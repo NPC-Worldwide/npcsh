@@ -1,5 +1,5 @@
 <p align="center">
-  <a href= "https://github.com/cagostino/npcsh/blob/main/docs/npcsh.md"> 
+  <a href= "https://github.com/npc-worldwide/npcsh/blob/main/docs/npcsh.md"> 
   <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npcsh.png" alt="npcsh logo" width=250></a>
 </p> 
 
@@ -63,8 +63,8 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 
 ## `guac`
 
-<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/guac.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/guac.png" alt="npcsh logo of a solarpunk sign", width=250></a>
+<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/guac.md"> 
+  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/guac.png" alt="npcsh logo of a solarpunk sign", width=250></a>
 </p> 
 
 - a replacement shell for interpreters like python/r/node/julia with an avocado input marker 🥑 that brings a pomodoro-like approach to interactive coding. 
@@ -105,7 +105,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
       
         ```
         <p align="center">
-          <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/test_data/markov_chain.png" alt="markov_chain_figure", width=250>
+          <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/markov_chain.png" alt="markov_chain_figure", width=250>
         </p>
         
         Access the variables created in the code:    
@@ -134,7 +134,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 - A command line interface offering the capabilities of the npc shell from a regular bash shell. Our mascot agent Sibiji the spider will help you weave your agent web with the `npc` CLI. 
 
 <p align="center">
-<img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/sibiji.png" alt="npcsh logo with sibiji the spider">
+<img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/sibiji.png" alt="npcsh logo with sibiji the spider">
 </p>
 
 - The NPC CLI lets users iterate and experiment with AI through bash commands. Below is a cheat sheet that shows how to use the `npc` CLI.
@@ -191,8 +191,8 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 
 ## `alicanto` : a research exploration agent flow. 
 
-<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/alicanto.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/alicanto.png" alt="logo for deep research", width=250></a>
+<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/alicanto.md"> 
+  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/alicanto.png" alt="logo for deep research", width=250></a>
 </p>
 
   - Examples:
@@ -220,8 +220,8 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 ## `pti`
 -  a reasoning REPL loop with explicit checks to request inputs from users following thinking traces.
  
-<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/pti.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/frederic4.png" alt="npcsh logo of frederic the bear and the pti logo", width=250></a>
+<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/pti.md"> 
+  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/frederic4.png" alt="npcsh logo of frederic the bear and the pti logo", width=250></a>
 </p>
 Speak with frederic the bear who, once he's done thinking, asks you for input before trudging on so it can work with confidence.
 
@@ -233,15 +233,15 @@ pti
 ## `spool`
 - a simple agentic REPL chat loop with a specified agent.
 
-<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/spool.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/spool.png" alt="logo for spool", width=250></a>
+<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/spool.md"> 
+  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/spool.png" alt="logo for spool", width=250></a>
 </p>
 
 ## `yap`
 
 
-<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/yap.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/yap.png" alt="logo for yap ", width=250></a>
+<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/yap.md"> 
+  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/yap.png" alt="logo for yap ", width=250></a>
 </p>
 
 - an agentic voice control loop with a specified agent. When launching `yap`, the user enters the typical `npcsh` agentic loop except that the system is waiting for either text or audio input.
@@ -253,8 +253,8 @@ yap
 
 ## `wander` 
 
-<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/wander.md">
-  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/kadiefa.png" alt="logo for wander", width=250></a>
+<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/wander.md">
+  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/kadiefa.png" alt="logo for wander", width=250></a>
 </p>
   A system for thinking outside of the box. From our testing, it appears gpt-4o-mini and gpt-series models in general appear to wander the most through various languages and ideas with high temperatures. Gemini models and many llama ones appear more stable despite high temps. Thinking models in general appear to be worse at this task.
   
@@ -307,7 +307,7 @@ Read the docs at [npcsh.readthedocs.io](https://npcsh.readthedocs.io/en/latest/)
 
 
 ## NPC Studio
-There is a graphical user interface that makes use of the NPC Toolkit through the NPC Studio. See the open source code for NPC Studio [here](https://github.com/cagostino/npc-studio). Download the executables (soon) at [our website](https://www.npcworldwi.de/npc-studio).
+There is a graphical user interface that makes use of the NPC Toolkit through the NPC Studio. See the open source code for NPC Studio [here](https://github.com/npc-worldwide/npc-studio). Download the executables (soon) at [our website](https://www.npcworldwi.de/npc-studio).
 
 
 ## Mailing List
