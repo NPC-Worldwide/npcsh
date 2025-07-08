@@ -7,10 +7,13 @@ import os
 from npcpy.npc_sysenv import (    
     print_and_process_stream_with_markdown,
     )
+from npcpy.npc_sysenv import (
+        get_system_message, 
+        render_markdown,
+
+)
 from npcsh._state import    (
     orange, 
-    get_system_message, 
-    render_markdown,
     NPCSH_VISION_MODEL, 
     NPCSH_VISION_PROVIDER, 
     NPCSH_CHAT_MODEL,
@@ -21,7 +24,7 @@ from npcpy.llm_funcs import (get_llm_response,)
 
 from npcpy.npc_compiler import NPC
 from typing import Any, List, Dict, Union
-from npcpy.modes.yap import enter_yap_mode
+from npcsh.yap import enter_yap_mode
 
 
 def enter_spool_mode(
