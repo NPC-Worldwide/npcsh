@@ -6,12 +6,17 @@
 # NPC Shell
 
 The NPC shell is a suite of executable command-line programs that allow users to easily interact with NPCs and LLMs through a command line shell. 
+
 Programs within the NPC shell use the properties defined in `~/.npcshrc`, which is generated upon installation and running of `npcsh` for the first time.
 
+To get started:
+```
+pip install 'npcsh[local]'
+```
+Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc` cli, `yap` `pti`, `wander`, and `spool`. 
 
 
-The following are the current programs in the NPC shell:
-
+## npcsh
 - a bash-replacement shell (`npcsh`) that can process bash, natural language, or special macro calls. `npcsh` detects whether input is bash or natural language and processes it accordingly. 
     
     - Users can specify whether natural language commands are processed in one of three ways:
@@ -488,15 +493,9 @@ For cases where you wish to set up a project specific set of NPCs, jinxs, and as
 
 ```
 
-
-
 ## Contributing
 Contributions are welcome! Please submit issues and pull requests on the GitHub repository.
 
 
 ## License
 This project is licensed under the MIT License.
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=cagostino/npcpy&type=Date)](https://star-history.com/#cagostino/npcpy&Date)

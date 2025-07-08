@@ -102,7 +102,6 @@ setup(
             "pti=npcpy.modes.pti:main",
             "guac=npcpy.modes.guac:main",
             "wander=npcpy.modes.wander:main",
-            "deep_research=npcpy.modes.deep_search:main",
             "spool=npcpy.modes.spool:main",
         ],
     },
