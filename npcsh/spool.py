@@ -4,16 +4,19 @@ from npcpy.data.image import capture_screenshot
 from npcpy.data.text import rag_search
 
 import os
-from npcpy.npc_sysenv import (
+from npcpy.npc_sysenv import (    
+    print_and_process_stream_with_markdown,
+    )
+from npcsh._state import    (
     orange, 
     get_system_message, 
     render_markdown,
-    render_code_block, 
-    print_and_process_stream_with_markdown,
-    NPCSH_VISION_MODEL, NPCSH_VISION_PROVIDER, 
-    NPCSH_CHAT_MODEL, NPCSH_CHAT_PROVIDER,
+    NPCSH_VISION_MODEL, 
+    NPCSH_VISION_PROVIDER, 
+    NPCSH_CHAT_MODEL,
+    NPCSH_CHAT_PROVIDER,
     NPCSH_STREAM_OUTPUT
-    )
+)
 from npcpy.llm_funcs import (get_llm_response,)
 
 from npcpy.npc_compiler import NPC

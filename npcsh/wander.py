@@ -2,7 +2,8 @@ import os
 from sqlalchemy import create_engine
 from npcpy.npc_compiler import NPC
 from npcpy.llm_funcs import get_llm_response 
-from npcpy.npc_sysenv import NPCSH_CHAT_MODEL, NPCSH_CHAT_PROVIDER, NPCSH_STREAM_OUTPUT, print_and_process_stream_with_markdown
+from npcpy.npc_sysenv import print_and_process_stream_with_markdown
+from npcsh._state import NPCSH_CHAT_MODEL, NPCSH_CHAT_PROVIDER, NPCSH_STREAM_OUTPUT
 import numpy as np
 import random
 from typing import List, Dict, Any, Optional, Union

@@ -10,7 +10,7 @@ steps:
   - engine: "python"
     code: |
       from npcpy.data.web import search_web
-      from npcpy.npc_sysenv import NPCSH_SEARCH_PROVIDER
+      from npcsh._state import NPCSH_SEARCH_PROVIDER
       query = "{{ query }}"
       provider = '{{ provider }}'
       if provider.strip() != '':

@@ -18,8 +18,8 @@ The following are the current programs in the NPC shell:
 
 ## `npcsh`
 <p align="center">
-  <a href= "https://github.com/cagostino/npcpy/blob/main/docs/guide.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcpy/main/npcpy/npcsh.png" alt="npcsh logo" width=250></a>
+  <a href= "https://github.com/cagostino/npcsh/blob/main/docs/npcsh.md"> 
+  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npcsh.png" alt="npcsh logo" width=250></a>
 </p> 
 
 - a bash-replacement shell (`npcsh`) that can process bash, natural language, or special macro calls. `npcsh` detects whether input is bash or natural language and processes it accordingly. 
@@ -68,8 +68,8 @@ The following are the current programs in the NPC shell:
 
 ## `guac`
 
-<p align="center"><a href ="https://github.com/cagostino/npcpy/blob/main/docs/guac.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcpy/main/npcpy/npc_team/guac.png" alt="npcpy logo of a solarpunk sign", width=250></a>
+<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/guac.md"> 
+  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/guac.png" alt="npcsh logo of a solarpunk sign", width=250></a>
 </p> 
 
 - a replacement shell for interpreters like python/r/node/julia with an avocado input marker 🥑 that brings a pomodoro-like approach to interactive coding. 
@@ -110,7 +110,7 @@ The following are the current programs in the NPC shell:
       
         ```
         <p align="center">
-          <img src="https://raw.githubusercontent.com/cagostino/npcpy/main/test_data/markov_chain.png" alt="markov_chain_figure", width=250>
+          <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/test_data/markov_chain.png" alt="markov_chain_figure", width=250>
         </p>
         
         Access the variables created in the code:    
@@ -139,7 +139,7 @@ The following are the current programs in the NPC shell:
 - A command line interface offering the capabilities of the npc shell from a regular bash shell. Our mascot agent Sibiji the spider will help you weave your agent web with the `npc` CLI. 
 
 <p align="center">
-<img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcpy/npc_team/sibiji.png" alt="npcsh logo with sibiji the spider">
+<img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/sibiji.png" alt="npcsh logo with sibiji the spider">
 </p>
 
 - The NPC CLI lets users iterate and experiment with AI through bash commands. Below is a cheat sheet that shows how to use the `npc` CLI.
@@ -196,8 +196,8 @@ The following are the current programs in the NPC shell:
 
 ## `alicanto` : a research exploration agent flow. 
 
-<p align="center"><a href ="https://github.com/cagostino/npcpy/blob/main/docs/deep.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcpy/main/npcpy/npc_team/alicanto.png" alt="logo for deep research", width=250></a>
+<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/alicanto.md"> 
+  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/alicanto.png" alt="logo for deep research", width=250></a>
 </p>
 
   - Examples:
@@ -225,8 +225,8 @@ The following are the current programs in the NPC shell:
 ## `pti`
 -  a reasoning REPL loop with explicit checks to request inputs from users following thinking traces.
  
-<p align="center"><a href ="https://github.com/cagostino/npcpy/blob/main/docs/pti.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcpy/main/npcpy/npc_team/frederic4.png" alt="npcpy logo of frederic the bear and the pti logo", width=250></a>
+<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/pti.md"> 
+  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/frederic4.png" alt="npcsh logo of frederic the bear and the pti logo", width=250></a>
 </p>
 Speak with frederic the bear who, once he's done thinking, asks you for input before trudging on so it can work with confidence.
 
@@ -238,15 +238,15 @@ pti
 ## `spool`
 - a simple agentic REPL chat loop with a specified agent.
 
-<p align="center"><a href ="https://github.com/cagostino/npcpy/blob/main/docs/spool.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcpy/main/npcpy/npc_team/spool.png" alt="logo for spool", width=250></a>
+<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/spool.md"> 
+  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/spool.png" alt="logo for spool", width=250></a>
 </p>
 
 ## `yap`
 
 
-<p align="center"><a href ="https://github.com/cagostino/npcpy/blob/main/docs/yap.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcpy/main/npcpy/npc_team/yap.png" alt="logo for yap ", width=250></a>
+<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/yap.md"> 
+  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/yap.png" alt="logo for yap ", width=250></a>
 </p>
 
 - an agentic voice control loop with a specified agent. When launching `yap`, the user enters the typical `npcsh` agentic loop except that the system is waiting for either text or audio input.
@@ -258,8 +258,8 @@ yap
 
 ## `wander` 
 
-<p align="center"><a href ="https://github.com/cagostino/npcpy/blob/main/docs/wander.md">
-  <img src="https://raw.githubusercontent.com/cagostino/npcpy/main/npcpy/npc_team/kadiefa.png" alt="logo for wander", width=250></a>
+<p align="center"><a href ="https://github.com/cagostino/npcsh/blob/main/docs/wander.md">
+  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npc_team/kadiefa.png" alt="logo for wander", width=250></a>
 </p>
   A system for thinking outside of the box. From our testing, it appears gpt-4o-mini and gpt-series models in general appear to wander the most through various languages and ideas with high temperatures. Gemini models and many llama ones appear more stable despite high temps. Thinking models in general appear to be worse at this task.
   
@@ -308,7 +308,7 @@ yap
 
 ## Read the Docs
 
-Read the docs at [npcpy.readthedocs.io](https://npcpy.readthedocs.io/en/latest/)
+Read the docs at [npcsh.readthedocs.io](https://npcsh.readthedocs.io/en/latest/)
 
 
 ## NPC Studio
@@ -320,7 +320,7 @@ Interested to stay in the loop and to hear the latest and greatest about `npcpy`
 
 
 ## Support
-If you appreciate the work here, [consider supporting NPC Worldwide with a monthly donation](https://buymeacoffee.com/npcworldwide), [buying NPC-WW themed merch](https://enpisi.com/shop), or hiring us to help you explore how to use `npcpy` and AI tools to help your business or research team, please reach out to info@npcworldwi.de .
+If you appreciate the work here, [consider supporting NPC Worldwide with a monthly donation](https://buymeacoffee.com/npcworldwide), [buying NPC-WW themed merch](https://enpisi.com/shop), or hiring us to help you explore how to use the NPC Toolkit and AI tools to help your business or research team, please reach out to info@npcworldwi.de .
 
 
 ## Installation
@@ -349,15 +349,15 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama pull llama3.2
 ollama pull llava:7b
 ollama pull nomic-embed-text
-pip install npcpy
+pip install npcsh
 # if you want to install with the API libraries
-pip install 'npcpy[lite]'
+pip install 'npcsh[lite]'
 # if you want the full local package set up (ollama, diffusers, transformers, cuda etc.)
-pip install 'npcpy[local]'
+pip install 'npcsh[local]'
 # if you want to use tts/stt
-pip install 'npcpy[yap]'
+pip install 'npcsh[yap]'
 # if you want everything:
-pip install 'npcpy[all]'
+pip install 'npcsh[all]'
 
 ```
 
@@ -383,16 +383,16 @@ brew services start ollama
 ollama pull llama3.2
 ollama pull llava:7b
 ollama pull nomic-embed-text
-pip install npcpy
+pip install npcsh
 # if you want to install with the API libraries
-pip install npcpy[lite]
+pip install npcsh[lite]
 # if you want the full local package set up (ollama, diffusers, transformers, cuda etc.)
-pip install npcpy[local]
+pip install npcsh[local]
 # if you want to use tts/stt
-pip install npcpy[yap]
+pip install npcsh[yap]
 
 # if you want everything:
-pip install npcpy[all]
+pip install npcsh[all]
 ```
 </details>
 
@@ -407,16 +407,16 @@ Then, in a powershell. Download and install ffmpeg.
 ollama pull llama3.2
 ollama pull llava:7b
 ollama pull nomic-embed-text
-pip install npcpy
+pip install npcsh
 # if you want to install with the API libraries
-pip install npcpy[lite]
+pip install 'npcsh[lite]'
 # if you want the full local package set up (ollama, diffusers, transformers, cuda etc.)
-pip install npcpy[local]
+pip install 'npcsh[local]'
 # if you want to use tts/stt
-pip install npcpy[yap]
+pip install 'npcsh[yap]'
 
 # if you want everything:
-pip install npcpy[all]
+pip install 'npcsh[all]'
 ```
 As of now, npcsh appears to work well with some of the core functionalities like /ots and /yap.
 
@@ -435,7 +435,7 @@ python-tkinter (pyautogui)
 </details>
 
 ## Startup Configuration and Project Structure
-After `npcpy` has been pip installed, `npcsh`, `guac`, `pti`, `spool`, `yap` and the `npc` CLI can be used as command line tools. To initialize these correctly, first start by starting the NPC shell:
+After `npcsh` has been pip installed, `npcsh`, `guac`, `pti`, `spool`, `yap` and the `npc` CLI can be used as command line tools. To initialize these correctly, first start by starting the NPC shell:
 ```bash
 npcsh
 ```
@@ -498,26 +498,7 @@ For cases where you wish to set up a project specific set of NPCs, jinxs, and as
 
 ```
 
-### Migrations and deprecations and major changes
-### v0.3.37
-<details>  <summary> Toggle </summary>
-- added team to the conversation history table. 
 
- </details>
-
-### v0.3.35
-<details>  <summary> Toggle </summary>
--In v0.3.35, there were many significant changes to the structure of npcpy, introducing various new submodules for data I/O (`data`), AI model generation and inference (`gen`), command history, knowledge graph, and search features (`memory`), mixture of agents methods and schemes (`mix`), modes for interaction like `spool`, `guac`, `wander`, `yap`, `pti`, and more (`modes`), SQL-focused tooling (`sql`) and computer automations like `cron`, `systemctl`, `pyautogui`, etc (`work`) .
-
- </details>
- 
-### v0.3.33
-<details>  <summary> Toggle </summary>
--In v0.3.33, the NPCCompiler object was phased out and the global/project dichotomy was removed. 
--the primary python package entrypoint was renamed from npcsh to npcpy
--npcsh is still automatically installed and available, but we will have a better separation of responsibilities in the NPC framework when the shell handles these rather than integrating it across the library.
--context files are being introduced.
- </details>
 
 ## Contributing
 Contributions are welcome! Please submit issues and pull requests on the GitHub repository.
