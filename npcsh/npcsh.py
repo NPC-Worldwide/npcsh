@@ -29,15 +29,18 @@ import shutil
 
 import yaml
 # Local Application Imports
-from npcpy.npc_sysenv import (
-    print_and_process_stream_with_markdown,
+from npcsh._state import (
     setup_npcsh_config,
     is_npcsh_initialized,
     initialize_base_npcs_if_needed,
     orange,
     interactive_commands,
     BASH_COMMANDS,
-    log_action,
+    log_action
+    )
+
+from npcpy.npc_sysenv import (
+    print_and_process_stream_with_markdown,
     render_markdown,
     get_locally_available_models,
     start_interactive_session,

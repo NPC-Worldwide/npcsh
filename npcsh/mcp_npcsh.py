@@ -29,11 +29,9 @@ import chromadb
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from npcpy.modes._state import ShellState, initial_state
-
-
-from npcpy.npc_sysenv import (
-    print_and_process_stream_with_markdown,
+from npcsh._state import (
+    ShellState,
+    initial_state, 
     setup_npcsh_config,
     is_npcsh_initialized,
     initialize_base_npcs_if_needed,
@@ -41,9 +39,12 @@ from npcpy.npc_sysenv import (
     interactive_commands,
     BASH_COMMANDS,
     log_action,
+    start_interactive_session,
+)
+from npcpy.npc_sysenv import (
+    print_and_process_stream_with_markdown,
     render_markdown,
     get_locally_available_models,
-    start_interactive_session,
     get_model_and_provider,
 )
 from npcpy.routes import router
@@ -167,7 +168,6 @@ class MCPClientNPC:
         # Special handling for lookup_provider - this is a built-in function, not an MCP tool
         if tool_name == 'lookup_provider':
             # Import the actual lookup_provider function
-            from npcpy.npc_sysenv import lookup_provider
             try:
                 # Call the actual function directly
                 model_name = args.get('model')
