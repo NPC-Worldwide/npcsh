@@ -10,8 +10,7 @@ from datetime import datetime
 from sqlalchemy import create_engine
 import logging 
 
-from npcpy.npc_sysenv import (
-    render_code_block, render_markdown,
+from npcsh._state import (
     NPCSH_VISION_MODEL, NPCSH_VISION_PROVIDER, NPCSH_API_URL,
     NPCSH_CHAT_MODEL, NPCSH_CHAT_PROVIDER, NPCSH_STREAM_OUTPUT,
     NPCSH_IMAGE_GEN_MODEL, NPCSH_IMAGE_GEN_PROVIDER,
@@ -41,14 +40,15 @@ from npcpy.memory.command_history import CommandHistory
 
 from npcpy.memory.knowledge_graph import breathe
 from npcpy.memory.sleep import sleep, forget
+from npcpy.serve import start_flask_server
 
-from npcpy.modes.guac import enter_guac_mode
-from npcpy.modes.plonk import execute_plonk_command
-from npcpy.modes.serve import start_flask_server
-from npcpy.modes.alicanto import alicanto
-from npcpy.modes.spool import enter_spool_mode
-from npcpy.modes.wander import enter_wander_mode
-from npcpy.modes.yap import enter_yap_mode
+
+from npcsh.guac import enter_guac_mode
+from npcsh.plonk import execute_plonk_command
+from npcsh.alicanto import alicanto
+from npcsh.spool import enter_spool_mode
+from npcsh.wander import enter_wander_mode
+from npcsh.yap import enter_yap_mode
 
 
 

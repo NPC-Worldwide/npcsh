@@ -20,7 +20,7 @@ import importlib.util
 from npcpy.memory.command_history import CommandHistory
 from npcpy.npc_compiler import Team, NPC
 from npcpy.llm_funcs import get_llm_response, check_llm_command, execute_llm_command
-from npcpy.modes._state import initial_state as npcsh_initial_state
+from npcsh._state import initial_state as npcsh_initial_state
 from npcpy.npc_sysenv import render_markdown, print_and_process_stream_with_markdown
 
 try:

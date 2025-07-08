@@ -28,6 +28,7 @@ except ImportError:
 import shutil
 
 import yaml
+
 # Local Application Imports
 from npcsh._state import (
     setup_npcsh_config,
@@ -36,17 +37,17 @@ from npcsh._state import (
     orange,
     interactive_commands,
     BASH_COMMANDS,
-    log_action
+    start_interactive_session,
+
     )
 
 from npcpy.npc_sysenv import (
     print_and_process_stream_with_markdown,
     render_markdown,
     get_locally_available_models,
-    start_interactive_session,
     get_model_and_provider,
 )
-from npcpy.routes import router
+from npcsh.routes import router
 from npcpy.data.image import capture_screenshot
 from npcpy.memory.command_history import (
     CommandHistory,
@@ -86,7 +87,7 @@ class CommandNotFoundError(Exception):
     pass
 
 
-from npcpy.modes._state import initial_state, ShellState
+from npcsh._state import initial_state, ShellState
 
 def readline_safe_prompt(prompt: str) -> str:
     ansi_escape = re.compile(r"(\033\[[0-9;]*[a-zA-Z])")
