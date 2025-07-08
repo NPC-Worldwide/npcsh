@@ -1,0 +1,96 @@
+jinx_name: file_editor
+description: Examines a file, determines what changes are needed, and applies those
+  changes.
+inputs:
+- file_path
+- edit_instructions
+- backup: true
+steps:
+  - name: "edit_file"
+    engine: "python"
+    code: |
+      import os
+      from npcpy.llm_funcs import get_llm_response
+      
+      # Get inputs
+      file_path = os.path.expanduser("{{ file_path }}")
+      edit_instructions = "{{ edit_instructions }}"
+      backup_str = "{{ backup }}"
+      create_backup = backup_str.lower() not in ('false', 'no', '0', '')
+      
+      # Read file content
+      with open(file_path, 'r') as f:
+          original_content = f.read()
+      
+      # Create backup if requested
+      if create_backup:
+          backup_path = file_path + ".bak"
+          with open(backup_path, 'w') as f:
+              f.write(original_content)
+      
+      # Make the prompt for the LLM
+      prompt = """You are a code editing assistant. Analyze this file and make the requested changes.
+
+        File content:
+        """ + original_content + """
+
+        Edit instructions: """ + edit_instructions + """
+
+        Return a JSON object with these fields:
+        1. "modifications": An array of modification objects, where each object has:
+        - "type": One of "replace", "insert_after", "insert_before", or "delete"
+        - "target": For "insert_after" and "insert_before", the text to insert after/before
+                    For "delete", the text to delete
+        - "original": For "replace", the text to be replaced
+        - "replacement": For "replace", the text to replace with
+        - "insertion": For "insert_after" and "insert_before", the text to insert
+        2. "explanation": Brief explanation of the changes made
+        """
+      print('getting llm response')
+      # Get the LLM response with JSON formatting
+      response = get_llm_response(prompt, model=npc.model, provider=npc.provider, npc=npc, format="json")
+      
+      result = response.get("response", {})
+      modifications = result.get("modifications", [])
+      explanation = result.get("explanation", "No explanation provided")
+      
+      # Apply modifications
+      updated_content = original_content
+      changes_applied = 0
+      
+      for mod in modifications:
+          print(mod)
+          mod_type = mod.get("type")
+          
+          if mod_type == "replace":
+              original = mod.get("original")
+              replacement = mod.get("replacement")
+              if original in updated_content:
+                  updated_content = updated_content.replace(original, replacement)
+                  changes_applied += 1
+          
+          elif mod_type == "insert_after":
+              target = mod.get("target")
+              insertion = mod.get("insertion")
+              if target in updated_content:
+                  updated_content = updated_content.replace(target, target + insertion)
+                  changes_applied += 1
+          
+          elif mod_type == "insert_before":
+              target = mod.get("target")
+              insertion = mod.get("insertion")
+              if target in updated_content:
+                  updated_content = updated_content.replace(target, insertion + target)
+                  changes_applied += 1
+          
+          elif mod_type == "delete":
+              target = mod.get("target")
+              if target in updated_content:
+                  updated_content = updated_content.replace(target, "")
+                  changes_applied += 1
+      
+      # Write the updated content
+      with open(file_path, 'w') as f:
+          f.write(updated_content)
+      
+      output = "Applied " + str(changes_applied) + " changes to " + file_path + "\n\n" + explanation

@@ -1,0 +1,29 @@
+jinx_name: image_generation_jinx
+description: 'Generates images based on a text prompt.'
+inputs:
+- prompt
+- output_name
+- model: runwayml/stable-diffusion-v1-5
+- provider: diffusers
+steps:
+  - engine: "python"
+    code: |
+      image_prompt = '{{prompt}}'.strip()
+      from npcpy.llm_funcs import gen_image
+      # Generate the image
+      pil_image = gen_image(
+          image_prompt,
+          npc=npc,
+          model='{{model}}',  # You can adjust the model as needed
+          provider='{{provider}}'
+      )
+      if pil_image:
+          image_generated = True
+      else:
+          image_generated = False
+      # save the image 
+      output_name = '{{output_name}}'
+      pil_image.save(f'{output_name}.png')
+      # open the image to display it
+      pil_image.show()
+      output = output_name
