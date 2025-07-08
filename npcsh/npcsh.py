@@ -646,12 +646,14 @@ def execute_command(
                     if not stream_this_segment: # If intermediate output is a stream, consume for piping
                         full_stream_output = "".join(map(str, output))
                         stdin_for_next = full_stream_output
-                        if is_last_command: final_output = full_stream_output
+                        if is_last_command: 
+                            final_output = full_stream_output
                     else: # Final output is a stream, don't consume, can't pipe
                         stdin_for_next = None
                         final_output = output
                 elif output is not None: # Try converting other types to string
-                    try: stdin_for_next = str(output)
+                    try: 
+                        stdin_for_next = str(output)
                     except Exception:
                         print(f"Warning: Cannot convert output to string for piping: {type(output)}", file=sys.stderr)
                         stdin_for_next = None
@@ -1002,6 +1004,7 @@ def process_result(
     if user_input =='/help':
         render_markdown(output)
     elif result_state.stream_output:
+
         try:
             final_output_str = print_and_process_stream_with_markdown(output, result_state.chat_model, result_state.chat_provider)
         except AttributeError as e:

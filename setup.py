@@ -84,7 +84,7 @@ extra_files = package_files("npcpy/npc_team/")
 
 setup(
     name="npcsh",
-    version="1.0.2",
+    version="1.0.3",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
@@ -108,7 +108,7 @@ setup(
     },
     author="Christopher Agostino",
     author_email="info@npcworldwi.de",
-    description="npcsh is a command-line toolkit for using AI agents.",
+    description="npcsh is a command-line toolkit for using AI agents in novel ways.",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/NPC-Worldwide/npcsh",
