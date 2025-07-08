@@ -1,0 +1,25 @@
+jinx_name: screen_capture_analysis_jinx
+description: Captures the whole screen and sends the image for analysis
+inputs:
+- prompt
+steps:
+  - engine: "python"
+    code: |
+      import os
+      from npcpy.data.image import capture_screenshot
+      out = capture_screenshot(full=True)
+      prompt = "{{prompt}}"
+      # Now properly use get_llm_response to analyze the image
+      # Create a prompt that includes the user's request and instructions
+      analysis_prompt = prompt + "\n\nAttached is a screenshot of my screen currently. Please use this to evaluate the situation. If the user asked for you to explain what's on their screen or something similar, they are referring to the details contained within the attached image."
+      llm_response = get_llm_response(
+          prompt=analysis_prompt,
+          model=npc.model if npc else None,
+          provider=npc.provider if npc else None,
+          api_url=npc.api_url if npc else None,
+          api_key=npc.api_key if npc else None,
+          npc=npc,
+          images=[out['file_path']],  
+      )
+      output = llm_response['response']  
+    
