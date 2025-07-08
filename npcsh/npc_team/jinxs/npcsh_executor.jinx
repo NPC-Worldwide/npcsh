@@ -23,7 +23,7 @@ steps:
     engine: 'python'
     code: | 
       from npcpy.modes.npcsh import execute_slash_command
-      from npcpy.modes._state import initial_state
+      from npcpy._state import initial_state
 
       llm_response = '{{generate_npc_command}}'
       llm_response = llm_response[1:]
