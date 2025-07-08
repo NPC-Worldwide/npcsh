@@ -1,4 +1,3 @@
-# `npcsh`
 <p align="center">
   <a href= "https://github.com/cagostino/npcsh/blob/main/docs/npcsh.md"> 
   <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npcsh.png" alt="npcsh logo" width=250></a>
