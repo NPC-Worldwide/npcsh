@@ -1,0 +1,50 @@
+site_name: npcpy
+site_url: https://npcsh.readthedocs.io/
+repo_url: https://github.com/NPC-Worldwide/npcsh
+
+theme:
+  name: readthedocs
+  features:
+    - navigation.tabs
+    - content.code.copy
+    - content.tabs.link
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - attr_list
+  - pymdownx.highlight:
+      anchor_linenums: true
+
+plugins:
+  - mkdocstrings:
+      handlers:
+        python:
+          import:
+            - https://docs.python.org/3/objects.inv
+          selection:
+            members:
+              - public
+            filters:
+              - "!^__init__$"  # Properly excludes __init__
+          rendering:
+            show_source: true
+            show_root_heading: false
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - 'Using npcsh, the NPC Shell': guide.md
+  - 'Using alicanto': alicanto.md
+  - 'Using guac': guac.md
+  - 'Using pti': pti.md
+  - 'Using spool': spool.md
+  - 'Using wander': wander.md
+  - 'Using yap': yap.md
+
+
+  - TLDR Cheat Sheet: TLDR_Cheat_sheet.md
+  - API:
+    - Image: api/image.md
+    - LLM Functions: api/llm_funcs.md
+    - NPC, Team, Jinx: api/npc_compiler.md
+    - NPC Sys Env Helpers: api/npc_sys_env_helpers.md

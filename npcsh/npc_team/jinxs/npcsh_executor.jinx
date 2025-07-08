@@ -1,0 +1,31 @@
+jinx_name: npcsh_executor
+description: Issue npc shell requests. Uses one of the NPC macros.
+inputs:
+- request
+steps:
+  - name: 'get_command_help'
+    engine: 'python'
+    code: |
+      from npcpy.routes import router, get_help_text
+      router_info = get_help_text()
+      output = router_info
+  - name: 'generate_npc_command'
+    engine: 'natural'
+    code: |
+      Based on the output: {{output}}
+
+      generate a npcsh command that can be executed to satisfy this user request:
+      {{request}}
+      Do not include any other comments, Your response should only be
+
+      the command string verbatim like '/<command> args --kwargs
+  - name: 'run command'
+    engine: 'python'
+    code: | 
+      from npcpy.modes.npcsh import execute_slash_command
+      from npcpy.modes._state import initial_state
+
+      llm_response = '{{generate_npc_command}}'
+      llm_response = llm_response[1:]
+      response = execute_slash_command(llm_response, None, initial_state, False)
+      output = response[1]

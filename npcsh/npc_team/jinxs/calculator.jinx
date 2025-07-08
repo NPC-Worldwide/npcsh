@@ -1,0 +1,11 @@
+jinx_name: calculator
+description: A jinx to simplify and evaluate mathematical expressions
+inputs:
+- expression
+steps:
+- code: |
+    expression = '{{ expression }}'.strip()
+    output = eval(expression)
+    print('Result:', output)
+
+  engine: python
