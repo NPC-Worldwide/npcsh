@@ -1,7 +1,7 @@
 # `npcsh`
 <p align="center">
   <a href= "https://github.com/cagostino/npcsh/blob/main/docs/npcsh.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npcsh.png" alt="npcsh logo" width=250></a>
+  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npcsh.png" alt="npcsh logo" width=250></a>
 </p> 
 
 # NPC Shell
@@ -12,10 +12,6 @@ Programs within the NPC shell use the properties defined in `~/.npcshrc`, which 
 
 
 The following are the current programs in the NPC shell:
-
-
-
-
 
 - a bash-replacement shell (`npcsh`) that can process bash, natural language, or special macro calls. `npcsh` detects whether input is bash or natural language and processes it accordingly. 
     
