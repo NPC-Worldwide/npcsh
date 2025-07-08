@@ -5,9 +5,14 @@ import sqlite3
 import traceback
 from typing import Optional
 
+from npcsh._state import (
+    NPCSH_CHAT_MODEL,
+    NPCSH_CHAT_PROVIDER,
+    NPCSH_API_URL, 
+    NPCSH_DB_PATH, 
+    NPCSH_STREAM_OUTPUT,
+    )
 from npcpy.npc_sysenv import (
-    NPCSH_CHAT_MODEL, NPCSH_CHAT_PROVIDER,
-    NPCSH_API_URL, NPCSH_DB_PATH, NPCSH_STREAM_OUTPUT,
     print_and_process_stream_with_markdown,
     render_markdown,
 )

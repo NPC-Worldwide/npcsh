@@ -32,17 +32,18 @@ except Exception as e:
         + "Could not load the whisper package. If you want to use tts/stt features, please run `pip install npcsh[audio]` and follow the instructions in the npcsh github readme to  ensure your OS can handle the audio dependencies."
     )
 from npcpy.data.load import load_csv, load_pdf
-from npcpy.npc_sysenv import (
+from npcsh._state import (
     NPCSH_CHAT_MODEL,
     NPCSH_CHAT_PROVIDER,
     NPCSH_DB_PATH,
     NPCSH_API_URL,
-    NPCSH_STREAM_OUTPUT,
+    NPCSH_STREAM_OUTPUT
+    )
+
+from npcpy.npc_sysenv import (
     get_system_message,
     print_and_process_stream_with_markdown, 
-    render_markdown
-    
-
+    render_markdown,
 )
 from sqlalchemy import create_engine
 from npcpy.llm_funcs import check_llm_command

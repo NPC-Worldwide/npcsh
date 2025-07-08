@@ -15,17 +15,7 @@ from mcp.server.fastmcp import FastMCP
 import importlib
 # npcpy imports
 from npcpy.gen.response import get_litellm_response
-from npcpy.npc_sysenv import (
-    NPCSH_CHAT_MODEL,
-    NPCSH_CHAT_PROVIDER,
-    NPCSH_API_URL,
-    NPCSH_IMAGE_GEN_MODEL,
-    NPCSH_IMAGE_GEN_PROVIDER,
-    NPCSH_VIDEO_GEN_MODEL,
-    NPCSH_VIDEO_GEN_PROVIDER,
-    get_model_and_provider,
-    lookup_provider,
-)
+
 
 import os
 import subprocess

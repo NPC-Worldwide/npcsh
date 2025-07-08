@@ -20,7 +20,7 @@ from mcp.client.stdio import stdio_client
 
 # Local imports from npcpy
 from npcpy.gen.response import get_litellm_response
-from npcpy.npc_sysenv import (
+from npcsh._state import (
     NPCSH_CHAT_MODEL,
     NPCSH_CHAT_PROVIDER,
     NPCSH_API_URL,
