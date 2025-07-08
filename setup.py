@@ -16,6 +16,7 @@ def package_files(directory):
 
 # Base requirements (no LLM packages)
 base_requirements = [
+    'npcpy', 
     "jinja2",
     "litellm",    
     "scipy",
