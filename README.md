@@ -307,7 +307,7 @@ Read the docs at [npcsh.readthedocs.io](https://npcsh.readthedocs.io/en/latest/)
 
 
 ## NPC Studio
-There is a graphical user interface that makes use of the NPC Toolkit through the NPC Studio. See the open source code for NPC Studio [here](https://github.com/npc-worldwide/npc-studio). Download the executables (soon) at [our website](https://www.npcworldwi.de/npc-studio).
+There is a graphical user interface that makes use of the NPC Toolkit through the NPC Studio. See the open source code for NPC Studio [here](https://github.com/npc-worldwide/npc-studio). Download the executables at [our website](https://enpisi.com/npc-studio).
 
 
 ## Mailing List
