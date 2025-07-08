@@ -1,11 +1,10 @@
+# `npcsh`
 <p align="center">
-  <img src="https://raw.githubusercontent.com/cagostino/npcpy/main/npcpy.png" alt="npcpy logo of a solarpunk sign">
-</p>
+  <a href= "https://github.com/cagostino/npcsh/blob/main/docs/npcsh.md"> 
+  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npcsh.png" alt="npcsh logo" width=250></a>
+</p> 
 
-
-
-
-## NPC Shell
+# NPC Shell
 
 The NPC shell is a suite of executable command-line programs that allow users to easily interact with NPCs and LLMs through a command line shell. 
 Programs within the NPC shell use the properties defined in `~/.npcshrc`, which is generated upon installation and running of `npcsh` for the first time.
@@ -16,11 +15,7 @@ The following are the current programs in the NPC shell:
 
 
 
-## `npcsh`
-<p align="center">
-  <a href= "https://github.com/cagostino/npcsh/blob/main/docs/npcsh.md"> 
-  <img src="https://raw.githubusercontent.com/cagostino/npcsh/main/npcsh/npcsh.png" alt="npcsh logo" width=250></a>
-</p> 
+
 
 - a bash-replacement shell (`npcsh`) that can process bash, natural language, or special macro calls. `npcsh` detects whether input is bash or natural language and processes it accordingly. 
     
