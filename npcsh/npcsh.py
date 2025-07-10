@@ -858,9 +858,13 @@ def interactive_edit_list(items: List[str], item_type: str) -> List[str]:
     return items
 def generate_todos(user_goal: str, state: ShellState, additional_context: str = "") -> List[Dict[str, Any]]:
     """Generate high-level todos for the user's goal"""
+    path_cmd = 'The current working directory is: ' + state.current_path
+    ls_files = 'Files in the current directory (full paths):\n' + "\n".join([os.path.join(state.current_path, f) for f in os.listdir(state.current_path)]) if os.path.exists(state.current_path) else 'No files found in the current directory.'
+    platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
+    info = path_cmd + '\n' + ls_files + '\n' + platform_info 
+
+
     
-    # This is a general instruction to the model on HOW to think about software tasks
-    # without polluting the user's direct prompt.
     high_level_planning_instruction = """
     You are a high-level project planner. When a user asks to work on a file or code,
     structure your plan using a simple, high-level software development lifecycle:
@@ -868,6 +872,9 @@ def generate_todos(user_goal: str, state: ShellState, additional_context: str = 
     2. Second, make the required changes based on the user's goal.
     3. Third, verify the changes work as intended (e.g., test the code).
     Your generated todos should reflect this high-level thinking.
+
+
+    
     """
     
     prompt = f"""
@@ -877,19 +884,31 @@ def generate_todos(user_goal: str, state: ShellState, additional_context: str = 
     
     {additional_context}
     
-    Generate a list of 3 todos to accomplish this goal. Use specific actionable language based on the user request. Do not make assumptions about user needs. 
-    Every todo must be directly sourced from the user's request.
+    Generate a list of 3 todos to accomplish this goal. Use specific actionable language based on the user request. 
+    Do not make assumptions about user needs. 
+    Every todo must be directly sourced from the user's request.     
+    If users request specific files to be incorporated, you MUST include the full path to the file in the todo.
+    Here is some relevant information for the current folder and working directory that may be relevant:
+    {info}
+
+    For example, if the user says "I need to add a new function to calculate the average of a list of numbers my research.py script" and the current working directory is /home/user/projects and one
+     of the available files in the current directory is /home/user/projects/research.py then one of the todos should be:
+    - "Add a new function to /home/user/projects/research.py to calculate the average of a list of numbers"
+    Do not truncate paths. Do not additional paths. Use them exactly as they are provided here.
+    
     Each todo should be:
     - Specific and actionable
     - Independent where possible
     - Focused on a single major component
-    
+
+    Remember, it is critical to provide as much relevant information as possible. Even if the user only refers to a file or something by a relative path, it is
+    critical for operation that you provide the full path to the file in the todo item.
+
     Return JSON with format:
     {{
         "todos": [
-            {{"description": "todo description", "estimated_complexity": "simple|medium|complex"}},
-            ...
-        ]
+            todo1, todo2, todo3,
+                    ]
     }}
     """
     
@@ -911,7 +930,7 @@ def generate_constraints(todos: List[Dict[str, Any]], user_goal: str, state: She
     User goal: {user_goal}
     
     Todos to accomplish:
-    {chr(10).join([f"- {todo['description']}" for todo in todos])}
+    {chr(10).join([f"- {todo}" for todo in todos])}
     
     Based ONLY on what the user explicitly stated in their goal, identify any constraints or requirements they mentioned.
     Do NOT invent new constraints. Only extract constraints that are directly stated or clearly implied by the user's request.
@@ -949,12 +968,12 @@ def generate_constraints(todos: List[Dict[str, Any]], user_goal: str, state: She
         return cleaned_constraints
     else:
         return []
-def should_break_down_todo(todo: Dict[str, Any], state: ShellState) -> bool:
+def should_break_down_todo(todo, state: ShellState) -> bool:
     """Ask LLM if a todo needs breakdown, then ask user for confirmation"""
     prompt = f"""
-    Todo: {todo['description']}
-    Estimated complexity: {todo.get('estimated_complexity', 'unknown')}
-    
+    Todo: {todo}
+
+        
     Does this todo need to be broken down into smaller, more atomic components?
     Consider:
     - Is it complex enough to warrant breakdown?
@@ -977,17 +996,17 @@ def should_break_down_todo(todo: Dict[str, Any], state: ShellState) -> bool:
     reason = result.get("reason", "No reason provided")
     
     if llm_suggests:
-        print(f"\nLLM suggests breaking down: '{todo['description']}'")
+        print(f"\nLLM suggests breaking down: '{todo}'")
         print(f"Reason: {reason}")
         user_choice = input("Break it down? [y/N]: ").strip().lower()
         return user_choice in ['y', 'yes']
     
     return False
 
-def generate_subtodos(todo: Dict[str, Any], state: ShellState) -> List[Dict[str, Any]]:
+def generate_subtodos(todo, state: ShellState) -> List[Dict[str, Any]]:
     """Generate atomic subtodos for a complex todo"""
     prompt = f"""
-    Parent todo: {todo['description']}
+    Parent todo: {todo}
     
     Break this down into atomic, executable subtodos. Each subtodo should be:
     - A single, concrete action
@@ -997,7 +1016,7 @@ def generate_subtodos(todo: Dict[str, Any], state: ShellState) -> List[Dict[str,
     Return JSON with format:
     {{
         "subtodos": [
-            {{"description": "subtodo description", "type": "file_edit|search|test|command"}},
+             "subtodo description",
             ...
         ]
     }}
@@ -1014,27 +1033,25 @@ def generate_subtodos(todo: Dict[str, Any], state: ShellState) -> List[Dict[str,
     return response.get("response", {}).get("subtodos", [])
 def execute_todo_item(todo: Dict[str, Any], ride_state: RideState, shell_state: ShellState) -> bool:
     """Execute a single todo item using the existing jinx system"""
-    context = ride_state.get_context_summary()
     path_cmd = 'The current working directory is: ' + shell_state.current_path
     ls_files = 'Files in the current directory (full paths):\n' + "\n".join([os.path.join(shell_state.current_path, f) for f in os.listdir(shell_state.current_path)]) if os.path.exists(shell_state.current_path) else 'No files found in the current directory.'
     platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
     info = path_cmd + '\n' + ls_files + '\n' + platform_info 
 
     command = f"""
-    Current context:
-    {context}
 
     General information:
     {info}
     
-    Execute this todo: {todo['description']}
+    Execute this todo: {todo}
     
     Constraints to follow:
     {chr(10).join([f"- {c}" for c in ride_state.constraints])}
     """
     
-    print(f"\nExecuting: {todo['description']}")
+    print(f"\nExecuting: {todo}")
     
+
     result = check_llm_command(
         command,
         model=shell_state.chat_model,
@@ -1047,31 +1064,33 @@ def execute_todo_item(todo: Dict[str, Any], ride_state: RideState, shell_state: 
     )
     
     output_payload = result.get("output", "")
-    
+    output_str = ""
+
     if isgenerator(output_payload):
-        print_and_process_stream_with_markdown(output_payload, shell_state.chat_model, shell_state.chat_provider)
+        output_str = print_and_process_stream_with_markdown(output_payload, shell_state.chat_model, shell_state.chat_provider)
     elif isinstance(output_payload, dict):
-        final_output = output_payload.get('output', str(output_payload))
-        render_markdown(final_output)
+        output_str = output_payload.get('output', str(output_payload))
+        if 'output' in output_str:
+            output_str = output_payload['output']
+        elif 'response' in output_str:
+            output_str = output_payload['response']
+        render_markdown(output_str)
     elif output_payload:
-        render_markdown(str(output_payload))
-    
+        output_str = str(output_payload)
+        render_markdown(output_str)
+
     user_feedback = input(f"\nTodo completed successfully? [y/N/notes]: ").strip()
     
     if user_feedback.lower() in ['y', 'yes']:
-        ride_state.successes.append(f"Completed: {todo['description']}")
-        return True
+        return True, output_str
     elif user_feedback.lower() in ['n', 'no']:
         mistake = input("What went wrong? ").strip()
-        ride_state.mistakes.append(f"Failed {todo['description']}: {mistake}")
-        return False
+        ride_state.mistakes.append(f"Failed {todo}: {mistake}")
+        return False, output_str
     else:
-        ride_state.facts.append(f"Re: {todo['description']}: {user_feedback}")
+        ride_state.facts.append(f"Re: {todo}: {user_feedback}")
         success = input("Mark as completed? [y/N]: ").strip().lower() in ['y', 'yes']
-        if success:
-            ride_state.successes.append(f"Completed: {todo['description']}")
-        return success
-    
+        return success, output_str
 
 def agentic_ride_loop(user_goal: str, state: ShellState) -> tuple:
     """
@@ -1085,16 +1104,15 @@ def agentic_ride_loop(user_goal: str, state: ShellState) -> tuple:
     
     # 2. User reviews/edits todos
     print("\n📋 Review and edit todos:")
-    todo_descriptions = [todo['description'] for todo in todos]
+    todo_descriptions = [todo for todo in todos]
     edited_descriptions = interactive_edit_list(todo_descriptions, "todos")
     
-    # Update todos with edited descriptions
-    todos = [{"description": desc, "estimated_complexity": "medium"} for desc in edited_descriptions]
-    ride_state.todos = todos
+
+    ride_state.todos = edited_descriptions
     
     # 3. Generate constraints
     print("\n🔒 Generating constraints...")
-    constraints = generate_constraints(todos, user_goal, state)
+    constraints = generate_constraints(edited_descriptions, user_goal, state)
     
     # 4. User reviews/edits constraints
     print("\n📐 Review and edit constraints:")
@@ -1104,39 +1122,35 @@ def agentic_ride_loop(user_goal: str, state: ShellState) -> tuple:
     # 5. Execution loop
     print("\n⚡ Starting execution...")
     
-    for i, todo in enumerate(todos):
-        print(f"\n--- Todo {i+1}/{len(todos)}: {todo['description']} ---")
+    for i, todo in enumerate(edited_descriptions):
+        print(f"\n--- Todo {i+1}/{len(todos)}: {todo} ---")
         
-        # Check if todo needs breakdown
-        if should_break_down_todo(todo, state):
-            print("Breaking down todo...")
-            subtodos = generate_subtodos(todo, state)
-            
-            # User reviews subtodos
-            subtodo_descriptions = [st['description'] for st in subtodos]
-            edited_subtodos = interactive_edit_list(subtodo_descriptions, "subtodos")
-            
-            # Execute subtodos
-            for j, subtodo_desc in enumerate(edited_subtodos):
-                subtodo = {"description": subtodo_desc, "type": "atomic"}
-                print(f"\n  Subtodo {j+1}/{len(edited_subtodos)}: {subtodo_desc}")
-                
-                success = execute_todo_item(subtodo, ride_state, state)
-                if not success:
-                    retry = input("Retry this subtodo? [y/N]: ").strip().lower()
-                    if retry in ['y', 'yes']:
-                        success = execute_todo_item(subtodo, ride_state, state)
-                
-                if not success:
-                    print("Subtodo failed. Continuing to next...")
-        else:
-            # Execute todo directly
-            success = execute_todo_item(todo, ride_state, state)
+        def attempt_execution(current_todo):
+            # This inner function handles the execution and retry logic
+            success, output_str = execute_todo_item(current_todo, ride_state, state)
             if not success:
                 retry = input("Retry this todo? [y/N]: ").strip().lower()
                 if retry in ['y', 'yes']:
-                    success = execute_todo_item(todo, ride_state, state)
-    
+                    success, output_str = execute_todo_item(current_todo, ride_state, state)
+            return success, output_str
+
+        if should_break_down_todo(todo, state):
+            print("Breaking down todo...")
+            subtodos = generate_subtodos(todo, state)
+            subtodo_descriptions = [st for st in subtodos]
+            edited_subtodos = interactive_edit_list(subtodo_descriptions, "subtodos")
+
+            for j, subtodo_desc in enumerate(edited_subtodos):
+                subtodo = {"description": subtodo_desc, "type": "atomic"}
+                success, output = attempt_execution(subtodo)
+                if success:
+                    ride_state.successes.append({"description": subtodo_desc, "output": output})
+                else:
+                    print("Subtodo failed. Continuing to next...")
+        else:
+            success, output = attempt_execution(todo)
+            if success:
+                ride_state.successes.append({"description": todo, "output": output})
     # 6. Final summary
     print("\n🎯 Execution Summary:")
     print(f"Successes: {len(ride_state.successes)}")
