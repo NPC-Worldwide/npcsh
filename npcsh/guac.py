@@ -607,11 +607,30 @@ def execute_guac_command(command: str, state: GuacState) -> Tuple[GuacState, Any
             state.command_history.add_command(nl_input_for_llm, [history_output], "", state.current_path)
 
     elif state.current_mode == "cmd":
+        locals_context_string = "Current Python environment variables and functions:\n"
+        if state.locals:
+            for k, v in state.locals.items():
+                if not k.startswith('__'): # Exclude Python built-ins and internal vars
+                    try:
+                        # Use repr() for a developer-friendly representation
+                        value_repr = repr(v)
+                        # Truncate long representations to prevent context window bloat
+                        if len(value_repr) > 200: 
+                            value_repr = value_repr[:197] + "..."
+                        locals_context_string += f"- {k} (type: {type(v).__name__}) = {value_repr}\n"
+                    except Exception:
+                        locals_context_string += f"- {k} (type: {type(v).__name__}) = <unrepresentable>\n"
+            # Add a clear separator for LLM to distinguish this context
+            locals_context_string += "\n--- End of Environment Context ---\n"
+        else:
+            locals_context_string += "(Environment is empty)\n"
+
         prompt_cmd = (
             f"User input for Python CMD mode: '{nl_input_for_llm}'.\n"
             f"Generate ONLY executable Python code required to fulfill this.\n"
             f"Do not include any explanations, leading markdown like ```python, or any text other than the Python code itself.\n"
         )
+
         llm_response = get_llm_response(
             prompt_cmd,
             model=state.chat_model,
