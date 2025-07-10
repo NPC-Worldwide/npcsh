@@ -1,0 +1,30 @@
+jinx_name: file_reader
+description: Examines a specific file per user request and summarizes its content. Files must contain full paths and extensions.
+inputs:
+- file_path
+- user_request
+steps:
+  - name: "read_file"
+    engine: "python"
+    code: |
+      import os
+      
+      # Get inputs for the path to the file with extension.
+      file_path = os.path.expanduser("{{ file_path }}")
+
+      # Read file content
+      with open(file_path, 'r') as f:
+          original_content = f.read()
+      
+      output = "File: " + file_path + "\n\n"
+      output += "Original content:\n\n" + original_content + "\n\n"
+  - name: 'summarize'
+    engine: 'natural'
+    code: |
+        Please summarize the content of this code according to the needs of the user request:
+       
+      
+        {{output}} 
+
+
+        This was the user's request: {{user_request}}
