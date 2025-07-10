@@ -7,3 +7,5 @@ databases:
     - ~/npcsh_history.db
 mcp_servers:
     - ~/.npcsh/mcp_server.py
+use_global_jinxs: true
+forenpc: sibiji

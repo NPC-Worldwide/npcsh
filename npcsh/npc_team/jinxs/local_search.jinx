@@ -1,4 +1,4 @@
-jinx_name: local_search`
+jinx_name: local_search
 description: 'Searches files in current and downstream directories to find items related
   to the user''s query using fuzzy matching.
 

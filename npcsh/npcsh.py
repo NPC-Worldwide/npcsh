@@ -1,4 +1,3 @@
-# Standard Library Imports
 import os
 import sys
 import atexit
@@ -548,60 +547,90 @@ def process_pipeline_command(
     if not cmd_to_process:
          return state, stdin_input
 
-    exec_model = model_override or state.chat_model    
-    exec_provider = provider_override or state.chat_provider 
+    exec_model = model_override or state.chat_model
+    exec_provider = provider_override or state.chat_provider
 
     if cmd_to_process.startswith("/"):
-        #print(cmd_to_process)
         return execute_slash_command(cmd_to_process, stdin_input, state, stream_final)
-    else:
-        try:
-            cmd_parts = parse_command_safely(cmd_to_process)
-            if not cmd_parts:
-                 return state, stdin_input
+    
+    try:
+        cmd_parts = parse_command_safely(cmd_to_process)
+        if not cmd_parts:
+                return state, stdin_input
 
-            command_name = cmd_parts[0]
+        command_name = cmd_parts[0]
 
+        is_unambiguous_bash = (
+            command_name in BASH_COMMANDS or
+            command_name in interactive_commands or
+            command_name == "cd" or
+            cmd_to_process.startswith("./")
+        )
+
+        if is_unambiguous_bash:
             if command_name in interactive_commands:
                 return handle_interactive_command(cmd_parts, state)
             elif command_name == "cd":
                 return handle_cd_command(cmd_parts, state)
             else:
-                try:
-                    bash_state, bash_output = handle_bash_command(cmd_parts, cmd_to_process, stdin_input, state)
-                    return bash_state, bash_output
-                except CommandNotFoundError:
-                    full_llm_cmd = f"{cmd_to_process} {stdin_input}" if stdin_input else cmd_to_process
+                return handle_bash_command(cmd_parts, cmd_to_process, stdin_input, state)
+        else:
+            full_llm_cmd = f"{cmd_to_process} {stdin_input}" if stdin_input else cmd_to_process
+            
+            path_cmd = 'The current working directory is: ' + state.current_path
+            ls_files = 'Files in the current directory (full paths):\n' + "\n".join([os.path.join(state.current_path, f) for f in os.listdir(state.current_path)]) if os.path.exists(state.current_path) else 'No files found in the current directory.'
+            platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
+            full_llm_cmd = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n' + full_llm_cmd
+            llm_result = check_llm_command(
+                full_llm_cmd,
+                model=exec_model,
+                provider=exec_provider,
+                api_url=state.api_url,
+                api_key=state.api_key,
+                npc=state.npc,
+                team=state.team,
+                messages=state.messages,
+                images=state.attachments,
+                stream=stream_final,
+                context=None,
+                shell=True,
+            )
+            if isinstance(llm_result, dict):
+                state.messages = llm_result.get("messages", state.messages)
+                output = llm_result.get("output")
+                return state, output
+            else:
+                return state, llm_result
 
-                    llm_result = check_llm_command(
-                        command = full_llm_cmd,
-                        model = exec_model,        
-                        provider = exec_provider,  
-                        api_url = state.api_url,
-                        api_key = state.api_key,
-                        npc = state.npc,
-                        team = state.team,
-                        messages = state.messages, 
-                        images = state.attachments,
-                        stream = stream_final,
-                        context = None ,
-                        shell = True,
-                       
-                    )
-                    if isinstance(llm_result, dict):
-                        state.messages = llm_result.get("messages", state.messages)
-                        output = llm_result.get("output")
-                        return state, output
-                    else:
-                        return state, llm_result
-
-                except Exception as bash_err:
-                     return state, colored(f"Bash execution failed: {bash_err}", "red")
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return state, colored(f"Error processing command '{cmd_segment[:50]}...': {e}", "red")
+    except CommandNotFoundError as e:
+        print(colored(f"Command not found, falling back to LLM: {e}", "yellow"), file=sys.stderr)
+        full_llm_cmd = f"{cmd_to_process} {stdin_input}" if stdin_input else cmd_to_process
+        llm_result = check_llm_command(
+            full_llm_cmd, 
+            model=exec_model, 
+            provider=exec_provider,
+            api_url=state.api_url, 
+            api_key=state.api_key, 
+            npc=state.npc,
+            team=state.team, 
+            messages=state.messages, 
+            images=state.attachments,
+            stream=stream_final, 
+            context=None, 
+            shell=True
+        )
+        if isinstance(llm_result, dict):
+            state.messages = llm_result.get("messages", state.messages)
+            output = llm_result.get("output")
+            return state, output
+        else:
+            return state, llm_result
+            
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return state, colored(f"Error processing command '{cmd_segment[:50]}...': {e}", "red")
+    
 def check_mode_switch(command:str , state: ShellState):
     if command in ['/cmd', '/agent', '/chat', '/ride']:
         state.current_mode = command[1:]
@@ -624,6 +653,7 @@ def execute_command(
     stdin_for_next = None
     final_output = None
     current_state = state 
+
     if state.current_mode == 'agent':
         for i, cmd_segment in enumerate(commands):
             is_last_command = (i == len(commands) - 1)
@@ -761,91 +791,363 @@ def execute_command(
 
         # Otherwise, run the agentic ride loop
         return agentic_ride_loop(command, state)
+@dataclass
+class RideState:
+    """Lightweight state tracking for /ride mode"""
+    todos: List[Dict[str, Any]] = field(default_factory=list)
+    constraints: List[str] = field(default_factory=list)
+    facts: List[str] = field(default_factory=list)
+    mistakes: List[str] = field(default_factory=list)
+    successes: List[str] = field(default_factory=list)
+    current_todo_index: int = 0
+    current_subtodo_index: int = 0
+    
+    def get_context_summary(self) -> str:
+        """Generate lightweight context for LLM prompts"""
+        context = []
+        if self.facts:
+            context.append(f"Facts: {'; '.join(self.facts[:5])}")  # Limit to 5 most recent
+        if self.mistakes:
+            context.append(f"Recent mistakes: {'; '.join(self.mistakes[-3:])}")
+        if self.successes:
+            context.append(f"Recent successes: {'; '.join(self.successes[-3:])}")
+        return "\n".join(context)
 
+def interactive_edit_list(items: List[str], item_type: str) -> List[str]:
+    """Interactive REPL for editing lists of items with regeneration options"""
+    while True:
+        print(f"\nCurrent {item_type}:")
+        for i, item in enumerate(items, 1):
+            print(f"{i}. {item}")
+        
+        choice = input(f"\nEdit {item_type} (e<num> to edit, d<num> to delete, a to add, r to regenerate, c to add context, ok to continue): ").strip()
+        
+        if choice.lower() == 'ok':
+            break
+        elif choice.lower() == 'r':
+            print("Regenerating list...")
+            return "REGENERATE"  # Special signal to regenerate
+        elif choice.lower() == 'c':
+            additional_context = input("Add more context: ").strip()
+            if additional_context:
+                return {"ADD_CONTEXT": additional_context, "items": items}
+        elif choice.lower() == 'a':
+            new_item = input(f"Enter new {item_type[:-1]}: ").strip()
+            if new_item:
+                items.append(new_item)
+        elif choice.lower().startswith('e'):
+            try:
+                idx = int(choice[1:]) - 1
+                if 0 <= idx < len(items):
+                    print(f"Current: {items[idx]}")
+                    new_item = input("New version: ").strip()
+                    if new_item:
+                        items[idx] = new_item
+            except ValueError:
+                print("Invalid format. Use e<number>")
+        elif choice.lower().startswith('d'):
+            try:
+                idx = int(choice[1:]) - 1
+                if 0 <= idx < len(items):
+                    items.pop(idx)
+            except ValueError:
+                print("Invalid format. Use d<number>")
+        else:
+            print("Invalid choice. Use: e<num>, d<num>, a, r (regenerate), c (add context), or ok")
+    
+    return items
+def generate_todos(user_goal: str, state: ShellState, additional_context: str = "") -> List[Dict[str, Any]]:
+    """Generate high-level todos for the user's goal"""
+    
+    # This is a general instruction to the model on HOW to think about software tasks
+    # without polluting the user's direct prompt.
+    high_level_planning_instruction = """
+    You are a high-level project planner. When a user asks to work on a file or code,
+    structure your plan using a simple, high-level software development lifecycle:
+    1. First, understand the current state (e.g., read the relevant file).
+    2. Second, make the required changes based on the user's goal.
+    3. Third, verify the changes work as intended (e.g., test the code).
+    Your generated todos should reflect this high-level thinking.
+    """
+    
+    prompt = f"""
+    {high_level_planning_instruction}
+
+    User goal: {user_goal}
+    
+    {additional_context}
+    
+    Generate a list of 3 todos to accomplish this goal. Use specific actionable language based on the user request. Do not make assumptions about user needs. 
+    Every todo must be directly sourced from the user's request.
+    Each todo should be:
+    - Specific and actionable
+    - Independent where possible
+    - Focused on a single major component
+    
+    Return JSON with format:
+    {{
+        "todos": [
+            {{"description": "todo description", "estimated_complexity": "simple|medium|complex"}},
+            ...
+        ]
+    }}
+    """
+    
+    response = get_llm_response(
+        prompt,
+        model=state.chat_model,
+        provider=state.chat_provider,
+        npc=state.npc,
+        format="json"
+    )
+    
+    todos_data = response.get("response", {}).get("todos", [])
+    return todos_data
+
+
+def generate_constraints(todos: List[Dict[str, Any]], user_goal: str, state: ShellState) -> List[str]:
+    """Generate constraints and requirements that define relationships between todos"""
+    prompt = f"""
+    User goal: {user_goal}
+    
+    Todos to accomplish:
+    {chr(10).join([f"- {todo['description']}" for todo in todos])}
+    
+    Based ONLY on what the user explicitly stated in their goal, identify any constraints or requirements they mentioned.
+    Do NOT invent new constraints. Only extract constraints that are directly stated or clearly implied by the user's request.
+    
+    Examples of valid constraints:
+    - If user says "without breaking existing functionality" -> "Maintain existing functionality"
+    - If user says "must be fast" -> "Performance must be optimized"
+    - If user says "should integrate with X" -> "Must integrate with X"
+    
+    If the user didn't specify any constraints, return an empty list.
+    
+    Return JSON with format:
+    {{
+        "constraints": ["constraint 1", "constraint 2", ...]
+    }}
+    """
+    
+    response = get_llm_response(
+        prompt,
+        model=state.chat_model,
+        provider=state.chat_provider,
+        npc=state.npc,
+        format="json"
+    )
+    
+    constraints_data = response.get("response", {})
+    
+    if isinstance(constraints_data, dict):
+        constraints = constraints_data.get("constraints", [])
+        # Make sure we're getting strings, not dicts
+        cleaned_constraints = []
+        for c in constraints:
+            if isinstance(c, str):
+                cleaned_constraints.append(c)
+        return cleaned_constraints
+    else:
+        return []
+def should_break_down_todo(todo: Dict[str, Any], state: ShellState) -> bool:
+    """Ask LLM if a todo needs breakdown, then ask user for confirmation"""
+    prompt = f"""
+    Todo: {todo['description']}
+    Estimated complexity: {todo.get('estimated_complexity', 'unknown')}
+    
+    Does this todo need to be broken down into smaller, more atomic components?
+    Consider:
+    - Is it complex enough to warrant breakdown?
+    - Would breaking it down make execution clearer?
+    - Are there multiple distinct steps involved?
+    
+    Return JSON: {{"should_break_down": true/false, "reason": "explanation"}}
+    """
+    
+    response = get_llm_response(
+        prompt,
+        model=state.chat_model,
+        provider=state.chat_provider,
+        npc=state.npc,
+        format="json"
+    )
+    
+    result = response.get("response", {})
+    llm_suggests = result.get("should_break_down", False)
+    reason = result.get("reason", "No reason provided")
+    
+    if llm_suggests:
+        print(f"\nLLM suggests breaking down: '{todo['description']}'")
+        print(f"Reason: {reason}")
+        user_choice = input("Break it down? [y/N]: ").strip().lower()
+        return user_choice in ['y', 'yes']
+    
+    return False
+
+def generate_subtodos(todo: Dict[str, Any], state: ShellState) -> List[Dict[str, Any]]:
+    """Generate atomic subtodos for a complex todo"""
+    prompt = f"""
+    Parent todo: {todo['description']}
+    
+    Break this down into atomic, executable subtodos. Each subtodo should be:
+    - A single, concrete action
+    - Executable in one step
+    - Clear and unambiguous
+    
+    Return JSON with format:
+    {{
+        "subtodos": [
+            {{"description": "subtodo description", "type": "file_edit|search|test|command"}},
+            ...
+        ]
+    }}
+    """
+    
+    response = get_llm_response(
+        prompt,
+        model=state.chat_model,
+        provider=state.chat_provider,
+        npc=state.npc,
+        format="json"
+    )
+    
+    return response.get("response", {}).get("subtodos", [])
+def execute_todo_item(todo: Dict[str, Any], ride_state: RideState, shell_state: ShellState) -> bool:
+    """Execute a single todo item using the existing jinx system"""
+    context = ride_state.get_context_summary()
+    path_cmd = 'The current working directory is: ' + shell_state.current_path
+    ls_files = 'Files in the current directory (full paths):\n' + "\n".join([os.path.join(shell_state.current_path, f) for f in os.listdir(shell_state.current_path)]) if os.path.exists(shell_state.current_path) else 'No files found in the current directory.'
+    platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
+    info = path_cmd + '\n' + ls_files + '\n' + platform_info 
+
+    command = f"""
+    Current context:
+    {context}
+
+    General information:
+    {info}
+    
+    Execute this todo: {todo['description']}
+    
+    Constraints to follow:
+    {chr(10).join([f"- {c}" for c in ride_state.constraints])}
+    """
+    
+    print(f"\nExecuting: {todo['description']}")
+    
+    result = check_llm_command(
+        command,
+        model=shell_state.chat_model,
+        provider=shell_state.chat_provider,
+        npc=shell_state.npc,
+        team=shell_state.team,
+        messages=[],
+        stream=shell_state.stream_output,
+        shell=True,
+    )
+    
+    output_payload = result.get("output", "")
+    
+    if isgenerator(output_payload):
+        print_and_process_stream_with_markdown(output_payload, shell_state.chat_model, shell_state.chat_provider)
+    elif isinstance(output_payload, dict):
+        final_output = output_payload.get('output', str(output_payload))
+        render_markdown(final_output)
+    elif output_payload:
+        render_markdown(str(output_payload))
+    
+    user_feedback = input(f"\nTodo completed successfully? [y/N/notes]: ").strip()
+    
+    if user_feedback.lower() in ['y', 'yes']:
+        ride_state.successes.append(f"Completed: {todo['description']}")
+        return True
+    elif user_feedback.lower() in ['n', 'no']:
+        mistake = input("What went wrong? ").strip()
+        ride_state.mistakes.append(f"Failed {todo['description']}: {mistake}")
+        return False
+    else:
+        ride_state.facts.append(f"Re: {todo['description']}: {user_feedback}")
+        success = input("Mark as completed? [y/N]: ").strip().lower() in ['y', 'yes']
+        if success:
+            ride_state.successes.append(f"Completed: {todo['description']}")
+        return success
+    
 
 def agentic_ride_loop(user_goal: str, state: ShellState) -> tuple:
     """
-    /ride mode: orchestrate via team, then LLM suggests 3 next steps, user picks or provides alternative input
-    repeat until quit.
-
+    New /ride mode: hierarchical planning with human-in-the-loop control
     """
-    if not hasattr(state, "team") or state.team is None:
-        raise ValueError("No team found in shell state for orchestration.")
-
-    request = user_goal
-    all_results = []
-
-    while True:
-        # 1. Orchestrate the current request
-        result = state.team.orchestrate(request)
-        all_results.append(result)
-        render_markdown("# Orchestration Result")
-        render_markdown(f"-  Request: {request}")
-        render_markdown(f"- Final response: {result.get('output')}")
-
-        render_markdown('- Summary: '+result['debrief']['summary'])
-        recommendations = result['debrief']['recommendations']
-        render_markdown(f'- Recommendations: {recommendations}')
-
-
-        # 2. Ask LLM for three next possible steps
-        suggestion_prompt = f"""
-        Given the following user goal and orchestration result, suggest three new 
-        avenues to go down that are related but distinct from the original goal and from each other.
-                
-        Be concise. Each step should be a single actionable instruction or question.
-
-User goal: {user_goal}
-Orchestration result: {result}
-
-Return a JSON object with a "steps" key, whose value is a list of three strings, each string being a next step.
-Return only the JSON object.
-"""
-        suggestions = get_llm_response(
-            suggestion_prompt,
-            model=state.chat_model,
-            provider=state.chat_provider,
-            api_url=state.api_url,
-            api_key=state.api_key,
-            npc=state.npc,
-            format="json"
-        )
-        # No custom parsing: just use the parsed output
-        steps = suggestions.get("response", {}).get("steps", [])
-        if not steps or len(steps) < 1:
-            print("No further steps suggested by LLM. Exiting.")
-            break
-
-        print("\nNext possible steps:")
-        for idx, step in enumerate(steps, 1):
-            print(f"{idx}. {step}")
-
-        user_input = input("\nChoose next step (1/2/3) or q to quit: ").strip().lower()
-        if user_input in ("q", "quit", "exit"):
-            print("Exiting /ride agentic loop.")
-            break
-        try:
-
-            choice = int(user_input)
-            if 1 <= choice <= len(steps):
-                request = f"""
-                My initial goal was: {user_goal}
-                The orchestration result was: {result.get('output')}
-                I have chosen to pursue the next step: {steps[choice - 1]}
-                Now work on this next problem.
-"""
-            else:
-                print("Invalid choice, please enter 1, 2, 3, or q.")
-                continue
-        except Exception:
-            # assume it is natural language input from the user on what to do next, not a number,
+    ride_state = RideState()
+    
+    # 1. Generate high-level todos
+    print("🚀 Generating high-level todos...")
+    todos = generate_todos(user_goal, state)
+    
+    # 2. User reviews/edits todos
+    print("\n📋 Review and edit todos:")
+    todo_descriptions = [todo['description'] for todo in todos]
+    edited_descriptions = interactive_edit_list(todo_descriptions, "todos")
+    
+    # Update todos with edited descriptions
+    todos = [{"description": desc, "estimated_complexity": "medium"} for desc in edited_descriptions]
+    ride_state.todos = todos
+    
+    # 3. Generate constraints
+    print("\n🔒 Generating constraints...")
+    constraints = generate_constraints(todos, user_goal, state)
+    
+    # 4. User reviews/edits constraints
+    print("\n📐 Review and edit constraints:")
+    edited_constraints = interactive_edit_list(constraints, "constraints")
+    ride_state.constraints = edited_constraints
+    
+    # 5. Execution loop
+    print("\n⚡ Starting execution...")
+    
+    for i, todo in enumerate(todos):
+        print(f"\n--- Todo {i+1}/{len(todos)}: {todo['description']} ---")
+        
+        # Check if todo needs breakdown
+        if should_break_down_todo(todo, state):
+            print("Breaking down todo...")
+            subtodos = generate_subtodos(todo, state)
             
-            request = user_input 
-            print("Invalid input, please enter 1, 2, 3, or q.")
-            continue
-
-    return state, all_results
-
+            # User reviews subtodos
+            subtodo_descriptions = [st['description'] for st in subtodos]
+            edited_subtodos = interactive_edit_list(subtodo_descriptions, "subtodos")
+            
+            # Execute subtodos
+            for j, subtodo_desc in enumerate(edited_subtodos):
+                subtodo = {"description": subtodo_desc, "type": "atomic"}
+                print(f"\n  Subtodo {j+1}/{len(edited_subtodos)}: {subtodo_desc}")
+                
+                success = execute_todo_item(subtodo, ride_state, state)
+                if not success:
+                    retry = input("Retry this subtodo? [y/N]: ").strip().lower()
+                    if retry in ['y', 'yes']:
+                        success = execute_todo_item(subtodo, ride_state, state)
+                
+                if not success:
+                    print("Subtodo failed. Continuing to next...")
+        else:
+            # Execute todo directly
+            success = execute_todo_item(todo, ride_state, state)
+            if not success:
+                retry = input("Retry this todo? [y/N]: ").strip().lower()
+                if retry in ['y', 'yes']:
+                    success = execute_todo_item(todo, ride_state, state)
+    
+    # 6. Final summary
+    print("\n🎯 Execution Summary:")
+    print(f"Successes: {len(ride_state.successes)}")
+    print(f"Mistakes: {len(ride_state.mistakes)}")
+    print(f"Facts learned: {len(ride_state.facts)}")
+    
+    return state, {
+        "todos_completed": len(ride_state.successes),
+        "ride_state": ride_state,
+        "final_context": ride_state.get_context_summary()
+    }
 # --- Main Application Logic ---
 
 def check_deprecation_warnings():
@@ -859,12 +1161,12 @@ def print_welcome_message():
     print(
             """
 Welcome to \033[1;94mnpc\033[0m\033[1;38;5;202msh\033[0m!
-\033[1;94m                    \033[0m\033[1;38;5;202m               \\\\
-\033[1;94m _ __   _ __    ___ \033[0m\033[1;38;5;202m ___  | |___    \\\\
-\033[1;94m| '_ \ | '_ \  / __|\033[0m\033[1;38;5;202m/ __/ | |_ _|    \\\\
-\033[1;94m| | | || |_) |( |__ \033[0m\033[1;38;5;202m\_  \ | | | |    //
-\033[1;94m|_| |_|| .__/  \___|\033[0m\033[1;38;5;202m|___/ |_| |_|   //
-       \033[1;94m| |          \033[0m\033[1;38;5;202m               //
+\033[1;94m                    \033[0m\033[1;38;5;202m                \\\\
+\033[1;94m _ __   _ __    ___ \033[0m\033[1;38;5;202m  ___  | |___    \\\\
+\033[1;94m| '_ \\ | '  \\  / __|\033[0m\033[1;38;5;202m / __/ | |_ _|    \\\\
+\033[1;94m| | | || |_) |( |__ \033[0m\033[1;38;5;202m \\_  \\ | | | |    //
+\033[1;94m|_| |_|| .__/  \\___|\033[0m\033[1;38;5;202m |___/ |_| |_|   //
+       \033[1;94m| |          \033[0m\033[1;38;5;202m                //
        \033[1;94m| |
        \033[1;94m|_|
 
@@ -872,7 +1174,6 @@ Begin by asking a question, issuing a bash command, or typing '/help' for more i
 
             """
         )
-
 
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     check_deprecation_warnings()
@@ -894,89 +1195,87 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     project_team_path = os.path.abspath(PROJECT_NPC_TEAM_PATH)
     global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
     team_dir = None
-    forenpc_obj = None
-    team_ctx = {}
+    default_forenpc_name = None
 
-    # --- Always prefer local/project team first ---
     if os.path.exists(project_team_path):
         team_dir = project_team_path
-        forenpc_name = "forenpc"
+        default_forenpc_name = "forenpc"
     else:
         resp = input(f"No npc_team found in {os.getcwd()}. Create a new team here? [Y/n]: ").strip().lower()
         if resp in ("", "y", "yes"):
             team_dir = project_team_path
             os.makedirs(team_dir, exist_ok=True)
-            forenpc_name = "forenpc"
+            default_forenpc_name = "forenpc"
             forenpc_directive = input(
-                f"Enter a primary directive for {forenpc_name} (default: 'You are the forenpc of the team, coordinating activities between NPCs on the team, verifying that results from NPCs are high quality and can help to adequately answer user requests.'): "
+                f"Enter a primary directive for {default_forenpc_name} (default: 'You are the forenpc of the team...'): "
             ).strip() or "You are the forenpc of the team, coordinating activities between NPCs on the team, verifying that results from NPCs are high quality and can help to adequately answer user requests."
             forenpc_model = input("Enter a model for your forenpc (default: llama3.2): ").strip() or "llama3.2"
             forenpc_provider = input("Enter a provider for your forenpc (default: ollama): ").strip() or "ollama"
-            forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
-            if not os.path.exists(forenpc_path):
-                with open(forenpc_path, "w") as f:
-                    yaml.dump({
-                        "name": forenpc_name,
-                        "primary_directive": forenpc_directive,
-                        "model": forenpc_model,
-                        "provider": forenpc_provider
-                    }, f)
+            
+            with open(os.path.join(team_dir, f"{default_forenpc_name}.npc"), "w") as f:
+                yaml.dump({
+                    "name": default_forenpc_name, "primary_directive": forenpc_directive,
+                    "model": forenpc_model, "provider": forenpc_provider
+                }, f)
+            
             ctx_path = os.path.join(team_dir, "team.ctx")
-            folder_context = input("Enter a short description or context for this project/team (optional): ").strip()
-            team_ctx = {
-                "forenpc": forenpc_name,
-                "model": forenpc_model,
-                "provider": forenpc_provider,
-                "api_key": None,
-                "api_url": None,
+            folder_context = input("Enter a short description for this project/team (optional): ").strip()
+            team_ctx_data = {
+                "forenpc": default_forenpc_name, "model": forenpc_model,
+                "provider": forenpc_provider, "api_key": None, "api_url": None,
                 "context": folder_context if folder_context else None
             }
-            use_jinxs = input("Do you want to copy jinxs from the global folder to this project (c), or use them from the global folder (g)? [c/g, default: g]: ").strip().lower()
-            global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
-            project_jinxs_dir = os.path.join(team_dir, "jinxs")
+            use_jinxs = input("Use global jinxs folder (g) or copy to this project (c)? [g/c, default: g]: ").strip().lower()
             if use_jinxs == "c":
+                global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
                 if os.path.exists(global_jinxs_dir):
-                    shutil.copytree(global_jinxs_dir, project_jinxs_dir, dirs_exist_ok=True)
-                    print(f"Copied jinxs from {global_jinxs_dir} to {project_jinxs_dir}")
-                else:
-                    print(f"No global jinxs found at {global_jinxs_dir}")
+                    shutil.copytree(global_jinxs_dir, os.path.join(team_dir, "jinxs"), dirs_exist_ok=True)
             else:
-                team_ctx["use_global_jinxs"] = True
+                team_ctx_data["use_global_jinxs"] = True
 
             with open(ctx_path, "w") as f:
-                yaml.dump(team_ctx, f)
+                yaml.dump(team_ctx_data, f)
         elif os.path.exists(global_team_path):
             team_dir = global_team_path
-            forenpc_name = "sibiji"
+            default_forenpc_name = "sibiji"
         else:
             print("No global npc_team found. Please run 'npcpy init' or create a team first.")
             sys.exit(1)
 
-    # --- Load team context if it exists ---
-    ctx_path = os.path.join(team_dir, "team.ctx")
-    if os.path.exists(ctx_path):
-        with open(ctx_path, "r") as f:
-            team_ctx = yaml.safe_load(f) or team_ctx
+    team_ctx = {}
+    for filename in os.listdir(team_dir):
+        if filename.endswith(".ctx"):
+            try:
+                with open(os.path.join(team_dir, filename), "r") as f:
+                    team_ctx = yaml.safe_load(f) or {}
+                break
+            except Exception as e:
+                print(f"Warning: Could not load context file {filename}: {e}")
 
-    # --- Load the forenpc_obj ---
-    forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
-    if os.path.exists(forenpc_path):
-        forenpc_obj = NPC(forenpc_path)
-    else:
-        forenpc_obj = None
+    forenpc_name = team_ctx.get("forenpc", default_forenpc_name)
+    print(f"Using forenpc: {forenpc_name}")
 
-    # --- Decide which jinxs directory to use ---
     if team_ctx.get("use_global_jinxs", False):
         jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
     else:
         jinxs_dir = os.path.join(team_dir, "jinxs")
-    from npcpy.npc_compiler import load_jinxs_from_directory
+        
     jinxs_list = load_jinxs_from_directory(jinxs_dir)
     jinxs_dict = {jinx.jinx_name: jinx for jinx in jinxs_list}
 
+    forenpc_obj = None
+    forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
+    #print('forenpc_path', forenpc_path)
+    #print('jinx list', jinxs_list)
+    if os.path.exists(forenpc_path):
+
+        forenpc_obj = NPC(file = forenpc_path, jinxs=jinxs_list)
+    else:
+        print(f"Warning: Forenpc file '{forenpc_name}.npc' not found in {team_dir}.")
+
     team = Team(team_path=team_dir, forenpc=forenpc_obj, jinxs=jinxs_dict)
     return command_history, team, forenpc_obj
-    
+
 def process_result(
     user_input: str,
     result_state: ShellState,
@@ -1012,6 +1311,16 @@ def process_result(
                 if len(output) > 0:
                     final_output_str = output
                     render_markdown(final_output_str) 
+        except TypeError as e:
+
+            if isinstance(output, str):
+                if len(output) > 0:
+                    final_output_str = output
+                    render_markdown(final_output_str)
+            elif isinstance(output, dict):
+                if 'output' in output:
+                    final_output_str = output['output']
+                    render_markdown(final_output_str)
                         
     elif output is not None:
         final_output_str = str(output)
@@ -1045,12 +1354,12 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
 
     def exit_shell(state):
         print("\nGoodbye!")
-        print('beginning knowledge consolidation')
-        try:
-            breathe_result = breathe(state.messages, state.chat_model, state.chat_provider, state.npc)
-            print(breathe_result)
-        except KeyboardInterrupt:
-            print("Knowledge consolidation interrupted. Exiting immediately.")
+        #print('beginning knowledge consolidation')
+        #try:
+        #    breathe_result = breathe(state.messages, state.chat_model, state.chat_provider, state.npc)
+        #    print(breathe_result)
+        #except KeyboardInterrupt:
+        #    print("Knowledge consolidation interrupted. Exiting immediately.")
         sys.exit(0)
 
     while True:
