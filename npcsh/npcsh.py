@@ -580,7 +580,8 @@ def process_pipeline_command(
             path_cmd = 'The current working directory is: ' + state.current_path
             ls_files = 'Files in the current directory (full paths):\n' + "\n".join([os.path.join(state.current_path, f) for f in os.listdir(state.current_path)]) if os.path.exists(state.current_path) else 'No files found in the current directory.'
             platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
-            full_llm_cmd = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n' + full_llm_cmd
+            info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n' 
+
             llm_result = check_llm_command(
                 full_llm_cmd,
                 model=exec_model,
@@ -592,7 +593,7 @@ def process_pipeline_command(
                 messages=state.messages,
                 images=state.attachments,
                 stream=stream_final,
-                context=None,
+                context=info,
                 shell=True,
             )
             if isinstance(llm_result, dict):
