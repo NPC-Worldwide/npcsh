@@ -411,7 +411,6 @@ BASH_COMMANDS = [
     "info",
     "whatis",
     "whereis",
-    "which",
     "date",
     "cal",
     "bc",
@@ -548,16 +547,20 @@ def validate_bash_command(command_parts: list) -> bool:
                 "--count",
                 "--heading",
             ],
-            "requires_arg": True,
+            "requires_arg": False,
         },
         "open": {
             "flags": ["-a", "-e", "-t", "-f", "-F", "-W", "-n", "-g", "-h"],
             "requires_arg": True,
         },
-        "which": {"flags": ["-a", "-s", "-v"], "requires_arg": True},
+
     }
 
     base_command = command_parts[0]
+
+    if base_command == 'which':
+        return False # disable which arbitrarily cause the command parsing for it is too finnicky.
+
 
     if base_command not in COMMAND_PATTERNS:
         return True  # Allow other commands to pass through
@@ -578,11 +581,6 @@ def validate_bash_command(command_parts: list) -> bool:
     # Check if 'who' has any arguments (it shouldn't)
     if base_command == "who" and args:
         return False
-
-    # Handle 'which' with '-a' flag
-    if base_command == "which" and "-a" in flags:
-        return True  # Allow 'which -a' with or without arguments.
-
     # Check if any required arguments are missing
     if pattern.get("requires_arg", False) and not args:
         return False

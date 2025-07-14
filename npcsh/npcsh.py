@@ -37,7 +37,7 @@ from npcsh._state import (
     interactive_commands,
     BASH_COMMANDS,
     start_interactive_session,
-
+    validate_bash_command
     )
 
 from npcpy.npc_sysenv import (
@@ -81,9 +81,6 @@ except Exception as e:
     print(f"Warning: Failed to initialize ChromaDB client at {EMBEDDINGS_DB_PATH}: {e}")
     chroma_client = None
 
-# --- Custom Exceptions ---
-class CommandNotFoundError(Exception):
-    pass
 
 
 from npcsh._state import initial_state, ShellState
@@ -404,14 +401,7 @@ def handle_bash_command(
     cmd_str: str,
     stdin_input: Optional[str],
     state: ShellState,
-    ) -> Tuple[ShellState, str]:
-
-    command_name = cmd_parts[0]
-
-    if command_name in TERMINAL_EDITORS:
-        output = open_terminal_editor(cmd_str)
-        return state, output
-
+) -> Tuple[bool, str]:
     try:
         process = subprocess.Popen(
             cmd_parts,
@@ -421,39 +411,23 @@ def handle_bash_command(
             text=True,
             cwd=state.current_path
         )
-
         stdout, stderr = process.communicate(input=stdin_input)
 
         if process.returncode != 0:
-            err_msg = stderr.strip() if stderr else f"Command '{cmd_str}' failed with return code {process.returncode}."
-            # If it failed because command not found, raise specific error for fallback
-            if "No such file or directory" in err_msg or "command not found" in err_msg:
-                 raise CommandNotFoundError(err_msg)
-            # Otherwise, return the error output
-            full_output = stdout.strip() + ("\n" + colored(f"stderr: {err_msg}", "red") if err_msg else "")
-            return state, full_output.strip()
+            return False, stderr.strip() if stderr else f"Command '{cmd_str}' failed with return code {process.returncode}."
 
+        if stderr.strip():
+            print(colored(f"stderr: {stderr.strip()}", "yellow"), file=sys.stderr)
+        
+        if cmd_parts[0] in ["ls", "find", "dir"]:
+            return True, format_file_listing(stdout.strip())
 
-        output = stdout.strip() if stdout else ""
-        if stderr:
-             # Log stderr but don't necessarily include in piped output unless requested
-             print(colored(f"stderr: {stderr.strip()}", "yellow"), file=sys.stderr)
-
-
-        if command_name in ["ls", "find", "dir"]:
-            output = format_file_listing(output)
-        elif not output and process.returncode == 0 and not stderr:
-             output = "" # No output is valid, don't print success message if piping
-
-        return state, output
+        return True, stdout.strip()
 
     except FileNotFoundError:
-        raise CommandNotFoundError(f"Command not found: {command_name}")
-    except PermissionError as e:
-         return state, colored(f"Error executing '{cmd_str}': Permission denied. {e}", "red")
-    except Exception as e:
-        return state, colored(f"Error executing command '{cmd_str}': {e}", "red")
-
+        return False, f"Command not found: {cmd_parts[0]}"
+    except PermissionError:
+        return False, f"Permission denied: {cmd_str}"
 
 def execute_slash_command(command: str, stdin_input: Optional[str], state: ShellState, stream: bool) -> Tuple[ShellState, Any]:
     """Executes slash commands using the router or checking NPC/Team jinxs."""
@@ -527,7 +501,6 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
 
     return state, colored(f"Unknown slash command or jinx: {command_name}", "red")
 
-
 def process_pipeline_command(
     cmd_segment: str,
     stdin_input: Optional[str],
@@ -553,85 +526,60 @@ def process_pipeline_command(
     if cmd_to_process.startswith("/"):
         return execute_slash_command(cmd_to_process, stdin_input, state, stream_final)
     
-    try:
-        cmd_parts = parse_command_safely(cmd_to_process)
-        if not cmd_parts:
-                return state, stdin_input
+    cmd_parts = parse_command_safely(cmd_to_process)
+    if not cmd_parts:
+        return state, stdin_input
 
+    if validate_bash_command(cmd_parts):
         command_name = cmd_parts[0]
+        if command_name in interactive_commands:
+            return handle_interactive_command(cmd_parts, state)
+        if command_name == "cd":
+            return handle_cd_command(cmd_parts, state)
 
-        is_unambiguous_bash = (
-            command_name in BASH_COMMANDS or
-            command_name in interactive_commands or
-            command_name == "cd" or
-            cmd_to_process.startswith("./")
-        )
-
-        if is_unambiguous_bash:
-            if command_name in interactive_commands:
-                return handle_interactive_command(cmd_parts, state)
-            elif command_name == "cd":
-                return handle_cd_command(cmd_parts, state)
-            else:
-                return handle_bash_command(cmd_parts, cmd_to_process, stdin_input, state)
+        success, result = handle_bash_command(cmd_parts, cmd_to_process, stdin_input, state)
+        if success:
+            return state, result
         else:
-            full_llm_cmd = f"{cmd_to_process} {stdin_input}" if stdin_input else cmd_to_process
-            
-            path_cmd = 'The current working directory is: ' + state.current_path
-            ls_files = 'Files in the current directory (full paths):\n' + "\n".join([os.path.join(state.current_path, f) for f in os.listdir(state.current_path)]) if os.path.exists(state.current_path) else 'No files found in the current directory.'
-            platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
-            info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n' 
-
-            llm_result = check_llm_command(
-                full_llm_cmd,
-                model=exec_model,
-                provider=exec_provider,
-                api_url=state.api_url,
-                api_key=state.api_key,
-                npc=state.npc,
-                team=state.team,
-                messages=state.messages,
-                images=state.attachments,
-                stream=stream_final,
-                context=info,
-                shell=True,
+            print(colored(f"Bash command failed. Asking LLM for a fix: {result}", "yellow"), file=sys.stderr)
+            fixer_prompt = f"The command '{cmd_to_process}' failed with the error: '{result}'. Provide the correct command."
+            response = execute_llm_command(
+                fixer_prompt, 
+                model=exec_model, 
+                provider=exec_provider, 
+                npc=state.npc, 
+                stream=stream_final, 
+                messages=state.messages
             )
-            if isinstance(llm_result, dict):
-                state.messages = llm_result.get("messages", state.messages)
-                output = llm_result.get("output")
-                return state, output
-            else:
-                return state, llm_result
-
-    except CommandNotFoundError as e:
-        print(colored(f"Command not found, falling back to LLM: {e}", "yellow"), file=sys.stderr)
+            state.messages = response['messages']     
+            return state, response['response']
+    else:
         full_llm_cmd = f"{cmd_to_process} {stdin_input}" if stdin_input else cmd_to_process
+        path_cmd = 'The current working directory is: ' + state.current_path
+        ls_files = 'Files in the current directory (full paths):\n' + "\n".join([os.path.join(state.current_path, f) for f in os.listdir(state.current_path)]) if os.path.exists(state.current_path) else 'No files found in the current directory.'
+        platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
+        info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n' 
+
         llm_result = check_llm_command(
-            full_llm_cmd, 
-            model=exec_model, 
+            full_llm_cmd,
+            model=exec_model,
             provider=exec_provider,
-            api_url=state.api_url, 
-            api_key=state.api_key, 
+            api_url=state.api_url,
+            api_key=state.api_key,
             npc=state.npc,
-            team=state.team, 
-            messages=state.messages, 
+            team=state.team,
+            messages=state.messages,
             images=state.attachments,
-            stream=stream_final, 
-            context=None, 
-            shell=True
+            stream=stream_final,
+            context=info,
+            shell=True,
         )
         if isinstance(llm_result, dict):
             state.messages = llm_result.get("messages", state.messages)
             output = llm_result.get("output")
             return state, output
         else:
-            return state, llm_result
-            
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return state, colored(f"Error processing command '{cmd_segment[:50]}...': {e}", "red")
-    
+            return state, llm_result        
 def check_mode_switch(command:str , state: ShellState):
     if command in ['/cmd', '/agent', '/chat', '/ride']:
         state.current_mode = command[1:]
@@ -730,8 +678,6 @@ def execute_command(
                     try:
                         bash_state, bash_output = handle_bash_command(cmd_parts, command, None, state)
                         return bash_state, bash_output
-                    except CommandNotFoundError:
-                        pass  # Fall through to LLM
                     except Exception as bash_err:
                         return state, colored(f"Bash execution failed: {bash_err}", "red")
             except Exception:
@@ -1216,46 +1162,51 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         team_dir = project_team_path
         default_forenpc_name = "forenpc"
     else:
-        resp = input(f"No npc_team found in {os.getcwd()}. Create a new team here? [Y/n]: ").strip().lower()
-        if resp in ("", "y", "yes"):
-            team_dir = project_team_path
-            os.makedirs(team_dir, exist_ok=True)
-            default_forenpc_name = "forenpc"
-            forenpc_directive = input(
-                f"Enter a primary directive for {default_forenpc_name} (default: 'You are the forenpc of the team...'): "
-            ).strip() or "You are the forenpc of the team, coordinating activities between NPCs on the team, verifying that results from NPCs are high quality and can help to adequately answer user requests."
-            forenpc_model = input("Enter a model for your forenpc (default: llama3.2): ").strip() or "llama3.2"
-            forenpc_provider = input("Enter a provider for your forenpc (default: ollama): ").strip() or "ollama"
-            
-            with open(os.path.join(team_dir, f"{default_forenpc_name}.npc"), "w") as f:
-                yaml.dump({
-                    "name": default_forenpc_name, "primary_directive": forenpc_directive,
-                    "model": forenpc_model, "provider": forenpc_provider
-                }, f)
-            
-            ctx_path = os.path.join(team_dir, "team.ctx")
-            folder_context = input("Enter a short description for this project/team (optional): ").strip()
-            team_ctx_data = {
-                "forenpc": default_forenpc_name, "model": forenpc_model,
-                "provider": forenpc_provider, "api_key": None, "api_url": None,
-                "context": folder_context if folder_context else None
-            }
-            use_jinxs = input("Use global jinxs folder (g) or copy to this project (c)? [g/c, default: g]: ").strip().lower()
-            if use_jinxs == "c":
-                global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
-                if os.path.exists(global_jinxs_dir):
-                    shutil.copytree(global_jinxs_dir, os.path.join(team_dir, "jinxs"), dirs_exist_ok=True)
-            else:
-                team_ctx_data["use_global_jinxs"] = True
+        if not os.path.exists('.npcsh_global'):
+            resp = input(f"No npc_team found in {os.getcwd()}. Create a new team here? [Y/n]: ").strip().lower()
+            if resp in ("", "y", "yes"):
+                team_dir = project_team_path
+                os.makedirs(team_dir, exist_ok=True)
+                default_forenpc_name = "forenpc"
+                forenpc_directive = input(
+                    f"Enter a primary directive for {default_forenpc_name} (default: 'You are the forenpc of the team...'): "
+                ).strip() or "You are the forenpc of the team, coordinating activities between NPCs on the team, verifying that results from NPCs are high quality and can help to adequately answer user requests."
+                forenpc_model = input("Enter a model for your forenpc (default: llama3.2): ").strip() or "llama3.2"
+                forenpc_provider = input("Enter a provider for your forenpc (default: ollama): ").strip() or "ollama"
+                
+                with open(os.path.join(team_dir, f"{default_forenpc_name}.npc"), "w") as f:
+                    yaml.dump({
+                        "name": default_forenpc_name, "primary_directive": forenpc_directive,
+                        "model": forenpc_model, "provider": forenpc_provider
+                    }, f)
+                
+                ctx_path = os.path.join(team_dir, "team.ctx")
+                folder_context = input("Enter a short description for this project/team (optional): ").strip()
+                team_ctx_data = {
+                    "forenpc": default_forenpc_name, "model": forenpc_model,
+                    "provider": forenpc_provider, "api_key": None, "api_url": None,
+                    "context": folder_context if folder_context else None
+                }
+                use_jinxs = input("Use global jinxs folder (g) or copy to this project (c)? [g/c, default: g]: ").strip().lower()
+                if use_jinxs == "c":
+                    global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
+                    if os.path.exists(global_jinxs_dir):
+                        shutil.copytree(global_jinxs_dir, os.path.join(team_dir, "jinxs"), dirs_exist_ok=True)
+                else:
+                    team_ctx_data["use_global_jinxs"] = True
 
-            with open(ctx_path, "w") as f:
-                yaml.dump(team_ctx_data, f)
+                with open(ctx_path, "w") as f:
+                    yaml.dump(team_ctx_data, f)
+            else:
+                render_markdown('From now on, npcsh will assume you will use the global team when activating from this folder. \n If you change your mind and want to initialize a team, use /init from within npcsh, `npc init` or `rm .npcsh_global` from the current working directory.')
+                with open(".npcsh_global", "w") as f:
+                    pass
+                team_dir = global_team_path
+                default_forenpc_name = "sibiji"  
         elif os.path.exists(global_team_path):
             team_dir = global_team_path
-            default_forenpc_name = "sibiji"
-        else:
-            print("No global npc_team found. Please run 'npcpy init' or create a team first.")
-            sys.exit(1)
+            default_forenpc_name = "sibiji"            
+        
 
     team_ctx = {}
     for filename in os.listdir(team_dir):
@@ -1369,6 +1320,12 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
 
     def exit_shell(state):
         print("\nGoodbye!")
+        # update the team ctx file  to update the context and the preferences 
+
+
+
+
+
         #print('beginning knowledge consolidation')
         #try:
         #    breathe_result = breathe(state.messages, state.chat_model, state.chat_provider, state.npc)
@@ -1432,27 +1389,6 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
             # Ctrl+D: exit shell cleanly
             exit_shell(state)
 
-def run_non_interactive(command_history: CommandHistory, initial_state: ShellState):
-    state = initial_state
-    # print("Running in non-interactive mode...", file=sys.stderr) # Optional debug
-
-    for line in sys.stdin:
-        user_input = line.strip()
-        if not user_input:
-            continue
-        if user_input.lower() in ["exit", "quit"]:
-             break
-
-        state.current_path = os.getcwd()
-        state, output = execute_command(user_input, state)
-        # Non-interactive: just print raw output, don't process results complexly
-        if state.stream_output and isgenerator(output):
-             for chunk in output: print(str(chunk), end='')
-             print()
-        elif output is not None:
-             print(output)
-        # Maybe still log history?
-        # process_result(user_input, state, output, command_history)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="npcsh - An NPC-powered shell.")
@@ -1470,6 +1406,9 @@ def main() -> None:
     initial_state.team = team
     #import pdb 
     #pdb.set_trace()
+
+    # add a -g global command to indicate if to use the global or project, otherwise go thru normal flow
+    
     if args.command:
          state = initial_state
          state.current_path = os.getcwd()
@@ -1479,9 +1418,6 @@ def main() -> None:
               print()
          elif output is not None:
               print(output)
-
-    elif not sys.stdin.isatty():
-        run_non_interactive(command_history, initial_state)
     else:
         run_repl(command_history, initial_state)
 
