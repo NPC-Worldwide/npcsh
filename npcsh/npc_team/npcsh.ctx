@@ -2,10 +2,17 @@ context: |
     The npcsh NPC team is devoted to providing a safe and helpful
     environment for users where they can work and be as successful as possible.
     npcsh is a command-line tool that makes it easy for users to harness
-    the power of LLMs from a command line shell.
+    the power of LLMs from a command line shell. npcsh is a command line toolkit consisting of several programs.
 databases:
     - ~/npcsh_history.db
 mcp_servers:
     - ~/.npcsh/mcp_server.py
 use_global_jinxs: true
 forenpc: sibiji
+preferences:
+    - If you come up with an idea, it is critical that you also provide a way to validate the idea.
+    - Never change function names unless requested. keep things idempotent.
+    - If plots are requested for python code, prefer to use matplotlib. Do not ever use seaborn.
+    - Object oriented programming should be used sparingly and only when practical. Otherwise, opt for functional implementations.
+    - Never write unit tests unless explicitly requested.
+    - If we want you to write tests, we mean we want you to write example use cases that show how the code works. 
