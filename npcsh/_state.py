@@ -389,7 +389,6 @@ BASH_COMMANDS = [
     "sudo",
     "whoami",
     "who",
-    "w",
     "last",
     "finger",
     "uptime",
@@ -560,10 +559,8 @@ def validate_bash_command(command_parts: list) -> bool:
 
     if base_command == 'which':
         return False # disable which arbitrarily cause the command parsing for it is too finnicky.
-
-
-    if base_command not in COMMAND_PATTERNS:
-        return True  # Allow other commands to pass through
+    if base_command not in COMMAND_PATTERNS and base_command not in BASH_COMMANDS:
+        return False # Allow other commands to pass through
 
     pattern = COMMAND_PATTERNS[base_command]
     args = []
