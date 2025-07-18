@@ -17,7 +17,7 @@ from npcpy.npc_sysenv import (
     render_markdown,
 )
 from npcpy.npc_compiler import NPC, Team
-from npcpy.routes import router
+from npcsh.routes import router
 from npcpy.llm_funcs import check_llm_command
 
 def load_npc_by_name(npc_name: str = "sibiji", db_path: str = NPCSH_DB_PATH) -> Optional[NPC]:
