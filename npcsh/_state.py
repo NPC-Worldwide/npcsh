@@ -552,6 +552,128 @@ def validate_bash_command(command_parts: list) -> bool:
             "flags": ["-a", "-e", "-t", "-f", "-F", "-W", "-n", "-g", "-h"],
             "requires_arg": True,
         },
+        "ls": {
+            "flags": [
+                "-a",
+                "-l",
+                "-h",
+                "-R",
+                "-t",
+                "-S",
+                "-r",
+                "-d",
+                "-F",
+                "-i",
+                "--color",
+            ],
+            "requires_arg": False,
+        },
+        "cp": {
+            "flags": [
+                "-r",
+                "-f",
+                "-i",
+                "-u",
+                "-v",
+                "--preserve",
+                "--no-preserve=mode,ownership,timestamps",
+            ],
+            "requires_arg": True,
+        },
+        "mv": {
+            "flags": ["-f", "-i", "-u", "-v", "--backup", "--no-clobber"],
+            "requires_arg": True,
+        },
+        "rm": {
+            "flags": ["-f", "-i", "-r", "-v", "--preserve-root", "--no-preserve-root"],
+            "requires_arg": True,
+        },
+        "mkdir": {
+            "flags": ["-p", "-v", "-m", "--mode", "--parents"],
+            "requires_arg": True,
+        },
+        "rmdir": {
+            "flags": ["-p", "-v", "--ignore-fail-on-non-empty"],
+            "requires_arg": True,
+        },
+        "touch": {
+            "flags": ["-a", "-c", "-m", "-r", "-d", "--date"],
+            "requires_arg": True,
+        },
+        "grep": {
+            "flags": [
+                "-i",
+                "-v",
+                "-r",
+                "-l",
+                "-n",
+                "-c",
+                "-w",
+                "-x",
+                "--color",
+                "--exclude",
+                "--include",
+            ],
+            "requires_arg": True,
+        },
+        "sed": {
+            "flags": [
+                "-e",
+                "-f",
+                "-i",
+                "-n",
+                "--expression",
+                "--file",
+                "--in-place",
+                "--quiet",
+                "--silent",
+            ],
+            "requires_arg": True,
+        },
+        "awk": {
+            "flags": [
+                "-f",
+                "-v",
+                "--file",
+                "--source",
+                "--assign",
+                "--posix",
+                "--traditional",
+            ],
+            "requires_arg": True,
+        },
+        "sort": {
+            "flags": [
+                "-b",
+                "-d",
+                "-f",
+                "-g",
+                "-i",
+                "-n",
+                "-r",
+                "-u",
+                "--check",
+                "--ignore-case",
+                "--numeric-sort",
+            ],
+            "requires_arg": False,
+        },
+        "uniq": {
+            "flags": ["-c", "-d", "-u", "-i", "--check-chars", "--skip-chars"],
+            "requires_arg": False,
+        },
+        "wc": {
+            "flags": ["-c", "-l", "-w", "-m", "-L", "--bytes", "--lines", "--words"],
+            "requires_arg": False,
+        },
+        "pwd": {
+            "flags": ["-L", "-P"],
+            "requires_arg": False,
+        },
+        "chmod": {
+            "flags": ["-R", "-v", "-c", "--reference"],
+            "requires_arg": True,
+        },
 
     }
 
