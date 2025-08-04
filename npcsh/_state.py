@@ -12,6 +12,14 @@ from termcolor import colored
 
 
 from typing import Dict, List
+import subprocess
+import termios
+import tty
+import pty
+import select
+import signal
+import time
+import os
 import re
 import sqlite3
 from datetime import datetime
@@ -436,6 +444,7 @@ def start_interactive_session(command: list) -> int:
     """
     Starts an interactive session. Only works on Unix. On Windows, print a message and return 1.
     """
+    ON_WINDOWS = platform.system().lower().startswith("win")
     if ON_WINDOWS or termios is None or tty is None or pty is None or select is None or signal is None:
         print("Interactive terminal sessions are not supported on Windows.")
         return 1
@@ -681,10 +690,21 @@ def validate_bash_command(command_parts: list) -> bool:
 
     if base_command == 'which':
         return False # disable which arbitrarily cause the command parsing for it is too finnicky.
-    if base_command not in COMMAND_PATTERNS and base_command not in BASH_COMMANDS:
-        return False # Allow other commands to pass through
 
-    pattern = COMMAND_PATTERNS[base_command]
+
+    # Allow interactive commands (ipython, python, sqlite3, r) as valid commands
+    INTERACTIVE_COMMANDS = ["ipython", "python", "sqlite3", "r"]
+    TERMINAL_EDITORS = ["vim", "nano", "emacs"]
+    if base_command in TERMINAL_EDITORS or base_command in INTERACTIVE_COMMANDS:
+        return True
+
+    if base_command not in COMMAND_PATTERNS and base_command not in BASH_COMMANDS:
+        return False # Not a recognized command
+
+    pattern = COMMAND_PATTERNS.get(base_command)
+    if not pattern:
+        return True  # Allow commands in BASH_COMMANDS but not in COMMAND_PATTERNS
+
     args = []
     flags = []
 

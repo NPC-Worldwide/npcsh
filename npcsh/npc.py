@@ -85,8 +85,6 @@ def main():
                                          help="Run 'npc <command> --help' for command-specific help")
 
         for cmd_name, help_text in router.help_info.items():
-            if router.shell_only.get(cmd_name, False):
-                continue
 
             cmd_parser = subparsers.add_parser(cmd_name, help=help_text, add_help=False)
             cmd_parser.add_argument('command_args', nargs=argparse.REMAINDER,
