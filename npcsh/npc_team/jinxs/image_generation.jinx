@@ -1,5 +1,5 @@
 jinx_name: image_generation_jinx
-description: 'Generates images based on a text prompt.'
+description: 'Generates images based on a text prompt. Prompt must be specified to facilitate the users goal and should NOT be a verbatim replication of their request unless asked. The output name must be a path relative to the current directory. do NOT use placeholders. specify ./descriptive_image_name.png. Model must be specified if the user indicates a specific model or provider. For example, if they want gemini-2.5-flash you should specify gemini-2.5-flash as the model and gemini as the provider . if they specify gpt-image-1 you should specify gpt-image-1 as the model and openai as the provider. Only leave it the default if the user does not indicate the model preference.'
 inputs:
 - prompt
 - output_name
@@ -25,5 +25,5 @@ steps:
       output_name = '{{output_name}}'
       pil_image.save(f'{output_name}.png')
       # open the image to display it
-      pil_image.show()
+      #pil_image.show()
       output = output_name
