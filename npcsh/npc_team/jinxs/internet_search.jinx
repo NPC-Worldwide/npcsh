@@ -2,7 +2,8 @@ jinx_name: internet_search
 description: Searches the web for information based on a query in order to verify
   timiely details (e.g. current events) or to corroborate information in uncertain
   situations. Should be mainly only used when users specifically request a search,
-  otherwise an LLMs basic knowledge should be sufficient.
+  otherwise an LLMs basic knowledge should be sufficient. The Query must be written specifically
+  as a search query, it should not be a direct parroting of the user's input text.  Returns a LLM summary so no post-summary is required
 inputs:
 - query
 - provider: ''

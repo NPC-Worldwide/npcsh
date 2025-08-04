@@ -1,5 +1,5 @@
 jinx_name: bash_executor
-description: Execute bash queries.
+description: Execute bash queries. Returns a LLM summary so no post-summary is required
 inputs:
 - bash_command
 - user_request
