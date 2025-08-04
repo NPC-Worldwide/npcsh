@@ -31,9 +31,11 @@ import yaml
 # Local Application Imports
 from npcsh._state import (
     setup_npcsh_config,
+    initial_state, 
     is_npcsh_initialized,
     initialize_base_npcs_if_needed,
     orange,
+    ShellState,
     interactive_commands,
     BASH_COMMANDS,
     start_interactive_session,
@@ -83,7 +85,178 @@ except Exception as e:
 
 
 
-from npcsh._state import initial_state, ShellState
+
+def get_path_executables() -> List[str]:
+    """Get executables from PATH (cached for performance)"""
+    if not hasattr(get_path_executables, '_cache'):
+        executables = set()
+        path_dirs = os.environ.get('PATH', '').split(os.pathsep)
+        for path_dir in path_dirs:
+            if os.path.isdir(path_dir):
+                try:
+                    for item in os.listdir(path_dir):
+                        item_path = os.path.join(path_dir, item)
+                        if os.path.isfile(item_path) and os.access(item_path, os.X_OK):
+                            executables.add(item)
+                except (PermissionError, OSError):
+                    continue
+        get_path_executables._cache = sorted(list(executables))
+    return get_path_executables._cache
+
+
+import logging
+
+# Set up completion logger
+completion_logger = logging.getLogger('npcsh.completion')
+completion_logger.setLevel(logging.WARNING)  # Default to WARNING (quiet)
+
+# Add handler if not already present
+if not completion_logger.handlers:
+    handler = logging.StreamHandler(sys.stderr)
+    formatter = logging.Formatter('[%(name)s] %(message)s')
+    handler.setFormatter(formatter)
+    completion_logger.addHandler(handler)
+
+def make_completer(shell_state: ShellState):
+    def complete(text: str, state_index: int) -> Optional[str]:
+        """Main completion function"""
+        try:
+            buffer = readline.get_line_buffer()
+            begidx = readline.get_begidx()
+            endidx = readline.get_endidx()
+            
+            completion_logger.debug(f"text='{text}', buffer='{buffer}', begidx={begidx}, endidx={endidx}, state_index={state_index}")
+            
+            matches = []
+            
+            # Check if we're completing a slash command
+            if begidx > 0 and buffer[begidx-1] == '/':
+                completion_logger.debug(f"Slash command completion - text='{text}'")
+                slash_commands = get_slash_commands(shell_state)
+                completion_logger.debug(f"Available slash commands: {slash_commands}")
+                
+                if text == '':
+                    matches = [cmd[1:] for cmd in slash_commands]
+                else:
+                    full_text = '/' + text
+                    matching_commands = [cmd for cmd in slash_commands if cmd.startswith(full_text)]
+                    matches = [cmd[1:] for cmd in matching_commands]
+                
+                completion_logger.debug(f"Slash command matches: {matches}")
+                
+            elif is_command_position(buffer, begidx):
+                completion_logger.debug("Command position detected")
+                bash_matches = [cmd for cmd in BASH_COMMANDS if cmd.startswith(text)]
+                matches.extend(bash_matches)
+                
+                interactive_matches = [cmd for cmd in interactive_commands.keys() if cmd.startswith(text)]
+                matches.extend(interactive_matches)
+                
+                if len(text) >= 1:
+                    path_executables = get_path_executables()
+                    exec_matches = [cmd for cmd in path_executables if cmd.startswith(text)]
+                    matches.extend(exec_matches[:20])
+            else:
+                completion_logger.debug("File completion")
+                matches = get_file_completions(text)
+            
+            matches = sorted(list(set(matches)))
+            completion_logger.debug(f"Final matches: {matches}")
+            
+            if state_index < len(matches):
+                result = matches[state_index]
+                completion_logger.debug(f"Returning: '{result}'")
+                return result
+            else:
+                completion_logger.debug(f"No match for state_index {state_index}")
+            
+        except Exception as e:
+            completion_logger.error(f"Exception in completion: {e}")
+            completion_logger.debug("Exception details:", exc_info=True)
+        
+        return None
+    
+    return complete
+
+def get_slash_commands(state: ShellState) -> List[str]:
+    """Get available slash commands from router and team"""
+    commands = []
+    
+    completion_logger.debug("Getting slash commands...")
+    
+    # Router commands
+    if router and hasattr(router, 'routes'):
+        router_cmds = [f"/{cmd}" for cmd in router.routes.keys()]
+        commands.extend(router_cmds)
+        completion_logger.debug(f"Router commands: {router_cmds}")
+    
+    # Team jinxs
+    if state.team and hasattr(state.team, 'jinxs_dict'):
+        jinx_cmds = [f"/{jinx}" for jinx in state.team.jinxs_dict.keys()]
+        commands.extend(jinx_cmds)
+        completion_logger.debug(f"Jinx commands: {jinx_cmds}")
+    
+    # NPC names for switching
+    if state.team and hasattr(state.team, 'npcs'):
+        npc_cmds = [f"/{npc}" for npc in state.team.npcs.keys()]
+        commands.extend(npc_cmds)
+        completion_logger.debug(f"NPC commands: {npc_cmds}")
+    
+    # Mode switching commands
+    mode_cmds = ['/cmd', '/agent', '/chat', '/ride']
+    commands.extend(mode_cmds)
+    completion_logger.debug(f"Mode commands: {mode_cmds}")
+    
+    result = sorted(commands)
+    completion_logger.debug(f"Final slash commands: {result}")
+    return result
+def get_file_completions(text: str) -> List[str]:
+    """Get file/directory completions"""
+    try:
+        if text.startswith('/'):
+            basedir = os.path.dirname(text) or '/'
+            prefix = os.path.basename(text)
+        elif text.startswith('./') or text.startswith('../'):
+            basedir = os.path.dirname(text) or '.'
+            prefix = os.path.basename(text)
+        else:
+            basedir = '.'
+            prefix = text
+        
+        if not os.path.exists(basedir):
+            return []
+        
+        matches = []
+        try:
+            for item in os.listdir(basedir):
+                if item.startswith(prefix):
+                    full_path = os.path.join(basedir, item)
+                    if basedir == '.':
+                        completion = item
+                    else:
+                        completion = os.path.join(basedir, item)
+                    
+                    # Just return the name, let readline handle spacing/slashes
+                    matches.append(completion)
+        except (PermissionError, OSError):
+            pass
+        
+        return sorted(matches)
+    except Exception:
+        return []
+def is_command_position(buffer: str, begidx: int) -> bool:
+    """Determine if cursor is at a command position"""
+    # Get the part of buffer before the current word
+    before_word = buffer[:begidx]
+    
+    # Split by command separators 
+    parts = re.split(r'[|;&]', before_word)
+    current_command_part = parts[-1].strip()
+    
+    # If there's nothing before the current word in this command part,
+    # or only whitespace, we're at command position
+    return len(current_command_part) == 0
+
 
 def readline_safe_prompt(prompt: str) -> str:
     ansi_escape = re.compile(r"(\033\[[0-9;]*[a-zA-Z])")
@@ -233,28 +406,26 @@ def wrap_text(text: str, width: int = 80) -> str:
 # --- Readline Setup and Completion ---
 
 def setup_readline() -> str:
+    """Setup readline with history and completion"""
     try:
         readline.read_history_file(READLINE_HISTORY_FILE)
-
         readline.set_history_length(1000)
+        
+        # Don't set completer here - it will be set in run_repl with state
+        readline.parse_and_bind("tab: complete")
+        
         readline.parse_and_bind("set enable-bracketed-paste on")
-        #readline.parse_and_bind('"\e[A": history-search-backward')
-        #readline.parse_and_bind('"\e[B": history-search-forward')
         readline.parse_and_bind(r'"\C-r": reverse-search-history')
         readline.parse_and_bind(r'"\C-e": end-of-line')
         readline.parse_and_bind(r'"\C-a": beginning-of-line')
-        #if sys.platform == "darwin":
-        #    readline.parse_and_bind("bind ^I rl_complete")
-        #else:
-        #    readline.parse_and_bind("tab: complete")
-
+        
         return READLINE_HISTORY_FILE
-
-
+        
     except FileNotFoundError:
         pass
     except OSError as e:
         print(f"Warning: Could not read readline history file {READLINE_HISTORY_FILE}: {e}")
+
 
 def save_readline_history():
     try:
@@ -263,52 +434,11 @@ def save_readline_history():
         print(f"Warning: Could not write readline history file {READLINE_HISTORY_FILE}: {e}")
 
 
-# --- Placeholder for actual valid commands ---
-# This should be populated dynamically based on router, builtins, and maybe PATH executables
+
+
 valid_commands_list = list(router.routes.keys()) + list(interactive_commands.keys()) + ["cd", "exit", "quit"] + BASH_COMMANDS
 
-def complete(text: str, state: int) -> Optional[str]:
-    try:
-        buffer = readline.get_line_buffer()
-    except:
-        print('couldnt get readline buffer')
-    line_parts = parse_command_safely(buffer) # Use safer parsing
-    word_before_cursor = ""
-    if len(line_parts) > 0 and not buffer.endswith(' '):
-         current_word = line_parts[-1]
-    else:
-         current_word = "" # Completing after a space
 
-    try:
-        # Command completion (start of line or after pipe/semicolon)
-        # This needs refinement to detect context better
-        is_command_start = not line_parts or (len(line_parts) == 1 and not buffer.endswith(' ')) # Basic check
-        if is_command_start and not text.startswith('-'): # Don't complete options as commands
-            cmd_matches = [cmd + ' ' for cmd in valid_commands_list if cmd.startswith(text)]
-            # Add executables from PATH? (Can be slow)
-            # path_executables = [f + ' ' for f in shutil.get_exec_path() if os.path.basename(f).startswith(text)]
-            # cmd_matches.extend(path_executables)
-            return cmd_matches[state]
-
-        # File/Directory completion (basic)
-        # Improve context awareness (e.g., after 'cd', 'ls', 'cat', etc.)
-        if text and (not text.startswith('/') or os.path.exists(os.path.dirname(text))):
-             basedir = os.path.dirname(text)
-             prefix = os.path.basename(text)
-             search_dir = basedir if basedir else '.'
-             try:
-                 matches = [os.path.join(basedir, f) + ('/' if os.path.isdir(os.path.join(search_dir, f)) else ' ')
-                            for f in os.listdir(search_dir) if f.startswith(prefix)]
-                 return matches[state]
-             except OSError: # Handle permission denied etc.
-                  return None
-
-    except IndexError:
-        return None
-    except Exception: # Catch broad exceptions during completion
-        return None
-
-    return None
 
 
 # --- Command Execution Logic ---
@@ -1146,7 +1276,6 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     command_history = CommandHistory(db_path)
 
     try:
-        readline.set_completer(complete)
         history_file = setup_readline()
         atexit.register(save_readline_history)
         atexit.register(command_history.close)
@@ -1317,6 +1446,11 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
     print(f'Using {state.current_mode} mode. Use /agent, /cmd, /chat, or /ride to switch to other modes')
     print(f'To switch to a different NPC, type /<npc_name>')
     is_windows = platform.system().lower().startswith("win")
+    try:
+        completer = make_completer(state)
+        readline.set_completer(completer)
+    except:
+        pass
 
     def exit_shell(state):
         print("\nGoodbye!")
@@ -1336,6 +1470,12 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
 
     while True:
         try:
+            try:
+                completer = make_completer(state)
+                readline.set_completer(completer)
+            except:
+                pass
+
             if is_windows:
                 cwd_part = os.path.basename(state.current_path)
                 if isinstance(state.npc, NPC):
@@ -1350,12 +1490,6 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                 else:
                     prompt_end = f":🤖{colored('npc', 'blue', attrs=['bold'])}{colored('sh', 'yellow')}> "
                 prompt = readline_safe_prompt(f"{cwd_colored}{prompt_end}")
-            cwd_colored = colored(os.path.basename(state.current_path), "blue")
-            if isinstance(state.npc, NPC):
-                prompt_end = f":🤖{orange(state.npc.name)}> "
-            else:
-                prompt_end = f":🤖{colored('npc', 'blue', attrs=['bold'])}{colored('sh', 'yellow')}> "
-            prompt = readline_safe_prompt(f"{cwd_colored}{prompt_end}")
 
             user_input = get_multiline_input(prompt).strip()
             # Handle Ctrl+Z (ASCII SUB, '\x1a') as exit (Windows and Unix)
