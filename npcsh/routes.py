@@ -62,13 +62,11 @@ class CommandRouter:
     def __init__(self):
         self.routes = {}
         self.help_info = {}
-        self.shell_only = {}
 
-    def route(self, command: str, help_text: str = "", shell_only: bool = False) -> Callable:
+    def route(self, command: str, help_text: str = "") -> Callable:
         def wrapper(func):
             self.routes[command] = func
             self.help_info[command] = help_text
-            self.shell_only[command] = shell_only
 
             @functools.wraps(func)
             def wrapped_func(*args, **kwargs):
@@ -102,13 +100,12 @@ router = CommandRouter()
 def get_help_text():
     commands = router.get_commands()
     help_info = router.help_info
-    shell_only = router.shell_only
+
     commands.sort()
     output = "# Available Commands\n\n"
     for cmd in commands:
         help_text = help_info.get(cmd, "")
-        shell_only_text = " (Shell only)" if shell_only.get(cmd, False) else ""
-        output += f"/{cmd}{shell_only_text} - {help_text}\n\n"
+        output += f"/{cmd} - {help_text}\n\n"
     output += """
 # Note
 - Bash commands and programs can be executed directly (try bash first, then LLM).
@@ -120,7 +117,7 @@ def get_help_text():
 def safe_get(kwargs, key, default=None):
     return kwargs.get(key, default)
 
-@router.route("breathe", "Condense context on a regular cadence", shell_only=True)
+@router.route("breathe", "Condense context on a regular cadence")
 def breathe_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
     npc = safe_get(kwargs, "npc")
@@ -162,7 +159,7 @@ def compile_handler(command: str, **kwargs):
 
 
 
-@router.route("flush", "Flush the last N messages", shell_only=True)
+@router.route("flush", "Flush the last N messages")
 def flush_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
     try:
@@ -260,6 +257,28 @@ def init_handler(command: str, **kwargs):
         traceback.print_exc()
         output = f"Error initializing project: {e}"
     return {"output": output, "messages": messages}
+# Add these route handlers after the existing imports (around line 50):
+@router.route("n")
+@router.route("npc")
+def switch_npc_handler(command: str, **kwargs) -> dict:
+    """Switch to a different NPC"""
+    team = kwargs.get('team')
+    parts = command.split()
+    
+    if len(parts) < 2:
+        if team:
+            available_npcs = list(team.npcs.keys())
+            return {"output": f"Available NPCs: {', '.join(available_npcs)}"}
+        return {"output": "No team loaded or no NPC specified"}
+    
+    npc_name = parts[1]
+    if team and npc_name in team.npcs:
+        # We can't directly modify the state here, so return a special signal
+        return {"output": f"SWITCH_NPC:{npc_name}"}
+    else:
+        available_npcs = list(team.npcs.keys()) if team else []
+        return {"output": f"NPC '{npc_name}' not found. Available: {', '.join(available_npcs)}"}
+
 
 
 @router.route("ots", "Take screenshot and optionally analyze with vision model")
@@ -284,7 +303,7 @@ def ots_handler(command: str, **kwargs):
                 else:
                     return {"output": f"Error: Image file not found at {full_path}", "messages": messages}
         else:
-            screenshot_info = capture_screenshot(npc=npc)
+            screenshot_info = capture_screenshot(full=False)
             if screenshot_info and "file_path" in screenshot_info:
                 image_paths.append(screenshot_info["file_path"])
                 print(f"Screenshot captured: {screenshot_info.get('filename', os.path.basename(screenshot_info['file_path']))}")
@@ -823,7 +842,7 @@ def wander_handler(command: str, **kwargs):
         traceback.print_exc()
         return {"output": f"Error during wander mode: {e}", "messages": messages}
 
-@router.route("yap", "Enter voice chat (yap) mode", shell_only=True)
+@router.route("yap", "Enter voice chat (yap) mode")
 def whisper_handler(command: str, **kwargs):
     try:
         return enter_yap_mode(
