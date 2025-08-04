@@ -1,5 +1,5 @@
 jinx_name: file_reader
-description: Examines a specific file per user request and summarizes its content. Files must contain full paths and extensions.
+description: Examines a specific file per user request and summarizes its content. Files must contain full paths and extensions. Returns a LLM summary so no post-summary is required
 inputs:
 - file_path
 - user_request
