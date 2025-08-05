@@ -14,11 +14,11 @@ import subprocess
 import networkx as nx
 
 from npcpy.npc_compiler import NPC
-from npcpy.llm_funcs import get_llm_response
+from npcpy.llm_funcs import get_llm_response, extract_facts, identify_groups, assign_groups_to_fact
 from npcsh._state import NPCSH_CHAT_MODEL, NPCSH_CHAT_PROVIDER
 from npcpy.npc_sysenv import print_and_process_stream_with_markdown
-from npcpy.memory.deep_research import consolidate_research
-from npcpy.memory.knowledge_graph import extract_facts, identify_groups, assign_groups_to_fact
+
+
 
 def generate_random_npcs(num_npcs: int, model: str, provider: str, request: str) -> List[NPC]:
     """
