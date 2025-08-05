@@ -54,8 +54,6 @@ from npcpy.memory.command_history import (
     CommandHistory,
     save_conversation_message,
 )
-from npcpy.memory.knowledge_graph import breathe
-from npcpy.memory.sleep import sleep, forget
 from npcpy.npc_compiler import NPC, Team, load_jinxs_from_directory
 from npcpy.llm_funcs import check_llm_command, get_llm_response, execute_llm_command
 from npcpy.gen.embeddings import get_embeddings
@@ -585,10 +583,8 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
             result_dict = handler(command, **handler_kwargs)
 
             if isinstance(result_dict, dict):
-                #some respond with output, some with response, needs to be fixed upstream
-                output = result_dict.get("output") or result_dict.get("response")
                 state.messages = result_dict.get("messages", state.messages)
-                return state, output
+                return state, result_dict
             else:
                 return state, result_dict
 
@@ -702,7 +698,7 @@ def process_pipeline_command(
             images=state.attachments,
             stream=stream_final,
             context=info,
-            shell=True,
+
         )
         if isinstance(llm_result, dict):
             state.messages = llm_result.get("messages", state.messages)
@@ -859,8 +855,6 @@ def execute_command(
                     try:
                         bash_state, bash_output = handle_bash_command(cmd_parts, command, None, state)
                         return bash_state, bash_output
-                    except CommandNotFoundError:
-                        return state, colored(f"Command not found: {command_name}", "red")
                     except Exception as bash_err:
                         return state, colored(f"Bash execution failed: {bash_err}", "red")
             except Exception:
@@ -1137,11 +1131,12 @@ def execute_todo_item(todo: Dict[str, Any], ride_state: RideState, shell_state: 
         team=shell_state.team,
         messages=[],
         stream=shell_state.stream_output,
-        shell=True,
+
     )
     
     output_payload = result.get("output", "")
     output_str = ""
+
 
     if isgenerator(output_payload):
         output_str = print_and_process_stream_with_markdown(output_payload, shell_state.chat_model, shell_state.chat_provider)
@@ -1398,34 +1393,30 @@ def process_result(
     if user_input =='/help':
         render_markdown(output)
     elif result_state.stream_output:
+        
+        if isinstance(output, dict):
+            output_gen = output.get('output')
+            model = output.get('model', result_state.chat_model)
+            provider = output.get('provider', result_state.chat_provider)
+        else:
+            output_gen = output
+            model = result_state.chat_model
+            provider = result_state.chat_provider
+        print('processing stream output with markdown...')
 
-        try:
-            final_output_str = print_and_process_stream_with_markdown(output, result_state.chat_model, result_state.chat_provider)
-        except AttributeError as e:
-            if isinstance(output, str):
-                if len(output) > 0:
-                    final_output_str = output
-                    render_markdown(final_output_str) 
-        except TypeError as e:
-
-            if isinstance(output, str):
-                if len(output) > 0:
-                    final_output_str = output
-                    render_markdown(final_output_str)
-            elif isinstance(output, dict):
-                if 'output' in output:
-                    final_output_str = output['output']
-                    render_markdown(final_output_str)
+        final_output_str = print_and_process_stream_with_markdown(output_gen, 
+                                                                    model, 
+                                                                    provider)
                         
     elif output is not None:
         final_output_str = str(output)
-        render_markdown(final_output_str)
+        render_markdown('str not none: ', final_output_str)
     if final_output_str and result_state.messages and result_state.messages[-1].get("role") != "assistant":
         result_state.messages.append({"role": "assistant", "content": final_output_str})
 
     #print(result_state.messages)
 
-    print() # Add spacing after output
+
 
     if final_output_str:
         save_conversation_message(
