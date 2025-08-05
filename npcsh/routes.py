@@ -24,6 +24,7 @@ from npcpy.llm_funcs import (
     get_llm_response,
     gen_image,
     gen_video,
+    breathe,
 )
 from npcpy.npc_compiler import NPC, Team, Jinx
 from npcpy.npc_compiler import initialize_npc_project
@@ -38,8 +39,8 @@ from npcpy.memory.search import execute_rag_command, execute_search_command, exe
 from npcpy.memory.command_history import CommandHistory
 
 
-from npcpy.memory.knowledge_graph import breathe
-from npcpy.memory.sleep import sleep, forget
+
+
 from npcpy.serve import start_flask_server
 
 
@@ -336,7 +337,7 @@ def ots_handler(command: str, **kwargs):
             api_url=safe_get(kwargs, 'api_url'),
             api_key=safe_get(kwargs, 'api_key')
         )
-        return {"output": response_data.get('response'), "messages": response_data.get('messages')}
+        return {"output": response_data.get('response'), "messages": response_data.get('messages'), "model": vision_model, "provider": vision_provider}
 
     except Exception as e:
         traceback.print_exc()
