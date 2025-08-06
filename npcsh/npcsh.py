@@ -561,6 +561,15 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
     """Executes slash commands using the router or checking NPC/Team jinxs."""
     command_parts = command.split()
     command_name = command_parts[0].lstrip('/')
+
+    if command_name in ['n', 'npc']:
+        npc_to_switch_to = command_parts[1] if len(command_parts) > 1 else None
+        if npc_to_switch_to and state.team and npc_to_switch_to in state.team.npcs:
+            state.npc = state.team.npcs[npc_to_switch_to]
+            return state, f"Switched to NPC: {npc_to_switch_to}"
+        else:
+            available_npcs = list(state.team.npcs.keys()) if state.team else []
+            return state, colored(f"NPC '{npc_to_switch_to}' not found. Available NPCs: {', '.join(available_npcs)}", "red")
     handler = router.get_route(command_name)
     #print(handler)
     if handler:
@@ -1247,7 +1256,7 @@ def print_welcome_message():
     print(
             """
 Welcome to \033[1;94mnpc\033[0m\033[1;38;5;202msh\033[0m!
-\033[1;94m                    \033[0m\033[1;38;5;202m                \\\\
+\033[1;94m                    \033[0m\033[1;38;5;202m        _       \\\\
 \033[1;94m _ __   _ __    ___ \033[0m\033[1;38;5;202m  ___  | |___    \\\\
 \033[1;94m| '_ \\ | '  \\  / __|\033[0m\033[1;38;5;202m / __/ | |_ _|    \\\\
 \033[1;94m| | | || |_) |( |__ \033[0m\033[1;38;5;202m \\_  \\ | | | |    //
@@ -1392,6 +1401,7 @@ def process_result(
     final_output_str = None
     if user_input =='/help':
         render_markdown(output)
+        
     elif result_state.stream_output:
         
         if isinstance(output, dict):
@@ -1410,7 +1420,7 @@ def process_result(
                         
     elif output is not None:
         final_output_str = str(output)
-        render_markdown('str not none: ', final_output_str)
+        render_markdown( final_output_str)
     if final_output_str and result_state.messages and result_state.messages[-1].get("role") != "assistant":
         result_state.messages.append({"role": "assistant", "content": final_output_str})
 
@@ -1434,8 +1444,13 @@ def process_result(
 def run_repl(command_history: CommandHistory, initial_state: ShellState):
     state = initial_state
     print_welcome_message()
-    print(f'Using {state.current_mode} mode. Use /agent, /cmd, /chat, or /ride to switch to other modes')
-    print(f'To switch to a different NPC, type /<npc_name>')
+
+
+    render_markdown(f'- Using {state.current_mode} mode. Use /agent, /cmd, /chat, or /ride to switch to other modes')
+    render_markdown(f'- To switch to a different NPC, type /npc <npc_name> or /n <npc_name> to switch to that NPC.')
+    render_markdown('\n- Here are the current NPCs available in your team: ' + ', '.join([npc_name for npc_name in state.team.npcs.keys()]))
+
+
     is_windows = platform.system().lower().startswith("win")
     try:
         completer = make_completer(state)
