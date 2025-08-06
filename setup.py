@@ -84,14 +84,14 @@ extra_files = package_files("npcpy/npc_team/")
 
 setup(
     name="npcsh",
-    version="1.0.10",
+    version="1.0.11",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
         "lite": api_requirements,  # Just API integrations
         "local": local_requirements,  # Local AI/ML features
         "yap": voice_requirements,  # Voice/Audio features
-        "mcp": mcp_requirements,  # MCP integration
+    "mcp": mcp_requirements,  # MCP integration
         "all": api_requirements + local_requirements + voice_requirements + mcp_requirements,  # Everything
     },
     entry_points={
