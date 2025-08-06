@@ -258,27 +258,7 @@ def init_handler(command: str, **kwargs):
         traceback.print_exc()
         output = f"Error initializing project: {e}"
     return {"output": output, "messages": messages}
-# Add these route handlers after the existing imports (around line 50):
-@router.route("n")
-@router.route("npc")
-def switch_npc_handler(command: str, **kwargs) -> dict:
-    """Switch to a different NPC"""
-    team = kwargs.get('team')
-    parts = command.split()
-    
-    if len(parts) < 2:
-        if team:
-            available_npcs = list(team.npcs.keys())
-            return {"output": f"Available NPCs: {', '.join(available_npcs)}"}
-        return {"output": "No team loaded or no NPC specified"}
-    
-    npc_name = parts[1]
-    if team and npc_name in team.npcs:
-        # We can't directly modify the state here, so return a special signal
-        return {"output": f"SWITCH_NPC:{npc_name}"}
-    else:
-        available_npcs = list(team.npcs.keys()) if team else []
-        return {"output": f"NPC '{npc_name}' not found. Available: {', '.join(available_npcs)}"}
+
 
 
 
@@ -289,8 +269,10 @@ def ots_handler(command: str, **kwargs):
     npc = safe_get(kwargs, 'npc')
     vision_model = safe_get(kwargs, 'model', NPCSH_VISION_MODEL)
     vision_provider = safe_get(kwargs, 'provider', NPCSH_VISION_PROVIDER)
-    if vision_model == NPCSH_CHAT_MODEL: vision_model = NPCSH_VISION_MODEL
-    if vision_provider == NPCSH_CHAT_PROVIDER: vision_provider = NPCSH_VISION_PROVIDER
+    if vision_model == NPCSH_CHAT_MODEL: 
+        vision_model = NPCSH_VISION_MODEL
+    if vision_provider == NPCSH_CHAT_PROVIDER: 
+        vision_provider = NPCSH_VISION_PROVIDER
 
     messages = safe_get(kwargs, 'messages', [])
     stream = safe_get(kwargs, 'stream', NPCSH_STREAM_OUTPUT)
