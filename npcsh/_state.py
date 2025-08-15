@@ -1044,6 +1044,7 @@ class ShellState:
     current_path: str = field(default_factory=os.getcwd)
     stream_output: bool = NPCSH_STREAM_OUTPUT
     attachments: Optional[List[Any]] = None
+    turn_count: int =0
     def get_model_for_command(self, model_type: str = "chat"):
         if model_type == "chat":
             return self.chat_model, self.chat_provider

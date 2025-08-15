@@ -25,7 +25,9 @@ try:
 except ImportError:
     chromadb = None
 import shutil
-
+import json
+import sqlite3
+import copy
 import yaml
 
 # Local Application Imports
@@ -53,10 +55,22 @@ from npcpy.data.image import capture_screenshot
 from npcpy.memory.command_history import (
     CommandHistory,
     save_conversation_message,
+    load_kg_from_db, 
+    save_kg_to_db, 
 )
 from npcpy.npc_compiler import NPC, Team, load_jinxs_from_directory
-from npcpy.llm_funcs import check_llm_command, get_llm_response, execute_llm_command
+from npcpy.llm_funcs import (
+    check_llm_command,
+    get_llm_response,
+    execute_llm_command,
+    breathe
+)
+from npcpy.memory.knowledge_graph import (
+    kg_initial,
+    kg_evolve_incremental
+)
 from npcpy.gen.embeddings import get_embeddings
+
 try:
     import readline
 except:
@@ -655,8 +669,14 @@ def process_pipeline_command(
     if not cmd_to_process:
          return state, stdin_input
 
-    exec_model = model_override or state.chat_model
-    exec_provider = provider_override or state.chat_provider
+    # --- Corrected Model Resolution ---
+    # Priority: 1. Inline Override, 2. NPC Model, 3. Global Model
+    npc_model = state.npc.model if isinstance(state.npc, NPC) and state.npc.model else None
+    npc_provider = state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else None
+
+    exec_model = model_override or npc_model or state.chat_model
+    exec_provider = provider_override or npc_provider or state.chat_provider
+    # --- End of Correction ---
 
     if cmd_to_process.startswith("/"):
         return execute_slash_command(cmd_to_process, stdin_input, state, stream_final)
@@ -680,8 +700,8 @@ def process_pipeline_command(
             fixer_prompt = f"The command '{cmd_to_process}' failed with the error: '{result}'. Provide the correct command."
             response = execute_llm_command(
                 fixer_prompt, 
-                model=exec_model, 
-                provider=exec_provider, 
+                model=exec_model,      # Uses corrected model
+                provider=exec_provider, # Uses corrected provider
                 npc=state.npc, 
                 stream=stream_final, 
                 messages=state.messages
@@ -697,8 +717,8 @@ def process_pipeline_command(
 
         llm_result = check_llm_command(
             full_llm_cmd,
-            model=exec_model,
-            provider=exec_provider,
+            model=exec_model,       # Uses corrected model
+            provider=exec_provider, # Uses corrected provider
             api_url=state.api_url,
             api_key=state.api_key,
             npc=state.npc,
@@ -714,7 +734,8 @@ def process_pipeline_command(
             output = llm_result.get("output")
             return state, output
         else:
-            return state, llm_result        
+            return state, llm_result
+        
 def check_mode_switch(command:str , state: ShellState):
     if command in ['/cmd', '/agent', '/chat', '/ride']:
         state.current_mode = command[1:]
@@ -737,6 +758,10 @@ def execute_command(
     stdin_for_next = None
     final_output = None
     current_state = state 
+    npc_model = state.npc.model if isinstance(state.npc, NPC) and state.npc.model else None
+    npc_provider = state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else None
+    active_model = npc_model or state.chat_model
+    active_provider = npc_provider or state.chat_provider
 
     if state.current_mode == 'agent':
         for i, cmd_segment in enumerate(commands):
@@ -821,8 +846,8 @@ def execute_command(
         # Otherwise, treat as chat (LLM)
         response = get_llm_response(
             command, 
-            model=state.chat_model, 
-            provider=state.chat_provider, 
+            model=active_model,          
+            provider=active_provider,    
             npc=state.npc,
             stream=state.stream_output,
             messages=state.messages
@@ -833,8 +858,8 @@ def execute_command(
     elif state.current_mode == 'cmd':
 
         response = execute_llm_command(command, 
-                                                 model = state.chat_model, 
-                                                 provider = state.chat_provider, 
+                                        model=active_model,          
+                                        provider=active_provider,  
                                                  npc = state.npc, 
                                                  stream = state.stream_output, 
                                                  messages = state.messages) 
@@ -1279,6 +1304,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     command_history = CommandHistory(db_path)
 
+
     try:
         history_file = setup_readline()
         atexit.register(save_readline_history)
@@ -1324,7 +1350,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                 if use_jinxs == "c":
                     global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
                     if os.path.exists(global_jinxs_dir):
-                        shutil.copytree(global_jinxs_dir, os.path.join(team_dir, "jinxs"), dirs_exist_ok=True)
+                        shutil.copytree(global_jinxs_dir, team_dir, dirs_exist_ok=True)
                 else:
                     team_ctx_data["use_global_jinxs"] = True
 
@@ -1352,7 +1378,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                 print(f"Warning: Could not load context file {filename}: {e}")
 
     forenpc_name = team_ctx.get("forenpc", default_forenpc_name)
-    print(f"Using forenpc: {forenpc_name}")
+    #render_markdown(f"- Using forenpc: {forenpc_name}")
 
     if team_ctx.get("use_global_jinxs", False):
         jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
@@ -1364,82 +1390,170 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
 
     forenpc_obj = None
     forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
-    #print('forenpc_path', forenpc_path)
-    #print('jinx list', jinxs_list)
-    if os.path.exists(forenpc_path):
 
-        forenpc_obj = NPC(file = forenpc_path, jinxs=jinxs_list)
+
+    #render_markdown('- Loaded team context'+ json.dumps(team_ctx, indent=2))
+
+
+    
+    if os.path.exists(forenpc_path):
+        forenpc_obj = NPC(file = forenpc_path, 
+                          jinxs=jinxs_list)
+        if forenpc_obj.model is None:
+            forenpc_obj.model= team_ctx.get("model", initial_state.chat_model)
+        if forenpc_obj.provider is None:
+            forenpc_obj.provider=team_ctx.get('provider', initial_state.chat_provider)
+            
     else:
         print(f"Warning: Forenpc file '{forenpc_name}.npc' not found in {team_dir}.")
 
-    team = Team(team_path=team_dir, forenpc=forenpc_obj, jinxs=jinxs_dict)
+    team = Team(team_path=team_dir, 
+                forenpc=forenpc_obj, 
+                jinxs=jinxs_dict)
+
+    for npc_name, npc_obj in team.npcs.items():
+        if not npc_obj.model:
+            npc_obj.model = initial_state.chat_model
+        if not npc_obj.provider:
+            npc_obj.provider = initial_state.chat_provider
+
+    # Also apply to the forenpc specifically
+    if team.forenpc and isinstance(team.forenpc, NPC):
+        if not team.forenpc.model:
+            team.forenpc.model = initial_state.chat_model
+        if not team.forenpc.provider:
+            team.forenpc.provider = initial_state.chat_provider
+    team_name_from_ctx = team_ctx.get("name")
+    if team_name_from_ctx:
+        team.name = team_name_from_ctx
+    elif team_dir and os.path.basename(team_dir) != 'npc_team':
+        team.name = os.path.basename(team_dir)
+    else:
+        team.name = "global_team" # fallback for ~/.npcsh/npc_team
+
     return command_history, team, forenpc_obj
+
+# In your main npcsh.py file
 
 def process_result(
     user_input: str,
     result_state: ShellState,
     output: Any,
-    command_history: CommandHistory):
+    command_history: CommandHistory
+):
+    # --- Part 1: Save Conversation & Determine Output ---
+    
+    # Define team and NPC names early for consistent logging
+    team_name = result_state.team.name if result_state.team else "__none__"
+    npc_name = result_state.npc.name if isinstance(result_state.npc, NPC) else "__none__"
+    
+    # Determine the actual NPC object to use for this turn's operations
+    active_npc = result_state.npc if isinstance(result_state.npc, NPC) else NPC(
+        name="default", 
+        model=result_state.chat_model, 
+        provider=result_state.chat_provider
+    )
 
-    npc_name = result_state.npc.name if isinstance(result_state.npc, NPC) else result_state.npc
-    team_name = result_state.team.name if isinstance(result_state.team, Team) else result_state.team
     save_conversation_message(
         command_history,
         result_state.conversation_id,
         "user",
         user_input,
         wd=result_state.current_path,
-        model=result_state.chat_model, # Log primary chat model? Or specific used one?
-        provider=result_state.chat_provider,
+        model=active_npc.model,
+        provider=active_npc.provider,
         npc=npc_name,
         team=team_name,
         attachments=result_state.attachments,
     )
-    
-    result_state.attachments = None # Clear attachments after logging user message
+    result_state.attachments = None
 
     final_output_str = None
-    if user_input =='/help':
-        render_markdown(output)
-        
-    elif result_state.stream_output:
-        
-        if isinstance(output, dict):
-            output_gen = output.get('output')
-            model = output.get('model', result_state.chat_model)
-            provider = output.get('provider', result_state.chat_provider)
-        else:
-            output_gen = output
-            model = result_state.chat_model
-            provider = result_state.chat_provider
-        print('processing stream output with markdown...')
+    output_content = output.get('output') if isinstance(output, dict) else output
+    
+    if result_state.stream_output and isgenerator(output_content):
+        final_output_str = print_and_process_stream_with_markdown(output_content, active_npc.model, active_npc.provider)
+    elif output_content is not None:
+        final_output_str = str(output_content)
+        render_markdown(final_output_str)
 
-        final_output_str = print_and_process_stream_with_markdown(output_gen, 
-                                                                    model, 
-                                                                    provider)
-                        
-    elif output is not None:
-        final_output_str = str(output)
-        render_markdown( final_output_str)
-    if final_output_str and result_state.messages and result_state.messages[-1].get("role") != "assistant":
-        result_state.messages.append({"role": "assistant", "content": final_output_str})
-
-    #print(result_state.messages)
-
-
-
+    # --- Part 2: Process Output and Evolve Knowledge ---
     if final_output_str:
+        # Append assistant message to state for context continuity
+        if result_state.messages and (not result_state.messages or result_state.messages[-1].get("role") != "assistant"):
+            result_state.messages.append({"role": "assistant", "content": final_output_str})
+
+        # Save assistant message to the database
         save_conversation_message(
             command_history,
             result_state.conversation_id,
             "assistant",
             final_output_str,
             wd=result_state.current_path,
-            model=result_state.chat_model,
-            provider=result_state.chat_provider,
+            model=active_npc.model,
+            provider=active_npc.provider,
             npc=npc_name,
             team=team_name,
         )
+
+        # --- Hierarchical Knowledge Graph Evolution ---
+        conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
+        conn = command_history.conn
+
+        try:
+
+            npc_kg = load_kg_from_db(conn, team_name, npc_name, "__npc_global__")
+            evolved_npc_kg, _ = kg_evolve_incremental(
+                existing_kg=npc_kg, new_content_text=conversation_turn_text,
+                model=active_npc.model, provider=active_npc.provider
+            )
+            save_kg_to_db(conn, evolved_npc_kg, team_name, npc_name, result_state.current_path)
+        except Exception as e:
+            print(colored(f"Error during real-time KG evolution: {e}", "red"))
+
+        # --- Part 3: Periodic Team Context Suggestions ---
+        result_state.turn_count += 1
+        if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:
+            print(colored("\nChecking for potential team improvements...", "cyan"))
+            try:
+                summary = breathe(messages=result_state.messages[-20:], npc=active_npc)
+                key_facts = summary.get('output', {}).get('facts', [])
+
+                if key_facts and result_state.team:
+                    team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
+                    ctx_data = {}
+                    if os.path.exists(team_ctx_path):
+                        with open(team_ctx_path, 'r') as f:
+                           ctx_data = yaml.safe_load(f) or {}
+                    current_context = ctx_data.get('context', '')
+
+                    prompt = f"""Based on these key topics: {key_facts},
+                    suggest changes (additions, deletions, edits) to the team's context. 
+                    Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
+                    
+                    Current Context: "{current_context}". 
+                    
+                    Respond with JSON: {{"suggestion": "Your sentence."}}"""
+                    response = get_llm_response(prompt, npc=active_npc, format="json")
+                    suggestion = response.get("response", {}).get("suggestion")
+
+                    if suggestion:
+                        new_context = (current_context + " " + suggestion).strip()
+                        print(colored("AI suggests updating team context:", "yellow"))
+                        print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
+                        if input("Apply? [y/N]: ").strip().lower() == 'y':
+                            ctx_data['context'] = new_context
+                            with open(team_ctx_path, 'w') as f:
+                                yaml.dump(ctx_data, f)
+                            print(colored("Team context updated.", "green"))
+                        else:
+                            print("Suggestion declined.")
+            except Exception as e:
+                import traceback
+                print(colored(f"Could not generate team suggestions: {e}", "yellow"))
+                traceback.print_exc()
+                
+
 
 def run_repl(command_history: CommandHistory, initial_state: ShellState):
     state = initial_state
@@ -1457,22 +1571,62 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
         readline.set_completer(completer)
     except:
         pass
+    session_scopes = set()
 
-    def exit_shell(state):
+
+    def exit_shell(current_state: ShellState):
+        """
+        On exit, iterates through all active scopes from the session and
+        creates/updates the specific knowledge graph for each one.
+        """
         print("\nGoodbye!")
-        # update the team ctx file  to update the context and the preferences 
+        print(colored("Processing and archiving all session knowledge...", "cyan"))
+        
+        conn = command_history.conn
+        integrator_npc = NPC(name="integrator", model=current_state.chat_model, provider=current_state.chat_provider)
 
+        # Process each unique scope that was active during the session
+        for team_name, npc_name, path in session_scopes:
+            try:
+                print(f"  -> Archiving knowledge for: T='{team_name}', N='{npc_name}', P='{path}'")
+                
+                # Get all messages for the current conversation that happened in this specific path
+                convo_id = current_state.conversation_id
+                all_messages = command_history.get_conversations_by_id(convo_id)
+                
+                scope_messages = [
+                    m for m in all_messages 
+                    if m.get('directory_path') == path and m.get('team') == team_name and m.get('npc') == npc_name
+                ]
+                
+                full_text = "\n".join([f"{m['role']}: {m['content']}" for m in scope_messages if m.get('content')])
 
+                if not full_text.strip():
+                    print("     ...No content for this scope, skipping.")
+                    continue
 
+                # Load the existing KG for this specific, real scope
+                current_kg = load_kg_from_db(conn, team_name, npc_name, path)
+                
+                # Evolve it with the full text from the session for this scope
+                evolved_kg, _ = kg_evolve_incremental(
+                    existing_kg=current_kg,
+                    new_content_text=full_text,
+                    model=integrator_npc.model,
+                    provider=integrator_npc.provider
+                )
+                
+                # Save the updated KG back to the database under the same exact scope
+                save_kg_to_db(conn, evolved_kg, team_name, npc_name, path)
 
+            except Exception as e:
+                import traceback
+                print(colored(f"Failed to process KG for scope ({team_name}, {npc_name}, {path}): {e}", "red"))
+                traceback.print_exc()
 
-        #print('beginning knowledge consolidation')
-        #try:
-        #    breathe_result = breathe(state.messages, state.chat_model, state.chat_provider, state.npc)
-        #    print(breathe_result)
-        #except KeyboardInterrupt:
-        #    print("Knowledge consolidation interrupted. Exiting immediately.")
         sys.exit(0)
+
+
 
     while True:
         try:
@@ -1482,17 +1636,21 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
             except:
                 pass
 
+            display_model = state.chat_model
+            if isinstance(state.npc, NPC) and state.npc.model:
+                display_model = state.npc.model
+
             if is_windows:
                 cwd_part = os.path.basename(state.current_path)
                 if isinstance(state.npc, NPC):
-                    prompt_end = f":{state.npc.name}> "
+                    prompt_end = f":{state.npc.name}:{display_model}> "
                 else:
                     prompt_end = ":npcsh> "
                 prompt = f"{cwd_part}{prompt_end}"
             else:
                 cwd_colored = colored(os.path.basename(state.current_path), "blue")
                 if isinstance(state.npc, NPC):
-                    prompt_end = f":🤖{orange(state.npc.name)}:{state.chat_model}> "
+                    prompt_end = f":🤖{orange(state.npc.name)}:{display_model}> "
                 else:
                     prompt_end = f":🤖{colored('npc', 'blue', attrs=['bold'])}{colored('sh', 'yellow')}> "
                 prompt = readline_safe_prompt(f"{cwd_colored}{prompt_end}")
@@ -1512,11 +1670,13 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                     continue
                 else:
                     exit_shell(state)
+            team_name = state.team.name if state.team else "__none__"
+            npc_name = state.npc.name if isinstance(state.npc, NPC) else "__none__"
+            session_scopes.add((team_name, npc_name, state.current_path))
 
-            state.current_path = os.getcwd()
             state, output = execute_command(user_input, state)
             process_result(user_input, state, output, command_history)
-
+        
         except KeyboardInterrupt:
             if is_windows:
                 # On Windows, Ctrl+C cancels the current input line, show prompt again
@@ -1528,8 +1688,6 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
         except EOFError:
             # Ctrl+D: exit shell cleanly
             exit_shell(state)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="npcsh - An NPC-powered shell.")
     parser.add_argument(
