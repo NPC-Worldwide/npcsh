@@ -9,15 +9,6 @@ import time
 from datetime import datetime
 from sqlalchemy import create_engine
 import logging 
-
-from npcsh._state import (
-    NPCSH_VISION_MODEL, NPCSH_VISION_PROVIDER, NPCSH_API_URL,
-    NPCSH_CHAT_MODEL, NPCSH_CHAT_PROVIDER, NPCSH_STREAM_OUTPUT,
-    NPCSH_IMAGE_GEN_MODEL, NPCSH_IMAGE_GEN_PROVIDER,
-    NPCSH_EMBEDDING_MODEL, NPCSH_EMBEDDING_PROVIDER,
-    NPCSH_REASONING_MODEL, NPCSH_REASONING_PROVIDER,
-    NPCSH_SEARCH_PROVIDER,
-)
 from npcpy.data.load import load_file_contents
 
 from npcpy.llm_funcs import (
@@ -28,22 +19,28 @@ from npcpy.llm_funcs import (
 )
 from npcpy.npc_compiler import NPC, Team, Jinx
 from npcpy.npc_compiler import initialize_npc_project
-
-
+from npcpy.npc_sysenv import render_markdown
 from npcpy.work.plan import execute_plan_command
 from npcpy.work.trigger import execute_trigger_command
 from npcpy.work.desktop import perform_action
-
-
 from npcpy.memory.search import execute_rag_command, execute_search_command, execute_brainblast_command
 from npcpy.memory.command_history import CommandHistory
-
-
-
-
 from npcpy.serve import start_flask_server
+from npcpy.mix.debate import run_debate
+from npcpy.data.image import capture_screenshot
+from npcpy.npc_compiler import NPC, Team, Jinx
+from npcpy.npc_compiler import initialize_npc_project
+from npcpy.data.web import search_web
 
 
+from npcsh._state import (
+    NPCSH_VISION_MODEL, NPCSH_VISION_PROVIDER, NPCSH_API_URL,
+    NPCSH_CHAT_MODEL, NPCSH_CHAT_PROVIDER, NPCSH_STREAM_OUTPUT,
+    NPCSH_IMAGE_GEN_MODEL, NPCSH_IMAGE_GEN_PROVIDER,
+    NPCSH_EMBEDDING_MODEL, NPCSH_EMBEDDING_PROVIDER,
+    NPCSH_REASONING_MODEL, NPCSH_REASONING_PROVIDER,
+    NPCSH_SEARCH_PROVIDER,
+)
 from npcsh.guac import enter_guac_mode
 from npcsh.plonk import execute_plonk_command
 from npcsh.alicanto import alicanto
@@ -52,12 +49,6 @@ from npcsh.wander import enter_wander_mode
 from npcsh.yap import enter_yap_mode
 
 
-
-from npcpy.mix.debate import run_debate
-from npcpy.data.image import capture_screenshot
-from npcpy.npc_compiler import NPC, Team, Jinx
-from npcpy.npc_compiler import initialize_npc_project
-from npcpy.data.web import search_web
 
 class CommandRouter:
     def __init__(self):
@@ -229,7 +220,10 @@ def guac_handler(command,  **kwargs):
 
 @router.route("help", "Show help information")
 def help_handler(command, **kwargs):
-    return {"output": get_help_text(), "messages": safe_get(kwargs, "messages", [])}
+    return {"output": get_help_text(),
+            "messages": safe_get(kwargs, 
+                                 "messages", 
+                                 [])}
 
 @router.route("init", "Initialize NPC project")
 def init_handler(command: str, **kwargs):
@@ -533,14 +527,25 @@ def search_handler(command: str, **kwargs):
     """    
     Executes a search command.
     # search commands will bel ike :
-    # '/search -p default = google "search term" '
-    # '/search -p perplexity ..
-    # '/search -p google ..
+    # '/search "search term" '
+    # '/search -sp perplexity ..
+    # '/search -sp google ..
     # extract provider if its there
     # check for either -p or --p        
     """
     messages = safe_get(kwargs, "messages", [])
-    query = " ".join(command.split()[1:])
+    
+    # The query is now in 'positional_args'
+    positional_args = safe_get(kwargs, 'positional_args', [])
+    query = " ".join(positional_args)
+    
+    if not query:
+        return {"output": "Usage: /search [-sp name --sprovider name] query", 
+                "messages": messages}
+    search_provider = safe_get(kwargs, 'sprovider', NPCSH_SEARCH_PROVIDER)
+    render_markdown(f'- Searching {search_provider} for "{query}"'    )
+
+
     
     if not query:
         return {"output": "Usage: /search <query>", "messages": messages}

@@ -26,7 +26,6 @@ import sqlite3
 import copy
 import yaml
 
-# Local Application Imports
 from npcsh._state import (
     setup_npcsh_config,
     initial_state, 
@@ -567,52 +566,114 @@ def handle_bash_command(
     except PermissionError:
         return False, f"Permission denied: {cmd_str}"
 
+def _try_convert_type(value: str) -> Union[str, int, float, bool]:
+    """Helper to convert string values to appropriate types."""
+    if value.lower() in ['true', 'yes']:
+        return True
+    if value.lower() in ['false', 'no']:
+        return False
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        pass
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        pass
+    return value
+
+def parse_generic_command_flags(parts: List[str]) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    Parses a list of command parts into a dictionary of keyword arguments and a list of positional arguments.
+    Handles: -f val, --flag val, --flag=val, flag=val, --boolean-flag
+    """
+    parsed_kwargs = {}
+    positional_args = []
+    i = 0
+    while i < len(parts):
+        part = parts[i]
+        
+        if part.startswith('--'):
+            key_part = part[2:]
+            if '=' in key_part:
+                key, value = key_part.split('=', 1)
+                parsed_kwargs[key] = _try_convert_type(value)
+            else:
+                # Look ahead for a value
+                if i + 1 < len(parts) and not parts[i + 1].startswith('-'):
+                    parsed_kwargs[key_part] = _try_convert_type(parts[i + 1])
+                    i += 1 # Consume the value
+                else:
+                    parsed_kwargs[key_part] = True # Boolean flag
+        
+        elif part.startswith('-'):
+            key = part[1:]
+            # Look ahead for a value
+            if i + 1 < len(parts) and not parts[i + 1].startswith('-'):
+                parsed_kwargs[key] = _try_convert_type(parts[i + 1])
+                i += 1 # Consume the value
+            else:
+                parsed_kwargs[key] = True # Boolean flag
+        
+        elif '=' in part and not part.startswith('-'):
+             key, value = part.split('=', 1)
+             parsed_kwargs[key] = _try_convert_type(value)
+        
+        else:
+            positional_args.append(part)
+        
+        i += 1
+        
+    return parsed_kwargs, positional_args
 def execute_slash_command(command: str, stdin_input: Optional[str], state: ShellState, stream: bool) -> Tuple[ShellState, Any]:
     """Executes slash commands using the router or checking NPC/Team jinxs."""
-    command_parts = command.split()
-    command_name = command_parts[0].lstrip('/')
+    all_command_parts = shlex.split(command)
+    command_name = all_command_parts[0].lstrip('/')
 
     if command_name in ['n', 'npc']:
-        npc_to_switch_to = command_parts[1] if len(command_parts) > 1 else None
+        # This command is simple and doesn't need generic parsing
+        npc_to_switch_to = all_command_parts[1] if len(all_command_parts) > 1 else None
         if npc_to_switch_to and state.team and npc_to_switch_to in state.team.npcs:
             state.npc = state.team.npcs[npc_to_switch_to]
             return state, f"Switched to NPC: {npc_to_switch_to}"
         else:
             available_npcs = list(state.team.npcs.keys()) if state.team else []
             return state, colored(f"NPC '{npc_to_switch_to}' not found. Available NPCs: {', '.join(available_npcs)}", "red")
+    
     handler = router.get_route(command_name)
-    #print(handler)
     if handler:
-        # Prepare kwargs for the handler
+        # --- GENERIC PARSING LOGIC ---
+        # Parse all arguments after the command name
+        parsed_flags, positional_args = parse_generic_command_flags(all_command_parts[1:])
+
+        # --- CONSTRUCT KWARGS ---
+        # Start with base context from the shell state
         handler_kwargs = {
-            'stream': stream,
-            'npc': state.npc, 
-            'team': state.team,
-            'messages': state.messages,
-            'model': state.chat_model, 
-            'provider': state.chat_provider,
-            'api_url': state.api_url,
-            'api_key': state.api_key,
+            'stream': stream, 'npc': state.npc, 'team': state.team,
+            'messages': state.messages, 'api_url': state.api_url,
+            'api_key': state.api_key, 'stdin_input': stdin_input,
+            'positional_args': positional_args
         }
-        #print(handler_kwargs, command)
-        if stdin_input is not None:
-            handler_kwargs['stdin_input'] = stdin_input
 
+        # Set default model/provider, which can be overridden by parsed flags
+        handler_kwargs['model'] = state.npc.model if isinstance(state.npc, NPC) and state.npc.model else state.chat_model
+        handler_kwargs['provider'] = state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else state.chat_provider
+        
+        # Update with flags parsed from the command line, overriding defaults
+        handler_kwargs.update(parsed_flags)
+        
         try:
-            result_dict = handler(command, **handler_kwargs)
-
+            result_dict = handler(command=command, **handler_kwargs)
             if isinstance(result_dict, dict):
                 state.messages = result_dict.get("messages", state.messages)
                 return state, result_dict
             else:
                 return state, result_dict
-
         except Exception as e:
             import traceback
             print(f"Error executing slash command '{command_name}':", file=sys.stderr)
             traceback.print_exc()
             return state, colored(f"Error executing slash command '{command_name}': {e}", "red")
-
     active_npc = state.npc if isinstance(state.npc, NPC) else None
     jinx_to_execute = None
     executor = None
@@ -656,8 +717,11 @@ def process_pipeline_command(
     if not cmd_segment:
         return state, stdin_input
 
+    # cache these
     available_models_all = get_locally_available_models(state.current_path)
+
     available_models_all_list = [item for key, item in available_models_all.items()]
+
     model_override, provider_override, cmd_cleaned = get_model_and_provider(
         cmd_segment, available_models_all_list
     )
@@ -759,7 +823,6 @@ def execute_command(
 
     if state.current_mode == 'agent':
         for i, cmd_segment in enumerate(commands):
-            print(len(commands))
             is_last_command = (i == len(commands) - 1)
             stream_this_segment = is_last_command and state.stream_output # Use state's stream setting
 
@@ -773,7 +836,6 @@ def execute_command(
 
                 if is_last_command:
                     final_output = output # Capture the output of the last command
-
                 if isinstance(output, str):
                     stdin_for_next = output
                 elif not isinstance(output, str):
@@ -1097,9 +1159,11 @@ def process_result(
 
     final_output_str = None
     output_content = output.get('output') if isinstance(output, dict) else output
-    
 
-    if result_state.stream_output:
+    print('\n')
+    if user_input =='/help':
+        render_markdown(output.get('output'))
+    elif result_state.stream_output:
         final_output_str = print_and_process_stream_with_markdown(output_content, active_npc.model, active_npc.provider)
     elif output_content is not None:
         final_output_str = str(output_content)
@@ -1329,8 +1393,6 @@ def main() -> None:
 
     initial_state.npc = default_npc 
     initial_state.team = team
-    #import pdb 
-    #pdb.set_trace()
 
     # add a -g global command to indicate if to use the global or project, otherwise go thru normal flow
     
