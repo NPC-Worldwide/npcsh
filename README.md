@@ -19,20 +19,34 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 ## npcsh
 - a bash-replacement shell (`npcsh`) that can process bash, natural language, or special macro calls. `npcsh` detects whether input is bash or natural language and processes it accordingly. 
     
-    - Users can specify whether natural language commands are processed in one of three ways:
-        - agentically (i.e. an NPC reviews and decides to pass to other NPCs or to use NPC tools called `jinxs` (short for Jinja Template Executions) to carry out tasks.
-        - conversationally (the NPC generates a response which the user can approve to run) 
-        - directly through bash execution (the NPC responds by generating executable bash code which is then processed automatically in the shell.
-    
+    - Users can specify whether natural language commands are processed in one of three ways: `agent`, `chat`, or `execute`
         Switching between the modes within the session is straightforward and the user can specify the default mode in the `.npcshrc` file described in greater detail below. The default mode is agentic, but the user can switch by typing `/chat` to switch to conversational mode or `/cmd` to switch to bash execution mode.
-    
-    - Web searching     
+
+    - Get help with a task: 
         ```
-        /search -p perplexity 'cal bears football schedule'
+      can you help me identify what process is listening on port 5337? 
         ```
+        <p align="center"> 
+          <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/port5337.png" alt="example of running npcsh to check what processes are listening on port 5337", width=250>
+        </p>
+    - Enter chat loop with an NPC:     
+        ```
+        /spool -n <npc_name>
+        ```
+    - Computer use:     
+        ```
+        /plonk -n 'npc_name' -sp 'task for plonk to carry out '
+        ```
+
     - One shot sampling 
         ```
         /sample 'prompt'
+        ```
+
+    - Web searching     
+        ```
+        /search -sp perplexity 'cal bears football schedule'
+        /search --sprovider duckduckgo 'beef tongue'
         ```
 
     - Image generation:      
@@ -51,14 +65,6 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     - voice chat:     
         ```
         /yap
-        ```
-    - Computer use:     
-        ```
-        /plonk -n 'npc_name' -sp 'task for plonk to carry out '
-        ```
-    - Enter chat loop with an NPC:     
-        ```
-        /spool -n <npc_name>
         ```
 
 ## `guac`
