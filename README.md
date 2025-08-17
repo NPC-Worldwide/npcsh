@@ -17,55 +17,114 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 
 
 ## npcsh
-- a bash-replacement shell (`npcsh`) that can process bash, natural language, or special macro calls. `npcsh` detects whether input is bash or natural language and processes it accordingly. 
-    
-    - Users can specify whether natural language commands are processed in one of three ways: `agent`, `chat`, or `execute`
-        Switching between the modes within the session is straightforward and the user can specify the default mode in the `.npcshrc` file described in greater detail below. The default mode is agentic, but the user can switch by typing `/chat` to switch to conversational mode or `/cmd` to switch to bash execution mode.
-
-    - Get help with a task: 
-        ```
-      can you help me identify what process is listening on port 5337? 
-        ```
+- An AI-powered shell that parses bash, natural language, and special macro calls, `npcsh` processes your input accordingly, agentically, and automatically.
+  - Get help with a task: 
+      ```
+      npcsh:🤖sibiji:qwen3:latest>can you help me identify what process is listening on port 5337? 
+      ```
         <p align="center"> 
           <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/port5337.png" alt="example of running npcsh to check what processes are listening on port 5337", width=250>
         </p>
-    - Enter chat loop with an NPC:     
+    - Edit files
+
+
+    - # Macros
+
+    - Brainblast searching through past messages:
         ```
-        /spool -n <npc_name>
-        ```
-    - Computer use:     
-        ```
-        /plonk -n 'npc_name' -sp 'task for plonk to carry out '
+        # npcsh
+        /brainblast 'query to check through'
+        #bash
+        npc brainblast                                        
         ```
 
-    - One shot sampling 
-        ```
-        /sample 'prompt'
-        ```
 
-    - Web searching     
-        ```
-        /search -sp perplexity 'cal bears football schedule'
-        /search --sprovider duckduckgo 'beef tongue'
-        ```
+ 
 
-    - Image generation:      
+    - Condense conversation context:
+        ```npcsh
+        /breathe
+        /breathe -p ollama -m qwen3:latest 
         ```
-        /vixynt 'an image of a dog eating a hat'
-        ```
-        
-    - Process Identification:       
-        ```    
-        please identify the process consuming the most memory on my computer
-        ```    
-    - Screenshot analysis:     
-        ```
+    ## `ots`
+        - Screenshot analysis:     
+        ```npcsh
+        #npcsh
         /ots
+        #bash
+        npc ots
         ```
-    - voice chat:     
+           - One shot sampling 
+        ```npcsh
+        /sample 'prompt'
+        /sample -m gemini-1.5-flash "Summarize the plot of 'The Matrix' in three sentences."
+
+        /sample --model claude-3-5-haiku-latest "Translate 'good morning' to Japanese."
+
+        /sample model=qwen3:latest "tell me about the last time you went shopping."
+
+        /sample -p ollama -m gemma3:12b --temp 1.8 --top_k 50 "Write a haiku about the command line."
+
+        /sample model=gpt-4o-mini "What are the primary colors?" --provider openai
+
         ```
-        /yap
+
+
+    - /search     
+        ```npcsh
+        /search -sp perplexity 'cal bears football schedule'
+        /search --sprovider duckduckgo 'beef tongue'        
+        # Other search providers could be added, but we have only integrated duckduckgo and perplexity for the moment.
         ```
+
+    - /search     
+        ```npcsh
+        /search -sp perplexity 'cal bears football schedule'
+        /search --sprovider duckduckgo 'beef tongue'        
+        # Other search providers could be added, but we have only integrated duckduckgo and perplexity for the moment.
+        ```
+    ## Vixynt
+    - Image generation and editing:   
+        ```npcsh
+        /vixynt 'an image of a dog eating a hat'
+        /vixynt --output_file ~/Desktop/dragon.png "A terrifying dragon"
+        /vixynt "A photorealistic portrait of a cat wearing a wizard hat in the dungeon of hte master and margarita" -w 1024.   height=1024        
+        /vixynt -igp ollama  --igmodel Qwen/QwenImage --output_file /tmp/sub.png width=1024 height=512 "A detailed steampunk submarine exploring a vibrant coral reef, wide aspect ratio"
+        /vixynt --attachments ./test_data/rabbit.PNG "Turn this rabbit into a fierce warrior in a snowy winter scene" -igp openai -igm gpt-image
+        /vixynt --igmodel CompVis/stable-diffusion-v1-4 --igprovider diffusers "sticker of a red tree"
+        ```
+
+    # Modes
+
+## `alicanto` : a research exploration agent flow. 
+
+<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/alicanto.md"> 
+  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/alicanto.png" alt="logo for deep research", width=250></a>
+</p>
+
+  - Examples:
+    ```
+    npc alicanto "What are the implications of quantum computing for cybersecurity?"
+    ```
+
+    - With more researchers and deeper exploration
+    
+    ```
+    npc alicanto "How might climate change impact global food security?" --num-npcs 8 --depth 5
+
+    ```
+    - Control exploration vs. exploitation balance
+
+    ```
+    npc alicanto "What ethical considerations should guide AI development?" --exploration 0.5
+
+    ```
+    - Different output formats
+    ```    
+    npc alicanto "What is the future of remote work?" --format report
+    ```
+ 
+
 
 ## `guac`
 
@@ -135,15 +194,143 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 
     A guac session progresses through a series of stages, each of equal length. Each stage adjusts the emoji input prompt. Once the stages have passed, it is time to refresh. Stage 1: `🥑`, Stage 2: `🥑🔪` Stage 3: `🥑🥣` Stage:4 `🥑🥣🧂`, `Stage 5: 🥘 TIME TO REFRESH`. At stage 5, the user is reminded to refresh with the /refresh macro. This will evaluate the session so farand suggest and implement new functions or automations that will aid in future sessions, with the ultimate approval of the user.
 
- 
-## `npc`
-- A command line interface offering the capabilities of the npc shell from a regular bash shell. Our mascot agent Sibiji the spider will help you weave your agent web with the `npc` CLI. 
 
-<p align="center">
-<img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/sibiji.png" alt="npcsh logo with sibiji the spider">
+    ## `plonk`
+    - Computer use:     
+        ```
+        #npcsh
+        /plonk -n 'npc_name' -sp 'task for plonk to carry out '
+        plonk
+        #bash
+        npc plonk
+        ```
+
+
+## `pti`
+-  a reasoning REPL loop with explicit checks to request inputs from users following thinking traces.
+ 
+  ```npcsh
+  /pti  -n frederic -m qwen3:latest -p ollama 
+  ```
+
+  Or from the bash cmd line:
+  ```
+  pti
+  ```
+<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/pti.md"> 
+  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/frederic4.png" alt="npcsh logo of frederic the bear and the pti logo", width=250></a>
+</p>
+Speak with frederic the bear who, once he's done thinking, asks you for input before trudging on so it can work with confidence.
+
+```bash
+pti
+```
+
+
+
+    ## `spool`
+    <p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/spool.md"> 
+      <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/spool.png" alt="logo for spool", width=250></a>
+    </p>
+
+    - Enter chat loop with isolated context, attachments, specified models/providers:     
+        ```npcsh
+        /spool -n <npc_name>
+        /spool --attachments ./test_data/port5337.png,./test_data/yuan2004.pdf,./test_data/books.csv
+        /spool --provider ollama --model llama3
+        /spool -p deepseek -m deepseek-reasoner
+        /spool -n alicanto
+        ```
+
+## `wander` 
+
+<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/wander.md">
+  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/kadiefa.png" alt="logo for wander", width=250></a>
+</p>
+  A system for thinking outside of the box. From our testing, it appears gpt-4o-mini and gpt-series models in general appear to wander the most through various languages and ideas with high temperatures. Gemini models and many llama ones appear more stable despite high temps. Thinking models in general appear to be worse at this task.
+  
+  - Wander with an auto-generated environment  
+    ```
+    npc --model "gemini-2.0-flash"  --provider "gemini"  wander "how does the bar of a galaxy influence the the surrounding IGM?" \
+      n-high-temp-streams=10 \
+      high-temp=1.95 \
+      low-temp=0.4 \
+      sample-rate=0.5 \
+      interruption-likelihood=1
+
+
+    ```
+  - Specify a custom environment
+    ```
+
+    npc --model "gpt-4o-mini"  --provider "openai"  wander "how does the goos-hanchen effect impact neutron scattering?" \
+      environment='a ships library in the south.' \
+      num-events=3 \
+      n-high-temp-streams=10 \
+      high-temp=1.95 \
+      low-temp=0.4 \
+      sample-rate=0.5 \
+      interruption-likelihood=1
+
+    ```
+  - Control event generation
+    ```
+    npc wander "what is the goos hanchen effect and does it affect water refraction?" \
+    --provider "ollama" \
+    --model "deepseek-r1:32b" \
+    environment="a vast, dark ocean ." \
+    interruption-likelihood=.1
+
+
+
+    ```
+
+
+
+
+    ## yap
+
+## `yap`
+
+
+<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/yap.md"> 
+  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/yap.png" alt="logo for yap ", width=250></a>
 </p>
 
-- The NPC CLI lets users iterate and experiment with AI through bash commands. Below is a cheat sheet that shows how to use the `npc` CLI.
+- an agentic voice control loop with a specified agent. When launching `yap`, the user enters the typical `npcsh` agentic loop except that the system is waiting for either text or audio input.
+
+```
+yap 
+```
+
+    - voice chat:     
+        ```
+        #npcsh
+        /yap
+        #bash
+        yap
+        npc yap
+        ```
+    - Show available Jinja Execution Templates:
+        ```npcsh
+        # npcsh
+        /jinxs
+        # bash
+        npc jinxs 
+        ```
+    - Plan tasks with cron triggers:
+        ```npcsh
+        # npcsh
+        /plan 'a description of a cron job to implement' -m gemma3:27b -p ollama 
+        # bash
+        npc plan
+        ```
+    - Schedule triggers with listeners:
+        ```npcsh
+        /trigger 'a description of a trigger to implement with system daemons/file system listeners.' -m gemma3:27b -p ollama
+        npc trigger
+        ``` 
+
 
   - **Ask a Generic Question**
     ```bash
@@ -192,115 +379,6 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     ```bash
     npc ots
     ```
-
-
-
-## `alicanto` : a research exploration agent flow. 
-
-<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/alicanto.md"> 
-  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/alicanto.png" alt="logo for deep research", width=250></a>
-</p>
-
-  - Examples:
-    ```
-    npc alicanto "What are the implications of quantum computing for cybersecurity?"
-    ```
-
-    - With more researchers and deeper exploration
-    
-    ```
-    npc alicanto "How might climate change impact global food security?" --num-npcs 8 --depth 5
-
-    ```
-    - Control exploration vs. exploitation balance
-
-    ```
-    npc alicanto "What ethical considerations should guide AI development?" --exploration 0.5
-
-    ```
-    - Different output formats
-    ```    
-    npc alicanto "What is the future of remote work?" --format report
-    ```
- 
-## `pti`
--  a reasoning REPL loop with explicit checks to request inputs from users following thinking traces.
- 
-<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/pti.md"> 
-  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/frederic4.png" alt="npcsh logo of frederic the bear and the pti logo", width=250></a>
-</p>
-Speak with frederic the bear who, once he's done thinking, asks you for input before trudging on so it can work with confidence.
-
-```bash
-pti
-```
-
-
-## `spool`
-- a simple agentic REPL chat loop with a specified agent.
-
-<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/spool.md"> 
-  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/spool.png" alt="logo for spool", width=250></a>
-</p>
-
-## `yap`
-
-
-<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/yap.md"> 
-  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/yap.png" alt="logo for yap ", width=250></a>
-</p>
-
-- an agentic voice control loop with a specified agent. When launching `yap`, the user enters the typical `npcsh` agentic loop except that the system is waiting for either text or audio input.
-
-```
-yap 
-```
-
-
-## `wander` 
-
-<p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/wander.md">
-  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/kadiefa.png" alt="logo for wander", width=250></a>
-</p>
-  A system for thinking outside of the box. From our testing, it appears gpt-4o-mini and gpt-series models in general appear to wander the most through various languages and ideas with high temperatures. Gemini models and many llama ones appear more stable despite high temps. Thinking models in general appear to be worse at this task.
-  
-  - Wander with an auto-generated environment  
-    ```
-    npc --model "gemini-2.0-flash"  --provider "gemini"  wander "how does the bar of a galaxy influence the the surrounding IGM?" \
-      n-high-temp-streams=10 \
-      high-temp=1.95 \
-      low-temp=0.4 \
-      sample-rate=0.5 \
-      interruption-likelihood=1
-
-
-    ```
-  - Specify a custom environment
-    ```
-
-    npc --model "gpt-4o-mini"  --provider "openai"  wander "how does the goos-hanchen effect impact neutron scattering?" \
-      environment='a ships library in the south.' \
-      num-events=3 \
-      n-high-temp-streams=10 \
-      high-temp=1.95 \
-      low-temp=0.4 \
-      sample-rate=0.5 \
-      interruption-likelihood=1
-
-    ```
-  - Control event generation
-    ```
-    npc wander "what is the goos hanchen effect and does it affect water refraction?" \
-    --provider "ollama" \
-    --model "deepseek-r1:32b" \
-    environment="a vast, dark ocean ." \
-    interruption-likelihood=.1
-
-
-
-    ```
-
-
 
 
 
