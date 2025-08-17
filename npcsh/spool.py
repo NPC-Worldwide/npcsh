@@ -1,12 +1,12 @@
 from npcpy.memory.command_history import CommandHistory, start_new_conversation, save_conversation_message
-from npcpy.data.load import load_pdf, load_csv, load_json, load_excel, load_txt
+from npcpy.data.load import load_file_contents
 from npcpy.data.image import capture_screenshot
 from npcpy.data.text import rag_search
 
 import os
 from npcpy.npc_sysenv import (    
     print_and_process_stream_with_markdown,
-    )
+)
 from npcpy.npc_sysenv import (
         get_system_message, 
         render_markdown,
@@ -28,290 +28,231 @@ from npcsh.yap import enter_yap_mode
 
 
 def enter_spool_mode(
-    npc = None,    
+    npc: NPC = None,    
     team = None,
-    model: str = NPCSH_CHAT_MODEL, 
-    provider: str =  NPCSH_CHAT_PROVIDER,
-    vision_model:str = NPCSH_VISION_MODEL,
-    vision_provider:str = NPCSH_VISION_PROVIDER,
-    files: List[str] = None,
+    model: str = None, 
+    provider: str = None,
+    vision_model:str = None,
+    vision_provider:str = None,
+    attachments: List[str] = None,
     rag_similarity_threshold: float = 0.3,
     messages: List[Dict] = None,
     conversation_id: str = None,
     stream: bool = NPCSH_STREAM_OUTPUT,
+    **kwargs,
 ) -> Dict:
-    """
-    Function Description:
-        This function is used to enter the spool mode where files can be loaded into memory.
-    Args:
-
-        npc : Any : The NPC object.
-        files : List[str] : List of file paths to load into the context.
-    Returns:
-        Dict : The messages and output.
-    """
+    
+    session_model = model or (npc.model if npc else NPCSH_CHAT_MODEL)
+    session_provider = provider or (npc.provider if npc else NPCSH_CHAT_PROVIDER)
+    session_vision_model = vision_model or NPCSH_VISION_MODEL
+    session_vision_provider = vision_provider or NPCSH_VISION_PROVIDER
 
     npc_info = f" (NPC: {npc.name})" if npc else ""
     print(f"Entering spool mode{npc_info}. Type '/sq' to exit spool mode.")
+    print("💡 Tip: Press Ctrl+C during streaming to interrupt and continue with a new message.")
 
-    spool_context = (
-        messages.copy() if messages else []
-    )  # Initialize context with messages
+    spool_context = messages.copy() if messages else []
+    loaded_chunks = {}
 
-    loaded_content = {}  # New dictionary to hold loaded content
-
-    # Create conversation ID if not provided
     if not conversation_id:
         conversation_id = start_new_conversation()
 
     command_history = CommandHistory()
-    # Load specified files if any
-    if files:
-        for file in files:
-            extension = os.path.splitext(file)[1].lower()
+    
+    files_to_load = attachments
+    if files_to_load:
+        if isinstance(files_to_load, str):
+            files_to_load = [f.strip() for f in files_to_load.split(',')]
+        
+        for file_path in files_to_load:
+            file_path = os.path.expanduser(file_path)
+            if not os.path.exists(file_path):
+                print(f"Error: File not found at {file_path}")
+                continue
             try:
-                if extension == ".pdf":
-                    content = load_pdf(file)["texts"].iloc[0]
-                elif extension == ".csv":
-                    content = load_csv(file)
-                else:
-                    print(f"Unsupported file type: {file}")
-                    continue
-                loaded_content[file] = content
-                print(f"Loaded content from: {file}")
+                chunks = load_file_contents(file_path)
+                loaded_chunks[file_path] = chunks
+                print(f"Loaded {len(chunks)} chunks from: {file_path}")
             except Exception as e:
-                print(f"Error loading {file}: {str(e)}")
+                print(f"Error loading {file_path}: {str(e)}")
 
-    # Add system message to context
     system_message = get_system_message(npc) if npc else "You are a helpful assistant."
-    if len(spool_context) > 0:
-        if spool_context[0]["role"] != "system":
-            spool_context.insert(0, {"role": "system", "content": system_message})
-    else:
-        spool_context.append({"role": "system", "content": system_message})
-    # Inherit last n messages if specified
-    if npc is not None:
-        if model is None:
-            model = npc.model
-        if provider is None:
-            provider = npc.provider
+    if not spool_context or spool_context[0].get("role") != "system":
+        spool_context.insert(0, {"role": "system", "content": system_message})
+
+    if loaded_chunks:
+        initial_file_context = "\n\n--- The user has loaded the following files for this session ---\n"
+        for filename, chunks in loaded_chunks.items():
+            initial_file_context += f"\n\n--- Start of content from {filename} ---\n"
+            initial_file_context += "\n".join(chunks)
+            initial_file_context += f"\n--- End of content from {filename} ---\n"
+
+    def _handle_llm_interaction(
+        prompt, 
+        current_context, 
+        model_to_use, 
+        provider_to_use, 
+        images_to_use=None
+    ):
+        
+        current_context.append({"role": "user", "content": prompt})
+
+        save_conversation_message(
+            command_history, 
+            conversation_id, 
+            "user", 
+            prompt,
+            wd=os.getcwd(), 
+            model=model_to_use, 
+            provider=provider_to_use,
+            npc=npc.name if npc else None, 
+            team=team.name if team else None,
+        )
+        
+        assistant_reply = ""
+        
+        try:
+            response = get_llm_response(
+                prompt,
+                model=model_to_use, 
+                provider=provider_to_use,
+                messages=current_context, 
+                images=images_to_use, 
+                stream=stream, 
+                npc=npc
+            )
+            assistant_reply = response.get('response')
+
+            if stream:
+                print(orange(f'{npc.name if npc else "🧵"}....> '), end='', flush=True)
+                
+                # The streaming function now handles KeyboardInterrupt internally
+                assistant_reply = print_and_process_stream_with_markdown(
+                    assistant_reply, 
+                    model=model_to_use, 
+                    provider=provider_to_use
+                )
+            else:
+                render_markdown(assistant_reply)
+        
+        except Exception as e:
+            assistant_reply = f"[Error during response generation: {str(e)}]"
+            print(f"\n❌ Error: {str(e)}")
+        
+        current_context.append({"role": "assistant", "content": assistant_reply})
+        
+        if assistant_reply and assistant_reply.count("```") % 2 != 0:
+            assistant_reply += "```"
+
+        save_conversation_message(
+            command_history, 
+            conversation_id, 
+            "assistant", 
+            assistant_reply,
+            wd=os.getcwd(), 
+            model=model_to_use, 
+            provider=provider_to_use,
+            npc=npc.name if npc else None, 
+            team=team.name if team else None,
+        )
+        
+        return current_context
 
     while True:
-        kwargs_to_pass = {}
-        if npc:
-            kwargs_to_pass["npc"] = npc
-
         try:
-            
-            user_input = input("spool:in> ").strip()
-            if len(user_input) == 0:
+            prompt_text = orange(f"🧵:{npc.name if npc else 'chat'}:{session_model}> ")
+            user_input = input(prompt_text).strip()
+
+            if not user_input:
                 continue
             if user_input.lower() == "/sq":
                 print("Exiting spool mode.")
                 break
-
-            if user_input.lower() == "/whisper":  # Check for whisper command
-                messages = enter_yap_mode(spool_context, npc)
+            if user_input.lower() == "/yap":
+                spool_context = enter_yap_mode(spool_context, npc)
                 continue
 
             if user_input.startswith("/ots"):
                 command_parts = user_input.split()
                 image_paths = []
-                print('using vision model: ', vision_model)
                 
-                # Handle image loading/capturing
                 if len(command_parts) > 1:
-                    # User provided image path(s)
                     for img_path in command_parts[1:]:
-                        full_path = os.path.join(os.getcwd(), img_path)
-                        if os.path.exists(full_path):
-                            image_paths.append(full_path)
-                        else:
-                            print(f"Error: Image file not found at {full_path}")
+                        full_path = os.path.expanduser(img_path)
+                        if os.path.exists(full_path): image_paths.append(full_path)
+                        else: print(f"Error: Image file not found at {full_path}")
                 else:
-                    # Capture screenshot
-                    output = capture_screenshot(npc=npc)
-                    if output and "file_path" in output:
-                        image_paths.append(output["file_path"])
-                        print(f"Screenshot captured: {output['filename']}")
+                    screenshot = capture_screenshot()
+                    if screenshot and "file_path" in screenshot:
+                        image_paths.append(screenshot["file_path"])
+                        print(f"Screenshot captured: {screenshot['filename']}")
                 
-                if not image_paths:
-                    print("No valid images provided.")
-                    continue
+                if not image_paths: continue
                 
-                # Get user prompt about the image(s)
-                user_prompt = input(
-                    "Enter a prompt for the LLM about these images (or press Enter to skip): "
+                vision_prompt = input("Prompt for image(s) (or press Enter): ").strip() or "Describe these images."
+                spool_context = _handle_llm_interaction(
+                    vision_prompt, 
+                    spool_context, 
+                    session_vision_model, 
+                    session_vision_provider, 
+                    images_to_use=image_paths
                 )
-                if not user_prompt:
-                    user_prompt = "Please analyze these images."
-                
-                model= vision_model
-                provider= vision_provider
-                # Save the user message
-                message_id = save_conversation_message(
-                    command_history,
-                    conversation_id,
-                    "user",
-                    user_prompt,
-                    wd=os.getcwd(),
-                    model=vision_model,
-                    provider=vision_provider,
-                    npc=npc.name if npc else None,
-                    team=team.name if team else None,
-                    
-                )
-                
-                # Process the request with our unified approach
-                response = get_llm_response(
-                    user_prompt, 
-                    model=vision_model,
-                    provider=provider,
-                    messages=spool_context,
-                    images=image_paths,
-                    stream=stream, 
-                    **kwargs_to_pass
-                )
-                
-                # Extract the assistant's response
-                assistant_reply = response['response']
-                
-                spool_context = response['messages']
-                
-                if stream:
-                    print(orange(f'spool:{npc.name}:{vision_model}>'), end='', flush=True)
-                    
-                    assistant_reply = print_and_process_stream_with_markdown(assistant_reply, model=model, provider=provider)
-                
-                    spool_context.append({"role": "assistant", "content": assistant_reply})
-                if assistant_reply.count("```") % 2 != 0:
-                    assistant_reply = assistant_reply + "```"
-                # Save the assistant's response
-                save_conversation_message(
-                    command_history,
-                    conversation_id,
-                    "assistant",
-                    assistant_reply,
-                    wd=os.getcwd(),
-                    model=vision_model,
-                    provider=vision_provider,
-                    npc=npc.name if npc else None,
-                    team=team.name if team else None,
-                    
-
-                )
-                                
-
-                
-                # Display the response
-                if not stream:
-                    render_markdown(assistant_reply)
-                
                 continue
-
-
             
-            # Handle RAG context
-            if loaded_content:
+            current_prompt = user_input
+            if loaded_chunks:
                 context_content = ""
-                for filename, content in loaded_content.items():
+                for filename, chunks in loaded_chunks.items():
+                    full_content_str = "\n".join(chunks)
                     retrieved_docs = rag_search(
                         user_input,
-                        content,
+                        full_content_str,
                         similarity_threshold=rag_similarity_threshold,
                     )
                     if retrieved_docs:
-                        context_content += (
-                            f"\n\nLoaded content from: {filename}\n{content}\n\n"
-                        )
-                if len(context_content) > 0:
-                    user_input += f"""
-                    Here is the loaded content that may be relevant to your query:
-                        {context_content}
-                    Please reference it explicitly in your response and use it for answering.
-                    """
-
-            # Save user message
-            message_id = save_conversation_message(
-                command_history,
-                conversation_id,
-                "user",
-                user_input,
-                wd=os.getcwd(),
-                model=model,
-                provider=provider,
-                npc=npc.name if npc else None,
-                team=team.name if team else None,
+                        context_content += f"\n\nContext from: {filename}\n{retrieved_docs}\n"
                 
-            )
+                if context_content:
+                    current_prompt += f"\n\n--- Relevant context from loaded files ---\n{context_content}"
+                print(f'prepped  context_content : {context_content}')
             
-            response = get_llm_response(
-                user_input, 
-                model=model, 
-                provider=provider,
-                messages=spool_context, 
-                stream=stream,
-                **kwargs_to_pass
+            spool_context = _handle_llm_interaction(
+                current_prompt, 
+                spool_context, 
+                session_model, 
+                session_provider
             )
 
-            assistant_reply, spool_context = response['response'], response['messages']
-            if stream:
-                print(orange(f'{npc.name if npc else "spool"}:{npc.model if npc else model}>'), end='', flush=True)
-                assistant_reply = print_and_process_stream_with_markdown(assistant_reply, model=model, provider=provider)
-            # Save assistant message
-            save_conversation_message(
-                command_history,
-                conversation_id,
-                "assistant",
-                assistant_reply,
-                wd=os.getcwd(),
-                model=model,
-                provider=provider,
-                npc=npc.name if npc else None,
-                team=team.name if team else None,
-                
-            )
-
-            # Fix unfinished markdown notation
-            if assistant_reply.count("```") % 2 != 0:
-                assistant_reply = assistant_reply + "```"
-
-            if not stream:
-                render_markdown(assistant_reply)
-
-        except (KeyboardInterrupt, EOFError):
+        except (EOFError,):
             print("\nExiting spool mode.")
             break
+        except KeyboardInterrupt:
+            # This handles Ctrl+C at the input prompt (not during streaming)
+            print("\n🔄 Use '/sq' to exit or continue with a new message.")
+            continue
 
-    return {
-        "messages": spool_context,
-        "output": "\n".join(
-            [msg["content"] for msg in spool_context if msg["role"] == "assistant"]
-        ),
-    }
+    return {"messages": spool_context, "output": "Exited spool mode."}
+
+
 def main():
-    # Example usage
     import argparse    
     parser = argparse.ArgumentParser(description="Enter spool mode for chatting with an LLM")
-    parser.add_argument("--model", default=NPCSH_CHAT_MODEL, help="Model to use")
-    parser.add_argument("--provider", default=NPCSH_CHAT_PROVIDER, help="Provider to use")
-    parser.add_argument("--files", nargs="*", help="Files to load into context")
+    parser.add_argument("--model", help="Model to use")
+    parser.add_argument("--provider", help="Provider to use")
+    parser.add_argument("--attachments", nargs="*", help="Files to load into context")
     parser.add_argument("--stream", default="true", help="Use streaming mode")
     parser.add_argument("--npc", type=str, default=os.path.expanduser('~/.npcsh/npc_team/sibiji.npc'), help="Path to NPC file")
     
-    
     args = parser.parse_args()
     
-    npc = NPC(file=args.npc)
-    print('npc: ', args.npc)
-    print(args.stream)
-    # Enter spool mode
+    npc = NPC(file=args.npc) if os.path.exists(os.path.expanduser(args.npc)) else None
+
     enter_spool_mode(
         npc=npc,
         model=args.model,
         provider=args.provider,
-        files=args.files,
-        stream= args.stream.lower() == "true",
+        attachments=args.attachments,
+        stream=args.stream.lower() == "true",
     )
 
 if __name__ == "__main__":

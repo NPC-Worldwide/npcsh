@@ -36,7 +36,9 @@ from npcsh._state import (
     interactive_commands,
     BASH_COMMANDS,
     start_interactive_session,
-    validate_bash_command
+    validate_bash_command, 
+    normalize_and_expand_flags, 
+
     )
 
 from npcpy.npc_sysenv import (
@@ -44,6 +46,7 @@ from npcpy.npc_sysenv import (
     render_markdown,
     get_locally_available_models,
     get_model_and_provider,
+    lookup_provider
 )
 from npcsh.routes import router
 from npcpy.data.image import capture_screenshot
@@ -625,13 +628,47 @@ def parse_generic_command_flags(parts: List[str]) -> Tuple[Dict[str, Any], List[
         i += 1
         
     return parsed_kwargs, positional_args
+
+
+def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
+    """Determine if this interaction is too trivial for KG processing"""
+    
+    # Skip if user input is too short or trivial
+    trivial_inputs = {
+        '/sq', '/exit', '/quit', 'exit', 'quit', 'hey', 'hi', 'hello', 
+        'fwah!', 'test', 'ping', 'ok', 'thanks', 'ty'
+    }
+    
+    if user_input.lower().strip() in trivial_inputs:
+        return True
+    
+    # Skip if user input is very short (less than 10 chars)
+    if len(user_input.strip()) < 10:
+        return True
+    
+    # Skip simple bash commands
+    simple_bash = {'ls', 'pwd', 'cd', 'mkdir', 'touch', 'rm', 'mv', 'cp'}
+    first_word = user_input.strip().split()[0] if user_input.strip() else ""
+    if first_word in simple_bash:
+        return True
+    
+    # Skip if assistant output is very short (less than 20 chars)
+    if len(assistant_output.strip()) < 20:
+        return True
+    
+    # Skip if it's just a mode exit message
+    if "exiting" in assistant_output.lower() or "exited" in assistant_output.lower():
+        return True
+    
+    return False
+
+
+
 def execute_slash_command(command: str, stdin_input: Optional[str], state: ShellState, stream: bool) -> Tuple[ShellState, Any]:
     """Executes slash commands using the router or checking NPC/Team jinxs."""
     all_command_parts = shlex.split(command)
     command_name = all_command_parts[0].lstrip('/')
-
     if command_name in ['n', 'npc']:
-        # This command is simple and doesn't need generic parsing
         npc_to_switch_to = all_command_parts[1] if len(all_command_parts) > 1 else None
         if npc_to_switch_to and state.team and npc_to_switch_to in state.team.npcs:
             state.npc = state.team.npcs[npc_to_switch_to]
@@ -639,31 +676,64 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
         else:
             available_npcs = list(state.team.npcs.keys()) if state.team else []
             return state, colored(f"NPC '{npc_to_switch_to}' not found. Available NPCs: {', '.join(available_npcs)}", "red")
-    
     handler = router.get_route(command_name)
     if handler:
-        # --- GENERIC PARSING LOGIC ---
-        # Parse all arguments after the command name
         parsed_flags, positional_args = parse_generic_command_flags(all_command_parts[1:])
 
-        # --- CONSTRUCT KWARGS ---
-        # Start with base context from the shell state
-        handler_kwargs = {
-            'stream': stream, 'npc': state.npc, 'team': state.team,
-            'messages': state.messages, 'api_url': state.api_url,
-            'api_key': state.api_key, 'stdin_input': stdin_input,
-            'positional_args': positional_args
-        }
+        normalized_flags = normalize_and_expand_flags(parsed_flags)
 
-        # Set default model/provider, which can be overridden by parsed flags
-        handler_kwargs['model'] = state.npc.model if isinstance(state.npc, NPC) and state.npc.model else state.chat_model
-        handler_kwargs['provider'] = state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else state.chat_provider
+        handler_kwargs = {
+            'stream': stream,
+            'team': state.team,
+            'messages': state.messages,
+            'api_url': state.api_url,
+            'api_key': state.api_key,
+            'stdin_input': stdin_input,
+            'positional_args': positional_args,
+            'plonk_context': state.team.shared_context.get('PLONK_CONTEXT') if state.team and hasattr(state.team, 'shared_context') else None,
+            
+            # Default chat model/provider
+            'model': state.npc.model if isinstance(state.npc, NPC) and state.npc.model else state.chat_model,
+            'provider': state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else state.chat_provider,
+            'npc': state.npc,
+            
+            # All other specific defaults
+            'sprovider': state.search_provider,
+            'emodel': state.embedding_model,
+            'eprovider': state.embedding_provider,
+            'igmodel': state.image_gen_model,
+            'igprovider': state.image_gen_provider,
+            'vmodel': state.vision_model,
+            'vprovider': state.vision_provider,
+            'rmodel': state.reasoning_model,
+            'rprovider': state.reasoning_provider,
+        }
         
-        # Update with flags parsed from the command line, overriding defaults
-        handler_kwargs.update(parsed_flags)
+        if len(normalized_flags)>0:
+            kwarg_part = 'with kwargs: \n    -' + '\n    -'.join(f'{key}={item}' for key, item in normalized_flags.items())
+        else:
+            kwarg_part = ''
+
+        # 4. Merge the clean, normalized flags. This will correctly overwrite defaults.
+        render_markdown(f'- Calling {command_name} handler {kwarg_part} ')
+        if 'model' in normalized_flags and 'provider' not in normalized_flags:
+            # Call your existing, centralized lookup_provider function
+            inferred_provider = lookup_provider(normalized_flags['model'])
+            if inferred_provider:
+                # Update the provider that will be used for this command.
+                handler_kwargs['provider'] = inferred_provider
+                print(colored(f"Info: Inferred provider '{inferred_provider}' for model '{normalized_flags['model']}'.", "cyan"))
+        if 'provider' in normalized_flags and 'model' not in normalized_flags:
+            # loop up mhandler_kwargs model's provider
+            current_provider = lookup_provider(handler_kwargs['model'])
+            if current_provider != normalized_flags['provider']:
+                print(f'Please specify a model for the provider: {normalized_flags['provider']}')
+        handler_kwargs.update(normalized_flags)
+        
         
         try:
             result_dict = handler(command=command, **handler_kwargs)
+            # add the output model and provider for the print_and_process_stream downstream processing
             if isinstance(result_dict, dict):
                 state.messages = result_dict.get("messages", state.messages)
                 return state, result_dict
@@ -707,6 +777,7 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
 
     return state, colored(f"Unknown slash command or jinx: {command_name}", "red")
 
+
 def process_pipeline_command(
     cmd_segment: str,
     stdin_input: Optional[str],
@@ -717,9 +788,7 @@ def process_pipeline_command(
     if not cmd_segment:
         return state, stdin_input
 
-    # cache these
     available_models_all = get_locally_available_models(state.current_path)
-
     available_models_all_list = [item for key, item in available_models_all.items()]
 
     model_override, provider_override, cmd_cleaned = get_model_and_provider(
@@ -729,7 +798,6 @@ def process_pipeline_command(
     if not cmd_to_process:
          return state, stdin_input
 
-    # Priority: 1. Inline Override, 2. NPC Model, 3. Global Model
     npc_model = state.npc.model if isinstance(state.npc, NPC) and state.npc.model else None
     npc_provider = state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else None
 
@@ -743,23 +811,25 @@ def process_pipeline_command(
     if not cmd_parts:
         return state, stdin_input
 
-    if validate_bash_command(cmd_parts):
-        command_name = cmd_parts[0]
-        if command_name in interactive_commands:
-            return handle_interactive_command(cmd_parts, state)
-        if command_name == "cd":
-            return handle_cd_command(cmd_parts, state)
+    command_name = cmd_parts[0]
 
+    if command_name == "cd":
+        return handle_cd_command(cmd_parts, state)
+    
+    if command_name in interactive_commands:
+        return handle_interactive_command(cmd_parts, state)
+
+    if validate_bash_command(cmd_parts):
         success, result = handle_bash_command(cmd_parts, cmd_to_process, stdin_input, state)
         if success:
             return state, result
         else:
-            print(colored(f"Bash command failed. Asking LLM for a fix: {result}", "yellow"), file=sys.stderr)
+            print(colored(f"Bash command failed: {result}. Asking LLM for a fix...", "yellow"), file=sys.stderr)
             fixer_prompt = f"The command '{cmd_to_process}' failed with the error: '{result}'. Provide the correct command."
             response = execute_llm_command(
                 fixer_prompt, 
-                model=exec_model,      # Uses corrected model
-                provider=exec_provider, # Uses corrected provider
+                model=exec_model,
+                provider=exec_provider,
                 npc=state.npc, 
                 stream=stream_final, 
                 messages=state.messages
@@ -785,15 +855,13 @@ def process_pipeline_command(
             images=state.attachments,
             stream=stream_final,
             context=info,
-
         )
         if isinstance(llm_result, dict):
             state.messages = llm_result.get("messages", state.messages)
             output = llm_result.get("output")
             return state, output
         else:
-            return state, llm_result
-        
+            return state, llm_result        
 def check_mode_switch(command:str , state: ShellState):
     if command in ['/cmd', '/agent', '/chat',]:
         state.current_mode = command[1:]
@@ -1159,22 +1227,24 @@ def process_result(
 
     final_output_str = None
     output_content = output.get('output') if isinstance(output, dict) else output
+    model_for_stream = output.get('model', active_npc.model) if isinstance(output, dict) else active_npc.model
+    provider_for_stream = output.get('provider', active_npc.provider) if isinstance(output, dict) else active_npc.provider
 
     print('\n')
     if user_input =='/help':
         render_markdown(output.get('output'))
     elif result_state.stream_output:
-        final_output_str = print_and_process_stream_with_markdown(output_content, active_npc.model, active_npc.provider)
+
+
+        final_output_str = print_and_process_stream_with_markdown(output_content, model_for_stream, provider_for_stream)
     elif output_content is not None:
         final_output_str = str(output_content)
         render_markdown(final_output_str)
 
     if final_output_str:
-        # Append assistant message to state for context continuity
+
         if result_state.messages and (not result_state.messages or result_state.messages[-1].get("role") != "assistant"):
             result_state.messages.append({"role": "assistant", "content": final_output_str})
-
-        # Save assistant message to the database
         save_conversation_message(
             command_history,
             result_state.conversation_id,
@@ -1187,18 +1257,30 @@ def process_result(
             team=team_name,
         )
 
-        # --- Hierarchical Knowledge Graph Evolution ---
         conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
         conn = command_history.conn
 
         try:
+            if not should_skip_kg_processing(user_input, final_output_str):
 
-            npc_kg = load_kg_from_db(conn, team_name, npc_name, "__npc_global__")
-            evolved_npc_kg, _ = kg_evolve_incremental(
-                existing_kg=npc_kg, new_content_text=conversation_turn_text,
-                model=active_npc.model, provider=active_npc.provider
-            )
-            save_kg_to_db(conn, evolved_npc_kg, team_name, npc_name, result_state.current_path)
+                npc_kg = load_kg_from_db(conn, team_name, npc_name, result_state.current_path)
+                evolved_npc_kg, _ = kg_evolve_incremental(
+                    existing_kg=npc_kg, 
+                    new_content_text=conversation_turn_text,
+                    model=active_npc.model, 
+                    provider=active_npc.provider, 
+                    get_concepts=True,
+                    link_concepts_facts = False, 
+                    link_concepts_concepts = False, 
+                    link_facts_facts = False, 
+
+                    
+                )
+                save_kg_to_db(conn,
+                              evolved_npc_kg, 
+                              team_name, 
+                              npc_name, 
+                              result_state.current_path)
         except Exception as e:
             print(colored(f"Error during real-time KG evolution: {e}", "red"))
 
@@ -1207,10 +1289,11 @@ def process_result(
         if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:
             print(colored("\nChecking for potential team improvements...", "cyan"))
             try:
-                summary = breathe(messages=result_state.messages[-20:], npc=active_npc)
-                key_facts = summary.get('output', {}).get('facts', [])
+                summary = breathe(messages=result_state.messages[-20:], 
+                                  npc=active_npc)
+                characterization = summary.get('output')
 
-                if key_facts and result_state.team:
+                if characterization and result_state.team:
                     team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
                     ctx_data = {}
                     if os.path.exists(team_ctx_path):
@@ -1218,13 +1301,15 @@ def process_result(
                            ctx_data = yaml.safe_load(f) or {}
                     current_context = ctx_data.get('context', '')
 
-                    prompt = f"""Based on these key topics: {key_facts},
+                    prompt = f"""Based on this characterization: {characterization},
+
                     suggest changes (additions, deletions, edits) to the team's context. 
                     Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
                     
                     Current Context: "{current_context}". 
                     
-                    Respond with JSON: {{"suggestion": "Your sentence."}}"""
+                    Respond with JSON: {{"suggestion": "Your sentence."
+                    }}"""
                     response = get_llm_response(prompt, npc=active_npc, format="json")
                     suggestion = response.get("response", {}).get("suggestion")
 
@@ -1304,7 +1389,12 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                     existing_kg=current_kg,
                     new_content_text=full_text,
                     model=integrator_npc.model,
-                    provider=integrator_npc.provider
+                    provider=integrator_npc.provider, 
+                    get_concepts=True,
+                    link_concepts_facts = True, 
+                    link_concepts_concepts = True, 
+                    link_facts_facts = True, 
+
                 )
                 
                 # Save the updated KG back to the database under the same exact scope
@@ -1366,7 +1456,9 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
             session_scopes.add((team_name, npc_name, state.current_path))
 
             state, output = execute_command(user_input, state)
-            process_result(user_input, state, output, command_history)
+            process_result(user_input, state, 
+                           output, 
+                           command_history)
         
         except KeyboardInterrupt:
             if is_windows:
