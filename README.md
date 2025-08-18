@@ -31,8 +31,9 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 
   - **Ask a Generic Question**
     ```bash
-    npc 'has there ever been a better pasta shape than bucatini?'
+    npcsh> has there ever been a better pasta shape than bucatini?
     ```
+    
     ```
     .Loaded .env file...                                                                                                                                               
     Initializing database schema...                                                                                                                                                            
@@ -107,10 +108,10 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     - `/serve` - Serve an NPC Team server.
     - `/set` - Set configuration values
     - `/sleep` - Evolve knowledge graph with options for dreaming. 
-    - `/spool` - Enter interactive chat (spool) mode
+    - `/spool` - Enter interactive chat (spool) mode with an npc with fresh context or files for rag
     - `/trigger` - Execute a trigger command
-    - `/vixynt` - Generate images from text descriptions
-    - `/wander` - Enter wander mode (experimental)
+    - `/vixynt` - Generate and edit images from text descriptions using local models, openai, gemini
+    - `/wander` - A method for LLMs to think on a problem by switching between states of high temperature and low temperature
     - `/yap` - Enter voice chat (yap) mode
     
     ## Common Command-Line Flags\n\nThe shortest unambiguous prefix works (e.g., `-t` for `--temperature`).
