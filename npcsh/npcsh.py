@@ -35,6 +35,7 @@ from npcsh._state import (
     ShellState,
     interactive_commands,
     BASH_COMMANDS,
+
     start_interactive_session,
     validate_bash_command, 
     normalize_and_expand_flags, 
@@ -1269,75 +1270,76 @@ def process_result(
         conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
         conn = command_history.conn
 
-        try:
-            if not should_skip_kg_processing(user_input, final_output_str):
-
-                npc_kg = load_kg_from_db(conn, team_name, npc_name, result_state.current_path)
-                evolved_npc_kg, _ = kg_evolve_incremental(
-                    existing_kg=npc_kg, 
-                    new_content_text=conversation_turn_text,
-                    model=active_npc.model, 
-                    provider=active_npc.provider, 
-                    get_concepts=True,
-                    link_concepts_facts = False, 
-                    link_concepts_concepts = False, 
-                    link_facts_facts = False, 
-
-                    
-                )
-                save_kg_to_db(conn,
-                              evolved_npc_kg, 
-                              team_name, 
-                              npc_name, 
-                              result_state.current_path)
-        except Exception as e:
-            print(colored(f"Error during real-time KG evolution: {e}", "red"))
-
-        # --- Part 3: Periodic Team Context Suggestions ---
-        result_state.turn_count += 1
-        if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:
-            print(colored("\nChecking for potential team improvements...", "cyan"))
+        if result_state.build_kg:
             try:
-                summary = breathe(messages=result_state.messages[-20:], 
-                                  npc=active_npc)
-                characterization = summary.get('output')
+                if not should_skip_kg_processing(user_input, final_output_str):
 
-                if characterization and result_state.team:
-                    team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
-                    ctx_data = {}
-                    if os.path.exists(team_ctx_path):
-                        with open(team_ctx_path, 'r') as f:
-                           ctx_data = yaml.safe_load(f) or {}
-                    current_context = ctx_data.get('context', '')
+                    npc_kg = load_kg_from_db(conn, team_name, npc_name, result_state.current_path)
+                    evolved_npc_kg, _ = kg_evolve_incremental(
+                        existing_kg=npc_kg, 
+                        new_content_text=conversation_turn_text,
+                        model=active_npc.model, 
+                        provider=active_npc.provider, 
+                        get_concepts=True,
+                        link_concepts_facts = False, 
+                        link_concepts_concepts = False, 
+                        link_facts_facts = False, 
 
-                    prompt = f"""Based on this characterization: {characterization},
-
-                    suggest changes (additions, deletions, edits) to the team's context. 
-                    Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
-                    
-                    Current Context: "{current_context}". 
-                    
-                    Respond with JSON: {{"suggestion": "Your sentence."
-                    }}"""
-                    response = get_llm_response(prompt, npc=active_npc, format="json")
-                    suggestion = response.get("response", {}).get("suggestion")
-
-                    if suggestion:
-                        new_context = (current_context + " " + suggestion).strip()
-                        print(colored("AI suggests updating team context:", "yellow"))
-                        print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
-                        if input("Apply? [y/N]: ").strip().lower() == 'y':
-                            ctx_data['context'] = new_context
-                            with open(team_ctx_path, 'w') as f:
-                                yaml.dump(ctx_data, f)
-                            print(colored("Team context updated.", "green"))
-                        else:
-                            print("Suggestion declined.")
+                        
+                    )
+                    save_kg_to_db(conn,
+                                evolved_npc_kg, 
+                                team_name, 
+                                npc_name, 
+                                result_state.current_path)
             except Exception as e:
-                import traceback
-                print(colored(f"Could not generate team suggestions: {e}", "yellow"))
-                traceback.print_exc()
-                
+                print(colored(f"Error during real-time KG evolution: {e}", "red"))
+
+            # --- Part 3: Periodic Team Context Suggestions ---
+            result_state.turn_count += 1
+            if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:
+                print(colored("\nChecking for potential team improvements...", "cyan"))
+                try:
+                    summary = breathe(messages=result_state.messages[-20:], 
+                                    npc=active_npc)
+                    characterization = summary.get('output')
+
+                    if characterization and result_state.team:
+                        team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
+                        ctx_data = {}
+                        if os.path.exists(team_ctx_path):
+                            with open(team_ctx_path, 'r') as f:
+                            ctx_data = yaml.safe_load(f) or {}
+                        current_context = ctx_data.get('context', '')
+
+                        prompt = f"""Based on this characterization: {characterization},
+
+                        suggest changes (additions, deletions, edits) to the team's context. 
+                        Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
+                        
+                        Current Context: "{current_context}". 
+                        
+                        Respond with JSON: {{"suggestion": "Your sentence."
+                        }}"""
+                        response = get_llm_response(prompt, npc=active_npc, format="json")
+                        suggestion = response.get("response", {}).get("suggestion")
+
+                        if suggestion:
+                            new_context = (current_context + " " + suggestion).strip()
+                            print(colored("AI suggests updating team context:", "yellow"))
+                            print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
+                            if input("Apply? [y/N]: ").strip().lower() == 'y':
+                                ctx_data['context'] = new_context
+                                with open(team_ctx_path, 'w') as f:
+                                    yaml.dump(ctx_data, f)
+                                print(colored("Team context updated.", "green"))
+                            else:
+                                print("Suggestion declined.")
+                except Exception as e:
+                    import traceback
+                    print(colored(f"Could not generate team suggestions: {e}", "yellow"))
+                    traceback.print_exc()
+                    
 
 
 def run_repl(command_history: CommandHistory, initial_state: ShellState):
