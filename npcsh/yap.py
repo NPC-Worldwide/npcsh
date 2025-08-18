@@ -136,7 +136,7 @@ def enter_yap_mode(
         while running and speech_thread_active.is_set():
             #try:
             # Get next speech item from queue
-            print('....')
+            print('.', end='', flush=True)
             if not speech_queue.empty():
                 print('\n')
                 text_to_speak = speech_queue.get(timeout=0.1)
