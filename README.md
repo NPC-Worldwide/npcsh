@@ -145,22 +145,19 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 
       ```bash
       # bash
-      npc alicanto "What ethical considerations should guide AI development?" --exploration 0.5
+      npc alicanto "What ethical considerations should guide AI development?" --max_facts_per_chain 0.5 --max_thematic_groups 3 --max_criticisms_per_group 3 max_conceptual_combinations 3 max_experiments 10 
+
       npc alicanto "What is the future of remote work?" --format report
       ```
-  
-
-
     - ## Brainblast: searching through past messages:
         ```bash
         # npcsh
-        /brainblast 'query to check through'
+        /brainblast 'subtle summer winds'  --top_k 10
         ```
         ```bash
         # bash
-        npc brainblast                                        
+        npc brainblast 'python dictionaries'                                        
         ```
-
     - ## Breathe: Condense conversation context (shell only):
         ```bash
         # npcsh
@@ -262,7 +259,6 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         ```
         ```bash
         #bash
-        npc ots
         npc ots ...
         ```
     - ## `plan`: set up cron jobs:
@@ -276,10 +272,10 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         ```
 
     - ## `plonk`: Computer use:     
-        ```
-        #npcsh
+        ```bash
+        # npcsh
         /plonk -n 'npc_name' -sp 'task for plonk to carry out '
-        plonk
+
         #bash
         npc plonk
         ```
