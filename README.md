@@ -25,7 +25,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
       npcsh:🤖sibiji:gemini-2.5-flash>can you help me identify what process is listening on port 5337? 
       ```
       <p align="center"> 
-        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/port5337.png" alt="example of running npcsh to check what processes are listening on port 5337", width=250>
+        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/port5337.png" alt="example of running npcsh to check what processes are listening on port 5337", width=500>
       </p>
     - Edit files
 
@@ -51,7 +51,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     /search "cal golden bears football schedule" -sp perplexity
     ```
     <p align="center">
-        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/search_example.png" alt="example of search results", width=250>
+        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/search_example.png" alt="example of search results", width=500>
     </p>
 
   - **Computer Use**
