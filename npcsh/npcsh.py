@@ -893,9 +893,13 @@ def execute_command(
     active_provider = npc_provider or state.chat_provider
 
     if state.current_mode == 'agent':
+        print(len(commands), commands)
         for i, cmd_segment in enumerate(commands):
+
+            render_markdown(f'- executing command {i+1}/{len(commands)}')
             is_last_command = (i == len(commands) - 1)
-            stream_this_segment = is_last_command and state.stream_output # Use state's stream setting
+
+            stream_this_segment = state.stream_output and not is_last_command 
 
             try:
                 current_state, output = process_pipeline_command(
@@ -906,17 +910,18 @@ def execute_command(
                 )
 
                 if is_last_command:
-                    final_output = output # Capture the output of the last command
+                    return current_state, output
                 if isinstance(output, str):
                     stdin_for_next = output
                 elif not isinstance(output, str):
                     try:
-                        full_stream_output = print_and_process_stream_with_markdown(output, 
-                                                                                    state.npc.model, 
-                                                                                    state.npc.provider)
-                        stdin_for_next = full_stream_output
-                        if is_last_command: 
-                            final_output = full_stream_output
+                        if stream_this_segment:
+                            full_stream_output = print_and_process_stream_with_markdown(output, 
+                                                                                        state.npc.model, 
+                                                                                        state.npc.provider)
+                            stdin_for_next = full_stream_output
+                            if is_last_command: 
+                                final_output = full_stream_output
                     except:
                         if output is not None: # Try converting other types to string
                             try: 
@@ -1295,51 +1300,52 @@ def process_result(
             except Exception as e:
                 print(colored(f"Error during real-time KG evolution: {e}", "red"))
 
-            # --- Part 3: Periodic Team Context Suggestions ---
-            result_state.turn_count += 1
-            if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:
-                print(colored("\nChecking for potential team improvements...", "cyan"))
-                try:
-                    summary = breathe(messages=result_state.messages[-20:], 
-                                    npc=active_npc)
-                    characterization = summary.get('output')
+        # --- Part 3: Periodic Team Context Suggestions ---
+        result_state.turn_count += 1
 
-                    if characterization and result_state.team:
-                        team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
-                        ctx_data = {}
-                        if os.path.exists(team_ctx_path):
-                            with open(team_ctx_path, 'r') as f:
+        if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:
+            print(colored("\nChecking for potential team improvements...", "cyan"))
+            try:
+                summary = breathe(messages=result_state.messages[-20:], 
+                                npc=active_npc)
+                characterization = summary.get('output')
+
+                if characterization and result_state.team:
+                    team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
+                    ctx_data = {}
+                    if os.path.exists(team_ctx_path):
+                        with open(team_ctx_path, 'r') as f:
                             ctx_data = yaml.safe_load(f) or {}
-                        current_context = ctx_data.get('context', '')
+                    current_context = ctx_data.get('context', '')
 
-                        prompt = f"""Based on this characterization: {characterization},
+                    prompt = f"""Based on this characterization: {characterization},
 
-                        suggest changes (additions, deletions, edits) to the team's context. 
-                        Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
-                        
-                        Current Context: "{current_context}". 
-                        
-                        Respond with JSON: {{"suggestion": "Your sentence."
-                        }}"""
-                        response = get_llm_response(prompt, npc=active_npc, format="json")
-                        suggestion = response.get("response", {}).get("suggestion")
-
-                        if suggestion:
-                            new_context = (current_context + " " + suggestion).strip()
-                            print(colored("AI suggests updating team context:", "yellow"))
-                            print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
-                            if input("Apply? [y/N]: ").strip().lower() == 'y':
-                                ctx_data['context'] = new_context
-                                with open(team_ctx_path, 'w') as f:
-                                    yaml.dump(ctx_data, f)
-                                print(colored("Team context updated.", "green"))
-                            else:
-                                print("Suggestion declined.")
-                except Exception as e:
-                    import traceback
-                    print(colored(f"Could not generate team suggestions: {e}", "yellow"))
-                    traceback.print_exc()
+                    suggest changes (additions, deletions, edits) to the team's context. 
+                    Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
                     
+                    Current Context: "{current_context}". 
+                    
+                    Respond with JSON: {{"suggestion": "Your sentence."
+                    }}"""
+                    response = get_llm_response(prompt, npc=active_npc, format="json")
+                    suggestion = response.get("response", {}).get("suggestion")
+
+                    if suggestion:
+                        new_context = (current_context + " " + suggestion).strip()
+                        print(colored(f"{result_state.npc.name} suggests updating team context:", "yellow"))
+                        print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
+                        if input("Apply? [y/N]: ").strip().lower() == 'y':
+                            ctx_data['context'] = new_context
+                            with open(team_ctx_path, 'w') as f:
+                                yaml.dump(ctx_data, f)
+                            print(colored("Team context updated.", "green"))
+                        else:
+                            print("Suggestion declined.")
+            except Exception as e:
+                import traceback
+                print(colored(f"Could not generate team suggestions: {e}", "yellow"))
+                traceback.print_exc()
+                
 
 
 def run_repl(command_history: CommandHistory, initial_state: ShellState):
@@ -1496,6 +1502,7 @@ def main() -> None:
 
     initial_state.npc = default_npc 
     initial_state.team = team
+
 
     # add a -g global command to indicate if to use the global or project, otherwise go thru normal flow
     
