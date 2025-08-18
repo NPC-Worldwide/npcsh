@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from collections import Counter, defaultdict
 import networkx as nx
-import os
 
 def deep_analyze_kg():
     """Actually analyze the knowledge graph structure and content"""
@@ -31,7 +30,8 @@ def deep_analyze_kg():
         concept_words.extend(words)
     
     word_freq = Counter(concept_words)
-    print(f"Most common concept words: {dict(list(word_freq.most_common(10)))}")
+    most_common_words = dict(list(word_freq.most_common(10)))
+    print(f"Most common concept words: {most_common_words}")
     
     # Find concept clusters by shared words
     concept_clusters = defaultdict(list)
@@ -91,16 +91,19 @@ def deep_analyze_kg():
     
     # Find most connected concepts
     if len(G.nodes) > 0:
-        concept_degrees = []
-        for node in G.nodes:
-            if node in concepts_df['name'].values:
-                degree = G.degree(node)
-                concept_degrees.append((node, degree))
-        
-        concept_degrees.sort(key=lambda x: x[1], reverse=True)
+        concept_degrees = sorted(G.degree, key=lambda x: x[1], reverse=True)
         print("\nMost connected concepts:")
-        for concept, degree in concept_degrees[:10]:
-            print(f"  {concept}: {degree} connections")
+        for node, degree in concept_degrees[:10]:
+            print(f"  {node}: {degree} connections")
+        
+        # Visualize the most connected concepts
+        top_10_concepts = [node for node, _ in concept_degrees[:10]]
+        subgraph = G.subgraph(top_10_concepts)
+        
+        plt.figure(figsize=(12, 8))
+        nx.draw(subgraph, with_labels=True, node_size=3000, font_size=10, font_weight='bold', node_color='skyblue')
+        plt.title('Top 10 Most Connected Concepts in Knowledge Graph')
+        plt.show()
     
     # Analyze generational evolution
     print("\n⏳ TEMPORAL ANALYSIS:")
@@ -110,6 +113,14 @@ def deep_analyze_kg():
     gen_counts = concepts_df['generation'].value_counts().sort_index()
     print(f"Concept generation spread: {gen_counts.head(10).to_dict()}")
     
+    # Visualize the distribution of concepts by generation
+    plt.figure(figsize=(12, 8))
+    gen_counts.plot(kind='bar', color='skyblue')
+    plt.title('Distribution of Concepts by Generation')
+    plt.xlabel('Generation')
+    plt.ylabel('Number of Concepts')
+    plt.show()
+    
     # Latest concepts
     latest_concepts = concepts_df[concepts_df['generation'] >= concepts_df['generation'].max() - 5]
     print(f"\nRecent concepts (last 5 generations): {list(latest_concepts['name'][:8])}")
@@ -118,6 +129,23 @@ def deep_analyze_kg():
     if 'generation' in facts_df.columns:
         fact_gen_counts = facts_df['generation'].value_counts().sort_index()
         print(f"Recent fact generations: {fact_gen_counts.tail(5).to_dict()}")
+        
+        # Visualize the distribution of facts by generation
+        plt.figure(figsize=(12, 8))
+        fact_gen_counts.plot(kind='bar', color='skyblue')
+        plt.title('Distribution of Facts by Generation')
+        plt.xlabel('Generation')
+        plt.ylabel('Number of Facts')
+        plt.show()
+    
+    # Degree distribution in the network graph
+    degree_sequence = sorted([d for n, d in G.degree()], reverse=True)  # degree sequence
+    plt.figure(figsize=(12, 8))
+    plt.hist(degree_sequence, bins=50, color='skyblue', log=True)
+    plt.title('Degree Distribution of the Knowledge Graph')
+    plt.xlabel('Degree')
+    plt.ylabel('Number of Nodes')
+    plt.show()
     
     # Analyze directory contexts
     print("\n📁 DIRECTORY CONTEXT ANALYSIS:")
