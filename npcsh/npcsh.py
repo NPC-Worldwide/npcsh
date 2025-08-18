@@ -1064,6 +1064,13 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     command_history = CommandHistory(db_path)
 
 
+    if not is_npcsh_initialized():
+        print("Initializing NPCSH...")
+        initialize_base_npcs_if_needed(db_path)
+        print("NPCSH initialization complete. Restart or source ~/.npcshrc.")
+
+
+
     try:
         history_file = setup_readline()
         atexit.register(save_readline_history)
