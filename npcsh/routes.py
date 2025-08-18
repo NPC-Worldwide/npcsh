@@ -25,13 +25,14 @@ from npcpy.work.plan import execute_plan_command
 from npcpy.work.trigger import execute_trigger_command
 from npcpy.work.desktop import perform_action
 from npcpy.memory.search import execute_rag_command, execute_search_command, execute_brainblast_command
-from npcpy.memory.command_history import CommandHistory
+from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db
 from npcpy.serve import start_flask_server
 from npcpy.mix.debate import run_debate
 from npcpy.data.image import capture_screenshot
 from npcpy.npc_compiler import NPC, Team, Jinx
 from npcpy.npc_compiler import initialize_npc_project
 from npcpy.data.web import search_web
+from npcpy.memory.knowledge_graph import kg_sleep_process, kg_dream_process
 
 
 from npcsh._state import (
@@ -43,6 +44,8 @@ from npcsh._state import (
     NPCSH_STREAM_OUTPUT,
     NPCSH_IMAGE_GEN_MODEL, 
     NPCSH_IMAGE_GEN_PROVIDER,
+    NPCSH_VIDEO_GEN_MODEL,
+    NPCSH_VIDEO_GEN_PROVIDER,
     NPCSH_EMBEDDING_MODEL,
     NPCSH_EMBEDDING_PROVIDER,
     NPCSH_REASONING_MODEL,
@@ -370,7 +373,7 @@ def init_handler(command: str, **kwargs):
 
 
 
-@router.route("ots", "Take screenshot and optionally analyze with vision model")
+@router.route("ots", "Take screenshot and analyze with vision model")
 def ots_handler(command: str, **kwargs):
     command_parts = command.split()
     image_paths = []
@@ -597,8 +600,8 @@ def roll_handler(command: str, **kwargs):
     try:
         result = gen_video(
             prompt=prompt,
-            model=safe_get(kwargs, 'model', NPCSH_VISION_MODEL),
-            provider=safe_get(kwargs, 'provider', NPCSH_VISION_PROVIDER),
+            model=safe_get(kwargs, 'vgmodel', NPCSH_VIDEO_GEN_MODEL),
+            provider=safe_get(kwargs, 'vgprovider', NPCSH_VIDEO_GEN_PROVIDER),
             npc=safe_get(kwargs, 'npc'),
             num_frames = num_frames,
             width = width,
@@ -683,7 +686,7 @@ def search_handler(command: str, **kwargs):
 
 
 
-@router.route("serve", "Set configuration values")
+@router.route("serve", "Serve an NPC Team")
 def serve_handler(command: str, **kwargs):
     #print('calling serve handler')
     #print(kwargs)
@@ -727,21 +730,103 @@ def set_handler(command: str, **kwargs):
         output = f"Error setting configuration '{key}': {e}"
     return {"output": output, "messages": messages}
 
-@router.route("sleep", "Pause execution for N seconds")
+@router.route("sleep", "Evolve knowledge graph. Use --dream to also run creative synthesis.")
 def sleep_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
-    parts = command.split()
+    npc = safe_get(kwargs, 'npc')
+    team = safe_get(kwargs, 'team')
+    model = safe_get(kwargs, 'model')
+    provider = safe_get(kwargs, 'provider')
+
+    is_dreaming = safe_get(kwargs, 'dream', False)
+    operations_str = safe_get(kwargs, 'ops')
+    
+    operations_config = None
+    if operations_str and isinstance(operations_str, str):
+        operations_config = [op.strip() for op in operations_str.split(',')]
+
+    # Define the scope variables clearly at the start
+    team_name = team.name if team else "__none__"
+    npc_name = npc.name if isinstance(npc, NPC) else "__none__"
+    current_path = os.getcwd()
+    scope_str = f"Team: '{team_name}', NPC: '{npc_name}', Path: '{current_path}'"
+
+    # ADDED: Log the scope being checked for clarity
+    render_markdown(f"- Checking knowledge graph for scope: {scope_str}")
+
     try:
-        seconds = float(parts[1]) if len(parts) > 1 else 1.0
-        if seconds < 0: raise ValueError("Duration must be non-negative")
-        time.sleep(seconds)
-        output = f"Slept for {seconds} seconds."
-    except (ValueError, IndexError):
-        output = "Usage: /sleep <seconds>"
+        db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
+        command_history = CommandHistory(db_path)
+        conn = command_history.conn
     except Exception as e:
+        return {"output": f"Error connecting to history database for KG access: {e}", "messages": messages}
+
+    try:
+        current_kg = load_kg_from_db(conn, team_name, npc_name, current_path)
+
+        # FIXED: Provide a detailed and helpful message when the KG is empty
+        if not current_kg or not current_kg.get('facts'):
+            output_msg = f"Knowledge graph for the current scope is empty. Nothing to process.\n"
+            output_msg += f"  - Scope Checked: {scope_str}\n\n"
+            output_msg += "**Hint:** Have a conversation or run some commands first to build up knowledge in this specific context. The KG is unique to each combination of Team, NPC, and directory."
+            return {"output": output_msg, "messages": messages}
+
+        # Store initial stats for the final report
+        original_facts = len(current_kg.get('facts', []))
+        original_concepts = len(current_kg.get('concepts', []))
+        
+        # --- SEQUENTIAL EXECUTION ---
+
+        # 1. Always run the sleep process for maintenance first.
+        process_type = "Sleep"
+        ops_display = f"with operations: {operations_config}" if operations_config else "with random operations"
+        render_markdown(f"- Initiating sleep process {ops_display}")
+        
+        evolved_kg, _ = kg_sleep_process(
+            existing_kg=current_kg,
+            model=model,
+            provider=provider,
+            npc=npc,
+            operations_config=operations_config
+        )
+
+        # 2. If --dream is specified, run the dream process on the *result* of the sleep process.
+        if is_dreaming:
+            process_type += " & Dream"
+            render_markdown(f"- Initiating dream process on the evolved KG...")
+            evolved_kg, _ = kg_dream_process(
+                existing_kg=evolved_kg,
+                model=model,
+                provider=provider,
+                npc=npc
+            )
+
+        # 3. Save the final state of the KG back to the database
+        save_kg_to_db(conn, evolved_kg, team_name, npc_name, current_path)
+
+        # 4. Report the final, cumulative changes back to the user
+        new_facts = len(evolved_kg.get('facts', []))
+        new_concepts = len(evolved_kg.get('concepts', []))
+
+        output = f"{process_type} process complete.\n"
+        output += f"- Facts: {original_facts} -> {new_facts} ({new_facts - original_facts:+})\n"
+        output += f"- Concepts: {original_concepts} -> {new_concepts} ({new_concepts - original_concepts:+})"
+        
+        print(evolved_kg.get('facts'))
+        print(evolved_kg.get('concepts'))
+        
+        return {"output": output, "messages": messages}
+
+    except Exception as e:
+        import traceback
         traceback.print_exc()
-        output = f"Error during sleep: {e}"
-    return {"output": output, "messages": messages}
+        return {"output": f"Error during KG evolution process: {e}", "messages": messages}
+    finally:
+        if 'command_history' in locals() and command_history:
+            command_history.close()
+
+
+
 
 @router.route("spool", "Enter interactive chat (spool) mode")
 def spool_handler(command: str, **kwargs):
