@@ -757,12 +757,12 @@ def sleep_handler(command: str, **kwargs):
     try:
         db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
         command_history = CommandHistory(db_path)
-        conn = command_history.conn
+        engine = command_history.engine
     except Exception as e:
         return {"output": f"Error connecting to history database for KG access: {e}", "messages": messages}
 
     try:
-        current_kg = load_kg_from_db(conn, team_name, npc_name, current_path)
+        current_kg = load_kg_from_db(engine, team_name, npc_name, current_path)
 
         # FIXED: Provide a detailed and helpful message when the KG is empty
         if not current_kg or not current_kg.get('facts'):
@@ -1031,16 +1031,10 @@ def wander_handler(command: str, **kwargs):
         return {"output": f"Error during wander mode: {e}", "messages": messages}
 
 @router.route("yap", "Enter voice chat (yap) mode")
-def whisper_handler(command: str, **kwargs):
+def yap_handler(command: str, **kwargs):
     try:
         return enter_yap_mode(
-            messages=safe_get(kwargs, 'messages'),
-            npc=safe_get(kwargs, 'npc'),
-            model=safe_get(kwargs, 'model', NPCSH_CHAT_MODEL),
-            provider=safe_get(kwargs, 'provider', NPCSH_CHAT_PROVIDER),
-            team=safe_get(kwargs, 'team'),
-            stream=safe_get(kwargs, 'stream', NPCSH_STREAM_OUTPUT),
-            conversation_id=safe_get(kwargs, 'conversation_id')
+            ** kwargs
             )
     except Exception as e:
         traceback.print_exc()
