@@ -22,6 +22,8 @@ import time
 import os
 import re
 import sqlite3
+import shutil
+import filecmp
 from datetime import datetime
 import logging
 import textwrap
@@ -243,11 +245,11 @@ def ensure_npcshrc_exists() -> str:
             npcshrc.write("# NPCSH Configuration File\n")
             npcshrc.write("export NPCSH_INITIALIZED=0\n")
             npcshrc.write("export NPCSH_DEFAULT_MODE='agent'\n")
+            npcshrc.write("export NPCSH_BUILD_KG=1")
             npcshrc.write("export NPCSH_CHAT_PROVIDER='ollama'\n")
-            npcshrc.write("export NPCSH_CHAT_MODEL='llama3.2'\n")
+            npcshrc.write("export NPCSH_CHAT_MODEL='gemma3:4b'\n")
             npcshrc.write("export NPCSH_REASONING_PROVIDER='ollama'\n")
             npcshrc.write("export NPCSH_REASONING_MODEL='deepseek-r1'\n")
-
             npcshrc.write("export NPCSH_EMBEDDING_PROVIDER='ollama'\n")
             npcshrc.write("export NPCSH_EMBEDDING_MODEL='nomic-embed-text'\n")
             npcshrc.write("export NPCSH_VISION_PROVIDER='ollama'\n")
