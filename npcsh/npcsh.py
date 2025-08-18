@@ -703,6 +703,8 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
             'eprovider': state.embedding_provider,
             'igmodel': state.image_gen_model,
             'igprovider': state.image_gen_provider,
+            'vgmodel': state.video_gen_model, 
+            'vgprovider':state.video_gen_provider,
             'vmodel': state.vision_model,
             'vprovider': state.vision_provider,
             'rmodel': state.reasoning_model,
