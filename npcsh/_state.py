@@ -1,47 +1,35 @@
 
 from colorama import Fore, Back, Style
-
-
-from datetime import datetime
-from dotenv import load_dotenv
-
-import re
-import os
-from termcolor import colored
-
-
-
-from typing import Dict, List, Any
-import subprocess
-import termios
-import tty
-import pty
-import select
-import signal
-import time
-import os
-import re
-import sqlite3
-import shutil
+from dataclasses import dataclass, field
 import filecmp
-from datetime import datetime
+import os
+import platform
+import pty
+import re
+import select
+import shutil
+import signal
+import sqlite3
+import subprocess
+import sys
+from termcolor import colored
+import termios
+import time
+from typing import Dict, List,  Any, Tuple, Union, Optional
+import tty
 import logging
 import textwrap
 from termcolor import colored
-import sys
-import platform
-
+from npcpy.memory.command_history import (
+    start_new_conversation,
+)
+from npcpy.npc_compiler import NPC, Team
 
 def get_npc_path(npc_name: str, db_path: str) -> str:
-    # First, check in project npc_team directory
     project_npc_team_dir = os.path.abspath("./npc_team")
     project_npc_path = os.path.join(project_npc_team_dir, f"{npc_name}.npc")
-
-    # Then, check in global npc_team directory
     user_npc_team_dir = os.path.expanduser("~/.npcsh/npc_team")
     global_npc_path = os.path.join(user_npc_team_dir, f"{npc_name}.npc")
-
-    # Check database for compiled NPCs
     try:
         with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
@@ -107,9 +95,6 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     package_dir = os.path.dirname(__file__)
     package_npc_team_dir = os.path.join(package_dir, "npc_team")
 
-    
-
-    # User's global npc_team directory
     user_npc_team_dir = os.path.expanduser("~/.npcsh/npc_team")
 
     user_jinxs_dir = os.path.join(user_npc_team_dir, "jinxs")
@@ -117,7 +102,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     os.makedirs(user_npc_team_dir, exist_ok=True)
     os.makedirs(user_jinxs_dir, exist_ok=True)
     os.makedirs(user_templates_dir, exist_ok=True)
-    # Copy NPCs from package to user directory
+
     for filename in os.listdir(package_npc_team_dir):
         if filename.endswith(".npc"):
             source_path = os.path.join(package_npc_team_dir, filename)
@@ -1061,12 +1046,13 @@ NPCSH_REASONING_PROVIDER = os.environ.get("NPCSH_REASONING_PROVIDER", "ollama")
 NPCSH_STREAM_OUTPUT = eval(os.environ.get("NPCSH_STREAM_OUTPUT", "0")) == 1
 NPCSH_API_URL = os.environ.get("NPCSH_API_URL", None)
 NPCSH_SEARCH_PROVIDER = os.environ.get("NPCSH_SEARCH_PROVIDER", "duckduckgo")
-
+NPCSH_BUILD_KG = os.environ.get("NPCSH_BUILD_KG") == "1" 
 READLINE_HISTORY_FILE = os.path.expanduser("~/.npcsh_history")
 
 
 
 def setup_readline() -> str:
+    import readline
     if readline is None:
         return None
     try:
@@ -1099,14 +1085,6 @@ def save_readline_history():
 
 
 
-
-from npcpy.memory.command_history import (
-    start_new_conversation,
-)
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any, Tuple, Union
-from npcpy.npc_compiler import NPC, Team
-import os
 @dataclass
 class ShellState:
     npc: Optional[Union[NPC, str]] = None
@@ -1128,6 +1106,7 @@ class ShellState:
     video_gen_model: str = NPCSH_VIDEO_GEN_MODEL
     video_gen_provider: str = NPCSH_VIDEO_GEN_PROVIDER
     current_mode: str = NPCSH_DEFAULT_MODE
+    build_kg: bool = NPCSH_BUILD_KG,
     api_key: Optional[str] = None
     api_url: Optional[str] = NPCSH_API_URL
     current_path: str = field(default_factory=os.getcwd)
@@ -1165,5 +1144,6 @@ initial_state = ShellState(
     image_gen_provider=NPCSH_IMAGE_GEN_PROVIDER,
     video_gen_model=NPCSH_VIDEO_GEN_MODEL,
     video_gen_provider=NPCSH_VIDEO_GEN_PROVIDER,
+    build_kg=NPCSH_BUILD_KG, 
     api_url=NPCSH_API_URL,
 )
