@@ -44,40 +44,92 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     Bucatini is certainly a favorite for many due to its unique hollow center, which holds sauces beautifully. Whether it's "better" is subjective and depends on the dish and personal        
     preference. Shapes like orecchiette, rigatoni, or trofie excel in different recipes. Bucatini stands out for its versatility and texture, making it a top contender among pasta shapes!    
     ```
-    
 
-  - **Compile an NPC**
+
+  - **Search the Web**
     ```bash
-    npc compile /path/to/npc.npc
+    /search "cal golden bears football schedule" -sp perplexity
     ```
+    <p align="center">
+        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/search_example.png" alt="example of search results", width=250>
+    </p>
 
   - **Computer Use**
     ```bash
-    npc plonk -n 'npc_name' -sp 'task for plonk to carry out'
+    /plonk -n 'npc_name' -sp 'task for plonk to carry out'
     ```
 
   - **Generate Image**
     ```bash
-    npc vixynt 'generate an image of a rabbit eating ham in the brink of dawn' model='gpt-image-1' provider='openai'
+    /vixynt 'generate an image of a rabbit eating ham in the brink of dawn' model='gpt-image-1' provider='openai'
     ```
-  
-
-  - **Search the Web**
+      <p align="center">
+        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/rabbit.PNG" alt="a rabbit eating ham in the bring of dawn", width=250>
+      </p>
+  - **Generate Video**
     ```bash
-    npc search -q "cal golden bears football schedule" -sp perplexity
+    /roll 'generate a video of a hat riding a dog'
     ```
+      <p align="center">
+        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/hat_video.mp4" alt="video of a hat riding a dog", width=250>
+      </p>
 
   - **Serve an NPC Team**
     ```bash
-    npc serve --port 5337 --cors='http://localhost:5137/'
+    /serve --port 5337 --cors='http://localhost:5137/'
     ```
-
   - **Screenshot Analysis**
     ```bash
-    npc ots
+    /ots
     ```
 
-  - macros---commands activated by invoking a `/command`---in the NPC shell can be called in bash through the `npc` CLI. In our examples, we provide both `npcsh` calls as well as bash calls with the `npc` cli where relevant.
+
+# Macros
+-  activated by invoking `/<command> ...` in `npcsh`, macros can be called in bash or through the `npc` CLI. In our examples, we provide both `npcsh` calls as well as bash calls with the `npc` cli where relevant. For converting any `/<command>` in `npcsh` to a bash version, replace the `/` with `npc ` and the macro command will be invoked as a positional argument. Some, like breathe, flush,
+
+    - ## TL; DR:
+    - `/alicanto` - Conduct deep research with multiple perspectives, identifying gold insights and cliff warnings
+    - `/brainblast` - Execute an advanced chunked search on command history
+    - `/breathe` - Condense context on a regular cadence
+    - `/compile` - Compile NPC profiles
+    - `/flush` - Flush the last N messages
+    - `/guac` - Enter guac mode
+    - `/help` - Show help for commands, NPCs, or Jinxs. Usage: /help 
+    - `/init` - Initialize NPC project
+    - `/jinxs` - Show available jinxs for the current NPC/Team
+    - `/ots` - Take screenshot and analyze with vision model
+    - `/plan` - Execute a plan command\n\n/plonk - Use vision model to interact with GUI. Usage: /plonk <task description>
+    - `/pti` - Use pardon-the-interruption mode to interact with reasoning model LLM
+    - `/rag` - Execute a RAG command using ChromaDB embeddings with optional file input (-f/--file)
+    - `/roll` - generate a video with video generation model
+    - `/sample` - Send a prompt directly to the LLM
+    - `/search` - Execute a web search command
+    - `/serve` - Serve an NPC Team server.
+    - `/set` - Set configuration values
+    - `/sleep` - Evolve knowledge graph with options for dreaming. 
+    - `/spool` - Enter interactive chat (spool) mode
+    - `/trigger` - Execute a trigger command
+    - `/vixynt` - Generate images from text descriptions
+    - `/wander` - Enter wander mode (experimental)
+    - `/yap` - Enter voice chat (yap) mode
+    
+    ## Common Command-Line Flags\n\nThe shortest unambiguous prefix works (e.g., `-t` for `--temperature`).
+    
+    ```
+    Flag              Shorthand    | Flag              Shorthand    | Flag              Shorthand    | Flag              Shorthand   
+    ------------------------------ | ------------------------------ | ------------------------------ | ------------------------------
+    --attachments     (-a)         | --height          (-h)         | --num_npcs        (-num_n)     | --team            (-tea)      
+    --config_dir      (-con)       | --igmodel         (-igm)       | --output_file     (-o)         | --temperature     (-tem)      
+    --cors            (-cor)       | --igprovider      (-igp)       | --plots_dir       (-pl)        | --top_k                       
+    --creativity      (-cr)        | --lang            (-l)         | --port            (-po)        | --top_p                       
+    --depth           (-d)         | --max_tokens      (-ma)        | --provider        (-pr)        | --vmodel          (-vm)       
+    --emodel          (-em)        | --messages        (-me)        | --refresh_period  (-re)        | --vprovider       (-vp)       
+    --eprovider       (-ep)        | --model           (-mo)        | --rmodel          (-rm)        | --width           (-w)        
+    --exploration     (-ex)        | --npc             (-np)        | --rprovider       (-rp)        |                               
+    --format          (-f)         | --num_frames      (-num_f)     | --sprovider       (-s)         |                               
+    ```
+    '
+
     - ## alicanto: a research exploration agent flow. 
 
       <p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/alicanto.md"> 
@@ -109,12 +161,22 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         npc brainblast                                        
         ```
 
-    - ## Breathe: Condense conversation context ():
+    - ## Breathe: Condense conversation context (shell only):
         ```bash
         # npcsh
         /breathe
         /breathe -p ollama -m qwen3:latest 
         ```
+    - ## Compile: render npcs for use without re-loading npcsh
+      ```bash
+      # npcsh
+      /compile /path/to/npc
+      ```
+    - ## flush: flush context  (shell only):
+      ```bash
+      /flush
+      ```
+
 
     - ## `guac`
 
@@ -185,8 +247,12 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         A guac session progresses through a series of stages, each of equal length. Each stage adjusts the emoji input prompt. Once the stages have passed, it is time to refresh. Stage 1: `🥑`, Stage 2: `🥑🔪` Stage 3: `🥑🥣` Stage:4 `🥑🥣🧂`, `Stage 5: 🥘 TIME TO REFRESH`. At stage 5, the user is reminded to refresh with the /refresh macro. This will evaluate the session so farand suggest and implement new functions or automations that will aid in future sessions, with the ultimate approval of the user.
 
 
-
-
+    - ## help:/ Show help for commands, NPCs, or Jinxs. 
+       ```bash
+       /help 
+       ```
+    - ## init - Initialize NPC project        
+    - ## jinxs : show available jinxs                                                                                                                     
     - ## ots: Over-the-shoulder screen shot analysis
         - Screenshot analysis:     
         ```bash
@@ -199,6 +265,16 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         npc ots
         npc ots ...
         ```
+    - ## `plan`: set up cron jobs:
+        ```bash
+        # npcsh
+        /plan 'a description of a cron job to implement' -m gemma3:27b -p ollama 
+        ```
+        ```bash
+        # bash
+        npc plan
+        ```
+
     - ## `plonk`: Computer use:     
         ```
         #npcsh
@@ -221,21 +297,12 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/frederic4.png" alt="npcsh logo of frederic the bear and the pti logo", width=250></a>
       </p>
 
-    ## `spool`
-    <p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/spool.md"> 
-      <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/spool.png" alt="logo for spool", width=250></a>
-    </p>
-
-    - Enter chat loop with isolated context, attachments, specified models/providers:     
+    - ## `rag`: embedding search through chroma db, optional file input
+    - ## `roll`: your video generation assistant
+      - 
         ```npcsh
-        /spool -n <npc_name>
-        /spool --attachments ./test_data/port5337.png,./test_data/yuan2004.pdf,./test_data/books.csv
-        /spool --provider ollama --model llama3
-        /spool -p deepseek -m deepseek-reasoner
-        /spool -n alicanto
+        /roll --provider ollama --model llama3
         ```
-
-
 
     - ## sample: one-shot sampling from LLMs with specific parameters
         ```bash
@@ -266,6 +333,66 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         ```bash
         npc search 'when is the moon gonna go away from the earth'
         ```
+    
+
+    - ## serve: serve an npc team     
+        ```bash
+        /serve 
+        /serve ....    
+        # Other search providers could be added, but we have only integrated duckduckgo and perplexity for the moment.
+        ```
+
+        ```bash
+        npc serve
+        ```
+
+    - ## set: change current model, env params
+        ```bash
+        /set model ... 
+        /set provider ...
+        /set NPCSH_API_URL https://localhost:1937
+        ```
+
+        ```bash
+        npc set ...
+        ```
+    - ## sleep: prune and evolve the current knowledge graph 
+        ```bash
+        /sleep
+        /sleep --dream
+        /sleep --ops link_facts,deepen
+        ```
+
+        ```bash
+        npc sleep
+        ```
+    - ## `spool`
+    <p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/spool.md"> 
+      <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/spool.png" alt="logo for spool", width=250></a>
+    </p>
+
+    - Enter chat loop with isolated context, attachments, specified models/providers:     
+        ```npcsh
+        /spool -n <npc_name>
+        /spool --attachments ./test_data/port5337.png,./test_data/yuan2004.pdf,./test_data/books.csv
+        /spool --provider ollama --model llama3
+        /spool -p deepseek -m deepseek-reasoner
+        /spool -n alicanto
+        ```
+
+
+
+    - ## Trigger: schedule listeners, daemons
+        ```bash
+        /trigger 'a description of a trigger to implement with system daemons/file system listeners.' -m gemma3:27b -p ollama
+        ```
+        ```bash
+        npc trigger
+        ``` 
+
+
+
+
     
 
     - ## Vixynt: Image generation and editing:   
@@ -350,25 +477,6 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         # bash
         npc jinxs 
         ```
-    - Plan tasks with cron triggers:
-        ```bash
-        # npcsh
-        /plan 'a description of a cron job to implement' -m gemma3:27b -p ollama 
-        ```
-        ```bash
-        # bash
-        npc plan
-        ```
-    - Schedule triggers with listeners:
-        ```bash
-        /trigger 'a description of a trigger to implement with system daemons/file system listeners.' -m gemma3:27b -p ollama
-        ```
-        ```bash
-        npc trigger
-        ``` 
-
-
-
 
 
 
