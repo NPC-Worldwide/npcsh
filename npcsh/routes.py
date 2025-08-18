@@ -9,15 +9,7 @@ import time
 from datetime import datetime
 from sqlalchemy import create_engine
 import logging 
-
-from npcsh._state import (
-    NPCSH_VISION_MODEL, NPCSH_VISION_PROVIDER, NPCSH_API_URL,
-    NPCSH_CHAT_MODEL, NPCSH_CHAT_PROVIDER, NPCSH_STREAM_OUTPUT,
-    NPCSH_IMAGE_GEN_MODEL, NPCSH_IMAGE_GEN_PROVIDER,
-    NPCSH_EMBEDDING_MODEL, NPCSH_EMBEDDING_PROVIDER,
-    NPCSH_REASONING_MODEL, NPCSH_REASONING_PROVIDER,
-    NPCSH_SEARCH_PROVIDER,
-)
+import json 
 from npcpy.data.load import load_file_contents
 
 from npcpy.llm_funcs import (
@@ -28,36 +20,49 @@ from npcpy.llm_funcs import (
 )
 from npcpy.npc_compiler import NPC, Team, Jinx
 from npcpy.npc_compiler import initialize_npc_project
-
-
+from npcpy.npc_sysenv import render_markdown
 from npcpy.work.plan import execute_plan_command
 from npcpy.work.trigger import execute_trigger_command
 from npcpy.work.desktop import perform_action
-
-
 from npcpy.memory.search import execute_rag_command, execute_search_command, execute_brainblast_command
-from npcpy.memory.command_history import CommandHistory
-
-
-
-
+from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db
 from npcpy.serve import start_flask_server
+from npcpy.mix.debate import run_debate
+from npcpy.data.image import capture_screenshot
+from npcpy.npc_compiler import NPC, Team, Jinx
+from npcpy.npc_compiler import initialize_npc_project
+from npcpy.data.web import search_web
+from npcpy.memory.knowledge_graph import kg_sleep_process, kg_dream_process
 
 
+from npcsh._state import (
+    NPCSH_VISION_MODEL, 
+    NPCSH_VISION_PROVIDER, 
+    NPCSH_API_URL,
+    NPCSH_CHAT_MODEL, 
+    NPCSH_CHAT_PROVIDER, 
+    NPCSH_STREAM_OUTPUT,
+    NPCSH_IMAGE_GEN_MODEL, 
+    NPCSH_IMAGE_GEN_PROVIDER,
+    NPCSH_VIDEO_GEN_MODEL,
+    NPCSH_VIDEO_GEN_PROVIDER,
+    NPCSH_EMBEDDING_MODEL,
+    NPCSH_EMBEDDING_PROVIDER,
+    NPCSH_REASONING_MODEL,
+    NPCSH_REASONING_PROVIDER,
+    NPCSH_SEARCH_PROVIDER,
+    CANONICAL_ARGS, 
+    normalize_and_expand_flags, 
+    get_argument_help
+)
 from npcsh.guac import enter_guac_mode
-from npcsh.plonk import execute_plonk_command
+from npcsh.plonk import execute_plonk_command, format_plonk_summary
 from npcsh.alicanto import alicanto
 from npcsh.spool import enter_spool_mode
 from npcsh.wander import enter_wander_mode
 from npcsh.yap import enter_yap_mode
 
 
-
-from npcpy.mix.debate import run_debate
-from npcpy.data.image import capture_screenshot
-from npcpy.npc_compiler import NPC, Team, Jinx
-from npcpy.npc_compiler import initialize_npc_project
-from npcpy.data.web import search_web
 
 class CommandRouter:
     def __init__(self):
@@ -97,7 +102,6 @@ class CommandRouter:
         return self.help_info
 
 router = CommandRouter()
-
 def get_help_text():
     commands = router.get_commands()
     help_info = router.help_info
@@ -107,30 +111,88 @@ def get_help_text():
     for cmd in commands:
         help_text = help_info.get(cmd, "")
         output += f"/{cmd} - {help_text}\n\n"
+    
+    arg_help_map = get_argument_help()
+    if arg_help_map:
+        output += "## Common Command-Line Flags\n\n"
+        output += "The shortest unambiguous prefix works (e.g., `-t` for `--temperature`).\n\n"
+        
+
+        output += "```\n"
+
+        all_args_to_show = CANONICAL_ARGS[:]
+        all_args_to_show.sort()
+
+
+        NUM_COLUMNS = 4
+        FLAG_WIDTH = 18   
+        ALIAS_WIDTH = 12  
+        COLUMN_SEPARATOR = " | "
+
+        rows_per_column = (len(all_args_to_show) + NUM_COLUMNS - 1) // NUM_COLUMNS
+        columns = [all_args_to_show[i:i + rows_per_column] for i in range(0, len(all_args_to_show), rows_per_column)]
+
+        def get_shortest_alias(arg):
+            if arg in arg_help_map and arg_help_map[arg]:
+                return min(arg_help_map[arg], key=len)
+            return ""
+
+        header_parts = []
+        for _ in range(NUM_COLUMNS):
+            flag_header = "Flag".ljust(FLAG_WIDTH)
+            alias_header = "Shorthand".ljust(ALIAS_WIDTH)
+            header_parts.append(f"{flag_header}{alias_header}")
+        output += COLUMN_SEPARATOR.join(header_parts) + "\n"
+
+        divider_parts = []
+        for _ in range(NUM_COLUMNS):
+
+            divider_part = "-" * (FLAG_WIDTH + ALIAS_WIDTH)
+            divider_parts.append(divider_part)
+        output += COLUMN_SEPARATOR.join(divider_parts) + "\n"
+
+
+        for i in range(rows_per_column):
+            row_parts = []
+            for col_idx in range(NUM_COLUMNS):
+                if col_idx < len(columns) and i < len(columns[col_idx]):
+                    arg = columns[col_idx][i]
+                    alias = get_shortest_alias(arg)
+                    alias_display = f"(-{alias})" if alias else ""
+                    
+                    flag_part = f"--{arg}".ljust(FLAG_WIDTH)
+                    alias_part = alias_display.ljust(ALIAS_WIDTH)
+                    row_parts.append(f"{flag_part}{alias_part}")
+                else:
+
+                    row_parts.append(" " * (FLAG_WIDTH + ALIAS_WIDTH))
+            
+            output += COLUMN_SEPARATOR.join(row_parts) + "\n"
+
+
+        output += "```\n"
+
     output += """
-# Note
+\n## Note
 - Bash commands and programs can be executed directly (try bash first, then LLM).
 - Use '/exit' or '/quit' to exit the current NPC mode or the npcsh shell.
 - Jinxs defined for the current NPC or Team can also be used like commands (e.g., /screenshot).
 """
     return output
-
 def safe_get(kwargs, key, default=None):
     return kwargs.get(key, default)
 
 @router.route("breathe", "Condense context on a regular cadence")
 def breathe_handler(command: str, **kwargs):
-    messages = safe_get(kwargs, "messages", [])
-    npc = safe_get(kwargs, "npc")
-    try:
-        result = run_breathe_cycle(messages=messages, npc=npc, **kwargs)
-        if isinstance(result, dict): return result
-        return {"output": str(result), "messages": messages}
-    except NameError:
-         return {"output": "Breathe function (run_breathe_cycle) not available.", "messages": messages}
-    except Exception as e:
-        traceback.print_exc()
-        return {"output": f"Error during breathe: {e}", "messages": messages}
+    #try:
+    result = breathe(**kwargs)
+    if isinstance(result, dict): 
+        return result
+    #except NameError:
+    #     return {"output": "Breathe function not available."}
+    #except Exception as e:
+    #    traceback.print_exc()
+    #    return {"output": f"Error during breathe: {e}"}
 
 @router.route("compile", "Compile NPC profiles")
 def compile_handler(command: str, **kwargs):
@@ -227,9 +289,58 @@ def guac_handler(command,  **kwargs):
     return {"output": 'Exiting Guac Mode', "messages": safe_get(kwargs, "messages", [])}
 
 
-@router.route("help", "Show help information")
-def help_handler(command, **kwargs):
-    return {"output": get_help_text(), "messages": safe_get(kwargs, "messages", [])}
+@router.route("help", "Show help for commands, NPCs, or Jinxs. Usage: /help [topic]")
+def help_handler(command: str, **kwargs):
+    messages = safe_get(kwargs, "messages", [])
+    parts = shlex.split(command)
+    if len(parts) < 2:
+        return {"output": get_help_text(), "messages": messages}
+    target = parts[1].lstrip('/') # User might type /help /sample, so we clean it.
+    output = ""
+
+
+
+    if target in router.get_commands():
+        help_text = router.get_help(target).get(target, "No description available.")
+        output = f"## Help for Command: `/{target}`\n\n- **Description**: {help_text}"
+        return {"output": output, "messages": messages}
+
+    team = safe_get(kwargs, 'team')
+    if team and target in team.npcs:
+        npc_obj = team.npcs[target]
+        output = f"## Help for NPC: `{target}`\n\n"
+        output += f"- **Primary Directive**: {npc_obj.primary_directive}\n"
+        output += f"- **Default Model**: `{npc_obj.model}`\n"
+        output += f"- **Default Provider**: `{npc_obj.provider}`\n"
+        if hasattr(npc_obj, 'jinxs_dict') and npc_obj.jinxs_dict:
+            jinx_names = ", ".join([f"`{j}`" for j in npc_obj.jinxs_dict.keys()])
+            output += f"- **Associated Jinxs**: {jinx_names}\n"
+        return {"output": output, "messages": messages}
+
+    # 3. Is it a Jinx?
+    npc = safe_get(kwargs, 'npc')
+    jinx_obj = None
+    source = ""
+    if npc and hasattr(npc, 'jinxs_dict') and target in npc.jinxs_dict:
+        jinx_obj = npc.jinxs_dict[target]
+        source = f" (from NPC: `{npc.name}`)"
+    elif team and hasattr(team, 'jinxs_dict') and target in team.jinxs_dict:
+        jinx_obj = team.jinxs_dict[target]
+        source = f" (from Team: `{team.name}`)"
+
+    if jinx_obj:
+        output = f"## Help for Jinx: `/{target}`{source}\n\n"
+        output += f"- **Description**: {jinx_obj.description}\n"
+        if hasattr(jinx_obj, 'inputs') and jinx_obj.inputs:
+            inputs_str = json.dumps(jinx_obj.inputs, indent=2)
+            output += f"- **Inputs**:\n```json\n{inputs_str}\n```\n"
+        return {"output": output, "messages": messages}
+
+
+    return {"output": f"Sorry, no help topic found for `{target}`.", "messages": messages}
+
+
+
 
 @router.route("init", "Initialize NPC project")
 def init_handler(command: str, **kwargs):
@@ -262,20 +373,23 @@ def init_handler(command: str, **kwargs):
 
 
 
-@router.route("ots", "Take screenshot and optionally analyze with vision model")
+@router.route("ots", "Take screenshot and analyze with vision model")
 def ots_handler(command: str, **kwargs):
     command_parts = command.split()
     image_paths = []
     npc = safe_get(kwargs, 'npc')
-    vision_model = safe_get(kwargs, 'model', NPCSH_VISION_MODEL)
-    vision_provider = safe_get(kwargs, 'provider', NPCSH_VISION_PROVIDER)
-    if vision_model == NPCSH_CHAT_MODEL: 
-        vision_model = NPCSH_VISION_MODEL
-    if vision_provider == NPCSH_CHAT_PROVIDER: 
-        vision_provider = NPCSH_VISION_PROVIDER
-
-    messages = safe_get(kwargs, 'messages', [])
-    stream = safe_get(kwargs, 'stream', NPCSH_STREAM_OUTPUT)
+    vision_model = safe_get(kwargs, 
+                            'vmodel',
+                            NPCSH_VISION_MODEL)
+    vision_provider = safe_get(kwargs, 
+                               'vprovider', 
+                               NPCSH_VISION_PROVIDER)
+    messages = safe_get(kwargs, 
+                        'messages', 
+                        [])
+    stream = safe_get(kwargs, 
+                      'stream',
+                        NPCSH_STREAM_OUTPUT)
 
     try:
         if len(command_parts) > 1:
@@ -341,46 +455,48 @@ def plan_handler(command: str, **kwargs):
         return {"output": f"Error executing plan: {e}", "messages": messages}
 
 @router.route("pti", "Use pardon-the-interruption mode to interact with the LLM")
-def plonk_handler(command: str, **kwargs):
+def pti_handler(command: str, **kwargs):
     return
 
-@router.route("plonk", "Use vision model to interact with GUI")
+@router.route("plonk", "Use vision model to interact with GUI. Usage: /plonk <task description>")
 def plonk_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
-    request_str = " ".join(command.split()[1:])
-    if not request_str:
-        return {"output": "Usage: /plonk <task_description>", "messages": messages}
+    
+    # FIXED: Use the pre-parsed positional arguments for the request,
+    # leaving flags to be handled by kwargs.
+    positional_args = safe_get(kwargs, 'positional_args', [])
+    request_str = " ".join(positional_args)
 
-    action_space = {
-            "click": {"x": "int (0-100)", "y": "int (0-100)"},
-            "type": {"text": "string"},
-            "scroll": {"direction": "up/down/left/right", "amount": "int"},
-            "bash": {"command": "string"},
-            "wait": {"duration": "int (seconds)"}
-        }
+    if not request_str:
+        return {"output": "Usage: /plonk <task_description> [--vmodel model_name] [--vprovider provider_name]", "messages": messages}
+
     try:
-        result = execute_plonk_command(
+        plonk_context = safe_get(kwargs, 'plonk_context')
+        
+        # This part now works automatically with CLI flags because they are in kwargs
+        summary_data = execute_plonk_command(
             request=request_str,
-            action_space=action_space,
-            model=safe_get(kwargs, 'model', NPCSH_VISION_MODEL),
-            provider=safe_get(kwargs, 'provider', NPCSH_VISION_PROVIDER),
-            npc=safe_get(kwargs, 'npc')
-            )
-        if isinstance(result, dict) and "output" in result:
-            result_messages = result.get("messages", messages)
-            return {"output": result["output"], "messages": result_messages}
+            model=safe_get(kwargs, 'vmodel', NPCSH_VISION_MODEL),
+            provider=safe_get(kwargs, 'vprovider', NPCSH_VISION_PROVIDER),
+            npc=safe_get(kwargs, 'npc'),
+            plonk_context=plonk_context,
+            debug=True # Or could be controlled by a flag: safe_get(kwargs, 'debug', False)
+        )        
+        
+        if summary_data and isinstance(summary_data, list):
+            output_report = format_plonk_summary(summary_data)
+            return {"output": output_report, "messages": messages}
         else:
-            return {"output": str(result), "messages": messages}
-    except NameError:
-         return {"output": "Plonk function (execute_plonk_command) not available.", "messages": messages}
+            return {"output": "Plonk command did not complete within the maximum number of iterations.", "messages": messages}
+
     except Exception as e:
         traceback.print_exc()
         return {"output": f"Error executing plonk command: {e}", "messages": messages}
+
+
 @router.route("brainblast", "Execute an advanced chunked search on command history")
 def brainblast_handler(command: str, **kwargs):
-    messages = safe_get(kwargs, "messages", [])
-    
-    # Parse command to get the search query
+    messages = safe_get(kwargs, "messages", [])    
     parts = shlex.split(command)
     search_query = " ".join(parts[1:]) if len(parts) > 1 else ""
     
@@ -420,12 +536,10 @@ def brainblast_handler(command: str, **kwargs):
 def rag_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
     
-    # Parse command with shlex to properly handle quoted strings
     parts = shlex.split(command)
     user_command = []
     file_paths = []
     
-    # Process arguments
     i = 1  # Skip the first element which is "rag"
     while i < len(parts):
         if parts[i] == "-f" or parts[i] == "--file":
@@ -443,8 +557,8 @@ def rag_handler(command: str, **kwargs):
     user_command = " ".join(user_command)
     
     vector_db_path = safe_get(kwargs, "vector_db_path", os.path.expanduser('~/npcsh_chroma.db'))
-    embedding_model = safe_get(kwargs, "embedding_model", NPCSH_EMBEDDING_MODEL)
-    embedding_provider = safe_get(kwargs, "embedding_provider", NPCSH_EMBEDDING_PROVIDER)
+    embedding_model = safe_get(kwargs, "emodel", NPCSH_EMBEDDING_MODEL)
+    embedding_provider = safe_get(kwargs, "eprovider", NPCSH_EMBEDDING_PROVIDER)
     
     if not user_command and not file_paths:
         return {"output": "Usage: /rag [-f file_path] <query>", "messages": messages}
@@ -486,8 +600,8 @@ def roll_handler(command: str, **kwargs):
     try:
         result = gen_video(
             prompt=prompt,
-            model=safe_get(kwargs, 'model', NPCSH_VISION_MODEL),
-            provider=safe_get(kwargs, 'provider', NPCSH_VISION_PROVIDER),
+            model=safe_get(kwargs, 'vgmodel', NPCSH_VIDEO_GEN_MODEL),
+            provider=safe_get(kwargs, 'vgprovider', NPCSH_VIDEO_GEN_PROVIDER),
             npc=safe_get(kwargs, 'npc'),
             num_frames = num_frames,
             width = width,
@@ -505,42 +619,59 @@ def roll_handler(command: str, **kwargs):
 @router.route("sample", "Send a prompt directly to the LLM")
 def sample_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
-    prompt = " ".join(command.split()[1:])
+    
+
+    positional_args = safe_get(kwargs, 'positional_args', [])
+    prompt = " ".join(positional_args)
+
     if not prompt:
-        return {"output": "Usage: /sample <your prompt>", "messages": messages}
+        return {"output": "Usage: /sample <your prompt> [-m --model] model  [-p --provider] provider", 
+                "messages": messages}
 
     try:
         result = get_llm_response(
             prompt=prompt,
-            provider=safe_get(kwargs, 'provider'),
-            model=safe_get(kwargs, 'model'),
-            images=safe_get(kwargs, 'attachments'),
-            npc=safe_get(kwargs, 'npc'),
-            team=safe_get(kwargs, 'team'),
-            messages=messages,
-            api_url=safe_get(kwargs, 'api_url'),
-            api_key=safe_get(kwargs, 'api_key'),
-            context=safe_get(kwargs, 'context'),
-            stream=safe_get(kwargs, 'stream')
+            **kwargs
         )
-        return result
+        if result and isinstance(result, dict):
+            return {
+                "output": result.get('response'), 
+                "messages": result.get('messages', messages), 
+                "model": kwargs.get('model'), 
+                "provider":kwargs.get('provider'), 
+                "npc":kwargs.get("npc"),
+            }
+        else:
+            # Handle cases where get_llm_response might fail and return something unexpected
+            return {"output": str(result), "messages": messages}
+
     except Exception as e:
         traceback.print_exc()
         return {"output": f"Error sampling LLM: {e}", "messages": messages}
-
 @router.route("search", "Execute a web search command")
 def search_handler(command: str, **kwargs):
     """    
     Executes a search command.
     # search commands will bel ike :
-    # '/search -p default = google "search term" '
-    # '/search -p perplexity ..
-    # '/search -p google ..
+    # '/search "search term" '
+    # '/search -sp perplexity ..
+    # '/search -sp google ..
     # extract provider if its there
     # check for either -p or --p        
     """
     messages = safe_get(kwargs, "messages", [])
-    query = " ".join(command.split()[1:])
+    
+    # The query is now in 'positional_args'
+    positional_args = safe_get(kwargs, 'positional_args', [])
+    query = " ".join(positional_args)
+    
+    if not query:
+        return {"output": "Usage: /search [-sp name --sprovider name] query", 
+                "messages": messages}
+    search_provider = safe_get(kwargs, 'sprovider', NPCSH_SEARCH_PROVIDER)
+    render_markdown(f'- Searching {search_provider} for "{query}"'    )
+
+
     
     if not query:
         return {"output": "Usage: /search <query>", "messages": messages}
@@ -555,7 +686,7 @@ def search_handler(command: str, **kwargs):
 
 
 
-@router.route("serve", "Set configuration values")
+@router.route("serve", "Serve an NPC Team")
 def serve_handler(command: str, **kwargs):
     #print('calling serve handler')
     #print(kwargs)
@@ -599,39 +730,134 @@ def set_handler(command: str, **kwargs):
         output = f"Error setting configuration '{key}': {e}"
     return {"output": output, "messages": messages}
 
-@router.route("sleep", "Pause execution for N seconds")
+@router.route("sleep", "Evolve knowledge graph. Use --dream to also run creative synthesis.")
 def sleep_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
-    parts = command.split()
+    npc = safe_get(kwargs, 'npc')
+    team = safe_get(kwargs, 'team')
+    model = safe_get(kwargs, 'model')
+    provider = safe_get(kwargs, 'provider')
+
+    is_dreaming = safe_get(kwargs, 'dream', False)
+    operations_str = safe_get(kwargs, 'ops')
+    
+    operations_config = None
+    if operations_str and isinstance(operations_str, str):
+        operations_config = [op.strip() for op in operations_str.split(',')]
+
+    # Define the scope variables clearly at the start
+    team_name = team.name if team else "__none__"
+    npc_name = npc.name if isinstance(npc, NPC) else "__none__"
+    current_path = os.getcwd()
+    scope_str = f"Team: '{team_name}', NPC: '{npc_name}', Path: '{current_path}'"
+
+    # ADDED: Log the scope being checked for clarity
+    render_markdown(f"- Checking knowledge graph for scope: {scope_str}")
+
     try:
-        seconds = float(parts[1]) if len(parts) > 1 else 1.0
-        if seconds < 0: raise ValueError("Duration must be non-negative")
-        time.sleep(seconds)
-        output = f"Slept for {seconds} seconds."
-    except (ValueError, IndexError):
-        output = "Usage: /sleep <seconds>"
+        db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
+        command_history = CommandHistory(db_path)
+        conn = command_history.conn
     except Exception as e:
+        return {"output": f"Error connecting to history database for KG access: {e}", "messages": messages}
+
+    try:
+        current_kg = load_kg_from_db(conn, team_name, npc_name, current_path)
+
+        # FIXED: Provide a detailed and helpful message when the KG is empty
+        if not current_kg or not current_kg.get('facts'):
+            output_msg = f"Knowledge graph for the current scope is empty. Nothing to process.\n"
+            output_msg += f"  - Scope Checked: {scope_str}\n\n"
+            output_msg += "**Hint:** Have a conversation or run some commands first to build up knowledge in this specific context. The KG is unique to each combination of Team, NPC, and directory."
+            return {"output": output_msg, "messages": messages}
+
+        # Store initial stats for the final report
+        original_facts = len(current_kg.get('facts', []))
+        original_concepts = len(current_kg.get('concepts', []))
+        
+        # --- SEQUENTIAL EXECUTION ---
+
+        # 1. Always run the sleep process for maintenance first.
+        process_type = "Sleep"
+        ops_display = f"with operations: {operations_config}" if operations_config else "with random operations"
+        render_markdown(f"- Initiating sleep process {ops_display}")
+        
+        evolved_kg, _ = kg_sleep_process(
+            existing_kg=current_kg,
+            model=model,
+            provider=provider,
+            npc=npc,
+            operations_config=operations_config
+        )
+
+        # 2. If --dream is specified, run the dream process on the *result* of the sleep process.
+        if is_dreaming:
+            process_type += " & Dream"
+            render_markdown(f"- Initiating dream process on the evolved KG...")
+            evolved_kg, _ = kg_dream_process(
+                existing_kg=evolved_kg,
+                model=model,
+                provider=provider,
+                npc=npc
+            )
+
+        # 3. Save the final state of the KG back to the database
+        save_kg_to_db(conn, evolved_kg, team_name, npc_name, current_path)
+
+        # 4. Report the final, cumulative changes back to the user
+        new_facts = len(evolved_kg.get('facts', []))
+        new_concepts = len(evolved_kg.get('concepts', []))
+
+        output = f"{process_type} process complete.\n"
+        output += f"- Facts: {original_facts} -> {new_facts} ({new_facts - original_facts:+})\n"
+        output += f"- Concepts: {original_concepts} -> {new_concepts} ({new_concepts - original_concepts:+})"
+        
+        print(evolved_kg.get('facts'))
+        print(evolved_kg.get('concepts'))
+        
+        return {"output": output, "messages": messages}
+
+    except Exception as e:
+        import traceback
         traceback.print_exc()
-        output = f"Error during sleep: {e}"
-    return {"output": output, "messages": messages}
+        return {"output": f"Error during KG evolution process: {e}", "messages": messages}
+    finally:
+        if 'command_history' in locals() and command_history:
+            command_history.close()
+
+
+
 
 @router.route("spool", "Enter interactive chat (spool) mode")
 def spool_handler(command: str, **kwargs):
     try:
+        # Handle NPC loading if npc is passed as a string (name)
+        npc = safe_get(kwargs, 'npc')
+        team = safe_get(kwargs, 'team')
+        
+        # If npc is a string, try to load it from the team
+        if isinstance(npc, str) and team:
+            npc_name = npc
+            if npc_name in team.npcs:
+                npc = team.npcs[npc_name]
+            else:
+                return {"output": f"Error: NPC '{npc_name}' not found in team. Available NPCs: {', '.join(team.npcs.keys())}", "messages": safe_get(kwargs, "messages", [])}
+        
         return enter_spool_mode(
             model=safe_get(kwargs, 'model', NPCSH_CHAT_MODEL),
             provider=safe_get(kwargs, 'provider', NPCSH_CHAT_PROVIDER),
-            npc=safe_get(kwargs, 'npc'),
+            npc=npc,  
+            team=team, 
             messages=safe_get(kwargs, 'messages'),
             conversation_id=safe_get(kwargs, 'conversation_id'),
             stream=safe_get(kwargs, 'stream', NPCSH_STREAM_OUTPUT),
-            files=safe_get(kwargs, 'files'),
+            attachments=safe_get(kwargs, 'attachments'),
+            rag_similarity_threshold = safe_get(kwargs, 'rag_similarity_threshold', 0.3), 
         )
     except Exception as e:
         traceback.print_exc()
         return {"output": f"Error entering spool mode: {e}", "messages": safe_get(kwargs, "messages", [])}
-
-
+    
 @router.route("jinxs", "Show available jinxs for the current NPC/Team")
 def jinxs_handler(command: str, **kwargs):
     npc = safe_get(kwargs, 'npc')
@@ -681,46 +907,18 @@ def trigger_handler(command: str, **kwargs):
 @router.route("vixynt", "Generate images from text descriptions")
 def vixynt_handler(command: str, **kwargs):
     npc = safe_get(kwargs, 'npc')
-    model = safe_get(kwargs, 'model', NPCSH_IMAGE_GEN_MODEL)
-    provider = safe_get(kwargs, 'provider', NPCSH_IMAGE_GEN_PROVIDER)
+    model = safe_get(kwargs, 'igmodel', NPCSH_IMAGE_GEN_MODEL)
+    provider = safe_get(kwargs, 'igprovider', NPCSH_IMAGE_GEN_PROVIDER)
     height = safe_get(kwargs, 'height', 1024)
     width = safe_get(kwargs, 'width', 1024)
-    filename = safe_get(kwargs, 'output_filename', None)
-    attachments = None
-    if model == NPCSH_CHAT_MODEL: model = NPCSH_IMAGE_GEN_MODEL
-    if provider == NPCSH_CHAT_PROVIDER: provider = NPCSH_IMAGE_GEN_PROVIDER
-
+    output_file = safe_get(kwargs, 'output_file')
+    attachments = safe_get(kwargs, 'attachments')
     messages = safe_get(kwargs, 'messages', [])
 
-    filename = None
+    user_prompt = " ".join(safe_get(kwargs, 'positional_args', []))
 
-    prompt_parts = []
-    try:
-        parts = shlex.split(command)
-        for part in parts[1:]:
-            if part.startswith("filename="):
-                filename = part.split("=", 1)[1]
-            elif part.startswith("height="):
-                try: 
-                    height = int(part.split("=", 1)[1])
-                except ValueError:
-                    pass
-            elif part.startswith("width="):
-                try: 
-                    width = int(part.split("=", 1)[1])
-                except ValueError: 
-                    pass
-            elif part.startswith("attachments="):  # New parameter for image editing
-                # split at comma
-                attachments = part.split("=", 1)[1].split(",")
-
-            else:
-                prompt_parts.append(part)
-    except Exception as parse_err:
-        return {"output": f"Error parsing arguments: {parse_err}. Usage: /vixynt <prompt> [filename=...] [height=...] [width=...] [input=...for editing]", "messages": messages}
-    user_prompt = " ".join(prompt_parts)
     if not user_prompt:
-        return {"output": "Usage: /vixynt <prompt> [filename=...] [height=...] [width=...] [attachments=... for editing]", "messages": messages}
+        return {"output": "Usage: /vixynt <prompt> [--output_file path] [--attachments path]", "messages": messages}
 
     try:
         image = gen_image(
@@ -730,28 +928,35 @@ def vixynt_handler(command: str, **kwargs):
             npc=npc,
             height=height,
             width=width,
-            input_images=attachments  
+            input_images=attachments
         )
-        if filename is None:
-            # Generate a filename based on the prompt and the date time
+
+        if output_file is None:
             os.makedirs(os.path.expanduser("~/.npcsh/images/"), exist_ok=True)
-            filename = (
+            output_file = (
                 os.path.expanduser("~/.npcsh/images/")
                 + f"image_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            )    
-        image.save(filename)
+            )
+        else:
+            output_file = os.path.expanduser(output_file)
+
+        image.save(output_file)
         image.show()
 
         if attachments:
-            output = f"Image edited and saved to: {filename}"
+            output = f"Image edited and saved to: {output_file}"
         else:
-            output = f"Image generated and saved to: {filename}"
+            output = f"Image generated and saved to: {output_file}"
     except Exception as e:
         traceback.print_exc()
         output = f"Error {'editing' if attachments else 'generating'} image: {e}"
 
-    return {"output": output, "messages": messages}
-# --- THIS IS THE FINAL, CORRECTED wander_handler in routes.py ---
+    return {
+        "output": output,
+        "messages": messages,
+        "model": model,
+        "provider": provider
+    }
 @router.route("wander", "Enter wander mode (experimental)")
 def wander_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])

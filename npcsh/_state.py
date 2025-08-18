@@ -11,7 +11,7 @@ from termcolor import colored
 
 
 
-from typing import Dict, List
+from typing import Dict, List, Any
 import subprocess
 import termios
 import tty
@@ -285,6 +285,92 @@ def setup_npcsh_config() -> None:
 
     ensure_npcshrc_exists()
     add_npcshrc_to_shell_config()
+
+
+
+CANONICAL_ARGS = [
+    'model',            
+    'provider',         
+    'output_file',           
+    'attachments',     
+    'format',    
+    'temperature',
+    'top_k',
+    'top_p',
+    'max_tokens',
+    'messages',    
+    'npc',
+    'team',
+    'height',
+    'width',
+    'num_frames',
+    'sprovider',
+    'emodel',
+    'eprovider',
+    'igmodel',
+    'igprovider',
+    'vmodel',
+    'vprovider',
+    'rmodel',
+    'rprovider',
+    'num_npcs',
+    'depth',
+    'exploration',
+    'creativity',
+    'port',
+    'cors',
+    'config_dir',
+    'plots_dir',
+    'refresh_period',
+    'lang',
+]
+
+def get_argument_help() -> Dict[str, List[str]]:
+    """
+    Analyzes CANONICAL_ARGS to generate a map of canonical arguments
+    to all their possible shorthands.
+    
+    Returns -> {'model': ['m', 'mo', 'mod', 'mode'], 'provider': ['p', 'pr', ...]}
+    """
+    arg_map = {arg: [] for arg in CANONICAL_ARGS}
+    
+    for arg in CANONICAL_ARGS:
+        # Generate all possible prefixes for this argument
+        for i in range(1, len(arg)):
+            prefix = arg[:i]
+            
+            # Check if this prefix is an unambiguous shorthand
+            matches = [canonical for canonical in CANONICAL_ARGS if canonical.startswith(prefix)]
+            
+            # If this prefix uniquely resolves to our current argument, it's a valid shorthand
+            if len(matches) == 1 and matches[0] == arg:
+                arg_map[arg].append(prefix)
+
+    return arg_map
+
+
+
+
+def normalize_and_expand_flags(parsed_flags: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Expands argument aliases based on the priority order of CANONICAL_ARGS.
+    The first matching prefix in the list wins.
+    """
+    normalized = {}
+    for key, value in parsed_flags.items():
+        if key in CANONICAL_ARGS:
+            if key in normalized:
+                print(colored(f"Warning: Argument '{key}' specified multiple times. Using last value.", "yellow"))
+            normalized[key] = value
+            continue
+        first_match = next((arg for arg in CANONICAL_ARGS if arg.startswith(key)), None)
+        if first_match:
+            if first_match in normalized:
+                print(colored(f"Warning: Argument '{first_match}' specified multiple times (via alias '{key}'). Using last value.", "yellow"))
+            normalized[first_match] = value
+        else:
+            normalized[key] = value
+    return normalized
 
 
 BASH_COMMANDS = [
@@ -1034,6 +1120,7 @@ class ShellState:
     embedding_provider: str = NPCSH_EMBEDDING_PROVIDER
     reasoning_model: str = NPCSH_REASONING_MODEL
     reasoning_provider: str = NPCSH_REASONING_PROVIDER
+    search_provider: str = NPCSH_SEARCH_PROVIDER
     image_gen_model: str = NPCSH_IMAGE_GEN_MODEL
     image_gen_provider: str = NPCSH_IMAGE_GEN_PROVIDER
     video_gen_model: str = NPCSH_VIDEO_GEN_MODEL

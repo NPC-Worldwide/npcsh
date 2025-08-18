@@ -20,7 +20,10 @@ from npcpy.npc_sysenv import print_and_process_stream_with_markdown
 
 
 
-def generate_random_npcs(num_npcs: int, model: str, provider: str, request: str) -> List[NPC]:
+def generate_random_npcs(num_npcs: int, 
+                         model: str, 
+                         provider: str, 
+                         request: str) -> List[NPC]:
     """
     Generate a diverse set of NPCs with different expertise and perspectives
     related to the research request.
@@ -135,10 +138,14 @@ def generate_random_npcs(num_npcs: int, model: str, provider: str, request: str)
     
     return npcs
 
-def generate_research_chain(request: str, npc: NPC, depth: int, memory: int = 3, 
-                           context: str = None, model: str = None, provider: str = None,
-                           exploration_factor: float = 0.3,
-                           creativity_factor: float = 0.5) -> List[str]:
+def generate_research_chain(request: str, 
+                            npc: NPC, depth: int, 
+                            memory: int = 3, 
+                            context: str = None, 
+                            model: str = None, 
+                            provider: str = None,
+                            exploration_factor: float = 0.3,
+                            creativity_factor: float = 0.5) -> List[str]:
     """
     Generate a chain of research thoughts from a single NPC, diving deeper with each step.
     
@@ -209,7 +216,11 @@ def format_facts_list(facts: List[str]) -> str:
     """Format a list of facts for display in a report"""
     return "\n".join([f"• {fact}" for fact in facts])
 
-def simulate_experiments(research: Dict[str, Any], request: str, model: str = None, provider: str = None, max_experiments: int = None) -> Dict[str, Dict[str, Any]]:
+def simulate_experiments(research: Dict[str, Any], 
+                         request: str, 
+                         model: str = None, 
+                         provider: str = None, 
+                         max_experiments: int = None) -> Dict[str, Dict[str, Any]]:
     """
     Simulate thought experiments based on research findings
     
@@ -269,7 +280,11 @@ def simulate_experiments(research: Dict[str, Any], request: str, model: str = No
     simulations, thought experiments, and interdisciplinary methods.
     """
     
-    response = get_llm_response(prompt=prompt, model=model, provider=provider, temperature=0.8, format="json")
+    response = get_llm_response(prompt=prompt, 
+                                model=model, 
+                                provider=provider,
+                                temperature=0.8, 
+                                format="json")
     experiments = response.get("response", {})
     
     # Limit experiments if needed
