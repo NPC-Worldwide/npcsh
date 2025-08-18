@@ -1273,13 +1273,14 @@ def process_result(
         )
 
         conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
-        conn = command_history.conn
+        engine = command_history.engine
+
 
         if result_state.build_kg:
             try:
                 if not should_skip_kg_processing(user_input, final_output_str):
 
-                    npc_kg = load_kg_from_db(conn, team_name, npc_name, result_state.current_path)
+                    npc_kg = load_kg_from_db(engine, team_name, npc_name, result_state.current_path)
                     evolved_npc_kg, _ = kg_evolve_incremental(
                         existing_kg=npc_kg, 
                         new_content_text=conversation_turn_text,
@@ -1292,7 +1293,7 @@ def process_result(
 
                         
                     )
-                    save_kg_to_db(conn,
+                    save_kg_to_db(engine,
                                 evolved_npc_kg, 
                                 team_name, 
                                 npc_name, 
@@ -1375,7 +1376,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
         print("\nGoodbye!")
         print(colored("Processing and archiving all session knowledge...", "cyan"))
         
-        conn = command_history.conn
+        engine = command_history.engine
         integrator_npc = NPC(name="integrator", model=current_state.chat_model, provider=current_state.chat_provider)
 
         # Process each unique scope that was active during the session
@@ -1399,7 +1400,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                     continue
 
                 # Load the existing KG for this specific, real scope
-                current_kg = load_kg_from_db(conn, team_name, npc_name, path)
+                current_kg = load_kg_from_db(engine, team_name, npc_name, path)
                 
                 # Evolve it with the full text from the session for this scope
                 evolved_kg, _ = kg_evolve_incremental(
@@ -1415,7 +1416,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                 )
                 
                 # Save the updated KG back to the database under the same exact scope
-                save_kg_to_db(conn, evolved_kg, team_name, npc_name, path)
+                save_kg_to_db(engine, evolved_kg, team_name, npc_name, path)
 
             except Exception as e:
                 import traceback

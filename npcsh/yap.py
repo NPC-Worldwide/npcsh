@@ -54,18 +54,20 @@ from npcpy.npc_compiler import (
 from npcpy.memory.command_history import CommandHistory, save_conversation_message,start_new_conversation
 from typing import Dict, Any, List
 def enter_yap_mode(
-    
-    model: str ,
-    provider: str ,
-    messages: list = None,
+    messages: list = None,        
+    model: str =  None,
+    provider: str = None ,
     npc = None,    
-    team=  None,
+    team =  None,
+    stream: bool = False, 
+    api_url: str = None,
+    api_key: str=None, 
+    conversation_id = None,
     tts_model="kokoro",
     voice="af_heart", 
     files: List[str] = None,
     rag_similarity_threshold: float = 0.3,
-    stream: bool = NPCSH_STREAM_OUTPUT, 
-    conversation_id = None,
+    **kwargs
 ) -> Dict[str, Any]:
     running = True
     is_recording = False
@@ -100,22 +102,20 @@ def enter_yap_mode(
     # Add conciseness instruction to the system message
     system_message = system_message + " " + concise_instruction
 
-    if messages is None:
+    if messages is None or len(messages) == 0:
         messages = [{"role": "system", "content": system_message}]
     elif messages is not None and messages[0]['role'] != 'system':
         messages.insert(0, {"role": "system", "content": system_message})
 
     kokoro_pipeline = None
     if tts_model == "kokoro":
-        try:
-            from kokoro import KPipeline
-            import soundfile as sf
+        from kokoro import KPipeline
+        import soundfile as sf
 
-            kokoro_pipeline = KPipeline(lang_code="a")
-            print("Kokoro TTS model initialized")
-        except ImportError:
-            print("Kokoro not installed, falling back to gTTS")
-            tts_model = "gtts"
+        kokoro_pipeline = KPipeline(lang_code="a")
+        print("Kokoro TTS model initialized")
+
+
 
     # Initialize PyAudio
     pyaudio_instance = pyaudio.PyAudio()
@@ -134,43 +134,45 @@ def enter_yap_mode(
         nonlocal running, audio_stream
 
         while running and speech_thread_active.is_set():
-            try:
-                # Get next speech item from queue
-                if not speech_queue.empty():
-                    text_to_speak = speech_queue.get(timeout=0.1)
+            #try:
+            # Get next speech item from queue
+            print('....')
+            if not speech_queue.empty():
+                print('\n')
+                text_to_speak = speech_queue.get(timeout=0.1)
 
-                    # Only process if there's text to speak
-                    if text_to_speak.strip():
-                        # IMPORTANT: Set is_speaking flag BEFORE starting audio output
-                        is_speaking.set()
+                # Only process if there's text to speak
+                if text_to_speak.strip():
+                    # IMPORTANT: Set is_speaking flag BEFORE starting audio output
+                    is_speaking.set()
 
-                        # Safely close the audio input stream before speaking
-                        current_audio_stream = audio_stream
-                        audio_stream = (
-                            None  # Set to None to prevent capture thread from using it
-                        )
+                    # Safely close the audio input stream before speaking
+                    current_audio_stream = audio_stream
+                    audio_stream = (
+                        None  # Set to None to prevent capture thread from using it
+                    )
 
-                        if current_audio_stream and current_audio_stream.is_active():
-                            current_audio_stream.stop_stream()
-                            current_audio_stream.close()
+                    if current_audio_stream and current_audio_stream.is_active():
+                        current_audio_stream.stop_stream()
+                        current_audio_stream.close()
 
-                        print(f"Speaking full response...")
+                    print(f"Speaking full response...")
+                    print(text_to_speak)
+                    # Generate and play speech
+                    generate_and_play_speech(text_to_speak)
 
-                        # Generate and play speech
-                        generate_and_play_speech(text_to_speak)
+                    # Delay after speech to prevent echo
+                    time.sleep(0.005 * len(text_to_speak))
+                    print(len(text_to_speak))
 
-                        # Delay after speech to prevent echo
-                        time.sleep(0.005 * len(text_to_speak))
-                        print(len(text_to_speak))
-
-                        # Clear the speaking flag to allow listening again
-                        is_speaking.clear()
-                else:
-                    time.sleep(0.5)
-            except Exception as e:
-                print(f"Error in speech thread: {e}")
-                is_speaking.clear()  # Make sure to clear the flag if there's an error
-                time.sleep(0.1)
+                    # Clear the speaking flag to allow listening again
+                    is_speaking.clear()
+            else:
+                time.sleep(0.5)
+            #except Exception as e:
+            #    print(f"Error in speech thread: {e}")
+            #    is_speaking.clear()  # Make sure to clear the flag if there's an error
+            #    time.sleep(0.1)
 
     def safely_close_audio_stream(stream):
         """Safely close an audio stream with error handling"""
@@ -315,10 +317,9 @@ def enter_yap_mode(
                     frames_per_buffer=CHUNK,
                 )
 
-            # Initialize or reset the recording variables
-            is_recording = False
-            recording_data = []
-            buffer_data = []
+            # Add timeout counter
+            timeout_counter = 0
+            max_timeout = 100  # About 10 seconds at 0.1s intervals
 
             print("\nListening for speech...")
 
@@ -327,49 +328,63 @@ def enter_yap_mode(
                 and audio_stream
                 and audio_stream.is_active()
                 and not is_speaking.is_set()
+                and timeout_counter < max_timeout
             ):
                 try:
+                    # Add non-blocking read with timeout
                     data = audio_stream.read(CHUNK, exception_on_overflow=False)
-                    if data:
-                        audio_array = np.frombuffer(data, dtype=np.int16)
-                        audio_float = audio_array.astype(np.float32) / 32768.0
+                    
+                    if not data:
+                        timeout_counter += 1
+                        time.sleep(0.1)
+                        continue
+                        
+                    # Reset timeout on successful read
+                    timeout_counter = 0
+                    
+                    audio_array = np.frombuffer(data, dtype=np.int16)
+                    if len(audio_array) == 0:
+                        continue
+                        
+                    audio_float = audio_array.astype(np.float32) / 32768.0
+                    tensor = torch.from_numpy(audio_float).to(device)
+                    
+                    # Add timeout to VAD processing
+                    speech_prob = vad_model(tensor, RATE).item()
+                    current_time = time.time()
 
-                        tensor = torch.from_numpy(audio_float).to(device)
-                        speech_prob = vad_model(tensor, RATE).item()
-                        current_time = time.time()
+                    if speech_prob > 0.5:  # VAD threshold
+                        last_speech_time = current_time
+                        if not is_recording:
+                            is_recording = True
+                            print("\nSpeech detected, listening...")
+                            recording_data.extend(buffer_data)
+                            buffer_data = []
+                        recording_data.append(data)
+                    else:
+                        if is_recording:
+                            if (
+                                current_time - last_speech_time > 1
+                            ):  # silence duration
+                                is_recording = False
+                                print("Speech ended, transcribing...")
 
-                        if speech_prob > 0.5:  # VAD threshold
-                            last_speech_time = current_time
-                            if not is_recording:
-                                is_recording = True
-                                print("\nSpeech detected, listening...")
-                                recording_data.extend(buffer_data)
-                                buffer_data = []
-                            recording_data.append(data)
+                                # Stop stream before transcribing
+                                safely_close_audio_stream(audio_stream)
+                                audio_stream = None
+
+                                # Transcribe in this thread to avoid race conditions
+                                transcription = transcribe_recording(recording_data)
+                                if transcription:
+                                    transcription_queue.put(transcription)
+                                recording_data = []
+                                return True  # Got speech
                         else:
-                            if is_recording:
-                                if (
-                                    current_time - last_speech_time > 1
-                                ):  # silence duration
-                                    is_recording = False
-                                    print("Speech ended, transcribing...")
-
-                                    # Stop stream before transcribing
-                                    safely_close_audio_stream(audio_stream)
-                                    audio_stream = None
-
-                                    # Transcribe in this thread to avoid race conditions
-                                    transcription = transcribe_recording(recording_data)
-                                    if transcription:
-                                        transcription_queue.put(transcription)
-                                    recording_data = []
-                                    return True  # Got speech
-                            else:
-                                buffer_data.append(data)
-                                if len(buffer_data) > int(
-                                    0.65 * RATE / CHUNK
-                                ):  # buffer duration
-                                    buffer_data.pop(0)
+                            buffer_data.append(data)
+                            if len(buffer_data) > int(
+                                0.65 * RATE / CHUNK
+                            ):  # buffer duration
+                                buffer_data.pop(0)
 
                     # Check frequently if we need to stop capturing
                     if is_speaking.is_set():
@@ -427,19 +442,14 @@ def enter_yap_mode(
 
 
         while running:
-
-            # First check for typed input (non-blocking)
             import select
             import sys
-
-            # Don't spam the console with prompts when speaking
             if not is_speaking.is_set():
                 print(
                     "🎤🎤🎤🎤\n Speak or type your message (or 'exit' to quit): ",
                     end="",
                     flush=True,
                 )
-
             rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
             if rlist:
                 user_input = sys.stdin.readline().strip()
@@ -448,7 +458,7 @@ def enter_yap_mode(
                     break
                 if user_input:
                     print(f"\nYou (typed): {user_input}")
-                    # Handle RAG context
+
                     if loaded_content:
                         context_content = ""
                         for filename, content in loaded_content.items():
@@ -494,9 +504,8 @@ def enter_yap_mode(
 
 
                     continue  # Skip audio capture this cycle
-
-            # Then try to capture some audio (if no typed input)
             if not is_speaking.is_set():  # Only capture if not currently speaking
+                print('capturing audio')
                 got_speech = capture_audio()
 
                 # If we got speech, process it
@@ -560,9 +569,9 @@ def main():
         provider = sibiji.provider        
     # Enter spool mode
     enter_yap_mode(
-        model,
-        provider,
         messages=None,
+        model= model,
+        provider = provider,
         npc=sibiji,
         team = team,
         files=args.files,
