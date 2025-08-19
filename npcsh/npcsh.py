@@ -664,11 +664,12 @@ def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
     return False
 
 
-
 def execute_slash_command(command: str, stdin_input: Optional[str], state: ShellState, stream: bool) -> Tuple[ShellState, Any]:
     """Executes slash commands using the router or checking NPC/Team jinxs."""
     all_command_parts = shlex.split(command)
     command_name = all_command_parts[0].lstrip('/')
+    
+    # Handle NPC switching commands
     if command_name in ['n', 'npc']:
         npc_to_switch_to = all_command_parts[1] if len(all_command_parts) > 1 else None
         if npc_to_switch_to and state.team and npc_to_switch_to in state.team.npcs:
@@ -677,10 +678,11 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
         else:
             available_npcs = list(state.team.npcs.keys()) if state.team else []
             return state, colored(f"NPC '{npc_to_switch_to}' not found. Available NPCs: {', '.join(available_npcs)}", "red")
+    
+    # Check router commands first
     handler = router.get_route(command_name)
     if handler:
         parsed_flags, positional_args = parse_generic_command_flags(all_command_parts[1:])
-
         normalized_flags = normalize_and_expand_flags(parsed_flags)
 
         handler_kwargs = {
@@ -705,38 +707,37 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
             'igmodel': state.image_gen_model,
             'igprovider': state.image_gen_provider,
             'vgmodel': state.video_gen_model, 
-            'vgprovider':state.video_gen_provider,
+            'vgprovider': state.video_gen_provider,
             'vmodel': state.vision_model,
             'vprovider': state.vision_provider,
             'rmodel': state.reasoning_model,
             'rprovider': state.reasoning_provider,
         }
         
-        if len(normalized_flags)>0:
+        if len(normalized_flags) > 0:
             kwarg_part = 'with kwargs: \n    -' + '\n    -'.join(f'{key}={item}' for key, item in normalized_flags.items())
         else:
             kwarg_part = ''
 
-        # 4. Merge the clean, normalized flags. This will correctly overwrite defaults.
         render_markdown(f'- Calling {command_name} handler {kwarg_part} ')
+        
+        # Handle model/provider inference
         if 'model' in normalized_flags and 'provider' not in normalized_flags:
-            # Call your existing, centralized lookup_provider function
             inferred_provider = lookup_provider(normalized_flags['model'])
             if inferred_provider:
-                # Update the provider that will be used for this command.
                 handler_kwargs['provider'] = inferred_provider
                 print(colored(f"Info: Inferred provider '{inferred_provider}' for model '{normalized_flags['model']}'.", "cyan"))
+        
         if 'provider' in normalized_flags and 'model' not in normalized_flags:
-            # loop up mhandler_kwargs model's provider
             current_provider = lookup_provider(handler_kwargs['model'])
             if current_provider != normalized_flags['provider']:
-                print(f'Please specify a model for the provider: {normalized_flags['provider']}')
-        handler_kwargs.update(normalized_flags)
+                prov = normalized_flags['provider']
+                print(f'Please specify a model for the provider: {prov}')
         
+        handler_kwargs.update(normalized_flags)
         
         try:
             result_dict = handler(command=command, **handler_kwargs)
-            # add the output model and provider for the print_and_process_stream downstream processing
             if isinstance(result_dict, dict):
                 state.messages = result_dict.get("messages", state.messages)
                 return state, result_dict
@@ -747,39 +748,64 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
             print(f"Error executing slash command '{command_name}':", file=sys.stderr)
             traceback.print_exc()
             return state, colored(f"Error executing slash command '{command_name}': {e}", "red")
+
+    # Check for jinxs in active NPC
     active_npc = state.npc if isinstance(state.npc, NPC) else None
     jinx_to_execute = None
     executor = None
-    if active_npc and command_name in active_npc.jinxs_dict:
+    
+    if active_npc and hasattr(active_npc, 'jinxs_dict') and command_name in active_npc.jinxs_dict:
         jinx_to_execute = active_npc.jinxs_dict[command_name]
         executor = active_npc
-    elif state.team and command_name in state.team.jinxs_dict:
+    elif state.team and hasattr(state.team, 'jinxs_dict') and command_name in state.team.jinxs_dict:
         jinx_to_execute = state.team.jinxs_dict[command_name]
         executor = state.team
-
     if jinx_to_execute:
-        args = command_parts[1:]
+        args = all_command_parts[1:]  # Fix: use all_command_parts instead of command_parts
         try:
-            jinx_output = jinx_to_execute.run(
-                *args,
-                state=state,
-                stdin_input=stdin_input,
-                messages=state.messages # Pass messages explicitly if needed
-            )
-            return state, jinx_output
+            # Create input dictionary from args based on jinx inputs
+            input_values = {}
+            if hasattr(jinx_to_execute, 'inputs') and jinx_to_execute.inputs:
+                for i, input_name in enumerate(jinx_to_execute.inputs):
+                    if i < len(args):
+                        input_values[input_name] = args[i]
+            
+            # Execute the jinx with proper parameters
+            if isinstance(executor, NPC):
+                jinx_output = jinx_to_execute.execute(
+                    input_values=input_values,
+                    jinxs_dict=executor.jinxs_dict if hasattr(executor, 'jinxs_dict') else {},
+                    npc=executor,
+                    messages=state.messages
+                )
+            else:  # Team executor
+                jinx_output = jinx_to_execute.execute(
+                    input_values=input_values,
+                    jinxs_dict=executor.jinxs_dict if hasattr(executor, 'jinxs_dict') else {},
+                    npc=active_npc or state.npc,
+                    messages=state.messages
+                )
+            
+            # Update messages if jinx execution returned them
+            if isinstance(jinx_output, dict) and 'messages' in jinx_output:
+                state.messages = jinx_output['messages']
+                return state, jinx_output.get('output', jinx_output)
+            else:
+                return state, jinx_output
+                
         except Exception as e:
             import traceback
             print(f"Error executing jinx '{command_name}':", file=sys.stderr)
             traceback.print_exc()
             return state, colored(f"Error executing jinx '{command_name}': {e}", "red")
 
+    # Check if it's an NPC name for switching
     if state.team and command_name in state.team.npcs:
         new_npc = state.team.npcs[command_name]
-        state.npc = new_npc # Update state directly
+        state.npc = new_npc
         return state, f"Switched to NPC: {new_npc.name}"
 
-    return state, colored(f"Unknown slash command or jinx: {command_name}", "red")
-
+    return state, colored(f"Unknown slash command, jinx, or NPC: {command_name}", "red")
 
 def process_pipeline_command(
     cmd_segment: str,
@@ -893,7 +919,8 @@ def execute_command(
     active_provider = npc_provider or state.chat_provider
 
     if state.current_mode == 'agent':
-        print(len(commands), commands)
+        print('# of parsed commands: ', len(commands))
+        print('Commands:' '\n'.join(commands))
         for i, cmd_segment in enumerate(commands):
 
             render_markdown(f'- executing command {i+1}/{len(commands)}')
@@ -1170,7 +1197,8 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     
     if os.path.exists(forenpc_path):
         forenpc_obj = NPC(file = forenpc_path, 
-                          jinxs=jinxs_list)
+                          jinxs=jinxs_list, 
+                          db_conn=command_history.engine)
         if forenpc_obj.model is None:
             forenpc_obj.model= team_ctx.get("model", initial_state.chat_model)
         if forenpc_obj.provider is None:
@@ -1223,9 +1251,8 @@ def process_result(
     active_npc = result_state.npc if isinstance(result_state.npc, NPC) else NPC(
         name="default", 
         model=result_state.chat_model, 
-        provider=result_state.chat_provider
-    )
-
+        provider=result_state.chat_provider, 
+        db_conn=command_history.engine)
     save_conversation_message(
         command_history,
         result_state.conversation_id,
@@ -1377,14 +1404,13 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
         print(colored("Processing and archiving all session knowledge...", "cyan"))
         
         engine = command_history.engine
-        integrator_npc = NPC(name="integrator", model=current_state.chat_model, provider=current_state.chat_provider)
 
-        # Process each unique scope that was active during the session
+
         for team_name, npc_name, path in session_scopes:
             try:
                 print(f"  -> Archiving knowledge for: T='{team_name}', N='{npc_name}', P='{path}'")
                 
-                # Get all messages for the current conversation that happened in this specific path
+
                 convo_id = current_state.conversation_id
                 all_messages = command_history.get_conversations_by_id(convo_id)
                 
@@ -1399,15 +1425,16 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                     print("     ...No content for this scope, skipping.")
                     continue
 
-                # Load the existing KG for this specific, real scope
+
                 current_kg = load_kg_from_db(engine, team_name, npc_name, path)
                 
-                # Evolve it with the full text from the session for this scope
+
                 evolved_kg, _ = kg_evolve_incremental(
                     existing_kg=current_kg,
                     new_content_text=full_text,
-                    model=integrator_npc.model,
-                    provider=integrator_npc.provider, 
+                    model=current_state.npc.model,
+                    provider=current_state.npc.provider, 
+                    npc= current_state.npc,
                     get_concepts=True,
                     link_concepts_facts = True, 
                     link_concepts_concepts = True, 
@@ -1416,7 +1443,11 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                 )
                 
                 # Save the updated KG back to the database under the same exact scope
-                save_kg_to_db(engine, evolved_kg, team_name, npc_name, path)
+                save_kg_to_db(engine,
+                              evolved_kg,
+                              team_name, 
+                              npc_name, 
+                              path)
 
             except Exception as e:
                 import traceback
