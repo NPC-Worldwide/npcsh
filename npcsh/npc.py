@@ -1,7 +1,6 @@
 import argparse
 import sys
 import os
-import sqlite3
 import traceback
 from typing import Optional
 
@@ -11,7 +10,8 @@ from npcsh._state import (
     NPCSH_API_URL, 
     NPCSH_DB_PATH, 
     NPCSH_STREAM_OUTPUT,
-    )
+    initial_state,
+)
 from npcpy.npc_sysenv import (
     print_and_process_stream_with_markdown,
     render_markdown,
@@ -19,8 +19,18 @@ from npcpy.npc_sysenv import (
 from npcpy.npc_compiler import NPC, Team
 from npcsh.routes import router
 from npcpy.llm_funcs import check_llm_command
+from sqlalchemy import create_engine
+
+# Import the key functions from npcsh
+from npcsh.npcsh import (
+    setup_shell,
+    execute_slash_command,
+    execute_command,
+    process_pipeline_command,
+)
 
 def load_npc_by_name(npc_name: str = "sibiji", db_path: str = NPCSH_DB_PATH) -> Optional[NPC]:
+    """Load NPC by name, with fallback logic matching npcsh"""
     if not npc_name:
         npc_name = "sibiji"
 
@@ -37,7 +47,7 @@ def load_npc_by_name(npc_name: str = "sibiji", db_path: str = NPCSH_DB_PATH) -> 
 
     if chosen_path:
         try:
-            db_conn = sqlite3.connect(db_path)
+            db_conn = create_engine(f'sqlite:///{NPCSH_DB_PATH}')
             npc = NPC(file=chosen_path, db_conn=db_conn)
             return npc
         except Exception as e:
@@ -64,34 +74,38 @@ def main():
         "-n", "--npc", help="Name of the NPC to use (default: sibiji)", type=str, default="sibiji"
     )
 
-    # No subparsers setup at first - we'll conditionally create them
-
-    # First, get any arguments without parsing commands
+    # Parse arguments
     args, all_args = parser.parse_known_args()
     global_model = args.model
     global_provider = args.provider
 
-    # Check if the first argument is a known command
     is_valid_command = False
     command_name = None
-    if all_args and all_args[0] in router.get_commands():
-        is_valid_command = True
-        command_name = all_args[0]
-        all_args = all_args[1:]  # Remove the command from arguments
+    
+    if all_args:
+        first_arg = all_args[0]
+        if first_arg.startswith('/'):
+            is_valid_command = True
+            command_name = first_arg
+            all_args = all_args[1:]
+        elif first_arg in router.get_commands():
+            is_valid_command = True
+            command_name = '/' + first_arg
+            all_args = all_args[1:]
 
-    # Only set up subparsers if we have a valid command
+
+
     if is_valid_command:
         subparsers = parser.add_subparsers(dest="command", title="Available Commands",
                                          help="Run 'npc <command> --help' for command-specific help")
 
         for cmd_name, help_text in router.help_info.items():
-
             cmd_parser = subparsers.add_parser(cmd_name, help=help_text, add_help=False)
             cmd_parser.add_argument('command_args', nargs=argparse.REMAINDER,
                                     help='Arguments passed directly to the command handler')
 
         # Re-parse with command subparsers
-        args = parser.parse_args([command_name] + all_args)
+        args = parser.parse_args([command_name.lstrip('/')] + all_args)
         command_args = args.command_args if hasattr(args, 'command_args') else []
         unknown_args = []
     else:
@@ -104,67 +118,86 @@ def main():
         args.model = global_model
     if args.provider is None:
         args.provider = global_provider
-    # --- END OF FIX ---
-    npc_instance = load_npc_by_name(args.npc, NPCSH_DB_PATH)
 
-    effective_model = args.model or NPCSH_CHAT_MODEL
-    effective_provider = args.provider or NPCSH_CHAT_PROVIDER
+    # Use npcsh's setup_shell to get proper team and NPC setup
+    try:
+        command_history, team, forenpc_obj = setup_shell()
+    except Exception as e:
+        print(f"Warning: Could not set up full npcsh environment: {e}", file=sys.stderr)
+        print("Falling back to basic NPC loading...", file=sys.stderr)
+        team = None
+        forenpc_obj = load_npc_by_name(args.npc, NPCSH_DB_PATH)
 
+    # Determine which NPC to use
+    npc_instance = None
+    if team and args.npc in team.npcs:
+        npc_instance = team.npcs[args.npc]
+    elif team and args.npc == team.forenpc.name if team.forenpc else False:
+        npc_instance = team.forenpc
+    else:
+        npc_instance = load_npc_by_name(args.npc, NPCSH_DB_PATH)
 
+    if not npc_instance:
+        print(f"Error: Could not load NPC '{args.npc}'", file=sys.stderr)
+        sys.exit(1)
 
-    extras = {}
-
-    # Process command args if we have a valid command
-    if is_valid_command:
-        # Parse command args properly
-        if command_args:
-            i = 0
-            while i < len(command_args):
-                arg = command_args[i]
-                if arg.startswith("--"):
-                    param = arg[2:]  # Remove --
-                    if "=" in param:
-                        param_name, param_value = param.split("=", 1)
-                        extras[param_name] = param_value
-                        i += 1
-                    elif i + 1 < len(command_args) and not command_args[i+1].startswith("--"):
-                        extras[param] = command_args[i+1]
-                        i += 2
-                    else:
-                        extras[param] = True
-                        i += 1
-                else:
-                    i += 1
-            
-        handler = router.get_route(command_name)
-        if not handler:
-            print(f"Error: Command '{command_name}' recognized but no handler found.", file=sys.stderr)
-            sys.exit(1)
-
-        full_command_str = command_name
-        if command_args:
-            full_command_str += " " + " ".join(command_args)
+    # Now check for jinxs if we haven't identified a command yet
+    if not is_valid_command and all_args:
+        first_arg = all_args[0]
         
-        handler_kwargs = {
-            "model": effective_model,
-            "provider": effective_provider,
-            "npc": npc_instance,
-            "api_url": NPCSH_API_URL,
-            "stream": NPCSH_STREAM_OUTPUT,
-            "messages": [],
-            "team": None,
-            "current_path": os.getcwd(),
-            **extras
-        }
+        # Check if first argument is a jinx name
+        jinx_found = False
+        if team and first_arg in team.jinxs_dict:
+            jinx_found = True
+        elif isinstance(npc_instance, NPC) and hasattr(npc_instance, 'jinxs_dict') and first_arg in npc_instance.jinxs_dict:
+            jinx_found = True
+            
+        if jinx_found:
+            is_valid_command = True
+            command_name = '/' + first_arg
+            all_args = all_args[1:]
 
-        try:
-            result = handler(command=full_command_str, **handler_kwargs)
+    # Create a shell state object similar to npcsh
+    shell_state = initial_state
+    shell_state.npc = npc_instance
+    shell_state.team = team
+    shell_state.current_path = os.getcwd()
+    shell_state.stream_output = NPCSH_STREAM_OUTPUT
 
+    # Override model/provider if specified
+    effective_model = args.model or (npc_instance.model if npc_instance.model else NPCSH_CHAT_MODEL)
+    effective_provider = args.provider or (npc_instance.provider if npc_instance.provider else NPCSH_CHAT_PROVIDER)
+    
+    # Update the NPC's model/provider for this session if overridden
+    if args.model:
+        npc_instance.model = effective_model
+    if args.provider:
+        npc_instance.provider = effective_provider
+
+    try:
+        if is_valid_command:
+            # Handle slash command using npcsh's execute_slash_command
+            full_command_str = command_name
+            if command_args:
+                full_command_str += " " + " ".join(command_args)
+            
+            print(f"Executing command: {full_command_str}")
+            
+            updated_state, result = execute_slash_command(
+                full_command_str, 
+                stdin_input=None, 
+                state=shell_state, 
+                stream=NPCSH_STREAM_OUTPUT
+            )
+
+            # Process and display the result
             if isinstance(result, dict):
                 output = result.get("output") or result.get("response")
+                model_for_stream = result.get('model', effective_model)
+                provider_for_stream = result.get('provider', effective_provider)
                 
                 if NPCSH_STREAM_OUTPUT and not isinstance(output, str):
-                     print_and_process_stream_with_markdown(output, effective_model, effective_provider)
+                     print_and_process_stream_with_markdown(output, model_for_stream, provider_for_stream)
                 elif output is not None:
                      render_markdown(str(output))
             elif result is not None:
@@ -172,45 +205,38 @@ def main():
             else:
                 print(f"Command '{command_name}' executed.")
 
-        except Exception as e:
-            print(f"Error executing command '{command_name}': {e}", file=sys.stderr)
-            traceback.print_exc()
-            sys.exit(1)
-    else:
-        # Process as a prompt
-        prompt = " ".join(unknown_args)
+        else:
+            # Process as a regular prompt using npcsh's execution logic
+            prompt = " ".join(unknown_args)
 
-        if not prompt:
-            # If no prompt and no command, show help
-            parser.print_help()
-            sys.exit(1)
+            if not prompt:
+                # If no prompt and no command, show help
+                parser.print_help()
+                sys.exit(1)
 
-        print(f"Processing prompt: '{prompt}' with NPC: '{args.npc}'...")
-        try:
-            response_data = check_llm_command(
-                command=prompt,
-                model=effective_model,
-                provider=effective_provider,
-                npc=npc_instance,
-                stream=NPCSH_STREAM_OUTPUT,
-                messages=[],
-                team=None,
-                api_url=NPCSH_API_URL,
-            )
+            print(f"Processing prompt: '{prompt}' with NPC: '{args.npc}'...")
+            
+            # Use npcsh's execute_command but force it to chat mode for simple prompts
+            shell_state.current_mode = 'chat'
+            updated_state, result = execute_command(prompt, shell_state)
 
-            if isinstance(response_data, dict):
-                output = response_data.get("output")
+            # Process and display the result
+            if isinstance(result, dict):
+                output = result.get("output")
+                model_for_stream = result.get('model', effective_model)
+                provider_for_stream = result.get('provider', effective_provider)
+                
                 if NPCSH_STREAM_OUTPUT and hasattr(output, '__iter__') and not isinstance(output, (str, bytes, dict, list)):
-                    print_and_process_stream_with_markdown(output, effective_model, effective_provider)
+                    print_and_process_stream_with_markdown(output, model_for_stream, provider_for_stream)
                 elif output is not None:
                     render_markdown(str(output))
-            elif response_data is not None:
-                 render_markdown(str(response_data))
+            elif result is not None:
+                 render_markdown(str(result))
 
-        except Exception as e:
-            print(f"Error processing prompt: {e}", file=sys.stderr)
-            traceback.print_exc()
-            sys.exit(1)
+    except Exception as e:
+        print(f"Error executing command: {e}", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
