@@ -1,4 +1,4 @@
-jinx_name: sql_exectutor
+jinx_name: sql_executor
 description: Execute queries on the ~/npcsh_history.db to pull data. The database
   contains only information about conversations and other user-provided data. It does
   not store any information about individual files. Avoid using percent signs unless absolutely necessary. Returns a LLM summary so no post-summary is required
@@ -11,7 +11,6 @@ steps:
     code: |
       import pandas as pd
       query = "{{ sql_query }}"
-      print('HEY', query, type(query))
       try:
         df = pd.read_sql_query(query, npc.db_conn)
       except Exception as e:
