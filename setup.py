@@ -22,6 +22,7 @@ base_requirements = [
     "docx", 
     "scipy",
     "numpy",
+    "imagehash", 
     "requests",
     "matplotlib",
     "markdown",
