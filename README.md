@@ -148,16 +148,16 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
       # bash
       npc alicanto "What ethical considerations should guide AI development?" --max_facts_per_chain 0.5 --max_thematic_groups 3 --max_criticisms_per_group 3 max_conceptual_combinations 3 max_experiments 10 
 
-      npc alicanto "What is the future of remote work?" --format report
+      npc alicanto "What is the future of remote work?" --format report # NOTE: Report generation and formatting requires latex installed.
       ```
-    - ## Brainblast: searching through past messages:
+    - ## Brainblast: searching through past messages (soon to incorporate options for knowledge graph)
         ```bash
         # npcsh
         /brainblast 'subtle summer winds'  --top_k 10
         ```
         ```bash
         # bash
-        npc brainblast 'python dictionaries'                                        
+        npc brainblast 'executing a mirror in the wonderous moon'                                        
         ```
     - ## Breathe: Condense conversation context (shell only):
         ```bash
