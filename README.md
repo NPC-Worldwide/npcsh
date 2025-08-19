@@ -114,13 +114,13 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     - `/wander` - A method for LLMs to think on a problem by switching between states of high temperature and low temperature
     - `/yap` - Enter voice chat (yap) mode
     
-    ## Common Command-Line Flags\n\nThe shortest unambiguous prefix works (e.g., `-t` for `--temperature`).
+    ## Common Command-Line Flags:
     
     ```
     Flag              Shorthand    | Flag              Shorthand    | Flag              Shorthand    | Flag              Shorthand   
     ------------------------------ | ------------------------------ | ------------------------------ | ------------------------------
     --attachments     (-a)         | --height          (-h)         | --num_npcs        (-num_n)     | --team            (-tea)      
-    --config_dir      (-con)       | --igmodel         (-igm)       | --output_file     (-o)         | --temperature     (-tem)      
+    --config_dir      (-con)       | --igmodel         (-igm)       | --output_file     (-o)         | --temperature     (-t)      
     --cors            (-cor)       | --igprovider      (-igp)       | --plots_dir       (-pl)        | --top_k                       
     --creativity      (-cr)        | --lang            (-l)         | --port            (-po)        | --top_p                       
     --depth           (-d)         | --max_tokens      (-ma)        | --provider        (-pr)        | --vmodel          (-vm)       
