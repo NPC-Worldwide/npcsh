@@ -785,14 +785,17 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
                     npc=active_npc or state.npc,
                     messages=state.messages
                 )
-            
+            print('JINX OUTPUT')
+            print(jinx_output, type(jinx_output))
             # Update messages if jinx execution returned them
             if isinstance(jinx_output, dict) and 'messages' in jinx_output:
                 state.messages = jinx_output['messages']
+                return state, str(jinx_output.get('output', jinx_output))
+            elif isinstance(jinx_output, dict):
                 return state, jinx_output.get('output', jinx_output)
             else:
                 return state, jinx_output
-                
+            
         except Exception as e:
             import traceback
             print(f"Error executing jinx '{command_name}':", file=sys.stderr)
