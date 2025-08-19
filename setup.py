@@ -47,6 +47,7 @@ base_requirements = [
     "redis",
     "psycopg2-binary",
     "flask_sse",
+    "wikipedia", 
 ]
 
 # API integration requirements
