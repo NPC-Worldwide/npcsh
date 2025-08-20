@@ -3,6 +3,10 @@
 from typing import Callable, Dict, Any, List, Optional, Union
 import functools
 import os
+import subprocess
+import sys
+from pathlib import Path
+
 import traceback
 import shlex
 import time
@@ -60,6 +64,9 @@ from npcsh.spool import enter_spool_mode
 from npcsh.wander import enter_wander_mode
 from npcsh.yap import enter_yap_mode
 
+
+
+NPC_STUDIO_DIR = Path.home() / ".npcsh" / "npc-studio"
 
 
 class CommandRouter:
@@ -368,9 +375,76 @@ def init_handler(command: str, **kwargs):
         output = f"Error initializing project: {e}"
     return {"output": output, "messages": messages}
 
+def ensure_repo():
+    """Clone or update the npc-studio repo."""
+    if not NPC_STUDIO_DIR.exists():
+        os.makedirs(NPC_STUDIO_DIR.parent, exist_ok=True)
+        subprocess.check_call([
+            "git", "clone",
+            "https://github.com/npc-worldwide/npc-studio.git",
+            str(NPC_STUDIO_DIR)
+        ])
+    else:
+        subprocess.check_call(
+            ["git", "pull"],
+            cwd=NPC_STUDIO_DIR
+        )
 
+def install_dependencies():
+    """Install npm and pip dependencies."""
+    # Install frontend deps
+    subprocess.check_call(["npm", "install"], cwd=NPC_STUDIO_DIR)
 
+    # Install backend deps
+    req_file = NPC_STUDIO_DIR / "requirements.txt"
+    if req_file.exists():
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(req_file)])
+def launch_npc_studio(path_to_open: str = None):
+    """
+    Launch the NPC Studio backend + frontend.
+    Returns PIDs for processes.
+    """
+    ensure_repo()
+    install_dependencies()
 
+    # Start backend (Flask server)
+    backend = subprocess.Popen(
+        [sys.executable, "npc_studio_serve.py"],
+        cwd=NPC_STUDIO_DIR
+    )
+
+    # Start server (Electron)
+    dev_server = subprocess.Popen(
+        ["npm", "run", "dev"],
+        cwd=NPC_STUDIO_DIR,
+        shell=True
+    )
+    
+    # Start frontend (Electron)
+    frontend = subprocess.Popen(
+        ["npm", "start"],
+        cwd=NPC_STUDIO_DIR,
+        shell=True
+    )
+
+    return backend, dev_server, frontend
+# ========== Router handler ==========
+@router.route("npc-studio", "Start npc studio")
+def npc_studio_handler(command: str, **kwargs):
+    messages = kwargs.get("messages", [])
+    user_command = " ".join(command.split()[1:])
+
+    try:
+        backend, electron, frontend = launch_npc_studio(user_command or None)
+        return {
+            "output": f"NPC Studio started!\nBackend PID={backend.pid}, Electron PID={electron.pid} Frontend PID={frontend.pid}",
+            "messages": messages
+        }
+    except Exception as e:
+        return {
+            "output": f"Failed to start NPC Studio: {e}",
+            "messages": messages
+        }
 @router.route("ots", "Take screenshot and analyze with vision model")
 def ots_handler(command: str, **kwargs):
     command_parts = command.split()
@@ -436,6 +510,8 @@ def ots_handler(command: str, **kwargs):
     except Exception as e:
         traceback.print_exc()
         return {"output": f"Error during /ots command: {e}", "messages": messages}
+
+
 
 
 @router.route("plan", "Execute a plan command")
