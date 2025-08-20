@@ -1,4 +1,4 @@
-jinx_name: calculator
+jinx_name: calc
 description: A jinx to simplify and evaluate mathematical expressions
 inputs:
 - expression

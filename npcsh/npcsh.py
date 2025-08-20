@@ -785,14 +785,11 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
                     npc=active_npc or state.npc,
                     messages=state.messages
                 )
-            print('JINX OUTPUT')
-            print(jinx_output, type(jinx_output))
-            # Update messages if jinx execution returned them
             if isinstance(jinx_output, dict) and 'messages' in jinx_output:
                 state.messages = jinx_output['messages']
                 return state, str(jinx_output.get('output', jinx_output))
             elif isinstance(jinx_output, dict):
-                return state, jinx_output.get('output', jinx_output)
+                return state, str(jinx_output.get('output', jinx_output))
             else:
                 return state, jinx_output
             
@@ -1000,7 +997,7 @@ def execute_command(
                 else:
                     try:
                         bash_state, bash_output = handle_bash_command(cmd_parts, command, None, state)
-                        return bash_state, bash_output
+                        return state, bash_output
                     except Exception as bash_err:
                         return state, colored(f"Bash execution failed: {bash_err}", "red")
             except Exception:
@@ -1244,9 +1241,7 @@ def process_result(
     output: Any,
     command_history: CommandHistory
 ):
-    # --- Part 1: Save Conversation & Determine Output ---
     
-    # Define team and NPC names early for consistent logging
     team_name = result_state.team.name if result_state.team else "__none__"
     npc_name = result_state.npc.name if isinstance(result_state.npc, NPC) else "__none__"
     
@@ -1508,7 +1503,8 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
             session_scopes.add((team_name, npc_name, state.current_path))
 
             state, output = execute_command(user_input, state)
-            process_result(user_input, state, 
+            process_result(user_input, 
+                           state, 
                            output, 
                            command_history)
         

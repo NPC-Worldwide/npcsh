@@ -444,13 +444,13 @@ def plan_handler(command: str, **kwargs):
     user_command = " ".join(command.split()[1:])
     if not user_command:
         return {"output": "Usage: /plan <description_of_plan>", "messages": messages}
-    try:
-        return execute_plan_command(command=user_command, **kwargs)
-    except NameError:
-         return {"output": "Plan function (execute_plan_command) not available.", "messages": messages}
-    except Exception as e:
-        traceback.print_exc()
-        return {"output": f"Error executing plan: {e}", "messages": messages}
+    #try:
+    return execute_plan_command(command=user_command, **kwargs)
+
+    #return {"output": "Plan function (execute_plan_command) not available.", "messages": messages}
+    #except Exception as e:
+    #    traceback.print_exc()
+    #    return {"output": f"Error executing plan: {e}", "messages": messages}
 
 @router.route("pti", "Use pardon-the-interruption mode to interact with the LLM")
 def pti_handler(command: str, **kwargs):
