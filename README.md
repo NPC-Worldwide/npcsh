@@ -27,9 +27,10 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
       <p align="center"> 
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/port5337.png" alt="example of running npcsh to check what processes are listening on port 5337", width=600>
       </p>
-    - Edit files
-    ```
-      npcsh:🤖sibiji:gemini-2.5-flash>can you help me identify what process is listening on port 5337? 
+
+  - Edit files
+      ```
+      npcsh>please read through the markdown files in the docs folder and suggest changes based on the current implementation in the src folder
       ```
 
   - **Ask a Generic Question**
