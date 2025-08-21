@@ -4,7 +4,7 @@ When npcsh is installed, it comes with the `npc` cli as well. The `npc` cli has 
 
 Users can make queries like so:
 ```bash
-$ npc 'whats the biggest filei  n my computer'
+$ npc 'whats the biggest file in my computer'
 Loaded .env file from /home/caug/npcww/npcsh
 action chosen: request_input
 explanation given: The user needs to provide more context about their operating system or specify which directory to search for the biggest file.
@@ -78,11 +78,11 @@ or with the `--port` flag:
 npc serve --port 5337
 
 ```
-If you want to initialize a project based on templates and then make it available for serving, you can do so like this
+If you want to initialize a project based on templates, and then make it available for serving, you can do so like this:
 ```bash
 npc serve -t 'sales, marketing' -ctx 'im developing a team that will focus on sales and marketing within the logging industry. I need a team that can help me with the following: - generate leads - create marketing campaigns - build a sales funnel - close deals - manage customer relationships - manage sales pipeline - manage marketing campaigns - manage marketing budget' -m llama3.2 -pr ollama
 ```
-This will use the specified model and provider to generate a team of npcs to fit the templates and context provided.
+This will use the specified model and provider to generate a team of NPCs to fit the templates and context provided..
 
 
 Once the server is up and running, you can access the API endpoints at `http://localhost:5337/api/`. Here are some example curl commands to test the endpoints:
@@ -103,15 +103,15 @@ echo -e "\nTesting conversation messages endpoint..."
 curl -s http://localhost:5337/api/conversation/test123/messages | jq '.'
 ```
 
-## Planned cli features
+## Planned CLI Features
 
 
-* **Planned:** -npc scripts
--npc run select +sql_model   <run up>
--npc run select +sql_model+  <run up and down>
--npc run select sql_model+  <run down>
--npc run line <assembly_line>
--npc conjure fabrication_plan.fab
+*   **Scripting (Future):** `npc scripts` (details to be defined)
+    *   `npc run select +sql_model` (run migrations up)
+    *   `npc run select +sql_model+` (run migrations up and down)
+    *   `npc run select sql_model+` (run migrations down)
+*   **Assembly Line (Future):** `npc run line <assembly_line>` (execute a predefined sequence of operations)
+*   **Conjure (Future):** `npc conjure fabrication_plan.fab` (generate content based on a fabrication plan)
 
 
 

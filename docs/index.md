@@ -8,28 +8,20 @@
 ## Quick Links
 - [Installation Guide](installation.md)
 - [NPC Data Layer](npc_data_layer.md)
-
 - [API Reference](api/index.md)
 
 
 ## Guides for NPC Shell programs
 - [NPC Shell](npcsh.md)
 - [NPC CLI ](api/npc_cli.md)
-
 - [Alicanto](alicanto.md)
 - [Guac](guac.md)
 - [PTI](pti.md)
 - [Spool](spool.md)
 - [Wander](wander.md)
 - [Yap](yap.md)
-- [API Reference](api/index.md)
-
-
 - [TLDR Cheat Sheet](TLDR_Cheat_sheet.md)
 - [API Reference](api/index.md)
-
-
-
 
 
 ## Contributing
