@@ -67,6 +67,7 @@ from npcpy.npc_sysenv import (
     render_markdown,
     get_model_and_provider, 
     get_locally_available_models,
+    lookup_provider
 )
 
 from npcpy.memory.command_history import (
@@ -1852,7 +1853,8 @@ def execute_slash_command(command: str, stdin_input: Optional[str], state: Shell
         handler_kwargs.update(normalized_flags)
         
         try:
-            result_dict = handler(command=command, **handler_kwargs)
+            result_dict = handler(command=command, 
+                                  **handler_kwargs)
             if isinstance(result_dict, dict):
                 state.messages = result_dict.get("messages", state.messages)
                 return state, result_dict
@@ -1925,7 +1927,8 @@ def process_pipeline_command(
     stdin_input: Optional[str],
     state: ShellState,
     stream_final: bool, 
-    router
+    review = True, 
+    router = None,
     ) -> Tuple[ShellState, Any]:
     '''
     Processing command 
@@ -1993,7 +1996,9 @@ def process_pipeline_command(
         ls_files = 'Files in the current directory (full paths):\n' + "\n".join([os.path.join(state.current_path, f) for f in os.listdir(state.current_path)]) if os.path.exists(state.current_path) else 'No files found in the current directory.'
         platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
         info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n' 
-
+        state.messages.append({'role':'user', 'content':full_llm_cmd})
+        
+        
         llm_result = check_llm_command(
             full_llm_cmd,
             model=exec_model,      
@@ -2007,12 +2012,78 @@ def process_pipeline_command(
             stream=stream_final,
             context=info,
         )
-        if isinstance(llm_result, dict):
-            state.messages = llm_result.get("messages", state.messages)
-            output = llm_result.get("output")
-            return state, output
+        #
+        
+        if not review:
+            if isinstance(llm_result, dict):
+                state.messages = llm_result.get("messages", state.messages)
+                output = llm_result.get("output")
+                return state, output
+            else:
+                return state, llm_result        
+            
         else:
-            return state, llm_result        
+            return review_and_iterate_command(
+                original_command=full_llm_cmd,
+                initial_result=llm_result,
+                state=state,
+                exec_model=exec_model,
+                exec_provider=exec_provider,
+                stream_final=stream_final,
+                info=info
+            )
+def review_and_iterate_command(
+    original_command: str,
+    initial_result: Any,
+    state: ShellState,
+    exec_model: str,
+    exec_provider: str,
+    stream_final: bool,
+    info: str,
+    max_iterations: int = 2
+) -> Tuple[ShellState, Any]:
+    """
+    Simple iteration on LLM command result to improve quality.
+    """
+    
+    # Extract current state
+    if isinstance(initial_result, dict):
+        current_output = initial_result.get("output")
+        current_messages = initial_result.get("messages", state.messages)
+    else:
+        current_output = initial_result
+        current_messages = state.messages
+    
+    # Simple refinement prompt
+    refinement_prompt = f"""
+The previous response to "{original_command}" was:
+{current_output}
+
+Please review and improve this response if needed. Provide a better, more complete answer.
+"""
+    
+    # Iterate with check_llm_command
+    refined_result = check_llm_command(
+        refinement_prompt,
+        model=exec_model,      
+        provider=exec_provider, 
+        api_url=state.api_url,
+        api_key=state.api_key,
+        npc=state.npc,
+        team=state.team,
+        messages=current_messages,
+        images=state.attachments,
+        stream=stream_final,
+        context=info,
+    )
+    
+    # Update state and return
+    if isinstance(refined_result, dict):
+        state.messages = refined_result.get("messages", current_messages)
+        return state, refined_result.get("output", current_output)
+    else:
+        state.messages = current_messages
+        return state, refined_result
 def check_mode_switch(command:str , state: ShellState):
     if command in ['/cmd', '/agent', '/chat',]:
         state.current_mode = command[1:]
@@ -2022,6 +2093,7 @@ def check_mode_switch(command:str , state: ShellState):
 def execute_command(
     command: str,
     state: ShellState,
+    review = True, 
     router = None,
     ) -> Tuple[ShellState, Any]:
 
@@ -2040,26 +2112,22 @@ def execute_command(
     npc_provider = state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else None
     active_model = npc_model or state.chat_model
     active_provider = npc_provider or state.chat_provider
-
     if state.current_mode == 'agent':
         print('# of parsed commands: ', len(commands))
         print('Commands:' '\n'.join(commands))
         for i, cmd_segment in enumerate(commands):
-
             render_markdown(f'- executing command {i+1}/{len(commands)}')
             is_last_command = (i == len(commands) - 1)
-
             stream_this_segment = state.stream_output and not is_last_command 
-
             try:
                 current_state, output = process_pipeline_command(
                     cmd_segment.strip(),
                     stdin_for_next,
                     current_state, 
                     stream_final=stream_this_segment, 
+                    review=review,
                     router= router
                 )
-
                 if is_last_command:
                     return current_state, output
                 if isinstance(output, str):
@@ -2082,20 +2150,15 @@ def execute_command(
                                 stdin_for_next = None
                         else: # Output was None
                             stdin_for_next = None
-
-
             except Exception as pipeline_error:
                 import traceback
                 traceback.print_exc()
                 error_msg = colored(f"Error in pipeline stage {i+1} ('{cmd_segment[:50]}...'): {pipeline_error}", "red")
-                # Return the state as it was when the error occurred, and the error message
                 return current_state, error_msg
 
-        # Store embeddings using the final state
         if final_output is not None and isinstance(final_output,str):
             store_command_embeddings(original_command_for_embedding, final_output, current_state)
 
-        # Return the final state and the final output
         return current_state, final_output
 
 
@@ -2346,9 +2409,10 @@ def process_result(
         render_markdown(final_output_str)
 
     if final_output_str:
-
-        if result_state.messages and (not result_state.messages or result_state.messages[-1].get("role") != "assistant"):
-            result_state.messages.append({"role": "assistant", "content": final_output_str})
+        if result_state.messages:
+            if result_state.messages[-1].get("role") != "assistant":
+                result_state.messages.append({"role": "assistant", 
+                                          "content": final_output_str})
         save_conversation_message(
             command_history,
             result_state.conversation_id,
