@@ -57,6 +57,7 @@ from npcsh._state import (
     normalize_and_expand_flags, 
     get_argument_help
 )
+from npcsh.corca import enter_corca_mode
 from npcsh.guac import enter_guac_mode
 from npcsh.plonk import execute_plonk_command, format_plonk_summary
 from npcsh.alicanto import alicanto
@@ -227,6 +228,10 @@ def compile_handler(command: str, **kwargs):
 
 
 
+@router.route("corca", "Enter the Corca MCP-powered agentic shell. Usage: /corca [--mcp-server-path path]")
+def corca_handler(command: str, **kwargs):
+    return enter_corca_mode(command=command, **kwargs)
+    
 @router.route("flush", "Flush the last N messages")
 def flush_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
