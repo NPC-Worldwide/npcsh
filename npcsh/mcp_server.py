@@ -135,7 +135,7 @@ print("Loading tools from npcpy modules...")
 
 # Load modules from npcpy.routes
 try:
-    from npcpy.routes import routes
+    from npcsh.routes import routes
     for route_name, route_func in routes.items():
         if callable(route_func):
             async_func = make_async_wrapper(route_func)
@@ -160,11 +160,15 @@ except ImportError:
 # Load npc_sysenv functions
 #print("Loading functions from npcpy.npc_sysenv...")
 #register_module_tools("npcpy.npc_sysenv")
-register_module_tools("npcpy.memory.search")
+#register_module_tools("npcpy.memory.search")
 
-register_module_tools("npcpy.work.plan")
-register_module_tools("npcpy.work.trigger")
-register_module_tools("npcpy.work.desktop")
+register_module_tools("npcpy.llm_funcs")
+
+register_module_tools("npcpy.memory.command_history")
+
+#register_module_tools("npcpy.work.plan")
+#register_module_tools("npcpy.work.trigger")
+#register_module_tools("npcpy.work.desktop")
 
 #print("Loading functions from npcpy.command_history...")
 #register_module_tools("npcpy.memory.command_history")

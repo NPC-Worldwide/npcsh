@@ -46,7 +46,6 @@ steps:
         - "insertion": For "insert_after" and "insert_before", the text to insert
         2. "explanation": Brief explanation of the changes made
         """
-      print('getting llm response')
       # Get the LLM response with JSON formatting
       response = get_llm_response(prompt, model=npc.model, provider=npc.provider, npc=npc, format="json")
       
@@ -89,7 +88,6 @@ steps:
                   updated_content = updated_content.replace(target, "")
                   changes_applied += 1
       
-      # Write the updated content
       with open(file_path, 'w') as f:
           f.write(updated_content)
       
