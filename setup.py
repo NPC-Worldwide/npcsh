@@ -22,6 +22,7 @@ base_requirements = [
     "docx", 
     "scipy",
     "numpy",
+    "thefuzz", 
     "imagehash", 
     "requests",
     "matplotlib",
@@ -46,6 +47,7 @@ base_requirements = [
     "redis",
     "psycopg2-binary",
     "flask_sse",
+    "wikipedia", 
 ]
 
 # API integration requirements
@@ -86,7 +88,7 @@ extra_files = package_files("npcpy/npc_team/")
 
 setup(
     name="npcsh",
-    version="1.0.14",
+    version="1.0.16",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
