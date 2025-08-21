@@ -1,5 +1,5 @@
-site_name: npcpy
-site_url: https://npcsh.readthedocs.io/
+site_name: npcsh
+site_url: https://npc-shell.readthedocs.io/
 repo_url: https://github.com/NPC-Worldwide/npcsh
 
 theme:
