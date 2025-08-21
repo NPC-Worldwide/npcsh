@@ -61,6 +61,7 @@ from npcsh.corca import enter_corca_mode
 from npcsh.guac import enter_guac_mode
 from npcsh.plonk import execute_plonk_command, format_plonk_summary
 from npcsh.alicanto import alicanto
+from npcsh.pti import enter_pti_mode
 from npcsh.spool import enter_spool_mode
 from npcsh.wander import enter_wander_mode
 from npcsh.yap import enter_yap_mode
@@ -533,9 +534,9 @@ def plan_handler(command: str, **kwargs):
     #    traceback.print_exc()
     #    return {"output": f"Error executing plan: {e}", "messages": messages}
 
-@router.route("pti", "Use pardon-the-interruption mode to interact with the LLM")
+@router.route("pti", "Enter Pardon-The-Interruption mode for human-in-the-loop reasoning.")
 def pti_handler(command: str, **kwargs):
-    return
+    return enter_pti_mode(command=command, **kwargs)
 
 @router.route("plonk", "Use vision model to interact with GUI. Usage: /plonk <task description>")
 def plonk_handler(command: str, **kwargs):
