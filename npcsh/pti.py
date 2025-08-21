@@ -18,7 +18,8 @@ from npcsh._state import (
     ShellState,
     setup_shell,
     get_multiline_input,
-    readline_safe_prompt
+    readline_safe_prompt, 
+    get_npc_path
 )
 
 def print_pti_welcome_message():
@@ -31,8 +32,8 @@ Welcome to PTI Mode!
 {ice}{ice}{ice}   {ice}{ice}{ice}   {bear}
 {ice}  {ice}     {ice}     {bear}
 {ice}{ice}{ice}     {ice}     {bear}
-{ice}       {ice}     {bear}
-{ice}       {ice}     {bear}
+{ice}         {ice}     {bear}
+{ice}         {ice}     {bear}
 
 Pardon-The-Interruption for human-in-the-loop reasoning.
 Type 'exit' or 'quit' to return to the main shell.
@@ -59,6 +60,11 @@ def enter_pti_mode(command: str, **kwargs):
 
     print_pti_welcome_message()
 
+    frederic_path = get_npc_path("frederic", command_history.db_path)
+    state.npc = NPC(file=frederic_path)
+    print(colored("Defaulting to NPC: frederic", "cyan"))
+    state.npc = NPC(name="frederic")
+
     pti_messages = list(state.messages)
     loaded_content = {}
     
@@ -74,96 +80,106 @@ def enter_pti_mode(command: str, **kwargs):
     user_input = " ".join(args.initial_prompt)
 
     while True:
-        if not user_input:
-            user_input = input('🐻‍❄️> ').strip()
-
-        if user_input.lower() in ["exit", "quit", "done"]:
-            break
-        
-        prompt_for_llm = user_input
-        if loaded_content:
-            context_str = "\n".join([f"--- Content from {fname} ---\n{content}" for fname, content in loaded_content.items()])
-            prompt_for_llm += f"\n\nUse the following context to inform your answer:\n{context_str}"
-        
-        prompt_for_llm += "\n\nThink step-by-step using <think> tags. When you need more information from me, enclose your question in <request_for_input> tags."
-
-        save_conversation_message(
-            command_history,
-            state.conversation_id,
-            "user",
-            user_input,
-            wd=state.current_path,
-            model=state.reasoning_model,
-            provider=state.reasoning_provider,
-            npc=state.npc.name if isinstance(state.npc, NPC) else None,
-        )
-        pti_messages.append({"role": "user", "content": user_input})
-
         try:
-            response_dict = get_llm_response(
-                prompt=prompt_for_llm,
-                model=state.reasoning_model,
-                provider=state.reasoning_provider,
-                messages=pti_messages,
-                stream=True,
-                npc=state.npc
-            )
-            stream = response_dict.get('response')
-            
-            response_chunks = []
-            request_found = False
-            
-            for chunk in stream:
-                chunk_content = ""
-                if state.reasoning_provider == "ollama":
-                    chunk_content = chunk.get("message", {}).get("content", "")
-                else:
-                    chunk_content = "".join(
-                        choice.delta.content
-                        for choice in chunk.choices
-                        if choice.delta.content is not None
-                    )
-
-                print(chunk_content, end='')
-                sys.stdout.flush()
-                response_chunks.append(chunk_content)
+            if not user_input:
+                npc_name = state.npc.name if state.npc and isinstance(state.npc, NPC) else "frederic"
+                model_name = state.reasoning_model
                 
-                combined_text = "".join(response_chunks)
-                if "</request_for_input>" in combined_text:
-                    request_found = True
-                    break
+                prompt_str = f"{colored(os.path.basename(state.current_path), 'blue')}:{npc_name}:{model_name}> "
+                prompt = readline_safe_prompt(prompt_str)
+                user_input = get_multiline_input(prompt).strip()
 
-            full_response_text = "".join(response_chunks)
+            if user_input.lower() in ["exit", "quit", "done"]:
+                break
+            
+            if not user_input:
+                continue
+            
+            prompt_for_llm = user_input
+            if loaded_content:
+                context_str = "\n".join([f"--- Content from {fname} ---\n{content}" for fname, content in loaded_content.items()])
+                prompt_for_llm += f"\n\nUse the following context to inform your answer:\n{context_str}"
+            
+            prompt_for_llm += "\n\nThink step-by-step using <think> tags. When you need more information from me, enclose your question in <request_for_input> tags."
 
             save_conversation_message(
                 command_history,
                 state.conversation_id,
-                "assistant",
-                full_response_text,
+                "user",
+                user_input,
                 wd=state.current_path,
                 model=state.reasoning_model,
                 provider=state.reasoning_provider,
                 npc=state.npc.name if isinstance(state.npc, NPC) else None,
             )
-            pti_messages.append({"role": "assistant", "content": full_response_text})
-            
-            if request_found:
-                print()
-                user_input = None
+            pti_messages.append({"role": "user", "content": user_input})
+
+            try:
+                response_dict = get_llm_response(
+                    prompt=prompt_for_llm,
+                    model=state.reasoning_model,
+                    provider=state.reasoning_provider,
+                    messages=pti_messages,
+                    stream=True,
+                    npc=state.npc
+                )
+                stream = response_dict.get('response')
+                
+                response_chunks = []
+                request_found = False
+                
+                for chunk in stream:
+                    chunk_content = ""
+                    if state.reasoning_provider == "ollama":
+                        chunk_content = chunk.get("message", {}).get("content", "")
+                    else:
+                        chunk_content = "".join(
+                            choice.delta.content
+                            for choice in chunk.choices
+                            if choice.delta.content is not None
+                        )
+
+                    print(chunk_content, end='')
+                    sys.stdout.flush()
+                    response_chunks.append(chunk_content)
+                    
+                    combined_text = "".join(response_chunks)
+                    if "</request_for_input>" in combined_text:
+                        request_found = True
+                        break
+
+                full_response_text = "".join(response_chunks)
+
+                save_conversation_message(
+                    command_history,
+                    state.conversation_id,
+                    "assistant",
+                    full_response_text,
+                    wd=state.current_path,
+                    model=state.reasoning_model,
+                    provider=state.reasoning_provider,
+                    npc=state.npc.name if isinstance(state.npc, NPC) else None,
+                )
+                pti_messages.append({"role": "assistant", "content": full_response_text})
+                
+                print() 
+                user_input = None 
                 continue
-            else:
-                print()
-                user_input = None
+
+            except KeyboardInterrupt:
+                print(colored("\n\n--- Stream Interrupted ---", "yellow"))
+                interrupt_text = input('🐻‍❄️> ').strip()
+                if interrupt_text:
+                    user_input = interrupt_text
+                else:
+                    user_input = None
+                continue
 
         except KeyboardInterrupt:
-            print(colored("\n\n--- Stream Interrupted ---", "yellow"))
-            interrupt_text = input('🐻‍❄️> ').strip()
-            if interrupt_text:
-                user_input = interrupt_text
-            else:
-                user_input = None
+            print()
             continue
         except EOFError:
+            print("\nExiting PTI Mode.")
             break
 
     render_markdown("\n# Exiting PTI Mode")
@@ -181,7 +197,6 @@ def main():
     initial_shell_state = initial_state
     initial_shell_state.team = team
     initial_shell_state.npc = default_npc
-    
     
     fake_command_str = "/pti " + " ".join(args.initial_prompt)
     if args.files:
