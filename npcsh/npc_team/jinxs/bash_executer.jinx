@@ -1,5 +1,5 @@
 jinx_name: bash_executor
-description: Execute bash queries. Returns a LLM summary so no post-summary is required
+description: Execute bash queries. Should be used to grep for file contents, list directories, explore information to answer user questions more practically.
 inputs:
 - bash_command
 - user_request
