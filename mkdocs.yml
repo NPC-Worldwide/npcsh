@@ -37,6 +37,7 @@ nav:
   - 'Using alicanto': alicanto.md
   - 'Using guac': guac.md
   - 'Using pti': pti.md
+  - 'Using spool': spool.md
   - 'Using wander': wander.md
   - 'Using yap': yap.md
   - TLDR Cheat Sheet: TLDR_Cheat_sheet.md
