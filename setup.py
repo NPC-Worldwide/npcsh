@@ -100,8 +100,8 @@ setup(
     },
     entry_points={
         "console_scripts": [
+            "corca=npcsh.corca:main",
             "npcsh=npcsh.npcsh:main",
-            "npcsh-mcp=npcsh.mcp_npcsh:main",            
             "npc=npcsh.npc:main",
             "yap=npcsh.yap:main",
             "pti=npcsh.pti:main",
