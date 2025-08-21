@@ -53,11 +53,11 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     ```
     <p align="center">
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/search_example.png" alt="example of search results", width=600>
-    </p>
+     </p>
 
   - **Computer Use**
     ```bash
-    /plonk -n 'npc_name' -sp 'task for plonk to carry out'
+    /plonk 'find out the latest news on cnn'
     ```
 
   - **Generate Image**
@@ -71,9 +71,10 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     ```bash
     /roll 'generate a video of a hat riding a dog'
     ```
+    <!--
       <p align="center">
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/hat_video.mp4" alt="video of a hat riding a dog", width=250>
-      </p>
+      </p> -->
 
   - **Serve an NPC Team**
     ```bash
@@ -99,7 +100,8 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     - `/init` - Initialize NPC project
     - `/jinxs` - Show available jinxs for the current NPC/Team
     - `/ots` - Take screenshot and analyze with vision model
-    - `/plan` - Execute a plan command\n\n/plonk - Use vision model to interact with GUI. Usage: /plonk <task description>
+    - `/plan` - Execute a plan command
+    - `/plonk` - Use vision model to interact with GUI. Usage: /plonk <task description>
     - `/pti` - Use pardon-the-interruption mode to interact with reasoning model LLM
     - `/rag` - Execute a RAG command using ChromaDB embeddings with optional file input (-f/--file)
     - `/roll` - generate a video with video generation model
@@ -114,13 +116,13 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     - `/wander` - A method for LLMs to think on a problem by switching between states of high temperature and low temperature
     - `/yap` - Enter voice chat (yap) mode
     
-    ## Common Command-Line Flags\n\nThe shortest unambiguous prefix works (e.g., `-t` for `--temperature`).
+    ## Common Command-Line Flags:
     
     ```
     Flag              Shorthand    | Flag              Shorthand    | Flag              Shorthand    | Flag              Shorthand   
     ------------------------------ | ------------------------------ | ------------------------------ | ------------------------------
     --attachments     (-a)         | --height          (-h)         | --num_npcs        (-num_n)     | --team            (-tea)      
-    --config_dir      (-con)       | --igmodel         (-igm)       | --output_file     (-o)         | --temperature     (-tem)      
+    --config_dir      (-con)       | --igmodel         (-igm)       | --output_file     (-o)         | --temperature     (-t)      
     --cors            (-cor)       | --igprovider      (-igp)       | --plots_dir       (-pl)        | --top_k                       
     --creativity      (-cr)        | --lang            (-l)         | --port            (-po)        | --top_p                       
     --depth           (-d)         | --max_tokens      (-ma)        | --provider        (-pr)        | --vmodel          (-vm)       
@@ -131,7 +133,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     ```
     '
 
-    - ## alicanto: a research exploration agent flow. 
+    - ## `/alicanto`: a research exploration agent flow. 
 
       <p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/alicanto.md"> 
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/alicanto.png" alt="logo for deep research", width=250></a>
@@ -148,41 +150,44 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
       # bash
       npc alicanto "What ethical considerations should guide AI development?" --max_facts_per_chain 0.5 --max_thematic_groups 3 --max_criticisms_per_group 3 max_conceptual_combinations 3 max_experiments 10 
 
-      npc alicanto "What is the future of remote work?" --format report
+      npc alicanto "What is the future of remote work?" --format report # NOTE: Report generation and formatting requires latex installed.
       ```
-    - ## Brainblast: searching through past messages:
+    - ## `/brainblast`: searching through past messages (soon to incorporate options for knowledge graph)
         ```bash
         # npcsh
         /brainblast 'subtle summer winds'  --top_k 10
         ```
         ```bash
         # bash
-        npc brainblast 'python dictionaries'                                        
+        npc brainblast 'executing a mirror in the wonderous moon'                                        
         ```
-    - ## Breathe: Condense conversation context (shell only):
+    - ## `/breathe`: Condense conversation context (shell only):
         ```bash
         # npcsh
         /breathe
         /breathe -p ollama -m qwen3:latest 
         ```
-    - ## Compile: render npcs for use without re-loading npcsh
+    - ## `/compile`: render npcs for use without re-loading npcsh
       ```bash
       # npcsh
-      /compile /path/to/npc
+      /compile ./npc_team/sibiji.npc      
       ```
-    - ## flush: flush context  (shell only):
+    - ## `/flush`: flush context  (shell only):
+      If you're in the NPC shell and have been in a conversation thats going nowhere and you want to start over... just flush theh contexf.
       ```bash
       /flush
       ```
 
 
-    - ## `guac`
+    - ## `/guac`
 
     <p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/guac.md"> 
       <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/guac.png" alt="npcsh logo of a solarpunk sign", width=250></a>
     </p> 
 
-    - a replacement shell for interpreters like python/r/node/julia with an avocado input marker 🥑 that brings a pomodoro-like approach to interactive coding. 
+    - a replacement shell for interpreters like python/r/node/julia with an avocado input marker 🥑 that brings a pomodoro-like approach to interactive coding.
+    - available as a standalone program runnable via the `guac` command after `npcsh` has been installed via pip.
+   
         - Simulation:      
             `🥑 Make a markov chain simulation of a random walk in 2D space with 1000 steps and visualize`
             ```
@@ -245,13 +250,61 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         A guac session progresses through a series of stages, each of equal length. Each stage adjusts the emoji input prompt. Once the stages have passed, it is time to refresh. Stage 1: `🥑`, Stage 2: `🥑🔪` Stage 3: `🥑🥣` Stage:4 `🥑🥣🧂`, `Stage 5: 🥘 TIME TO REFRESH`. At stage 5, the user is reminded to refresh with the /refresh macro. This will evaluate the session so farand suggest and implement new functions or automations that will aid in future sessions, with the ultimate approval of the user.
 
 
-    - ## help:/ Show help for commands, NPCs, or Jinxs. 
-       ```bash
-       /help 
-       ```
-    - ## init - Initialize NPC project        
-    - ## jinxs : show available jinxs                                                                                                                     
-    - ## ots: Over-the-shoulder screen shot analysis
+    - ## `/help`: Show help for commands, NPCs, or Jinxs. 
+         ```bash
+         /help 
+         ```
+         ```
+         npc help
+         ```
+    - ## `/init` - Initialize NPC project    
+        -set up bare bones infra for an npc team
+        ```bash
+        # npcsh 
+        /init
+        ```
+        ```bash
+        # bash 
+        npc init
+        ```
+    
+
+    - ## `/jinxs` : show available jinxs for team
+        Jinxs are Jinja execution templates that let users develop small programs that can build on each other and reference each other through jinja templating. Jinx methods allow us to give smaller LLMs the scaffolding to perform `tool calling`, so to speak, reliably
+        ```bash
+        # npcsh 
+        /jinxs
+        # bash 
+        npc jinxs
+        ```
+
+        ```python
+        Available Jinxs:     
+        --- Jinxs for NPC: sibiji ---                                                                                                                                                                                                           
+
+        • /bash_executor: Execute bash queries.                                                                                                                                                                                                
+
+        • /calc: A jinx to simplify and evaluate mathematical expressions   (/calc 1+5, /calc 47233*234234)                                                                                                                
+
+        • /data_pull: Execute queries on the ~/npcsh_history.db to pull data. The database contains only information about conversations and other user-provided data. It does not store any information about individual files (/data_pull 'select * from conversation_history limit 10')
+
+
+        • /file_editor: Examines a file, determines what changes are needed, and applies those changes. (/file_editor filename.py 'instructions for carrying out the editing')                                                                                                                                   
+
+        • /image_generation_jinx: Generates images based on a text prompt. (/image_generation_jinx 'prompt for llm' output_name )                                                                                                                                       
+
+        • /internet_search: Searches the web for information based on a query in order to verify timiely details (e.g. current events) or to corroborate information in uncertain situations. Should be mainly only used when users            
+          specifically request a search, otherwise an LLMs basic knowledge should be sufficient. ( /internet_search 'cost of cubs tickets' )
+        • /local_search: Searches files in current and downstream directories to find items related to the users query using fuzzy matching. (/local_search 'class NPC')
+        Returns only relevant snippets (10 lines around matches) to avoid including too much irrelevant content. Intended for fuzzy searches, not for understanding file sizes.                                                                                                                                                                          
+
+        • /python_executor: Execute scripts with python. Set the ultimate result as the "output" variable. It must be a string. Do not add unnecessary print statements. (/python_executor 'import numpy as np; print(np.arange(1000))')
+        • /screen_capture_analysis_jinx: Captures the whole screen and sends the image for analysis  (mostly redundant with /ots.)  
+        ```
+
+
+
+    - ## `/ots`: Over-the-shoulder screen shot analysis
         - Screenshot analysis:     
         ```bash
         #npcsh
@@ -262,17 +315,17 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         #bash
         npc ots ...
         ```
-    - ## `plan`: set up cron jobs:
+    - ## `/plan`: set up cron jobs:
         ```bash
         # npcsh
-        /plan 'a description of a cron job to implement' -m gemma3:27b -p ollama 
+        /plan 'set up a cron job that reminds me to stretch every thirty minutes' -m gemma3:27b -p ollama 
         ```
         ```bash
         # bash
-        npc plan
+        npc plan 'record my cpu usage percentage every 45 minutes' 
         ```
 
-    - ## `plonk`: Computer use:     
+    - ## `/plonk`: Computer use:     
         ```bash
         # npcsh
         /plonk -n 'npc_name' -sp 'task for plonk to carry out '
@@ -280,7 +333,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         #bash
         npc plonk
         ```
-    - ## `pti`: a reasoning REPL loop with interruptions
+    - ## `/pti`: a reasoning REPL loop with interruptions
       
         ```npcsh
         /pti  -n frederic -m qwen3:latest -p ollama 
@@ -294,14 +347,14 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/frederic4.png" alt="npcsh logo of frederic the bear and the pti logo", width=250></a>
       </p>
 
-    - ## `rag`: embedding search through chroma db, optional file input
-    - ## `roll`: your video generation assistant
+    - ## `/rag`: embedding search through chroma db, optional file input
+    - ## `/roll`: your video generation assistant
       - 
         ```npcsh
         /roll --provider ollama --model llama3
         ```
 
-    - ## sample: one-shot sampling from LLMs with specific parameters
+    - ## `/sample`: one-shot sampling from LLMs with specific parameters
         ```bash
         # npcsh
         /sample 'prompt'
@@ -320,7 +373,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         npc sample model=gpt-4o-mini "What are the primary colors?" --provider openai
         ```
 
-    - ## search: use an internet search provider     
+    - ## `/search`: use an internet search provider     
         ```npcsh
         /search -sp perplexity 'cal bears football schedule'
         /search --sprovider duckduckgo 'beef tongue'        
@@ -332,7 +385,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         ```
     
 
-    - ## serve: serve an npc team     
+    - ## `/serve`: serve an npc team     
         ```bash
         /serve 
         /serve ....    
@@ -343,7 +396,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         npc serve
         ```
 
-    - ## set: change current model, env params
+    - ## `/set`: change current model, env params
         ```bash
         /set model ... 
         /set provider ...
@@ -353,7 +406,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         ```bash
         npc set ...
         ```
-    - ## sleep: prune and evolve the current knowledge graph 
+    - ## `/sleep`: prune and evolve the current knowledge graph 
         ```bash
         /sleep
         /sleep --dream
@@ -363,7 +416,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         ```bash
         npc sleep
         ```
-    - ## `spool`
+    - ## `/spool`
     <p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/spool.md"> 
       <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/spool.png" alt="logo for spool", width=250></a>
     </p>
@@ -392,7 +445,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 
     
 
-    - ## Vixynt: Image generation and editing:   
+    - ## `/vixynt`: Image generation and editing:   
         ```bash
         npcsh
         /vixynt 'an image of a dog eating a hat'
@@ -411,7 +464,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 
 
 
-    - ## `wander`: daydreaming for LLMs
+    - ## `/wander`: daydreaming for LLMs
 
       <p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/wander.md">
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/kadiefa.png" alt="logo for wander", width=250></a>
@@ -447,7 +500,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         interruption-likelihood=.1
         ```
 
-    - ## `yap`: an agentic voice control loop
+    - ## `/yap`: an agentic voice control loop
 
 
     <p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/yap.md"> 
@@ -465,20 +518,9 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
         yap
         npc yap
         ```
-    - Show available Jinja Execution Templates:
-        ```bash
-        # npcsh
-        /jinxs
-        ```
-        ```bash
-        # bash
-        npc jinxs 
-        ```
-
-
 
 ## Inference Capabilities
-- `npcsh` works with local and enterprise LLM providers through its LiteLLM integration, allowing users to run inference from Ollama, LMStudio, OpenAI, Anthropic, Gemini, and Deepseek, making it a versatile tool for both simple commands and sophisticated AI-driven tasks. 
+- `npcsh` works with local and enterprise LLM providers through its LiteLLM integration, allowing users to run inference from Ollama, LMStudio, vLLM, MLX, OpenAI, Anthropic, Gemini, and Deepseek, making it a versatile tool for both simple commands and sophisticated AI-driven tasks. 
 
 ## Read the Docs
 
@@ -654,6 +696,10 @@ export PERPLEXITY_API_KEY='your_perplexity_key'
 ├── npc_team/           # Global NPCs
 │   ├── jinxs/          # Global tools
 │   └── assembly_lines/ # Workflow pipelines
+│   └── example.npc  # globally available npc 
+│   └── global.ctx  # global context file
+
+
 
 ```
 For cases where you wish to set up a project specific set of NPCs, jinxs, and assembly lines, add a `npc_team` directory to your project and `npcsh` should be able to pick up on its presence, like so:
