@@ -18,14 +18,3 @@ steps:
         return stdout
       result = run_command(cmd)
       output = result.decode('utf-8')
-
-  - engine: natural
-    code: |
-
-      Here is the result of the bash command:
-      ```
-      {{ output }}
-      ```
-      This was the original user request: {{ user_request }}
-
-      Please provide a response accordingly.
