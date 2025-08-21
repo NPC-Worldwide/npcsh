@@ -1,20 +1,11 @@
 from setuptools import setup, find_packages
-import site
-import platform
-from pathlib import Path
 import os
-
-
 def package_files(directory):
     paths = []
     for path, directories, filenames in os.walk(directory):
         for filename in filenames:
             paths.append(os.path.join(path, filename))
     return paths
-
-
-
-# Base requirements (no LLM packages)
 base_requirements = [
     'npcpy', 
     "jinja2",
@@ -100,8 +91,8 @@ setup(
     },
     entry_points={
         "console_scripts": [
+            "corca=npcsh.corca:main",
             "npcsh=npcsh.npcsh:main",
-            "npcsh-mcp=npcsh.mcp_npcsh:main",            
             "npc=npcsh.npc:main",
             "yap=npcsh.yap:main",
             "pti=npcsh.pti:main",
