@@ -1,4 +1,4 @@
-jinx_name: screen_capture_analysis_jinx
+jinx_name: screen_cap
 description: Captures the whole screen and sends the image for analysis
 inputs:
 - prompt

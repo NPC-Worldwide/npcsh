@@ -18,7 +18,6 @@ from npcpy.llm_funcs import (
     gen_video,
     breathe,
 )
-from npcpy.npc_compiler import NPC, Team, Jinx
 from npcpy.npc_compiler import initialize_npc_project
 from npcpy.npc_sysenv import render_markdown
 from npcpy.work.plan import execute_plan_command
@@ -29,8 +28,7 @@ from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_k
 from npcpy.serve import start_flask_server
 from npcpy.mix.debate import run_debate
 from npcpy.data.image import capture_screenshot
-from npcpy.npc_compiler import NPC, Team, Jinx
-from npcpy.npc_compiler import initialize_npc_project
+from npcpy.npc_compiler import NPC, Team, Jinx,initialize_npc_project
 from npcpy.data.web import search_web
 from npcpy.memory.knowledge_graph import kg_sleep_process, kg_dream_process
 
@@ -446,13 +444,13 @@ def plan_handler(command: str, **kwargs):
     user_command = " ".join(command.split()[1:])
     if not user_command:
         return {"output": "Usage: /plan <description_of_plan>", "messages": messages}
-    try:
-        return execute_plan_command(command=user_command, **kwargs)
-    except NameError:
-         return {"output": "Plan function (execute_plan_command) not available.", "messages": messages}
-    except Exception as e:
-        traceback.print_exc()
-        return {"output": f"Error executing plan: {e}", "messages": messages}
+    #try:
+    return execute_plan_command(command=user_command, **kwargs)
+
+    #return {"output": "Plan function (execute_plan_command) not available.", "messages": messages}
+    #except Exception as e:
+    #    traceback.print_exc()
+    #    return {"output": f"Error executing plan: {e}", "messages": messages}
 
 @router.route("pti", "Use pardon-the-interruption mode to interact with the LLM")
 def pti_handler(command: str, **kwargs):
@@ -500,17 +498,18 @@ def brainblast_handler(command: str, **kwargs):
     parts = shlex.split(command)
     search_query = " ".join(parts[1:]) if len(parts) > 1 else ""
     
-    
     if not search_query:
         return {"output": "Usage: /brainblast <search_terms>", "messages": messages}
     
     # Get the command history instance
     command_history = kwargs.get('command_history')
     if not command_history:
+        #print('no command history provided to brainblast')
         # Create a new one if not provided
         db_path = safe_get(kwargs, "history_db_path", os.path.expanduser('~/npcsh_history.db'))
         try:
             command_history = CommandHistory(db_path)
+            kwargs['command_history'] = command_history
         except Exception as e:
             return {"output": f"Error connecting to command history: {e}", "messages": messages}
     
@@ -521,13 +520,8 @@ def brainblast_handler(command: str, **kwargs):
             
         # Execute the brainblast command
         return execute_brainblast_command(
-            command=search_query,
-            command_history=command_history,
-            messages=messages,
-            top_k=safe_get(kwargs, 'top_k', 5),
-            **kwargs
-        )
-    
+                                    command=search_query,
+                                    **kwargs)   
     except Exception as e:
         traceback.print_exc()
         return {"output": f"Error executing brainblast command: {e}", "messages": messages}
