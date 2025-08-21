@@ -670,7 +670,7 @@ interactive_commands = {
 }
 
 
-def start_interactive_session(command: list) -> int:
+def start_interactive_session(command: str) -> int:
     """
     Starts an interactive session. Only works on Unix. On Windows, print a message and return 1.
     """
@@ -1626,9 +1626,9 @@ def handle_interactive_command(cmd_parts: List[str], state: ShellState) -> Tuple
     command_name = cmd_parts[0]
     print(f"Starting interactive {command_name} session...")
     try:
-        return_code = start_interactive_session(
-            interactive_commands[command_name], cmd_parts[1:]
-        )
+        # CORRECTED: Join all parts into one string to pass to the function.
+        full_command_str = " ".join(cmd_parts)
+        return_code = start_interactive_session(full_command_str)
         output = f"Interactive {command_name} session ended with return code {return_code}"
     except Exception as e:
         output = f"Error starting interactive session {command_name}: {e}"
@@ -1964,6 +1964,11 @@ def process_pipeline_command(
     
     if command_name in interactive_commands:
         return handle_interactive_command(cmd_parts, state)
+    if command_name in TERMINAL_EDITORS:
+        print(f"Starting interactive editor: {command_name}...")
+        full_command_str = " ".join(cmd_parts)
+        output = open_terminal_editor(full_command_str)
+        return state, output
 
     if validate_bash_command(cmd_parts):
         success, result = handle_bash_command(cmd_parts, cmd_to_process, stdin_input, state)

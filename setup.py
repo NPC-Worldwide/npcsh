@@ -1,20 +1,11 @@
 from setuptools import setup, find_packages
-import site
-import platform
-from pathlib import Path
 import os
-
-
 def package_files(directory):
     paths = []
     for path, directories, filenames in os.walk(directory):
         for filename in filenames:
             paths.append(os.path.join(path, filename))
     return paths
-
-
-
-# Base requirements (no LLM packages)
 base_requirements = [
     'npcpy', 
     "jinja2",
