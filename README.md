@@ -21,7 +21,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 
 
   - Get help with a task: 
-      ```
+      ```bash
       npcsh:🤖sibiji:gemini-2.5-flash>can you help me identify what process is listening on port 5337? 
       ```
       <p align="center"> 
@@ -29,7 +29,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
       </p>
 
   - Edit files
-      ```
+      ```bash
       npcsh>please read through the markdown files in the docs folder and suggest changes based on the current implementation in the src folder
       ```
 
