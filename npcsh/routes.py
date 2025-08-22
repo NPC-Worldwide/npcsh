@@ -416,21 +416,22 @@ def launch_npc_studio(path_to_open: str = None):
     # Start backend (Flask server)
     backend = subprocess.Popen(
         [sys.executable, "npc_studio_serve.py"],
-        cwd=NPC_STUDIO_DIR
+        cwd=NPC_STUDIO_DIR, 
+        shell = False
     )
 
     # Start server (Electron)
     dev_server = subprocess.Popen(
         ["npm", "run", "dev"],
         cwd=NPC_STUDIO_DIR,
-        shell=True
+        shell=False
     )
     
     # Start frontend (Electron)
     frontend = subprocess.Popen(
         ["npm", "start"],
         cwd=NPC_STUDIO_DIR,
-        shell=True
+        shell=False
     )
 
     return backend, dev_server, frontend
