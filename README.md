@@ -137,7 +137,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     '
 
 ## Read the Docs
-To see more about how to use the macros and modes in the NPC Shell, read the docs at [npcsh.readthedocs.io](https://npcsh.readthedocs.io/en/latest/)
+To see more about how to use the macros and modes in the NPC Shell, read the docs at [npc-shell.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/)
 
 
 ## Inference Capabilities
