@@ -97,11 +97,13 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     - `/brainblast` - Execute an advanced chunked search on command history
     - `/breathe` - Condense context on a regular cadence
     - `/compile` - Compile NPC profiles
+    - `/corca` - Enter the Corca MCP-powered agentic shell. Usage: /corca [--mcp-server-path path]                  
     - `/flush` - Flush the last N messages
     - `/guac` - Enter guac mode
     - `/help` - Show help for commands, NPCs, or Jinxs. Usage: /help 
     - `/init` - Initialize NPC project
     - `/jinxs` - Show available jinxs for the current NPC/Team
+    - `/npc-studio` - Start npc studio                                                                                                                           
     - `/ots` - Take screenshot and analyze with vision model
     - `/plan` - Execute a plan command
     - `/plonk` - Use vision model to interact with GUI. Usage: /plonk <task description>
