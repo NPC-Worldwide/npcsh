@@ -220,9 +220,15 @@
     <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/frederic4.png" alt="npcsh logo of frederic the bear and the pti logo", width=250></a>
   </p>
 
-- ## `/rag`: embedding search through chroma db, optional file input
+- ## `/rag`: retrieval
+    - perform a search through chroma db, optional file input, or through the KG.
+    ```bash
+    /rag
+    ```
+
+
 - ## `/roll`: your video generation assistant
-  - 
+    - use local models to generate videos! 
     ```npcsh
     /roll --provider ollama --model llama3
     ```

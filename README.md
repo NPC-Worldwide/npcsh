@@ -37,6 +37,9 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     ```bash
     npcsh> has there ever been a better pasta shape than bucatini?
     ```
+    ```
+    Ultimately, the "best" pasta shape depends on personal preference and the dish being prepared. Bucatini shines in specific contexts, but pasta lovers often appreciate a diverse range of shapes for their unique qualities and compatibilities with various sauces and ingredients. Each shape has its place in the culinary world, and trying different types can enhance the overall dining experience.                                                          
+    ```
     
     ```
     .Loaded .env file...                                                                                                                                               
@@ -84,7 +87,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     ```bash
     /serve --port 5337 --cors='http://localhost:5137/'
     ```
-  - **Screenshot Analysis**
+  - **Screenshot Analysis**: select an area on your screen and then send your question to the LLM
     ```bash
     /ots
     ```
