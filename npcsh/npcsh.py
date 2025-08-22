@@ -199,7 +199,10 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
             npc_name = state.npc.name if isinstance(state.npc, NPC) else "__none__"
             session_scopes.add((team_name, npc_name, state.current_path))
 
-            state, output = execute_command(user_input, state, router)
+            state, output = execute_command(user_input, 
+                                            state, 
+                                            review = True, 
+                                            router=router)
             process_result(user_input, 
                            state, 
                            output, 
