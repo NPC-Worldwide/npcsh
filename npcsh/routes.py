@@ -40,6 +40,7 @@ from npcpy.memory.knowledge_graph import kg_sleep_process, kg_dream_process
 from npcsh._state import (
     NPCSH_VISION_MODEL, 
     NPCSH_VISION_PROVIDER, 
+    set_npcsh_config_value,
     NPCSH_API_URL,
     NPCSH_CHAT_MODEL, 
     NPCSH_CHAT_PROVIDER, 
@@ -290,7 +291,8 @@ def guac_handler(command,  **kwargs):
     team = Team(npc_team_dir, db_conn=db_conn)
 
     
-    enter_guac_mode(npc=npc, 
+    enter_guac_mode(workspace_dirs,
+                    npc=npc, 
                     team=team, 
                     config_dir=config_dir, 
                     plots_dir=plots_dir,
@@ -908,29 +910,18 @@ def sleep_handler(command: str, **kwargs):
 @router.route("spool", "Enter interactive chat (spool) mode")
 def spool_handler(command: str, **kwargs):
     try:
-        # Handle NPC loading if npc is passed as a string (name)
         npc = safe_get(kwargs, 'npc')
         team = safe_get(kwargs, 'team')
         
-        # If npc is a string, try to load it from the team
         if isinstance(npc, str) and team:
             npc_name = npc
             if npc_name in team.npcs:
                 npc = team.npcs[npc_name]
             else:
                 return {"output": f"Error: NPC '{npc_name}' not found in team. Available NPCs: {', '.join(team.npcs.keys())}", "messages": safe_get(kwargs, "messages", [])}
-        
-        return enter_spool_mode(
-            model=safe_get(kwargs, 'model', NPCSH_CHAT_MODEL),
-            provider=safe_get(kwargs, 'provider', NPCSH_CHAT_PROVIDER),
-            npc=npc,  
-            team=team, 
-            messages=safe_get(kwargs, 'messages'),
-            conversation_id=safe_get(kwargs, 'conversation_id'),
-            stream=safe_get(kwargs, 'stream', NPCSH_STREAM_OUTPUT),
-            attachments=safe_get(kwargs, 'attachments'),
-            rag_similarity_threshold = safe_get(kwargs, 'rag_similarity_threshold', 0.3), 
-        )
+        kwargs['npc'] = npc
+        return enter_spool_mode(            
+                                **kwargs)
     except Exception as e:
         traceback.print_exc()
         return {"output": f"Error entering spool mode: {e}", "messages": safe_get(kwargs, "messages", [])}
