@@ -59,6 +59,8 @@ def load_npc_by_name(npc_name: str = "sibiji", db_path: str = NPCSH_DB_PATH) -> 
         return None
 
 def main():
+    from npcsh.routes import router
+    
     parser = argparse.ArgumentParser(
         description="NPC Command Line Utilities. Call a command or provide a prompt for the default NPC.",
         usage="npc <command> [command_args...] | <prompt> [--npc NAME] [--model MODEL] [--provider PROV]"
@@ -172,7 +174,6 @@ def main():
         npc_instance.model = effective_model
     if args.provider:
         npc_instance.provider = effective_provider
-
     try:
         if is_valid_command:
             # Handle slash command using npcsh's execute_slash_command
@@ -186,7 +187,8 @@ def main():
                 full_command_str, 
                 stdin_input=None, 
                 state=shell_state, 
-                stream=NPCSH_STREAM_OUTPUT
+                stream=NPCSH_STREAM_OUTPUT, 
+                router = router
             )
 
             # Process and display the result
