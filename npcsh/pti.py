@@ -22,9 +22,9 @@ from npcsh._state import (
     get_npc_path
 )
 
+ice = "🧊"
+bear = "🐻‍❄️"
 def print_pti_welcome_message():
-    ice = "🧊"
-    bear = "🐻‍❄️"
     
     print(f"""
 Welcome to PTI Mode!
@@ -85,7 +85,7 @@ def enter_pti_mode(command: str, **kwargs):
                 npc_name = state.npc.name if state.npc and isinstance(state.npc, NPC) else "frederic"
                 model_name = state.reasoning_model
                 
-                prompt_str = f"{colored(os.path.basename(state.current_path), 'blue')}:{npc_name}:{model_name}> "
+                prompt_str = f"{colored(os.path.basename(state.current_path), 'blue')}:{npc_name}:{model_name}{bear}> "
                 prompt = readline_safe_prompt(prompt_str)
                 user_input = get_multiline_input(prompt).strip()
 

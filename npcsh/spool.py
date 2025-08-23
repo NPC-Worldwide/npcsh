@@ -26,8 +26,16 @@ from npcpy.npc_compiler import NPC
 from typing import Any, List, Dict, Union
 from npcsh.yap import enter_yap_mode
 from termcolor import colored
-
-
+def print_spool_ascii():
+    spool_art = """
+ ██████╗██████╗  ████████╗   ████████╗  ██╗     
+██╔════╝██╔══██╗██╔🧵🧵🧵██ ██╔🧵🧵🧵██ ██║     
+╚█████╗ ██████╔╝██║🧵🔴🧵██ ██║🧵🔴🧵██ ██║     
+ ╚═══██╗██╔═══╝ ██║🧵🧵🧵██ ██║🧵🧵🧵██ ██║     
+██████╔╝██║     ██╚══════██ ██ ══════██ ██║
+╚═════╝ ╚═╝     ╚═████████   ███████═╝ █████████╗
+"""
+    print(spool_art)
 def enter_spool_mode(
     npc: NPC = None,    
     team = None,
@@ -42,7 +50,7 @@ def enter_spool_mode(
     stream: bool = None,
     **kwargs,
 ) -> Dict:
-    
+    print_spool_ascii()
     # Initialize state using existing infrastructure
     command_history, state_team, default_npc = setup_shell()
     
