@@ -103,7 +103,7 @@ except importlib.metadata.PackageNotFoundError:
 
 
 
-NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "llama3.2")
+NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b")
 # print("NPCSH_CHAT_MODEL", NPCSH_CHAT_MODEL)
 NPCSH_CHAT_PROVIDER = os.environ.get("NPCSH_CHAT_PROVIDER", "ollama")
 # print("NPCSH_CHAT_PROVIDER", NPCSH_CHAT_PROVIDER)
@@ -116,7 +116,7 @@ NPCSH_VECTOR_DB_PATH = os.path.expanduser(
 #DEFAULT MODES = ['CHAT', 'AGENT', 'CODE', ]
 
 NPCSH_DEFAULT_MODE = os.path.expanduser(os.environ.get("NPCSH_DEFAULT_MODE", "agent"))
-NPCSH_VISION_MODEL = os.environ.get("NPCSH_VISION_MODEL", "llava:7b")
+NPCSH_VISION_MODEL = os.environ.get("NPCSH_VISION_MODEL", "gemma3:4b")
 NPCSH_VISION_PROVIDER = os.environ.get("NPCSH_VISION_PROVIDER", "ollama")
 NPCSH_IMAGE_GEN_MODEL = os.environ.get(
     "NPCSH_IMAGE_GEN_MODEL", "runwayml/stable-diffusion-v1-5"
@@ -160,7 +160,7 @@ class ShellState:
     video_gen_model: str = NPCSH_VIDEO_GEN_MODEL
     video_gen_provider: str = NPCSH_VIDEO_GEN_PROVIDER
     current_mode: str = NPCSH_DEFAULT_MODE
-    build_kg: bool = NPCSH_BUILD_KG,
+    build_kg: bool = NPCSH_BUILD_KG
     api_key: Optional[str] = None
     api_url: Optional[str] = NPCSH_API_URL
     current_path: str = field(default_factory=os.getcwd)
@@ -182,7 +182,96 @@ class ShellState:
             return self.video_gen_model, self.video_gen_provider
         else:
             return self.chat_model, self.chat_provider # Default fallback
+CONFIG_KEY_MAP = {
+    # Chat
+    "model": "NPCSH_CHAT_MODEL",
+    "chatmodel": "NPCSH_CHAT_MODEL",
+    "provider": "NPCSH_CHAT_PROVIDER",
+    "chatprovider": "NPCSH_CHAT_PROVIDER",
 
+    # Vision
+    "vmodel": "NPCSH_VISION_MODEL",
+    "visionmodel": "NPCSH_VISION_MODEL",
+    "vprovider": "NPCSH_VISION_PROVIDER",
+    "visionprovider": "NPCSH_VISION_PROVIDER",
+
+    # Embedding
+    "emodel": "NPCSH_EMBEDDING_MODEL",
+    "embeddingmodel": "NPCSH_EMBEDDING_MODEL",
+    "eprovider": "NPCSH_EMBEDDING_PROVIDER",
+    "embeddingprovider": "NPCSH_EMBEDDING_PROVIDER",
+
+    # Reasoning
+    "rmodel": "NPCSH_REASONING_MODEL",
+    "reasoningmodel": "NPCSH_REASONING_MODEL",
+    "rprovider": "NPCSH_REASONING_PROVIDER",
+    "reasoningprovider": "NPCSH_REASONING_PROVIDER",
+
+    # Image generation
+    "igmodel": "NPCSH_IMAGE_GEN_MODEL",
+    "imagegenmodel": "NPCSH_IMAGE_GEN_MODEL",
+    "igprovider": "NPCSH_IMAGE_GEN_PROVIDER",
+    "imagegenprovider": "NPCSH_IMAGE_GEN_PROVIDER",
+
+    # Video generation
+    "vgmodel": "NPCSH_VIDEO_GEN_MODEL",
+    "videogenmodel": "NPCSH_VIDEO_GEN_MODEL",
+    "vgprovider": "NPCSH_VIDEO_GEN_PROVIDER",
+    "videogenprovider": "NPCSH_VIDEO_GEN_PROVIDER",
+
+    # Other
+    "sprovider": "NPCSH_SEARCH_PROVIDER",
+    "mode": "NPCSH_DEFAULT_MODE",
+    "stream": "NPCSH_STREAM_OUTPUT",
+    "apiurl": "NPCSH_API_URL",
+    "buildkg": "NPCSH_BUILD_KG",
+}
+
+
+def set_npcsh_config_value(key: str, value: str):
+    """
+    Set NPCSH config values at runtime using shorthand (case-insensitive) or full keys.
+    Updates os.environ, globals, and ShellState defaults.
+    """
+    # case-insensitive lookup for shorthand
+    env_key = CONFIG_KEY_MAP.get(key.lower(), key)
+
+    # update env
+    os.environ[env_key] = value
+
+    # normalize types
+    if env_key in ["NPCSH_STREAM_OUTPUT", "NPCSH_BUILD_KG"]:
+        parsed_val = value.strip().lower() in ["1", "true", "yes"]
+    elif env_key.endswith("_PATH"):
+        parsed_val = os.path.expanduser(value)
+    else:
+        parsed_val = value
+
+    # update global
+    globals()[env_key] = parsed_val
+
+    # update ShellState defaults
+    field_map = {
+        "NPCSH_CHAT_MODEL": "chat_model",
+        "NPCSH_CHAT_PROVIDER": "chat_provider",
+        "NPCSH_VISION_MODEL": "vision_model",
+        "NPCSH_VISION_PROVIDER": "vision_provider",
+        "NPCSH_EMBEDDING_MODEL": "embedding_model",
+        "NPCSH_EMBEDDING_PROVIDER": "embedding_provider",
+        "NPCSH_REASONING_MODEL": "reasoning_model",
+        "NPCSH_REASONING_PROVIDER": "reasoning_provider",
+        "NPCSH_SEARCH_PROVIDER": "search_provider",
+        "NPCSH_IMAGE_GEN_MODEL": "image_gen_model",
+        "NPCSH_IMAGE_GEN_PROVIDER": "image_gen_provider",
+        "NPCSH_VIDEO_GEN_MODEL": "video_gen_model",
+        "NPCSH_VIDEO_GEN_PROVIDER": "video_gen_provider",
+        "NPCSH_DEFAULT_MODE": "current_mode",
+        "NPCSH_BUILD_KG": "build_kg",
+        "NPCSH_API_URL": "api_url",
+        "NPCSH_STREAM_OUTPUT": "stream_output",
+    }
+    if env_key in field_map:
+        setattr(ShellState, field_map[env_key], parsed_val)
 def get_npc_path(npc_name: str, db_path: str) -> str:
     project_npc_team_dir = os.path.abspath("./npc_team")
     project_npc_path = os.path.join(project_npc_team_dir, f"{npc_name}.npc")
@@ -1748,30 +1837,18 @@ def parse_generic_command_flags(parts: List[str]) -> Tuple[Dict[str, Any], List[
 def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
     """Determine if this interaction is too trivial for KG processing"""
     
-    # Skip if user input is too short or trivial
-    trivial_inputs = {
-        '/sq', '/exit', '/quit', 'exit', 'quit', 'hey', 'hi', 'hello', 
-        'fwah!', 'test', 'ping', 'ok', 'thanks', 'ty'
-    }
-    
-    if user_input.lower().strip() in trivial_inputs:
-        return True
-    
     # Skip if user input is very short (less than 10 chars)
     if len(user_input.strip()) < 10:
         return True
     
-    # Skip simple bash commands
     simple_bash = {'ls', 'pwd', 'cd', 'mkdir', 'touch', 'rm', 'mv', 'cp'}
     first_word = user_input.strip().split()[0] if user_input.strip() else ""
     if first_word in simple_bash:
         return True
     
-    # Skip if assistant output is very short (less than 20 chars)
     if len(assistant_output.strip()) < 20:
         return True
     
-    # Skip if it's just a mode exit message
     if "exiting" in assistant_output.lower() or "exited" in assistant_output.lower():
         return True
     
@@ -2430,6 +2507,8 @@ def process_result(
 
 
         if result_state.build_kg:
+            import pdb 
+            pdb.set_trace()
             try:
                 if not should_skip_kg_processing(user_input, final_output_str):
 
