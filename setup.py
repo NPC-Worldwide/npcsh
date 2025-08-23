@@ -16,6 +16,7 @@ base_requirements = [
     "thefuzz", 
     "imagehash", 
     "requests",
+    "chroptiks", 
     "matplotlib",
     "markdown",
     "networkx", 
@@ -39,6 +40,7 @@ base_requirements = [
     "psycopg2-binary",
     "flask_sse",
     "wikipedia", 
+    "darts",
 ]
 
 # API integration requirements

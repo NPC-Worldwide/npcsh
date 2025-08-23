@@ -22,11 +22,10 @@ from npcpy.llm_funcs import check_llm_command
 from sqlalchemy import create_engine
 
 # Import the key functions from npcsh
-from npcsh.npcsh import (
+from npcsh._state import (
     setup_shell,
     execute_slash_command,
     execute_command,
-    process_pipeline_command,
 )
 
 def load_npc_by_name(npc_name: str = "sibiji", db_path: str = NPCSH_DB_PATH) -> Optional[NPC]:
