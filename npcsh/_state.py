@@ -2214,7 +2214,7 @@ def execute_command(
                         if stream_this_segment:
                             full_stream_output = print_and_process_stream_with_markdown(output, 
                                                                                         state.npc.model, 
-                                                                                        state.npc.provider)
+                                                                                        state.npc.provider, show=True)
                             stdin_for_next = full_stream_output
                             if is_last_command: 
                                 final_output = full_stream_output
@@ -2480,7 +2480,7 @@ def process_result(
     elif result_state.stream_output:
 
 
-        final_output_str = print_and_process_stream_with_markdown(output_content, model_for_stream, provider_for_stream)
+        final_output_str = print_and_process_stream_with_markdown(output_content, model_for_stream, provider_for_stream, show=True)
     elif output_content is not None:
         final_output_str = str(output_content)
         render_markdown(final_output_str)

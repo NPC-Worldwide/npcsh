@@ -28,7 +28,8 @@ import sys
 from npcpy.memory.command_history import CommandHistory, start_new_conversation
 from npcpy.npc_compiler import Team, NPC
 from npcpy.llm_funcs import get_llm_response
-from npcpy.npc_sysenv import render_markdown
+from npcpy.npc_sysenv import render_markdown,print_and_process_stream_with_markdown
+
 
 from npcsh._state import (
     ShellState,
@@ -40,6 +41,10 @@ from npcsh._state import (
     get_multiline_input,
     orange
 )
+import threading
+import time
+import ctypes
+import ctypes.util
 
 try:
     import readline
@@ -63,6 +68,92 @@ EXTENSION_MAP = {
     "ISO": "archives", "NPY": "data", "NPZ": "data", "H5": "data", "HDF5": "data", "PKL": "data", "JOBLIB": "data"
 }
 
+_guac_monitor_thread = None
+_guac_monitor_stop_event = None
+
+def _clear_readline_buffer():
+    """Clear the current readline input buffer and redisplay prompt."""
+    try:
+        # Preferred: use Python readline API if available
+        if hasattr(readline, "replace_line") and hasattr(readline, "redisplay"):
+            readline.replace_line("", 0)
+            readline.redisplay()
+            return True
+    except Exception:
+        pass
+
+    # Fallback: call rl_replace_line and rl_redisplay from the linked readline/libedit
+    try:
+        libname = ctypes.util.find_library("readline") or ctypes.util.find_library("edit") or "readline"
+        rl = ctypes.CDLL(libname)
+        # rl_replace_line(char *text, int clear_undo)
+        rl.rl_replace_line.argtypes = [ctypes.c_char_p, ctypes.c_int]
+        rl.rl_redisplay.argtypes = []
+        rl.rl_replace_line(b"", 0)
+        rl.rl_redisplay()
+        return True
+    except Exception:
+        return False
+
+def _file_drop_monitor(npc_team_dir: Path, state: ShellState, locals_dict: Dict[str, Any], poll_interval: float = 0.2):
+    """
+    Background thread: poll readline.get_line_buffer() and process file drops immediately.
+    """
+    processed_bufs = set()
+    stop_event = _guac_monitor_stop_event
+    while stop_event is None or not stop_event.is_set():
+        try:
+            buf = ""
+            try:
+                buf = readline.get_line_buffer()
+            except Exception:
+                buf = ""
+            if not buf:
+                time.sleep(poll_interval)
+                continue
+
+            # Normalize buffer
+            candidate = buf.strip()
+            # If quoted, remove quotes
+            if (candidate.startswith("'") and candidate.endswith("'")) or (candidate.startswith('"') and candidate.endswith('"')):
+                inner = candidate[1:-1]
+            else:
+                inner = candidate
+
+            # quick check: must be single token and existing file
+            if " " not in inner and Path(inner.replace('~', str(Path.home()))).expanduser().exists() and Path(inner.replace('~', str(Path.home()))).expanduser().is_file():
+                # Avoid double-processing same buffer
+                if buf in processed_bufs:
+                    time.sleep(poll_interval)
+                    continue
+                processed_bufs.add(buf)
+
+                # Immediately process: copy and load
+                try:
+                    # Use your existing handler for multi-file copies to ensure directory structure
+                    # But we want immediate execution for a single file: call _handle_file_drop first to copy
+                    modified_input, processed_files = _handle_file_drop(buf, npc_team_dir)
+                    if processed_files:
+                        target_path = processed_files[0]
+                        # Generate loading code based on original file (inner) and target_path
+                        loading_code = _generate_file_analysis_code(inner, target_path)
+                        # Execute via your normal execute_python_code so it records in history
+                        print("\n[guac] Detected file drop — processing automatically...")
+                        # Note: execute_python_code expects state and locals_dict
+                        _state, exec_output = execute_python_code(loading_code, state, locals_dict)
+                        # Print whatever result execute_python_code returned (it will already have been captured)
+                        if exec_output:
+                            print(exec_output)
+                        # Clear the current readline buffer so user doesn't have to press Enter
+                        _clear_readline_buffer()
+                except Exception as e:
+                    print(f"[guac][ERROR] file drop processing failed: {e}")
+        except Exception:
+            # Be resilient: don't let thread die
+            pass
+        time.sleep(poll_interval)
+
+
 def is_python_code(text: str) -> bool:
     text = text.strip()
     if not text:
@@ -78,7 +169,6 @@ def is_python_code(text: str) -> bool:
             return False
     except (OverflowError, ValueError):
         return False
-
 def execute_python_code(code_str: str, state: ShellState, locals_dict: Dict[str, Any]) -> Tuple[ShellState, Any]:
     import io
     output_capture = io.StringIO()
@@ -122,9 +212,157 @@ def execute_python_code(code_str: str, state: ShellState, locals_dict: Dict[str,
         final_output_str = output_capture.getvalue().strip()
         output_capture.close()
     
+    # ADD THIS LINE:
+    _capture_plot_state(state.conversation_id, state.command_history.db_path, Path.cwd() / "npc_team")
+    
     if state.command_history:
         state.command_history.add_command(code_str, [final_output_str if final_output_str else ""], "", state.current_path)
     return state, final_output_str
+
+# Modify _generate_file_analysis_code - add the capture call to each code block:
+def _generate_file_analysis_code(file_path: str, target_path: str) -> str:
+    """Generate Python code to load and analyze the dropped file"""
+    ext = Path(file_path).suffix.lower()
+    file_var_name = f"file_{datetime.now().strftime('%H%M%S')}"
+    
+    capture_code = f"""
+# Capture file analysis state
+_capture_file_state('{state.conversation_id}', '{state.command_history.db_path}', r'{target_path}', '''AUTO_GENERATED_CODE''', locals())
+"""
+    
+    if ext == '.pdf':
+        return f"""
+# Automatically loaded PDF file
+import PyPDF2
+import pandas as pd
+try:
+    with open(r'{target_path}', 'rb') as file:
+        pdf_reader = PyPDF2.PdfReader(file)
+        {file_var_name}_text = ""
+        for page_num in range(len(pdf_reader.pages)):
+            {file_var_name}_text += pdf_reader.pages[page_num].extract_text()
+    
+    print(f"📄 Loaded PDF: {{len(pdf_reader.pages)}} pages, {{len({file_var_name}_text)}} characters")
+    print("First 500 characters:")
+    print({file_var_name}_text[:500])
+    print("\\n--- PDF loaded as '{file_var_name}_text' variable ---")
+    {capture_code}
+except Exception as e:
+    print(f"Error loading PDF: {{e}}")
+    {file_var_name}_text = None
+"""
+    
+    elif ext in ['.csv']:
+        return f"""
+# Automatically loaded CSV file
+import pandas as pd
+try:
+    {file_var_name}_df = pd.read_csv(r'{target_path}')
+    print(f"📊 Loaded CSV: {{len({file_var_name}_df)}} rows, {{len({file_var_name}_df.columns)}} columns")
+    print("Columns:", list({file_var_name}_df.columns))
+    print("\\nFirst 5 rows:")
+    print({file_var_name}_df.head())
+    print(f"\\n--- CSV loaded as '{file_var_name}_df' variable ---")
+    {capture_code}
+except Exception as e:
+    print(f"Error loading CSV: {{e}}")
+    {file_var_name}_df = None
+"""
+    
+    elif ext in ['.xlsx', '.xls']:
+        return f"""
+# Automatically loaded Excel file
+import pandas as pd
+try:
+    {file_var_name}_df = pd.read_excel(r'{target_path}')
+    print(f"📊 Loaded Excel: {{len({file_var_name}_df)}} rows, {{len({file_var_name}_df.columns)}} columns")
+    print("Columns:", list({file_var_name}_df.columns))
+    print("\\nFirst 5 rows:")
+    print({file_var_name}_df.head())
+    print(f"\\n--- Excel loaded as '{file_var_name}_df' variable ---")
+    {capture_code}
+except Exception as e:
+    print(f"Error loading Excel: {{e}}")
+    {file_var_name}_df = None
+"""
+    
+    elif ext in ['.json']:
+        return f"""
+# Automatically loaded JSON file
+import json
+try:
+    with open(r'{target_path}', 'r') as file:
+        {file_var_name}_data = json.load(file)
+    print(f"📄 Loaded JSON: {{type({file_var_name}_data)}}")
+    if isinstance({file_var_name}_data, dict):
+        print("Keys:", list({file_var_name}_data.keys()))
+    elif isinstance({file_var_name}_data, list):
+        print(f"List with {{len({file_var_name}_data)}} items")
+    print(f"\\n--- JSON loaded as '{file_var_name}_data' variable ---")
+    {capture_code}
+except Exception as e:
+    print(f"Error loading JSON: {{e}}")
+    {file_var_name}_data = None
+"""
+    
+    elif ext in ['.txt', '.md']:
+        return f"""
+# Automatically loaded text file
+try:
+    with open(r'{target_path}', 'r', encoding='utf-8') as file:
+        {file_var_name}_text = file.read()
+    print(f"📄 Loaded text file: {{len({file_var_name}_text)}} characters")
+    print("First 500 characters:")
+    print({file_var_name}_text[:500])
+    print(f"\\n--- Text loaded as '{file_var_name}_text' variable ---")
+    {capture_code}
+except Exception as e:
+    print(f"Error loading text file: {{e}}")
+    {file_var_name}_text = None
+"""
+    
+    elif ext in ['.png', '.jpg', '.jpeg', '.gif']:
+        return f"""
+# Automatically loaded image file
+import matplotlib.pyplot as plt
+from PIL import Image
+import numpy as np
+try:
+    {file_var_name}_img = Image.open(r'{target_path}')
+    {file_var_name}_array = np.array({file_var_name}_img)
+    print(f"🖼️ Loaded image: {{({file_var_name}_img.size)}} pixels, mode: {{{file_var_name}_img.mode}}")
+    print(f"Array shape: {{{file_var_name}_array.shape}}")
+    
+    plt.figure(figsize=(8, 6))
+    plt.imshow({file_var_name}_img)
+    plt.axis('off')
+    plt.title('Loaded Image: {Path(file_path).name}')
+    plt.show()
+    print(f"\\n--- Image loaded as '{file_var_name}_img' and '{file_var_name}_array' variables ---")
+    {capture_code}
+except Exception as e:
+    print(f"Error loading image: {{e}}")
+    {file_var_name}_img = None
+    {file_var_name}_array = None
+"""
+    
+    else:
+        return f"""
+# Automatically loaded file (unknown type)
+try:
+    with open(r'{target_path}', 'rb') as file:
+        {file_var_name}_data = file.read()
+    print(f"📄 Loaded binary file: {{len({file_var_name}_data)}} bytes")
+    print(f"File extension: {ext}")
+    print(f"\\n--- Binary data loaded as '{file_var_name}_data' variable ---")
+    {capture_code}
+except Exception as e:
+    print(f"Error loading file: {{e}}")
+    {file_var_name}_data = None
+"""
+
+
+
 
 def _handle_guac_refresh(state: ShellState, project_name: str, src_dir: Path):
     if not state.command_history or not state.npc:
@@ -157,7 +395,11 @@ def _handle_guac_refresh(state: ShellState, project_name: str, src_dir: Path):
     prompt = "\n".join(prompt_parts)
 
     try:
-        response = get_llm_response(prompt, model=state.chat_model, provider=state.chat_provider, npc=state.npc, stream=False)
+        response = get_llm_response(prompt, 
+                                    model=state.chat_model, 
+                                    provider=state.chat_provider, 
+                                    npc=state.npc, 
+                                    stream=False)
         suggested_code_raw = response.get("response", "").strip()
         code_blocks = re.findall(r'```python\s*(.*?)\s*```', suggested_code_raw, re.DOTALL)
         
@@ -272,7 +514,7 @@ def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None, lang='py
         yaml.dump(updated_ctx, f, default_flow_style=False)
     print("Updated team.ctx with GUAC-specific information.")
 
-    default_mode_val = default_mode_choice or "cmd"
+    default_mode_val = default_mode_choice or "agent"
     setup_npc_team(npc_team_dir, lang)
     
     print(f"\nGuac mode configured for package: {package_name} at {package_root}")
@@ -363,32 +605,170 @@ import shutil
 
 def _detect_file_drop(input_text: str) -> bool:
     """Detect if input is just a file path (drag and drop)"""
-    print(f"[DEBUG] _detect_file_drop called with: '{input_text}'")
     
     stripped = input_text.strip()
-    print(f"[DEBUG] Stripped input: '{stripped}'")
     
     # Remove quotes if present
     if stripped.startswith("'") and stripped.endswith("'"):
         stripped = stripped[1:-1]
-        print(f"[DEBUG] Removed single quotes: '{stripped}'")
     elif stripped.startswith('"') and stripped.endswith('"'):
         stripped = stripped[1:-1]
-        print(f"[DEBUG] Removed double quotes: '{stripped}'")
     
-    print(f"[DEBUG] Final stripped: '{stripped}'")
-    print(f"[DEBUG] Number of words: {len(stripped.split())}")
-    print(f"[DEBUG] Path exists: {Path(stripped).exists()}")
-    print(f"[DEBUG] Is file: {Path(stripped).is_file()}")
+    # Must be a single token (no spaces) - this is key!
+    if len(stripped.split()) != 1:
+        return False
     
-    # Check if it's just a file path
-    is_file_drop = (len(stripped.split()) == 1 and 
-                   Path(stripped).exists() and 
-                   Path(stripped).is_file())
+    # Must not contain Python operators or syntax
+    python_indicators = ['(', ')', '[', ']', '{', '}', '=', '+', '-', '*', '/', '%', '&', '|', '^', '<', '>', '!', '?', ':', ';', ',']
+    if any(indicator in stripped for indicator in python_indicators):
+        return False
     
-    print(f"[DEBUG] _detect_file_drop returning: {is_file_drop}")
-    return is_file_drop
+    # Must not start with common Python keywords or look like Python
+    python_keywords = ['import', 'from', 'def', 'class', 'if', 'for', 'while', 'try', 'with', 'lambda', 'print', 'len', 'str', 'int', 'float', 'list', 'dict', 'set', 'tuple']
+    if any(stripped.startswith(keyword) for keyword in python_keywords):
+        return False
+    
 
+import hashlib
+from sqlalchemy import create_engine, Column, Integer, String, Text, Float, DateTime, func
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+# Add these classes after your imports
+Base = declarative_base()
+
+class PlotState(Base):
+    __tablename__ = 'plot_states'
+    id = Column(Integer, primary_key=True)
+    session_id = Column(String(255))
+    plot_hash = Column(String(32))
+    plot_description = Column(Text)
+    figure_path = Column(String(500))
+    data_summary = Column(String(500))
+    change_significance = Column(Float)
+    timestamp = Column(DateTime, default=func.now())
+
+class FileAnalysisState(Base):
+    __tablename__ = 'file_analysis_states'
+    id = Column(Integer, primary_key=True)
+    session_id = Column(String(255))
+    file_path = Column(String(1000))
+    file_hash = Column(String(32))
+    analysis_summary = Column(Text)
+    variable_names = Column(Text)
+    timestamp = Column(DateTime, default=func.now())
+
+def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
+    """Capture plot state if significant change"""
+    if not plt.get_fignums():
+        return
+    
+    engine = create_engine(f'sqlite:///{db_path}')
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    
+    # Get plot info
+    fig = plt.gcf()
+    axes = fig.get_axes()
+    data_points = sum(len(line.get_xdata()) for ax in axes for line in ax.get_lines())
+    
+    # Create hash and check if different from last
+    plot_hash = hashlib.md5(f"{len(axes)}{data_points}".encode()).hexdigest()
+    
+    last = session.query(PlotState).filter(PlotState.session_id == session_id).order_by(PlotState.timestamp.desc()).first()
+    if last and last.plot_hash == plot_hash:
+        session.close()
+        return
+    
+    # Save plot
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    workspace_dirs = _get_workspace_dirs(npc_team_dir)
+    plot_path = workspace_dirs["plots"] / f"state_{timestamp}.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    
+    # Save to DB
+    plot_state = PlotState(
+        session_id=session_id,
+        plot_hash=plot_hash,
+        plot_description=f"Plot with {len(axes)} axes, {data_points} points",
+        figure_path=str(plot_path),
+        data_summary=f"{data_points} data points",
+        change_significance=1.0 if not last else 0.5
+    )
+    
+    session.add(plot_state)
+    session.commit()
+    session.close()
+    print(f"📊 Plot state captured -> {plot_path.name}")
+
+def _capture_file_state(session_id: str, db_path: str, file_path: str, analysis_code: str, locals_dict: Dict):
+    """Capture file analysis state"""
+    engine = create_engine(f'sqlite:///{db_path}')
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    
+    # Get file hash
+    try:
+        with open(file_path, 'rb') as f:
+            file_hash = hashlib.md5(f.read()).hexdigest()
+    except:
+        file_hash = "unknown"
+    
+    # Get variables created
+    file_stem = Path(file_path).stem.lower()
+    vars_created = [k for k in locals_dict.keys() if not k.startswith('_') and file_stem in k.lower()]
+    
+    file_state = FileAnalysisState(
+        session_id=session_id,
+        file_path=file_path,
+        file_hash=file_hash,
+        analysis_summary=f"Loaded {Path(file_path).name} -> {len(vars_created)} variables",
+        variable_names=json.dumps(vars_created)
+    )
+    
+    session.add(file_state)
+    session.commit()
+    session.close()
+    print(f"📁 File state captured: {Path(file_path).name}")
+
+def _get_plot_context(session_id: str, db_path: str) -> str:
+    """Get plot context for LLM"""
+    engine = create_engine(f'sqlite:///{db_path}')
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    
+    plots = session.query(PlotState).filter(PlotState.session_id == session_id).order_by(PlotState.timestamp.desc()).limit(3).all()
+    session.close()
+    
+    if not plots:
+        return "No plots in session."
+    
+    context = "Recent plots:\n"
+    for i, plot in enumerate(plots):
+        if i == 0:
+            context += f"📊 CURRENT: {plot.plot_description}\n"
+        else:
+            context += f"📊 Previous: {plot.plot_description}\n"
+    return context
+
+def _get_file_context(session_id: str, db_path: str) -> str:
+    """Get file context for LLM"""
+    engine = create_engine(f'sqlite:///{db_path}')
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    
+    files = session.query(FileAnalysisState).filter(FileAnalysisState.session_id == session_id).order_by(FileAnalysisState.timestamp.desc()).all()
+    session.close()
+    
+    if not files:
+        return "No files analyzed."
+    
+    context = "Analyzed files:\n"
+    for file in files:
+        context += f"📁 {Path(file.file_path).name}: {file.analysis_summary}\n"
+    return context
 def _generate_file_analysis_code(file_path: str, target_path: str) -> str:
     """Generate Python code to load and analyze the dropped file"""
     ext = Path(file_path).suffix.lower()
@@ -519,7 +899,7 @@ except Exception as e:
 """
 def _handle_file_drop(input_text: str, npc_team_dir: Path) -> Tuple[str, List[str]]:
     """Handle file drops by copying files to appropriate workspace directories"""
-    print(f"[DEBUG] _handle_file_drop called with input: '{input_text}'")
+    #print(f"[DEBUG] _handle_file_drop called with input: '{input_text}'")
     
     # Immediately check if this is a single file path
     stripped = input_text.strip("'\"")
@@ -560,10 +940,10 @@ def _handle_file_drop(input_text: str, npc_team_dir: Path) -> Tuple[str, List[st
     file_paths = re.findall(r"'([^']+)'|\"([^\"]+)\"|(\S+)", input_text)
     file_paths = [path for group in file_paths for path in group if path]
     
-    print(f"[DEBUG] Found file paths: {file_paths}")
+    #print(f"[DEBUG] Found file paths: {file_paths}")
     
     if not file_paths:
-        print(f"[DEBUG] No file paths found, returning original input")
+
         return input_text, processed_files
     
     modified_input = input_text
@@ -593,6 +973,137 @@ def _handle_file_drop(input_text: str, npc_team_dir: Path) -> Tuple[str, List[st
     return modified_input, processed_files
 
 
+def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
+    """Capture plot state if significant change"""
+    if not plt.get_fignums():
+        return
+    
+    try:
+        engine = create_engine(f'sqlite:///{db_path}')
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
+        # Get plot info
+        fig = plt.gcf()
+        axes = fig.get_axes()
+        data_points = sum(len(line.get_xdata()) for ax in axes for line in ax.get_lines())
+        
+        # Create hash and check if different from last
+        plot_hash = hashlib.md5(f"{len(axes)}{data_points}".encode()).hexdigest()
+        
+        last = session.query(PlotState).filter(PlotState.session_id == session_id).order_by(PlotState.timestamp.desc()).first()
+        if last and last.plot_hash == plot_hash:
+            session.close()
+            return
+        
+        # Save plot
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        workspace_dirs = _get_workspace_dirs(npc_team_dir)
+        plot_path = workspace_dirs["plots"] / f"state_{timestamp}.png"
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        
+        # Save to DB
+        plot_state = PlotState(
+            session_id=session_id,
+            plot_hash=plot_hash,
+            plot_description=f"Plot with {len(axes)} axes, {data_points} points",
+            figure_path=str(plot_path),
+            data_summary=f"{data_points} data points",
+            change_significance=1.0 if not last else 0.5
+        )
+        
+        session.add(plot_state)
+        session.commit()
+        session.close()
+        print(f"📊 Plot state captured -> {plot_path.name}")
+        
+    except Exception as e:
+        print(f"Error capturing plot state: {e}")
+
+def _capture_file_state(session_id: str, db_path: str, file_path: str, analysis_code: str, locals_dict: Dict):
+    """Capture file analysis state"""
+    try:
+        engine = create_engine(f'sqlite:///{db_path}')
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
+        # Get file hash
+        try:
+            with open(file_path, 'rb') as f:
+                file_hash = hashlib.md5(f.read()).hexdigest()
+        except:
+            file_hash = "unknown"
+        
+        # Get variables created
+        file_stem = Path(file_path).stem.lower()
+        vars_created = [k for k in locals_dict.keys() if not k.startswith('_') and file_stem in k.lower()]
+        
+        file_state = FileAnalysisState(
+            session_id=session_id,
+            file_path=file_path,
+            file_hash=file_hash,
+            analysis_summary=f"Loaded {Path(file_path).name} -> {len(vars_created)} variables",
+            variable_names=json.dumps(vars_created)
+        )
+        
+        session.add(file_state)
+        session.commit()
+        session.close()
+        print(f"📁 File state captured: {Path(file_path).name}")
+        
+    except Exception as e:
+        print(f"Error capturing file state: {e}")
+
+def _get_plot_context(session_id: str, db_path: str) -> str:
+    """Get plot context for LLM"""
+    try:
+        engine = create_engine(f'sqlite:///{db_path}')
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
+        plots = session.query(PlotState).filter(PlotState.session_id == session_id).order_by(PlotState.timestamp.desc()).limit(3).all()
+        session.close()
+        
+        if not plots:
+            return "No plots in session."
+        
+        context = "Recent plots:\n"
+        for i, plot in enumerate(plots):
+            if i == 0:
+                context += f"📊 CURRENT: {plot.plot_description}\n"
+            else:
+                context += f"📊 Previous: {plot.plot_description}\n"
+        return context
+        
+    except Exception as e:
+        return f"Error retrieving plot context: {e}"
+
+def _get_file_context(session_id: str, db_path: str) -> str:
+    """Get file context for LLM"""
+    try:
+        engine = create_engine(f'sqlite:///{db_path}')
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
+        files = session.query(FileAnalysisState).filter(FileAnalysisState.session_id == session_id).order_by(FileAnalysisState.timestamp.desc()).all()
+        session.close()
+        
+        if not files:
+            return "No files analyzed."
+        
+        context = "Analyzed files:\n"
+        for file in files:
+            context += f"📁 {Path(file.file_path).name}: {file.analysis_summary}\n"
+        return context
+        
+    except Exception as e:
+        return f"Error retrieving file context: {e}"
+
+
 
 def _save_matplotlib_figures(npc_team_dir: Path) -> List[str]:
     """Save all matplotlib figures to the plots directory and return paths"""
@@ -615,27 +1126,64 @@ def _save_matplotlib_figures(npc_team_dir: Path) -> List[str]:
     return saved_figures
 
 
-def _run_agentic_mode(command: str, state: ShellState, locals_dict: Dict[str, Any], npc_team_dir: Path) -> Tuple[ShellState, Any]:
-    """Run agentic mode with code execution, analysis, and iteration"""
-    max_iterations = 3
+def _run_agentic_mode(command: str, 
+                      state: ShellState, 
+                      locals_dict: Dict[str, Any], 
+                      npc_team_dir: Path) -> Tuple[ShellState, Any]:
+    """Run agentic mode with continuous iteration based on progress"""
+    max_iterations = 10  # Higher maximum as a safety limit
     iteration = 0
     full_output = []
     current_command = command
+    consecutive_failures = 0
+    max_consecutive_failures = 2
     
-    while iteration < max_iterations:
+    # Build context of existing variables
+    existing_vars_context = "EXISTING VARIABLES IN ENVIRONMENT:\n"
+    for var_name, var_value in locals_dict.items():
+        if not var_name.startswith('_') and var_name not in ['In', 'Out', 'exit', 'quit', 'get_ipython']:
+            try:
+                var_type = type(var_value).__name__
+                var_repr = repr(var_value)
+                if len(var_repr) > 100:
+                    var_repr = var_repr[:97] + "..."
+                existing_vars_context += f"- {var_name} ({var_type}): {var_repr}\n"
+            except:
+                existing_vars_context += f"- {var_name} ({type(var_value).__name__}): <unrepresentable>\n"
+    
+    while iteration < max_iterations and consecutive_failures < max_consecutive_failures:
         iteration += 1
-        print(f"\n🔄 Agentic iteration {iteration}/{max_iterations}")
+        print(f"\n🔄 Agentic iteration {iteration}")
         
         prompt = f"""
-        User request: {current_command}
-        Previous attempts: {full_output[-1] if full_output else 'None'}
+        USER REQUEST: {current_command}
         
-        Generate Python code to accomplish this task. If you need to make assumptions, state them clearly in comments.
+        {existing_vars_context}
+        
+        PREVIOUS ATTEMPTS: {full_output[-1] if full_output else 'None'}
+        
+        Generate Python code that BUILDS ON EXISTING VARIABLES to accomplish this task.
+        DO NOT redefine variables that already exist unless absolutely necessary.
+        Use the existing variables and add/modify as needed.
+        Be sure to generate logs and information  that oncne executed provide us with enough information to keep moving forward.
+        log variables and behaviors so we can pinpoint fixes clearly rather than getting stufck in nonsensical problematic loops.
+        
+        
         Provide ONLY executable Python code without any explanations or markdown formatting.
+        Focus on incremental changes rather than rewriting everything.
+
+        Do not include any leading ```python. Begin directly with the code.
         """
         
-        llm_response = get_llm_response(prompt, model=state.chat_model, provider=state.chat_provider, npc=state.npc, stream=False)
-        generated_code = llm_response.get("response", "").strip()
+        llm_response = get_llm_response(prompt, 
+                                        npc=state.npc, 
+                                        stream=True)
+      
+
+        generated_code = print_and_process_stream_with_markdown(llm_response.get('response'),
+                                                                state.npc.model, 
+                                                                state.npc.provider, 
+                                                                show=True)
         
         if generated_code.startswith('```python'):
             generated_code = generated_code[len('```python'):].strip()
@@ -648,41 +1196,74 @@ def _run_agentic_mode(command: str, state: ShellState, locals_dict: Dict[str, An
             state, exec_output = execute_python_code(generated_code, state, locals_dict)
             full_output.append(f"Iteration {iteration}:\nCode:\n{generated_code}\nOutput:\n{exec_output}")
             
-            saved_figures = _save_matplotlib_figures(npc_team_dir)
-            if saved_figures:
-                full_output[-1] += f"\nSaved figures: {', '.join(saved_figures)}"
+            # Update the context with new variables
+            new_vars = []
+            for var_name, var_value in locals_dict.items():
+                if (not var_name.startswith('_') and 
+                    var_name not in existing_vars_context and 
+                    var_name not in ['In', 'Out', 'exit', 'quit', 'get_ipython']):
+                    new_vars.append(var_name)
+            
+            if new_vars:
+                existing_vars_context += f"\nNEW VARIABLES CREATED: {', '.join(new_vars)}\n"
             
             analysis_prompt = f"""
-            Code execution results: {exec_output}
+            CODE EXECUTION RESULTS: {exec_output}
             
-            Was this successful? If not, what went wrong and how can we improve?
-            If successful, should we continue with more iterations or is this sufficient?
+            EXISTING VARIABLES: {existing_vars_context}
+            
+            ANALYSIS: 
+            - Is there MEANINGFUL PROGRESS? Return 'progress' if making good progress
+            - Is there a PROBLEM? Return 'problem' if stuck or error occurred
+    
+            - Return ONLY one of these words followed by a brief explanation.
             """
             
-            analysis_response = get_llm_response(analysis_prompt, model=state.chat_model, provider=state.chat_provider, npc=state.npc, stream=False)
-            analysis = analysis_response.get("response", "").strip()
+            analysis_response = get_llm_response(analysis_prompt,
+                                                 model=state.chat_model, 
+                                                 provider=state.chat_provider, 
+                                                 npc=state.npc, 
+                                                 stream=False)
+            
+            analysis = analysis_response.get("response", "").strip().lower()
             print(f"\n# Analysis:\n{analysis}")
             
-            if "ask user" in analysis.lower() or "clarification" in analysis.lower() or iteration == max_iterations:
+            if analysis.startswith('complete'):
+                print("✅ Task completed successfully!")
+                break
+            elif analysis.startswith('progress'):
+                consecutive_failures = 0  # Reset failure counter on progress
+                print("➡️  Making progress, continuing to next iteration...")
+                # Continue to next iteration
+            elif analysis.startswith('problem'):
+                consecutive_failures += 1
+                print(f"⚠️  Problem detected ({consecutive_failures}/{max_consecutive_failures} consecutive failures)")
+                
                 user_feedback = input("\n🤔 Agent requests feedback (press Enter to continue or type your response): ").strip()
                 if user_feedback:
                     current_command = f"{current_command} - User feedback: {user_feedback}"
-                else:
+                elif consecutive_failures >= max_consecutive_failures:
+                    print("❌ Too many consecutive failures, stopping iteration")
                     break
-            
-            if "sufficient" in analysis.lower() or "complete" in analysis.lower():
-                break
+            else:
+                # Default behavior for unexpected responses
+                consecutive_failures += 1
+                print(f"❓ Unexpected analysis response, counting as failure ({consecutive_failures}/{max_consecutive_failures})")
                 
         except Exception as e:
             error_msg = f"Error in iteration {iteration}: {str(e)}"
             print(error_msg)
             full_output.append(error_msg)
+            consecutive_failures += 1
             current_command = f"{current_command} - Error: {str(e)}"
+            
+            if consecutive_failures >= max_consecutive_failures:
+                print("❌ Too many consecutive errors, stopping iteration")
+                break
     
+    return state, "# Agentic execution completed\n" + '\n'.join(full_output)
 
-    return state, "# Agentic execution completed"+'\n'.join(full_output)
 
-    
 def print_guac_bowl():
     bowl_art = """
   🟢🟢🟢🟢🟢 
@@ -710,8 +1291,6 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
     stripped_command = command.strip()
     output = None 
     
-    print(f"[DEBUG] execute_guac_command called with: '{stripped_command}'")
-    
     if not stripped_command:
         return state, None
     if stripped_command.lower() in ["exit", "quit", "exit()", "quit()"]:
@@ -719,34 +1298,24 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
 
     # Get npc_team_dir from current working directory
     npc_team_dir = Path.cwd() / "npc_team"
-    print(f"[DEBUG] npc_team_dir: {npc_team_dir}")
 
     # Check if this is a file drop (single file path)
-    print(f"[DEBUG] Checking if file drop...")
     if _detect_file_drop(stripped_command):
-        print(f"[DEBUG] File drop detected!")
-        
         # Clean the path
         file_path = stripped_command.strip("'\"")
         expanded_path = Path(file_path).resolve()
-        print(f"[DEBUG] Cleaned file path: {file_path}")
-        print(f"[DEBUG] Expanded path: {expanded_path}")
-        print(f"[DEBUG] Path exists: {expanded_path.exists()}")
         
         # Copy to workspace
         workspace_dirs = _get_workspace_dirs(npc_team_dir)
         _ensure_workspace_dirs(workspace_dirs)
-        print(f"[DEBUG] Workspace dirs: {workspace_dirs}")
         
         ext = expanded_path.suffix[1:].upper() if expanded_path.suffix else "OTHERS"
         category = EXTENSION_MAP.get(ext, "data_inputs")
         target_dir = workspace_dirs.get(category, workspace_dirs["data_inputs"])
-        print(f"[DEBUG] Extension: {ext}, Category: {category}, Target dir: {target_dir}")
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         new_filename = f"{timestamp}_{expanded_path.name}"
         target_path = target_dir / new_filename
-        print(f"[DEBUG] Target path: {target_path}")
         
         try:
             shutil.copy2(expanded_path, target_path)
@@ -761,8 +1330,6 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
         except Exception as e:
             print(f"[ERROR] Failed to copy or load file: {e}")
             return state, f"Error loading file: {e}"
-    else:
-        print(f"[DEBUG] Not a file drop")
 
     # Handle file drops in text (multiple files or files with other text)
     processed_command, processed_files = _handle_file_drop(stripped_command, npc_team_dir)
@@ -783,25 +1350,18 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
     # Check if it's a router command (starts with / and not a built-in command)
     if stripped_command.startswith('/') and stripped_command not in ["/refresh", "/agent", "/chat", "/cmd"]:
         return execute_command(stripped_command, state, review=True, router=router)
-
-    # In agent mode, use the agentic workflow
+    if is_python_code(stripped_command):
+        try:
+            state, exec_output = execute_python_code(stripped_command, state, locals_dict)
+            return state, exec_output
+        except KeyboardInterrupt:
+            print("\nExecution interrupted by user")
+            return state, "Execution interrupted"
     if state.current_mode == "agent":
-        return _run_agentic_mode(stripped_command, state, locals_dict, npc_team_dir)
-
-    # In cmd mode, prioritize Python execution
+        return _run_agentic_mode(stripped_command, state, locals_dict, npc_team_dir) 
     if state.current_mode == "cmd":
-        if is_python_code(stripped_command):
-            try:
-                state, exec_output = execute_python_code(stripped_command, state, locals_dict)
-                saved_figures = _save_matplotlib_figures(npc_team_dir)
-                if saved_figures:
-                    exec_output += f"\n📊 Saved figures: {', '.join(saved_figures)}"
-                return state, exec_output
-            except KeyboardInterrupt:
-                print("\nExecution interrupted by user")
-                return state, "Execution interrupted"
-        
-        # If not Python, use LLM to generate Python code (existing logic)
+       
+        # If not Python, use LLM to generate Python code
         locals_context_string = "Current Python environment variables and functions:\n"
         if locals_dict:
             for k, v in locals_dict.items():
@@ -817,14 +1377,29 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
         else:
             locals_context_string += "(Environment is empty)\n"
 
-        prompt_cmd = (
-            f"User input for Python CMD mode: '{stripped_command}'.\n"
-            f"Generate ONLY executable Python code required to fulfill this.\n"
-            f"Do not include any explanations, leading markdown like ```python, or any text other than the Python code itself.\n"
-            f"{locals_context_string}"
-        )
+        # ADD CONTEXT ENHANCEMENT HERE:
+        enhanced_prompt = stripped_command
+        if any(word in stripped_command.lower() for word in ['plot', 'graph', 'chart', 'figure', 'visualiz']):
+            plot_context = _get_plot_context(state.conversation_id, state.command_history.db_path)
+            enhanced_prompt += f"\n\n{plot_context}"
+        
+        if any(word in stripped_command.lower() for word in ['file', 'data', 'load', 'variable', 'df']):
+            file_context = _get_file_context(state.conversation_id, state.command_history.db_path)
+            enhanced_prompt += f"\n\n{file_context}"
 
-        llm_response = get_llm_response(prompt_cmd, model=state.chat_model, provider=state.chat_provider, npc=state.npc, stream=False, messages=state.messages)
+        prompt_cmd = f"""User input for Python CMD mode: '{enhanced_prompt}'.
+            Generate ONLY executable Python code required to fulfill this. 
+            Do not include any explanations, leading markdown like ```python, or any text other than the Python code itself.
+            {locals_context_string}
+            Begin directly with the code
+            """
+    
+        llm_response = get_llm_response(prompt_cmd, 
+                                        model=state.chat_model, 
+                                        provider=state.chat_provider, 
+                                        npc=state.npc, 
+                                        stream=True, 
+                                        messages=state.messages)
         
         if llm_response.get('response', '').startswith('```python'):
             generated_code = llm_response.get("response", "").strip()[len('```python'):].strip()
@@ -838,9 +1413,6 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
             print(f"\n# LLM Generated Code (Cmd Mode):\n---\n{generated_code}\n---\n")
             try:
                 state, exec_output = execute_python_code(generated_code, state, locals_dict)
-                saved_figures = _save_matplotlib_figures(npc_team_dir)
-                if saved_figures:
-                    exec_output += f"\n📊 Saved figures: {', '.join(saved_figures)}"
                 output = f"# Code executed.\n# Output:\n{exec_output if exec_output else '(No direct output)'}"
             except KeyboardInterrupt:
                 print("\nExecution interrupted by user")
@@ -854,9 +1426,9 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
         return state, output
 
     return execute_command(stripped_command, state, review=True, router=router)
-
 def run_guac_repl(state: ShellState, project_name: str, package_root: Path, package_name: str):
     from npcsh.routes import router
+
     
     # Get workspace info 
     npc_team_dir = Path.cwd() / "npc_team"
@@ -864,7 +1436,17 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
     _ensure_workspace_dirs(workspace_dirs)
     
     locals_dict = {}
-    
+    global _guac_monitor_thread, _guac_monitor_stop_event
+    if _guac_monitor_thread is None or not (_guac_monitor_thread.is_alive()):
+        _guac_monitor_stop_event = threading.Event()
+        _guac_monitor_thread = threading.Thread(
+            target=_file_drop_monitor,
+            args=(workspace_dirs['workspace'].parent, state, locals_dict),
+            kwargs={'poll_interval': 0.2},
+            daemon=True
+        )
+        _guac_monitor_thread.start()
+
     try:
         if str(package_root) not in sys.path:
             sys.path.insert(0, str(package_root))
@@ -929,14 +1511,30 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             
         except (KeyboardInterrupt, EOFError):
             print("\nExiting Guac Mode...")
+            if _guac_monitor_stop_event:
+                _guac_monitor_stop_event.set()
+            if _guac_monitor_thread:
+                _guac_monitor_thread.join(timeout=1.0)
+            break
+
             break
         except SystemExit as e:
             print(f"\n{e}")
+            if _guac_monitor_stop_event:
+                _guac_monitor_stop_event.set()
+            if _guac_monitor_thread:
+                _guac_monitor_thread.join(timeout=1.0)
             break
+
         except Exception:
             print("An unexpected error occurred in the REPL:")
             traceback.print_exc()
 
+            if _guac_monitor_stop_event:
+                _guac_monitor_stop_event.set()
+            if _guac_monitor_thread:
+                _guac_monitor_thread.join(timeout=1.0)
+            break
 
 
 
