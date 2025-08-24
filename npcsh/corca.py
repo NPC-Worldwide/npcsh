@@ -179,11 +179,9 @@ def execute_command_corca(command: str, state: ShellState, command_history) -> T
         messages=state.messages,
         tools=mcp_tools,
         tool_map=mcp_tool_map,
-        auto_process_tool_calls=True,
+        auto_process_tool_calls=False,
         stream=state.stream_output
     )
-    print(response_dict)
-
     state.messages = response_dict.get("messages", state.messages)
     
     final_output = response_dict.get('response', '')
@@ -273,14 +271,158 @@ def enter_corca_mode(command: str, **kwargs):
                 continue
 
             state, output = execute_command_corca(user_input, state, command_history)
+            
             process_result(user_input, state, output, command_history)
 
-        except KeyboardInterrupt:
-            print()
-            continue
-        except EOFError:
-            print("\nExiting Corca Mode.")
-            break
+
+            # this is process_result
+            team_name = result_state.team.name if result_state.team else "__none__"
+            npc_name = result_state.npc.name if isinstance(result_state.npc, NPC) else "__none__"
+            
+            # Determine the actual NPC object to use for this turn's operations
+            active_npc = result_state.npc if isinstance(result_state.npc, NPC) else NPC(
+                name="default", 
+                model=result_state.chat_model, 
+                provider=result_state.chat_provider, 
+                db_conn=command_history.engine)
+            save_conversation_message(
+                command_history,
+                result_state.conversation_id,
+                "user",
+                user_input,
+                wd=result_state.current_path,
+                model=active_npc.model,
+                provider=active_npc.provider,
+                npc=npc_name,
+                team=team_name,
+                attachments=result_state.attachments,
+            )
+            result_state.attachments = None
+
+            final_output_str = None
+            output_content = output.get('output') if isinstance(output, dict) else output
+            model_for_stream = output.get('model', active_npc.model) if isinstance(output, dict) else active_npc.model
+            provider_for_stream = output.get('provider', active_npc.provider) if isinstance(output, dict) else active_npc.provider
+
+            print('\n')
+            if user_input =='/help':
+                render_markdown(output.get('output'))
+            elif result_state.stream_output:
+
+
+                final_output_str = print_and_process_stream_with_markdown(output_content, 
+                                                                        model_for_stream, 
+                                                                        provider_for_stream, 
+                                                                        show=True)
+            elif output_content is not None:
+                final_output_str = str(output_content)
+                render_markdown(final_output_str)
+
+            if final_output_str:
+                if result_state.messages:
+                    if result_state.messages[-1].get("role") != "assistant":
+                        result_state.messages.append({"role": "assistant", 
+                                                "content": final_output_str})
+                save_conversation_message(
+                    command_history,
+                    result_state.conversation_id,
+                    "assistant",
+                    final_output_str,
+                    wd=result_state.current_path,
+                    model=active_npc.model,
+                    provider=active_npc.provider,
+                    npc=npc_name,
+                    team=team_name,
+                )
+
+                conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
+                engine = command_history.engine
+
+
+                if result_state.build_kg:
+                    import pdb 
+                    pdb.set_trace()
+                    try:
+                        if not should_skip_kg_processing(user_input, final_output_str):
+
+                            npc_kg = load_kg_from_db(engine, team_name, npc_name, result_state.current_path)
+                            evolved_npc_kg, _ = kg_evolve_incremental(
+                                existing_kg=npc_kg, 
+                                new_content_text=conversation_turn_text,
+                                model=active_npc.model, 
+                                provider=active_npc.provider, 
+                                get_concepts=True,
+                                link_concepts_facts = False, 
+                                link_concepts_concepts = False, 
+                                link_facts_facts = False, 
+
+                                
+                            )
+                            save_kg_to_db(engine,
+                                        evolved_npc_kg, 
+                                        team_name, 
+                                        npc_name, 
+                                        result_state.current_path)
+                    except Exception as e:
+                        print(colored(f"Error during real-time KG evolution: {e}", "red"))
+
+                # --- Part 3: Periodic Team Context Suggestions ---
+                result_state.turn_count += 1
+
+                if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:
+                    print(colored("\nChecking for potential team improvements...", "cyan"))
+                    try:
+                        summary = breathe(messages=result_state.messages[-20:], 
+                                        npc=active_npc)
+                        characterization = summary.get('output')
+
+                        if characterization and result_state.team:
+                            team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
+                            ctx_data = {}
+                            if os.path.exists(team_ctx_path):
+                                with open(team_ctx_path, 'r') as f:
+                                    ctx_data = yaml.safe_load(f) or {}
+                            current_context = ctx_data.get('context', '')
+
+                            prompt = f"""Based on this characterization: {characterization},
+
+                            suggest changes (additions, deletions, edits) to the team's context. 
+                            Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
+                            
+                            Current Context: "{current_context}". 
+                            
+                            Respond with JSON: {{"suggestion": "Your sentence."
+                            }}"""
+                            response = get_llm_response(prompt, npc=active_npc, format="json")
+                            suggestion = response.get("response", {}).get("suggestion")
+
+                            if suggestion:
+                                new_context = (current_context + " " + suggestion).strip()
+                                print(colored(f"{result_state.npc.name} suggests updating team context:", "yellow"))
+                                print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
+                                if input("Apply? [y/N]: ").strip().lower() == 'y':
+                                    ctx_data['context'] = new_context
+                                    with open(team_ctx_path, 'w') as f:
+                                        yaml.dump(ctx_data, f)
+                                    print(colored("Team context updated.", "green"))
+                                else:
+                                    print("Suggestion declined.")
+                    except Exception as e:
+                        import traceback
+                        print(colored(f"Could not generate team suggestions: {e}", "yellow"))
+                        traceback.print_exc()
+                        
+
+
+
+                    import pdb 
+                    pdb.set_trace()
+                except KeyboardInterrupt:
+                    print()
+                    continue
+                except EOFError:
+                    print("\nExiting Corca Mode.")
+                    break
             
     if state.mcp_client:
         state.mcp_client.disconnect_sync()

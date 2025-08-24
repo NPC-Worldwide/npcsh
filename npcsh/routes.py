@@ -981,13 +981,15 @@ def vixynt_handler(command: str, **kwargs):
     width = safe_get(kwargs, 'width', 1024)
     output_file = safe_get(kwargs, 'output_file')
     attachments = safe_get(kwargs, 'attachments')
+    if isinstance(attachments, str):
+        attachments = list([attachments])
+    
     messages = safe_get(kwargs, 'messages', [])
 
     user_prompt = " ".join(safe_get(kwargs, 'positional_args', []))
 
     if not user_prompt:
         return {"output": "Usage: /vixynt <prompt> [--output_file path] [--attachments path]", "messages": messages}
-
     try:
         image = gen_image(
             prompt=user_prompt,
