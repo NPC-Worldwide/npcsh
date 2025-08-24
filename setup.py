@@ -40,7 +40,6 @@ base_requirements = [
     "psycopg2-binary",
     "flask_sse",
     "wikipedia", 
-    "darts",
 ]
 
 # API integration requirements
@@ -65,6 +64,7 @@ local_requirements = [
     "diffusers",
     "nltk",
     "torch",
+    "darts",
 ]
 
 # Voice/Audio requirements
@@ -81,7 +81,7 @@ extra_files = package_files("npcpy/npc_team/")
 
 setup(
     name="npcsh",
-    version="1.0.16",
+    version="1.0.17",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
