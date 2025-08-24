@@ -1857,7 +1857,10 @@ def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
 
 
 
-def execute_slash_command(command: str, stdin_input: Optional[str], state: ShellState, stream: bool, router) -> Tuple[ShellState, Any]:
+def execute_slash_command(command: str, 
+                          stdin_input: Optional[str], 
+                          state: ShellState, 
+                          stream: bool, router) -> Tuple[ShellState, Any]:
     """Executes slash commands using the router or checking NPC/Team jinxs."""
     all_command_parts = shlex.split(command)
     command_name = all_command_parts[0].lstrip('/')
