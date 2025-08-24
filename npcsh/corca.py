@@ -58,8 +58,12 @@ class MCPClientNPC:
         else:
             raise ValueError(f"Unsupported MCP server script type or not executable: {abs_path}")
 
-        server_params = StdioServerParameters(command=cmd_parts[0], args=cmd_parts[1:], env=os.environ.copy())
-
+        server_params = StdioServerParameters(
+            command=cmd_parts[0], 
+            args=['-c', f'import sys; sys.path.pop(0) if sys.path[0] == "{os.path.dirname(abs_path)}" else None; exec(open("{abs_path}").read())'], 
+            env=os.environ.copy(),
+            cwd=os.path.dirname(os.path.dirname(abs_path))  # Run from project root
+        )
         if self.session:
             await self._exit_stack.aclose()
         
@@ -88,10 +92,43 @@ class MCPClientNPC:
                 async def execute_tool(tool_name: str, args: dict):
                     if not self.session:
                         return {"error": "No MCP session"}
-                    return await self.session.call_tool(tool_name, args)
+                    
+                    print(f"DEBUG: About to call MCP tool {tool_name}")
+                    try:
+                        # Add a timeout
+                        result = await asyncio.wait_for(
+                            self.session.call_tool(tool_name, args), 
+                            timeout=30.0
+                        )
+                        print(f"DEBUG: MCP tool {tool_name} returned: {type(result)}")
+                        return result
+                    except asyncio.TimeoutError:
+                        print(f"DEBUG: Tool {tool_name} timed out after 30 seconds")
+                        return {"error": f"Tool {tool_name} timed out"}
+                    except Exception as e:
+                        print(f"DEBUG: Tool {tool_name} error: {e}")
+                        return {"error": str(e)}
                 
-                self.tool_map[mcp_tool.name] = (lambda name=mcp_tool.name: lambda **kwargs: asyncio.run(execute_tool(name, kwargs)))()
-
+                def make_tool_func(tool_name):
+                    async def tool_func(**kwargs):
+                        print(f"DEBUG: Tool wrapper called for {tool_name} with {kwargs}")
+                        # Clean up None string values
+                        cleaned_kwargs = {}
+                        for k, v in kwargs.items():
+                            if v == 'None':
+                                cleaned_kwargs[k] = None
+                            else:
+                                cleaned_kwargs[k] = v
+                        result = await execute_tool(tool_name, cleaned_kwargs)
+                        print(f"DEBUG: Tool wrapper got result: {type(result)}")
+                        return result
+                    
+                    def sync_wrapper(**kwargs):
+                        print(f"DEBUG: Sync wrapper called for {tool_name}")
+                        return asyncio.run(tool_func(**kwargs))
+                    
+                    return sync_wrapper
+                self.tool_map[mcp_tool.name] = make_tool_func(mcp_tool.name)
         tool_names = list(self.tool_map.keys())
         self._log(f"Connection successful. Tools: {', '.join(tool_names) if tool_names else 'None'}")
 
@@ -145,6 +182,7 @@ def execute_command_corca(command: str, state: ShellState, command_history) -> T
         auto_process_tool_calls=True,
         stream=state.stream_output
     )
+    print(response_dict)
 
     state.messages = response_dict.get("messages", state.messages)
     
