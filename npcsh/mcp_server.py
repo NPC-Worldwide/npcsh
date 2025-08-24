@@ -14,7 +14,6 @@ from typing import Optional, Dict, Any, List, Union, Callable
 from mcp.server.fastmcp import FastMCP
 import importlib
 # npcpy imports
-from npcpy.gen.response import get_litellm_response
 
 
 import os
@@ -28,8 +27,21 @@ except:
 from typing import Optional, Dict, Any, List, Union, Callable, get_type_hints
 # Add these imports to the top of your file
 from functools import wraps
+import sys 
+
+from npcpy.llm_funcs import  generate_group_candidates, abstract, extract_facts, zoom_in,   execute_llm_command, gen_image
+from npcpy.memory.search import search_similar_texts, execute_search_command, execute_rag_command,  answer_with_rag, execute_brainblast_command
+from npcpy.data.load import load_file_contents
+from npcpy.memory.command_history import CommandHistory
+from npcpy.data.image import capture_screenshot
+from npcpy.data.web import search_web
+
+from npcsh._state import NPCSH_DB_PATH
+
+command_history = CommandHistory(db=NPCSH_DB_PATH)
+
 # Initialize the MCP server
-mcp = FastMCP("npcpy_enhanced")
+mcp = FastMCP("npcsh_mcp")
 
 # Define the default workspace
 DEFAULT_WORKSPACE = os.path.join(os.getcwd(), "workspace")
@@ -50,7 +62,7 @@ async def run_server_command(command: str) -> str:
     """
     try:
         result = subprocess.run(
-            command, 
+            [sys.executable,command], 
             cwd=DEFAULT_WORKSPACE, 
             shell=True, 
             capture_output=True, 
@@ -60,37 +72,39 @@ async def run_server_command(command: str) -> str:
     except Exception as e:
         return str(e)
 def make_async_wrapper(func: Callable) -> Callable:
-    """Create an async wrapper for sync functions that fixes schema validation issues."""
+    """Create an async wrapper for sync functions with extensive logging."""
     
     @wraps(func)
     async def async_wrapper(*args, **kwargs):
-        # Direct parameter dict case (most common failure)
-        if len(args) == 1 and isinstance(args[0], dict):
-            params = args[0]
-            
-            # Fix for search_web - add required kwargs parameter
-            if "kwargs" not in params:
-                # Create a new dict with the kwargs parameter added
-                params = {**params, "kwargs": ""}
-            
-            # Call the function with the parameters
-            if asyncio.iscoroutinefunction(func):
-                return await func(**params)
-            else:
-                return await asyncio.to_thread(func, **params)
+        func_name = func.__name__
+        print(f"MCP SERVER DEBUG: {func_name} called with args={args}, kwargs={kwargs}", flush=True)
         
-        # Normal function call or other cases
-        if asyncio.iscoroutinefunction(func):
-            return await func(*args, **kwargs)
-        else:
-            return await asyncio.to_thread(func, *args, **kwargs)
+        try:
+            if len(args) == 1 and isinstance(args[0], dict):
+                params = args[0]
+                print(f"MCP SERVER DEBUG: {func_name} calling with params={params}", flush=True)
+                
+                result = func(**params)
+                print(f"MCP SERVER DEBUG: {func_name} returned type={type(result)}, len={len(str(result))}", flush=True)
+                return result
+            else:
+                print(f"MCP SERVER DEBUG: {func_name} calling with direct args", flush=True)
+                result = func(*args, **kwargs)
+                print(f"MCP SERVER DEBUG: {func_name} returned type={type(result)}", flush=True)
+                return result
+                
+        except Exception as e:
+            print(f"MCP SERVER DEBUG: {func_name} exception: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return f"Error in {func_name}: {e}"
     
-    # Preserve function metadata
     async_wrapper.__name__ = func.__name__
     async_wrapper.__doc__ = func.__doc__
     async_wrapper.__annotations__ = func.__annotations__
     
     return async_wrapper
+
 
 # Update your register_module_tools function to use this improved wrapper
 def register_module_tools(module_name: str) -> None:
@@ -133,49 +147,39 @@ def load_module_functions(module_name: str) -> List[Callable]:
 
 print("Loading tools from npcpy modules...")
 
-# Load modules from npcpy.routes
-try:
-    from npcsh.routes import routes
-    for route_name, route_func in routes.items():
-        if callable(route_func):
-            async_func = make_async_wrapper(route_func)
+
+
+
+
+def register_selected_npcpy_tools():
+    tools = [generate_group_candidates, 
+             abstract, 
+             extract_facts, 
+             zoom_in, 
+             execute_llm_command, 
+             gen_image, 
+             load_file_contents, 
+             capture_screenshot, 
+             search_web, ]
+
+    for func in tools:
+        # Ensure a docstring exists for schema generation
+        if not (getattr(func, "__doc__", None) and func.__doc__.strip()):
+            fallback_doc = f"Tool wrapper for {func.__name__}."
             try:
-                mcp.tool()(async_func)
-                print(f"Registered route: {route_name}")
-            except Exception as e:
-                print(f"Failed to register route {route_name}: {e}")
-except ImportError as e:
-    print(f"Warning: Could not import routes: {e}")
+                func.__doc__ = fallback_doc
+            except Exception:
+                pass  # Some builtins may not allow setting __doc__
+
+        try:
+            async_func = make_async_wrapper(func)
+            mcp.tool()(async_func)
+            print(f"Registered npcpy tool: {func.__name__}")
+        except Exception as e:
+            print(f"Failed to register npcpy tool {func.__name__}: {e}")
+register_selected_npcpy_tools()
 
 
-# Load npc_compiler functions
-print("Loading functions from npcpy.npc_compiler...")
-try:
-    import importlib.util
-    if importlib.util.find_spec("npcpy.npc_compiler"):
-        register_module_tools("npcpy.npc_compiler")
-except ImportError:
-    print("npcpy.npc_compiler not found, skipping...")
-
-# Load npc_sysenv functions
-#print("Loading functions from npcpy.npc_sysenv...")
-#register_module_tools("npcpy.npc_sysenv")
-#register_module_tools("npcpy.memory.search")
-
-register_module_tools("npcpy.llm_funcs")
-
-register_module_tools("npcpy.memory.command_history")
-
-#register_module_tools("npcpy.work.plan")
-#register_module_tools("npcpy.work.trigger")
-#register_module_tools("npcpy.work.desktop")
-
-#print("Loading functions from npcpy.command_history...")
-#register_module_tools("npcpy.memory.command_history")
-
-
-#print("Loading functions from npcpy.npc_sysenv...")
-#register_module_tools("npcpy.llm_funcs")
 
 
 # ==================== MAIN ENTRY POINT ====================
