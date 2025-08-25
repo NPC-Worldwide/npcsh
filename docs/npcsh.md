@@ -46,10 +46,10 @@
     /compile ./npc_team/sibiji.npc      
     ```
 - ## `/corca`: the MCP-powered Agent that helps with software development.
-<p align="center">
 
-  <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/corca.png" alt="logo for deep research", width=250>
-</p>
+  <p align="center">
+    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/corca.png" alt="logo for corca", width=500>
+  </p>
 
     ```bash
     # npcsh
