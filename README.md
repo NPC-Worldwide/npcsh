@@ -5,21 +5,25 @@
 
 # NPC Shell
 
-The NPC shell is a suite of executable command-line programs that allow users to easily interact with NPCs and LLMs through a command line shell. 
-
-Programs within the NPC shell use the properties defined in `~/.npcshrc`, which is generated upon installation and running of `npcsh` for the first time.
+The NPC shell is the toolkit for tomorrow, providing a suite of programs to make use of multi-modal LLMs and agents in novel interactive modes. `npcsh` is a command-line program, and so can be used wherever you work. `npcsh` is developed to work relibly with small models and performs excellently with the state-of-the-art models from major model providers. 
 
 To get started:
-```
+```bash
+# for users who want to mainly use models through APIs (e.g. , gemini, grok, deepseek, anthropic, openai, mistral, , any others provided by litellm ):
+pip install 'npcsh[lite]' 
+# for users who want to use local models (these install diffusers/transformers/torch stack so it is big.):
 pip install 'npcsh[local]'
+# for users who want to use the voice mode `yap`, see also the OS-specific installation instructions for installing needed system audio  libraries
+pip install 'npcsh[yap]'
 ```
-Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc` cli, `yap` `pti`, `wander`, and `spool`. 
+Once installed: run
+```bash
+npcsh
+```
+and you will enter the NPC shell. Additionally, the pip installation includes making the following CLI tools available in bash: `corca`, `guac`, `npc` cli, `pti`, `spool`, `wander`, and`yap`. 
 
 
-# npcsh
-- An AI-powered shell that parses bash, natural language, and special macro calls, `npcsh` processes your input accordingly, agentically, and automatically.
-
-
+# Usage
   - Get help with a task: 
       ```bash
       npcsh:🤖sibiji:gemini-2.5-flash>can you help me identify what process is listening on port 5337? 
@@ -37,15 +41,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     ```bash
     npcsh> has there ever been a better pasta shape than bucatini?
     ```
-    ```
-    Ultimately, the "best" pasta shape depends on personal preference and the dish being prepared. Bucatini shines in specific contexts, but pasta lovers often appreciate a diverse range of shapes for their unique qualities and compatibilities with various sauces and ingredients. Each shape has its place in the culinary world, and trying different types can enhance the overall dining experience.                                                          
-    ```
-    
-    ```                
-    Processing prompt: 'has there ever been a better pasta shape than bucatini?' with NPC: 'sibiji'...                                                                                         
-    • Action chosen: answer_question                                                                                                                                                           
-    • Explanation given: The question is a general opinion-based inquiry about pasta shapes and can be answered without external data or jinx invocation.                                      
-    ...............................................................................                                                                                                            
+    ```                              
     Bucatini is certainly a favorite for many due to its unique hollow center, which holds sauces beautifully. Whether it's "better" is subjective and depends on the dish and personal        
     preference. Shapes like orecchiette, rigatoni, or trofie excel in different recipes. Bucatini stands out for its versatility and texture, making it a top contender among pasta shapes!    
     ```
@@ -88,7 +84,27 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     ```bash
     /ots
     ```
+  - **Use an mcp server**: make use of NPCs with MCP servers.
+    ```bash
+    /corca --mcp-server-path /path.to.server.py
+    ```
 
+
+# NPC Data Layer
+
+The core of npcsh's capabilities is powered by the NPC Data Layer. Upon initialization, a user will be prompted to make a team in the current directory or to use a global team stored in `~/.npcsh/` which houses the NPC team with its jinxs, models, contexts, assembly lines. By implementing these components as simple data structures, users can focus on tweaking the relevant parts of their multi-agent systems.
+
+## Creating Custom Components
+
+Users can extend NPC capabilities through simple YAML files:
+
+- **NPCs** (.npc): are defined with a name, primary directive, and optional model specifications
+- **Jinxs** (.jinx): specify function-like capabilities with preprocessing, execution, and postprocessing steps
+- **Context** (.ctx): Specify contextual information, team preferences, MCP server paths, database connections, and other environment variables that are loaded for the team. Teams are specified by their path and the team name in the `<team>.ctx` file. Teams organize collections of NPCs with shared context and specify a coordinator within the team context 
+
+The NPC Shell system integrates the capabilities of `npcpy` to maintain conversation history, track command execution, and provide intelligent autocomplete through an extensible command routing system. State is preserved between sessions, allowing for continuous knowledge building over time.
+
+This architecture enables complex AI workflows while maintaining a simple, declarative syntax that abstracts away implementation complexity. By organizing AI capabilities as composable data structures rather than code, npcsh creates a more accessible and adaptable framework for AI automation.
 
 # Macros
 -  activated by invoking `/<command> ...` in `npcsh`, macros can be called in bash or through the `npc` CLI. In our examples, we provide both `npcsh` calls as well as bash calls with the `npc` cli where relevant. For converting any `/<command>` in `npcsh` to a bash version, replace the `/` with `npc ` and the macro command will be invoked as a positional argument. Some, like breathe, flush,
@@ -276,23 +292,38 @@ python-tkinter (pyautogui)
 </details>
 
 ## Startup Configuration and Project Structure
-After `npcsh` has been pip installed, `npcsh`, `corca`, `guac`, `pti`, `spool`, `yap` and the `npc` CLI can be used as command line tools. To initialize these correctly, first start by starting the NPC shell:
+To initialize the NPC shell environment parameters correctly, first start the NPC shell:
 ```bash
 npcsh
 ```
-When initialized, `npcsh` will generate a .npcshrc file in your home directory that stores your npcsh settings.
-Here is an example of what the .npcshrc file might look like after this has been run.
+When initialized, `npcsh` will generate a `.npcshrc` file in your home directory that stores your npcsh settings.
+Here is an example of what the `.npcshrc` file might look like after this has been run.
 ```bash
 # NPCSH Configuration File
 export NPCSH_INITIALIZED=1
-export NPCSH_CHAT_PROVIDER='ollama'
-export NPCSH_CHAT_MODEL='llama3.2'
 export NPCSH_DB_PATH='~/npcsh_history.db'
+export NPCSH_CHAT_MODEL=gemma3:4b
+export NPCSH_CHAT_PROVIDER=ollama
+export NPCSH_DEFAULT_MODE=agent
+export NPCSH_EMBEDDING_MODEL=nomic-embed-text
+export NPCSH_EMBEDDING_PROVIDER=ollama
+export NPCSH_IMAGE_GEN_MODEL=gpt-image-1
+export NPCSH_IMAGE_GEN_PROVIDER=openai
+export NPCSH_INITIALIZED=1
+export NPCSH_REASONING_MODEL=deepseek-r1
+export NPCSH_REASONING_PROVIDER=deepseek
+export NPCSH_SEARCH_PROVIDER=duckduckgo
+export NPCSH_STREAM_OUTPUT=1
+export NPCSH_VECTOR_DB_PATH=~/npcsh_chroma.db
+export NPCSH_VIDEO_GEN_MODEL=runwayml/stable-diffusion-v1-5
+export NPCSH_VIDEO_GEN_PROVIDER=diffusers
+export NPCSH_VISION_MODEL=gpt-4o-mini
+export NPCSH_VISION_PROVIDER=openai
 ```
 
-`npcsh` also comes with a set of jinxs and NPCs that are used in processing. It will generate a folder at ~/.npcsh/ that contains the tools and NPCs that are used in the shell and these will be used in the absence of other project-specific ones. Additionally, `npcsh` records interactions and compiled information about npcs within a local SQLite database at the path specified in the .npcshrc file. This will default to ~/npcsh_history.db if not specified. When the data mode is used to load or analyze data in CSVs or PDFs, these data will be stored in the same database for future reference.
+`npcsh` also comes with a set of jinxs and NPCs that are used in processing. It will generate a folder at `~/.npcsh/` that contains the tools and NPCs that are used in the shell and these will be used in the absence of other project-specific ones. Additionally, `npcsh` records interactions and compiled information about npcs within a local SQLite database at the path specified in the `.npcshrc `file. This will default to `~/npcsh_history.db` if not specified. When the data mode is used to load or analyze data in CSVs or PDFs, these data will be stored in the same database for future reference.
 
-The installer will automatically add this file to your shell config, but if it does not do so successfully for whatever reason you can add the following to your .bashrc or .zshrc:
+The installer will automatically add this file to your shell config, but if it does not do so successfully for whatever reason you can add the following to your `.bashrc` or `.zshrc`:
 
 ```bash
 # Source NPCSH configuration
@@ -303,7 +334,7 @@ fi
 
 We support inference via all providers supported by litellm. For openai-compatible providers that are not explicitly named in litellm, use simply `openai-like` as the provider. The default provider must be one of `['openai','anthropic','ollama', 'gemini', 'deepseek', 'openai-like']` and the model must be one available from those providers.
 
-To use tools that require API keys, create an `.env` file in the folder where you are working or place relevant API keys as env variables in your ~/.npcshrc. If you already have these API keys set in a ~/.bashrc or a ~/.zshrc or similar files, you need not additionally add them to ~/.npcshrc or to an `.env` file. Here is an example of what an `.env` file might look like:
+To use tools that require API keys, create an `.env` file in the folder where you are working or place relevant API keys as env variables in your `~/.npcshrc`. If you already have these API keys set in a `~/.bashrc` or a `~/.zshrc` or similar files, you need not additionally add them to `~/.npcshrc` or to an `.env` file. Here is an example of what an `.env` file might look like:
 
 ```bash
 export OPENAI_API_KEY="your_openai_key"
@@ -315,14 +346,15 @@ export PERPLEXITY_API_KEY='your_perplexity_key'
 
 
  Individual npcs can also be set to use different models and providers by setting the `model` and `provider` keys in the npc files.
- Once initialized and set up, you will find the following in your ~/.npcsh directory:
+
+ Once initialized and set up, you will find the following in your `~/.npcsh` directory:
 ```bash
 ~/.npcsh/
 ├── npc_team/           # Global NPCs
 │   ├── jinxs/          # Global tools
 │   └── assembly_lines/ # Workflow pipelines
-│   └── example.npc  # globally available npc 
-│   └── global.ctx  # global context file
+│   └── sibiji.npc  # globally available npc 
+│   └── npcsh.ctx  # global context file
 
 
 
