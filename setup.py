@@ -40,6 +40,7 @@ base_requirements = [
     "psycopg2-binary",
     "flask_sse",
     "wikipedia", 
+    "mcp"
 ]
 
 # API integration requirements
@@ -50,10 +51,6 @@ api_requirements = [
     "google-genai",
 ]
 
-# mcp integration requirements
-mcp_requirements = [
-    "mcp",
-]
 # Local ML/AI requirements
 local_requirements = [
     "sentence_transformers",
@@ -81,15 +78,14 @@ extra_files = package_files("npcpy/npc_team/")
 
 setup(
     name="npcsh",
-    version="1.0.17",
+    version="1.0.18",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
-        "lite": api_requirements,  # Just API integrations
-        "local": local_requirements,  # Local AI/ML features
-        "yap": voice_requirements,  # Voice/Audio features
-    "mcp": mcp_requirements,  # MCP integration
-        "all": api_requirements + local_requirements + voice_requirements + mcp_requirements,  # Everything
+        "lite": api_requirements,
+        "local": local_requirements,
+        "yap": voice_requirements,
+        "all": api_requirements + local_requirements + voice_requirements ,  
     },
     entry_points={
         "console_scripts": [
