@@ -14,10 +14,12 @@ except ImportError:
     sys.exit(1)
 
 from termcolor import colored, cprint
-from npcpy.llm_funcs import get_llm_response
+import json
+from npcpy.llm_funcs import get_llm_response, breathe
 from npcpy.npc_compiler import NPC
-from npcpy.npc_sysenv import render_markdown
-
+from npcpy.npc_sysenv import render_markdown, print_and_process_stream_with_markdown
+from npcpy.memory.command_history import load_kg_from_db, save_conversation_message, save_kg_to_db
+from npcpy.memory.knowledge_graph import kg_evolve_incremental, kg_dream_process, kg_initial, kg_sleep_process
 from npcsh._state import (
     ShellState,
     CommandHistory,
@@ -25,8 +27,12 @@ from npcsh._state import (
     process_result,
     get_multiline_input,
     readline_safe_prompt,
-    setup_shell
+    setup_shell, 
+    should_skip_kg_processing, 
+
 )
+import yaml 
+
 
 class MCPClientNPC:
     def __init__(self, debug: bool = True):
@@ -159,18 +165,15 @@ class MCPClientNPC:
 
 def execute_command_corca(command: str, state: ShellState, command_history) -> Tuple[ShellState, Any]:
     mcp_tools = []
-    mcp_tool_map = {}
     
     if hasattr(state, 'mcp_client') and state.mcp_client and state.mcp_client.session:
         mcp_tools = state.mcp_client.available_tools_llm
-        mcp_tool_map = state.mcp_client.tool_map
     else:
         cprint("Warning: Corca agent has no tools. No MCP server connected.", "yellow", file=sys.stderr)
 
-    active_npc = state.npc
-    if not isinstance(state.npc, NPC):
-        active_npc = NPC(name="default")
+    active_npc = state.npc if isinstance(state.npc, NPC) else NPC(name="default")
 
+    # Get the initial response with tools available but don't auto-process
     response_dict = get_llm_response(
         prompt=command,
         model=active_npc.model or state.chat_model,
@@ -178,29 +181,79 @@ def execute_command_corca(command: str, state: ShellState, command_history) -> T
         npc=state.npc,
         messages=state.messages,
         tools=mcp_tools,
-        tool_map=mcp_tool_map,
         auto_process_tool_calls=False,
         stream=state.stream_output
     )
-    state.messages = response_dict.get("messages", state.messages)
     
-    final_output = response_dict.get('response', '')
-    tool_results = response_dict.get('tool_results', [])
-
-    if tool_results:
-        summary_lines = ["\n**Tool Activity:**"]
-        for call_result in tool_results:
-            func_name = call_result.get('function_name', 'unknown_tool')
-            args = call_result.get('arguments', {})
-            result = call_result.get('result', 'No result')
-            arg_str = ", ".join([f"{k}={v}" for k, v in args.items()])
-            summary_lines.append(f"- **Call:** `{func_name}({arg_str})`")
-            summary_lines.append(f"  - **Result:** `{str(result)[:200]}`")
+    # Process the streaming response to extract tool calls
+    stream_response = response_dict.get('response')
+    messages = response_dict.get('messages', state.messages)
+    
+    # Collect the streamed content and extract tool calls
+    collected_content = ""
+    tool_calls = []
+    current_tool_call = None
+    
+    print("DEBUG: Processing stream response...")
+    
+    if hasattr(stream_response, '__iter__'):
+        # Process the stream to extract content and tool calls
+        for chunk in stream_response:
+            print(f"DEBUG: Chunk type: {type(chunk)}")
+            
+            if hasattr(chunk, 'choices') and chunk.choices:
+                delta = chunk.choices[0].delta
+                
+                if hasattr(delta, 'content') and delta.content:
+                    collected_content += delta.content
+                    print(delta.content, end='', flush=True)
+                
+                if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                    for tool_call_delta in delta.tool_calls:
+                        print(f"DEBUG: Tool call delta: {tool_call_delta}")
+                        
+                        if hasattr(tool_call_delta, 'index'):
+                            idx = tool_call_delta.index
+                            
+                            # Initialize tool call if needed
+                            while len(tool_calls) <= idx:
+                                tool_calls.append({
+                                    'id': '',
+                                    'type': 'function',
+                                    'function': {
+                                        'name': '',
+                                        'arguments': ''
+                                    }
+                                })
+                            
+                            # Update tool call data
+                            if hasattr(tool_call_delta, 'id') and tool_call_delta.id:
+                                tool_calls[idx]['id'] = tool_call_delta.id
+                            
+                            if hasattr(tool_call_delta, 'function'):
+                                if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
+                                    tool_calls[idx]['function']['name'] = tool_call_delta.function.name
+                                
+                                if hasattr(tool_call_delta.function, 'arguments') and tool_call_delta.function.arguments:
+                                    tool_calls[idx]['function']['arguments'] += tool_call_delta.function.arguments
+    
+    print(f"\nDEBUG: Final collected_content: {collected_content}")
+    print(f"DEBUG: Final tool_calls: {tool_calls}")
+    
+    # Update messages with the assistant response
+    state.messages = messages
+    if collected_content or tool_calls:
+        assistant_message = {"role": "assistant", "content": collected_content}
+        if tool_calls:
+            assistant_message["tool_calls"] = tool_calls
+        state.messages.append(assistant_message)
+    
+    return state, {
+        "output": collected_content,
+        "tool_calls": tool_calls,
+        "messages": state.messages
+    }
         
-        final_output = f"{final_output}\n\n" + "\n".join(summary_lines)
-
-    return state, {"output": final_output}
-
 def print_corca_welcome_message():
     turq = "\033[38;2;64;224;208m"
     chrome = "\033[38;2;211;211;211m"
@@ -219,9 +272,345 @@ Welcome to {turq}C{chrome}o{turq}r{chrome}c{turq}a{reset}!
 An MCP-powered shell for advanced agentic workflows.
         """
     )
-    
 
-def enter_corca_mode(command: str, **kwargs):
+
+def process_corca_result(
+    user_input: str,
+    result_state: ShellState,
+    output: Any,
+    command_history: CommandHistory,
+):
+    team_name = result_state.team.name if result_state.team else "__none__"
+    npc_name = result_state.npc.name if isinstance(result_state.npc, NPC) else "__none__"
+    
+    active_npc = result_state.npc if isinstance(result_state.npc, NPC) else NPC(
+        name="default", 
+        model=result_state.chat_model, 
+        provider=result_state.chat_provider, 
+        db_conn=command_history.engine)
+    
+    save_conversation_message(
+        command_history,
+        result_state.conversation_id,
+        "user",
+        user_input,
+        wd=result_state.current_path,
+        model=active_npc.model,
+        provider=active_npc.provider,
+        npc=npc_name,
+        team=team_name,
+        attachments=result_state.attachments,
+    )
+    result_state.attachments = None
+
+    output_content = output.get('output') if isinstance(output, dict) else output
+    tool_calls = output.get('tool_calls', []) if isinstance(output, dict) else []
+    final_output_str = None
+    
+    if tool_calls and hasattr(result_state, 'mcp_client') and result_state.mcp_client:
+        print(colored("\n🔧 Executing MCP tools...", "cyan"))
+        
+        tool_responses = []
+        for tool_call in tool_calls:
+            tool_name = tool_call['function']['name']
+            tool_args_str = tool_call['function']['arguments']
+            tool_call_id = tool_call['id']
+            
+            try:
+                tool_args = json.loads(tool_args_str) if tool_args_str.strip() else {}
+            except json.JSONDecodeError:
+                tool_args = {}
+            
+            try:
+                print(f"  Calling MCP tool: {tool_name} with args: {tool_args}")
+                
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                mcp_result = loop.run_until_complete(
+                    result_state.mcp_client.session.call_tool(tool_name, tool_args)
+                )
+                
+                print(f"DEBUG: MCP result type: {type(mcp_result)}")
+                print(f"DEBUG: MCP result: {mcp_result}")
+                print(f"DEBUG: MCP result attributes: {dir(mcp_result)}")
+                
+                tool_content = ""
+                if hasattr(mcp_result, 'content') and mcp_result.content:
+                    print(f"DEBUG: content type: {type(mcp_result.content)}")
+                    for i, content_item in enumerate(mcp_result.content):
+                        print(f"DEBUG: content_item[{i}]: {content_item} (type: {type(content_item)})")
+                        if hasattr(content_item, 'text'):
+                            tool_content += content_item.text
+                        else:
+                            tool_content += str(content_item)
+                else:
+                    tool_content = str(mcp_result)
+                
+                print(f"DEBUG: Extracted content length: {len(tool_content)}")
+                print(f"DEBUG: Extracted content preview: {tool_content[:200]}")
+                
+                tool_responses.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": tool_content
+                })
+                
+                print(colored(f"  ✓ {tool_name} completed", "green"))
+                
+            except Exception as e:
+                print(colored(f"  ✗ {tool_name} failed: {e}", "red"))
+                tool_responses.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": f"Error: {str(e)}"
+                })
+        
+        result_state.messages.extend(tool_responses)
+        
+        while True:
+            follow_up_response = get_llm_response(
+                prompt="",
+                model=active_npc.model,
+                provider=active_npc.provider,
+                npc=active_npc,
+                messages=result_state.messages,
+                tools=result_state.mcp_client.available_tools_llm,
+                auto_process_tool_calls=False,
+                stream=result_state.stream_output
+            )
+            
+            follow_up_messages = follow_up_response.get('messages', [])
+            follow_up_content = follow_up_response.get('response', '')
+            follow_up_tool_calls = []
+            
+            if result_state.stream_output:
+                collected_content = ""
+                follow_up_tool_calls = []
+                
+                if hasattr(follow_up_content, '__iter__'):
+                    for chunk in follow_up_content:
+                        if hasattr(chunk, 'choices') and chunk.choices:
+                            delta = chunk.choices[0].delta
+                            
+                            if hasattr(delta, 'content') and delta.content:
+                                collected_content += delta.content
+                                print(delta.content, end='', flush=True)
+                            
+                            if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                                for tool_call_delta in delta.tool_calls:
+                                    if hasattr(tool_call_delta, 'index'):
+                                        idx = tool_call_delta.index
+                                        
+                                        while len(follow_up_tool_calls) <= idx:
+                                            follow_up_tool_calls.append({
+                                                'id': '',
+                                                'type': 'function',
+                                                'function': {
+                                                    'name': '',
+                                                    'arguments': ''
+                                                }
+                                            })
+                                        
+                                        if hasattr(tool_call_delta, 'id') and tool_call_delta.id:
+                                            follow_up_tool_calls[idx]['id'] = tool_call_delta.id
+                                        
+                                        if hasattr(tool_call_delta, 'function'):
+                                            if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
+                                                follow_up_tool_calls[idx]['function']['name'] = tool_call_delta.function.name
+                                            
+                                            if hasattr(tool_call_delta.function, 'arguments') and tool_call_delta.function.arguments:
+                                                follow_up_tool_calls[idx]['function']['arguments'] += tool_call_delta.function.arguments
+                else:
+                    collected_content = str(follow_up_content)
+                
+                follow_up_content = collected_content
+            else:
+                if follow_up_messages:
+                    last_message = follow_up_messages[-1]
+                    if last_message.get("role") == "assistant" and "tool_calls" in last_message:
+                        follow_up_tool_calls = last_message["tool_calls"]
+            
+            result_state.messages = follow_up_messages
+            if follow_up_content or follow_up_tool_calls:
+                assistant_message = {"role": "assistant", "content": follow_up_content}
+                if follow_up_tool_calls:
+                    assistant_message["tool_calls"] = follow_up_tool_calls
+                result_state.messages.append(assistant_message)
+            
+            if not follow_up_tool_calls:
+                final_output_str = follow_up_content
+                if not result_state.stream_output:
+                    print('\n')
+                    render_markdown(final_output_str)
+                break
+            
+            print(colored("\n🔧 Executing follow-up MCP tools...", "cyan"))
+            for tool_call in follow_up_tool_calls:
+                tool_name = tool_call['function']['name']
+                tool_args_str = tool_call['function']['arguments']
+                tool_call_id = tool_call['id']
+                
+                try:
+                    tool_args = json.loads(tool_args_str) if tool_args_str.strip() else {}
+                except json.JSONDecodeError:
+                    tool_args = {}
+                
+                try:
+                    print(f"  Calling MCP tool: {tool_name} with args: {tool_args}")
+                    
+                    loop = asyncio.get_event_loop()
+                    if loop.is_closed():
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    
+                    mcp_result = loop.run_until_complete(
+                        result_state.mcp_client.session.call_tool(tool_name, tool_args)
+                    )
+                    
+                    print(f"DEBUG: MCP result type: {type(mcp_result)}")
+                    print(f"DEBUG: MCP result: {mcp_result}")
+                    print(f"DEBUG: MCP result.isError: {mcp_result.isError}")
+                    print(f"DEBUG: MCP result.meta: {mcp_result.meta}")
+                    print(f"DEBUG: MCP result.content length: {len(mcp_result.content)}")
+                    
+                    tool_content = ""
+                    if hasattr(mcp_result, 'content') and mcp_result.content:
+                        for i, content_item in enumerate(mcp_result.content):
+                            print(f"DEBUG: content_item[{i}] full object: {repr(content_item)}")
+                            print(f"DEBUG: content_item[{i}] text attribute: '{content_item.text}'")
+                            print(f"DEBUG: content_item[{i}] text length: {len(content_item.text) if content_item.text else 0}")
+                            
+                            if hasattr(content_item, 'text') and content_item.text:
+                                tool_content += content_item.text
+                            elif hasattr(content_item, 'data'):
+                                print(f"DEBUG: content_item[{i}] has data: {content_item.data}")
+                                tool_content += str(content_item.data)
+                            else:
+                                print(f"DEBUG: content_item[{i}] converting to string: {str(content_item)}")
+                                tool_content += str(content_item)                    
+                    result_state.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": tool_content
+                    })
+                    
+                    print(colored(f"  ✓ {tool_name} completed", "green"))
+                    
+                except Exception as e:
+                    print(colored(f"  ✗ {tool_name} failed: {e}", "red"))
+                    result_state.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": f"Error: {str(e)}"
+                    })
+    else:
+        print('\n')
+        if result_state.stream_output:
+            final_output_str = print_and_process_stream_with_markdown(
+                output_content, 
+                active_npc.model, 
+                active_npc.provider, 
+                show=True
+            )
+        else:
+            final_output_str = str(output_content)
+            render_markdown(final_output_str)
+
+    if final_output_str:
+        if not result_state.messages or result_state.messages[-1].get("role") != "assistant" or result_state.messages[-1].get("content") != final_output_str:
+            result_state.messages.append({"role": "assistant", "content": final_output_str})
+        
+        save_conversation_message(
+            command_history,
+            result_state.conversation_id,
+            "assistant",
+            final_output_str,
+            wd=result_state.current_path,
+            model=active_npc.model,
+            provider=active_npc.provider,
+            npc=npc_name,
+            team=team_name,
+        )
+
+        conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
+        engine = command_history.engine
+
+        if result_state.build_kg:
+            try:
+                if not should_skip_kg_processing(user_input, final_output_str):
+                    npc_kg = load_kg_from_db(engine, team_name, npc_name, result_state.current_path)
+                    evolved_npc_kg, _ = kg_evolve_incremental(
+                        existing_kg=npc_kg, 
+                        new_content_text=conversation_turn_text,
+                        model=active_npc.model, 
+                        provider=active_npc.provider, 
+                        get_concepts=True,
+                        link_concepts_facts = False, 
+                        link_concepts_concepts = False, 
+                        link_facts_facts = False, 
+                    )
+                    save_kg_to_db(engine,
+                                evolved_npc_kg, 
+                                team_name, 
+                                npc_name, 
+                                result_state.current_path)
+            except Exception as e:
+                print(colored(f"Error during real-time KG evolution: {e}", "red"))
+
+        result_state.turn_count += 1
+
+        if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:
+            print(colored("\nChecking for potential team improvements...", "cyan"))
+            try:
+                summary = breathe(messages=result_state.messages[-20:], 
+                                npc=active_npc)
+                characterization = summary.get('output')
+
+                if characterization and result_state.team:
+                    team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
+                    ctx_data = {}
+                    if os.path.exists(team_ctx_path):
+                        with open(team_ctx_path, 'r') as f:
+                            ctx_data = yaml.safe_load(f) or {}
+                    current_context = ctx_data.get('context', '')
+
+                    prompt = f"""Based on this characterization: {characterization},
+
+                    suggest changes (additions, deletions, edits) to the team's context. 
+                    Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
+                    
+                    Current Context: "{current_context}". 
+                    
+                    Respond with JSON: {{"suggestion": "Your sentence."
+                    }}"""
+                    response = get_llm_response(prompt, npc=active_npc, format="json")
+                    suggestion = response.get("response", {}).get("suggestion")
+
+                    if suggestion:
+                        new_context = (current_context + " " + suggestion).strip()
+                        print(colored(f"{result_state.npc.name} suggests updating team context:", "yellow"))
+                        print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
+                        if input("Apply? [y/N]: ").strip().lower() == 'y':
+                            ctx_data['context'] = new_context
+                            with open(team_ctx_path, 'w') as f:
+                                yaml.dump(ctx_data, f)
+                            print(colored("Team context updated.", "green"))
+                        else:
+                            print("Suggestion declined.")
+            except Exception as e:
+                import traceback
+                print(colored(f"Could not generate team suggestions: {e}", "yellow"))
+                traceback.print_exc()
+                
+def enter_corca_mode(command: str, 
+                     **kwargs):
     state: ShellState = kwargs.get('shell_state')
     command_history: CommandHistory = kwargs.get('command_history')
 
@@ -259,7 +648,7 @@ def enter_corca_mode(command: str, **kwargs):
             if state.npc:
                 prompt_npc_name = state.npc.name
             
-            prompt_str = f"{colored(os.path.basename(state.current_path), 'blue')}:corca:{prompt_npc_name}> "
+            prompt_str = f"{colored(os.path.basename(state.current_path), 'blue')}:corca:{prompt_npc_name}🦌> "
             prompt = readline_safe_prompt(prompt_str)
             
             user_input = get_multiline_input(prompt).strip()
@@ -272,157 +661,18 @@ def enter_corca_mode(command: str, **kwargs):
 
             state, output = execute_command_corca(user_input, state, command_history)
             
-            process_result(user_input, state, output, command_history)
-
-
-            # this is process_result
-            team_name = result_state.team.name if result_state.team else "__none__"
-            npc_name = result_state.npc.name if isinstance(result_state.npc, NPC) else "__none__"
-            
-            # Determine the actual NPC object to use for this turn's operations
-            active_npc = result_state.npc if isinstance(result_state.npc, NPC) else NPC(
-                name="default", 
-                model=result_state.chat_model, 
-                provider=result_state.chat_provider, 
-                db_conn=command_history.engine)
-            save_conversation_message(
-                command_history,
-                result_state.conversation_id,
-                "user",
-                user_input,
-                wd=result_state.current_path,
-                model=active_npc.model,
-                provider=active_npc.provider,
-                npc=npc_name,
-                team=team_name,
-                attachments=result_state.attachments,
-            )
-            result_state.attachments = None
-
-            final_output_str = None
-            output_content = output.get('output') if isinstance(output, dict) else output
-            model_for_stream = output.get('model', active_npc.model) if isinstance(output, dict) else active_npc.model
-            provider_for_stream = output.get('provider', active_npc.provider) if isinstance(output, dict) else active_npc.provider
-
-            print('\n')
-            if user_input =='/help':
-                render_markdown(output.get('output'))
-            elif result_state.stream_output:
-
-
-                final_output_str = print_and_process_stream_with_markdown(output_content, 
-                                                                        model_for_stream, 
-                                                                        provider_for_stream, 
-                                                                        show=True)
-            elif output_content is not None:
-                final_output_str = str(output_content)
-                render_markdown(final_output_str)
-
-            if final_output_str:
-                if result_state.messages:
-                    if result_state.messages[-1].get("role") != "assistant":
-                        result_state.messages.append({"role": "assistant", 
-                                                "content": final_output_str})
-                save_conversation_message(
-                    command_history,
-                    result_state.conversation_id,
-                    "assistant",
-                    final_output_str,
-                    wd=result_state.current_path,
-                    model=active_npc.model,
-                    provider=active_npc.provider,
-                    npc=npc_name,
-                    team=team_name,
-                )
-
-                conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
-                engine = command_history.engine
-
-
-                if result_state.build_kg:
-                    import pdb 
-                    pdb.set_trace()
-                    try:
-                        if not should_skip_kg_processing(user_input, final_output_str):
-
-                            npc_kg = load_kg_from_db(engine, team_name, npc_name, result_state.current_path)
-                            evolved_npc_kg, _ = kg_evolve_incremental(
-                                existing_kg=npc_kg, 
-                                new_content_text=conversation_turn_text,
-                                model=active_npc.model, 
-                                provider=active_npc.provider, 
-                                get_concepts=True,
-                                link_concepts_facts = False, 
-                                link_concepts_concepts = False, 
-                                link_facts_facts = False, 
-
-                                
+            process_corca_result(user_input, 
+                           state, 
+                           output, 
+                           command_history, 
                             )
-                            save_kg_to_db(engine,
-                                        evolved_npc_kg, 
-                                        team_name, 
-                                        npc_name, 
-                                        result_state.current_path)
-                    except Exception as e:
-                        print(colored(f"Error during real-time KG evolution: {e}", "red"))
-
-                # --- Part 3: Periodic Team Context Suggestions ---
-                result_state.turn_count += 1
-
-                if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:
-                    print(colored("\nChecking for potential team improvements...", "cyan"))
-                    try:
-                        summary = breathe(messages=result_state.messages[-20:], 
-                                        npc=active_npc)
-                        characterization = summary.get('output')
-
-                        if characterization and result_state.team:
-                            team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
-                            ctx_data = {}
-                            if os.path.exists(team_ctx_path):
-                                with open(team_ctx_path, 'r') as f:
-                                    ctx_data = yaml.safe_load(f) or {}
-                            current_context = ctx_data.get('context', '')
-
-                            prompt = f"""Based on this characterization: {characterization},
-
-                            suggest changes (additions, deletions, edits) to the team's context. 
-                            Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
-                            
-                            Current Context: "{current_context}". 
-                            
-                            Respond with JSON: {{"suggestion": "Your sentence."
-                            }}"""
-                            response = get_llm_response(prompt, npc=active_npc, format="json")
-                            suggestion = response.get("response", {}).get("suggestion")
-
-                            if suggestion:
-                                new_context = (current_context + " " + suggestion).strip()
-                                print(colored(f"{result_state.npc.name} suggests updating team context:", "yellow"))
-                                print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
-                                if input("Apply? [y/N]: ").strip().lower() == 'y':
-                                    ctx_data['context'] = new_context
-                                    with open(team_ctx_path, 'w') as f:
-                                        yaml.dump(ctx_data, f)
-                                    print(colored("Team context updated.", "green"))
-                                else:
-                                    print("Suggestion declined.")
-                    except Exception as e:
-                        import traceback
-                        print(colored(f"Could not generate team suggestions: {e}", "yellow"))
-                        traceback.print_exc()
-                        
-
-
-
-                    import pdb 
-                    pdb.set_trace()
-                except KeyboardInterrupt:
-                    print()
-                    continue
-                except EOFError:
-                    print("\nExiting Corca Mode.")
-                    break
+            
+        except KeyboardInterrupt:
+            print()
+            continue
+        except EOFError:
+            print("\nExiting Corca Mode.")
+            break
             
     if state.mcp_client:
         state.mcp_client.disconnect_sync()

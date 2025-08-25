@@ -982,7 +982,7 @@ def vixynt_handler(command: str, **kwargs):
     output_file = safe_get(kwargs, 'output_file')
     attachments = safe_get(kwargs, 'attachments')
     if isinstance(attachments, str):
-        attachments = list([attachments])
+        attachments = attachments.split(',')
     
     messages = safe_get(kwargs, 'messages', [])
 
