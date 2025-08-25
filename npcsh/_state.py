@@ -2487,6 +2487,7 @@ def process_result(
                                                                   model_for_stream, 
                                                                   provider_for_stream, 
                                                                   show=True)
+        
     elif output_content is not None:
         final_output_str = str(output_content)
         render_markdown(final_output_str)

@@ -1170,7 +1170,7 @@ def _run_agentic_mode(command: str,
         
         
         Provide ONLY executable Python code without any explanations or markdown formatting.
-        Focus on incremental changes rather than rewriting everything.
+        Focus on incremental changes rather than rewriting everything. Do not re-write any functions that are currently within the existing vars contxt or which appear to have no need to be changed.
 
         Do not include any leading ```python. Begin directly with the code.
         """
