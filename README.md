@@ -96,33 +96,42 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
 # Macros
 -  activated by invoking `/<command> ...` in `npcsh`, macros can be called in bash or through the `npc` CLI. In our examples, we provide both `npcsh` calls as well as bash calls with the `npc` cli where relevant. For converting any `/<command>` in `npcsh` to a bash version, replace the `/` with `npc ` and the macro command will be invoked as a positional argument. Some, like breathe, flush,
     
-    - `/alicanto` - Conduct deep research with multiple perspectives, identifying gold insights and cliff warnings
-    - `/brainblast` - Execute an advanced chunked search on command history
-    - `/breathe` - Condense context on a regular cadence
-    - `/compile` - Compile NPC profiles
-    - `/corca` - Enter the Corca MCP-powered agentic shell. Usage: /corca [--mcp-server-path path]                  
-    - `/flush` - Flush the last N messages
-    - `/guac` - Enter guac mode
-    - `/help` - Show help for commands, NPCs, or Jinxs. Usage: /help 
-    - `/init` - Initialize NPC project
-    - `/jinxs` - Show available jinxs for the current NPC/Team
-    - `/npc-studio` - Start npc studio                                                                                                                           
-    - `/ots` - Take screenshot and analyze with vision model
-    - `/plan` - Execute a plan command
-    - `/plonk` - Use vision model to interact with GUI. Usage: /plonk <task description>
-    - `/pti` - Use pardon-the-interruption mode to interact with reasoning model LLM
-    - `/rag` - Execute a RAG command using ChromaDB embeddings with optional file input (-f/--file)
-    - `/roll` - generate a video with video generation model
-    - `/sample` - Send a prompt directly to the LLM
-    - `/search` - Execute a web search command
-    - `/serve` - Serve an NPC Team server.
-    - `/set` - Set configuration values
-    - `/sleep` - Evolve knowledge graph with options for dreaming. 
-    - `/spool` - Enter interactive chat (spool) mode with an npc with fresh context or files for rag
-    - `/trigger` - Execute a trigger command
-    - `/vixynt` - Generate and edit images from text descriptions using local models, openai, gemini
-    - `/wander` - A method for LLMs to think on a problem by switching between states of high temperature and low temperature
-    - `/yap` - Enter voice chat (yap) mode
+    - `/alicanto` - Conduct deep research with multiple perspectives, identifying gold insights and cliff warnings. Usage: `/alicanto 'query to be researched' --num-npcs <int> --depth <int>`
+    - `/brainblast` - Execute an advanced chunked search on command history. Usage:     `/brainblast 'query'  --top_k 10`
+    - `/breathe` - Condense context on a regular cadence. Usage: `/breathe -p <provider: NPCSH_CHAT_PROVIDER> -m <model: NPCSH_CHAT_MODEL>`
+    - `/compile` - Compile NPC profiles. Usage: `/compile <path_to_npc> `
+    - `/corca` - Enter the Corca MCP-powered agentic shell. Usage: `/corca [--mcp-server-path path]`                  
+    - `/flush` - Flush the last N messages. Usage: `/flush N=10`
+    - `/guac` - Enter guac mode. Usage: `/guac`
+    - `/help` - Show help for commands, NPCs, or Jinxs. Usage: `/help`
+    - `/init` - Initialize NPC project. Usage: `/init`
+    - `/jinxs` - Show available jinxs for the current NPC/Team. Usage: `/jinxs`
+    - `/<jinx_name>` - Run a jinx with specified command line arguments. `/<jinx_name> jinx_arg1 jinx_arg2`
+    - `/npc-studio` - Start npc studio. Pulls NPC Studio github to `~/.npcsh/npc-studio` and launches it in development mode after installing necessary NPM dependencies.Usage: `/npc-studio`
+    - `/ots` - Take screenshot and analyze with vision model. Usage: `/ots filename=<output_file_name_for_screenshot>` then select an area, and you will be prompted for your request.
+    - `/plan` - Execute a plan command. Usage: `/plan 'idea for a cron job to be set up to accomplish'`
+    - `/plonk` - Use vision model to interact with GUI. Usage: `/plonk '<task description>' `
+    - `/pti` - Use pardon-the-interruption mode to interact with reasoning model LLM. Usage: `/pti`
+    - `/rag` - Execute a RAG command using ChromaDB embeddings with optional file input (-f/--file). Usage: `/rag '<query_to_rag>' --emodel <NPCSH_EMBEDDING_MODEL> --eprovider <NPCSH_EMBEDDING_PROVIDER>`
+    - `/roll` - generate a video with video generation model. Usage: `/roll '<description_for_a_movie>' --vgmodel <NPCSH_VIDEO_GEN_MODEL> --vgprovider <NPCSH_VIDEO_GEN_PROVIDER>`
+    - `/sample` - Send a context-free prompt to an LLM, letting you get fresh answers without needing to start a separate conversation/shell. Usage: `/sample -m <NPCSH_CHAT_MODEL> 'question to sample --temp <float> --top_k int`
+    - `/search` - Execute a web search command. Usage: `/search 'search query' --sprovider <provider>` where provider is currently limited to DuckDuckGo and Perplexity. Wikipedia integration ongoing.
+    - `/serve` - Serve an NPC Team server. 
+    - `/set` - Set configuration values. 
+      - Usage: 
+        - `/set model gemma3:4b`, 
+        - `/set provider ollama`, 
+        - `/set NPCSH_VIDEO_GEN_PROVIDER diffusers`
+    - `/sleep` - Evolve knowledge graph with options for dreaming.  Usage: `/sleep --ops link_facts,deepen`
+    - `/spool` - Enter interactive chat (spool) mode with an npc with fresh context or files for rag. Usage: `/spool --attachments 'path1,path2,path3' -n <npc_name> -m <modell> -p <provider>`
+    - `/trigger` - Execute a trigger command.  Usage: `/trigger 'a description of a trigger to implement with system daemons/file system listeners.' -m gemma3:27b -p ollama`
+    - `/vixynt` - Generate and edit images from text descriptions using local models, openai, gemini. 
+      - Usage: 
+        - Gen Image: `/vixynt -igp <NPCSH_IMAGE_GEN_PROVIDER> --igmodel <NPCSH_IMAGE_GEN_MODEL> --output_file <path_to_file> width=<int:1024> height =<int:1024> 'description of image`
+        - Edit Image: `/vixynt 'edit this....' --attachments '/path/to/image.png,/path/to/image.jpeg'`
+
+    - `/wander` - A method for LLMs to think on a problem by switching between states of high temperature and low temperature.  Usage: `/wander 'query to wander about' --provider "ollama" --model "deepseek-r1:32b" environment="a vast dark ocean" interruption-likelihood=.1`
+    - `/yap` - Enter voice chat (yap) mode. Usage: `/yap -n <npc_to_chat_with>`
     
     ## Common Command-Line Flags:
     
