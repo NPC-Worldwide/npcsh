@@ -41,10 +41,7 @@ Once installed, the following CLI tools will be available: `npcsh`, `guac`, `npc
     Ultimately, the "best" pasta shape depends on personal preference and the dish being prepared. Bucatini shines in specific contexts, but pasta lovers often appreciate a diverse range of shapes for their unique qualities and compatibilities with various sauces and ingredients. Each shape has its place in the culinary world, and trying different types can enhance the overall dining experience.                                                          
     ```
     
-    ```
-    .Loaded .env file...                                                                                                                                               
-    Initializing database schema...                                                                                                                                                            
-    Database schema initialization complete.                                                                                                                                                   
+    ```                
     Processing prompt: 'has there ever been a better pasta shape than bucatini?' with NPC: 'sibiji'...                                                                                         
     • Action chosen: answer_question                                                                                                                                                           
     • Explanation given: The question is a general opinion-based inquiry about pasta shapes and can be answered without external data or jinx invocation.                                      
