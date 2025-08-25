@@ -1298,38 +1298,59 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
 
     # Get npc_team_dir from current working directory
     npc_team_dir = Path.cwd() / "npc_team"
+    if stripped_command.startswith('run '):
+        file_path = stripped_command[4:].strip()
+        try:
+            resolved_path = Path(file_path).resolve()
+            if not resolved_path.exists():
+                return state, f"Error: File '{file_path}' not found"
+            
+            with open(resolved_path, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+            
+            print(f"Running {resolved_path.name}...")
+            state, exec_output = execute_python_code(file_content, state, locals_dict)
+            return state, exec_output
+            
+        except Exception as e:
+            return state, f"Error running file: {e}"
 
+
+        
     # Check if this is a file drop (single file path)
     if _detect_file_drop(stripped_command):
-        # Clean the path
-        file_path = stripped_command.strip("'\"")
-        expanded_path = Path(file_path).resolve()
-        
-        # Copy to workspace
-        workspace_dirs = _get_workspace_dirs(npc_team_dir)
-        _ensure_workspace_dirs(workspace_dirs)
-        
-        ext = expanded_path.suffix[1:].upper() if expanded_path.suffix else "OTHERS"
-        category = EXTENSION_MAP.get(ext, "data_inputs")
-        target_dir = workspace_dirs.get(category, workspace_dirs["data_inputs"])
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        new_filename = f"{timestamp}_{expanded_path.name}"
-        target_path = target_dir / new_filename
-        
-        try:
-            shutil.copy2(expanded_path, target_path)
-            print(f"📁 Copied {expanded_path.name} to workspace: {target_path}")
+        if stripped_command.startswith('run'):
+            pass
+        else:
+            # Clean the path
+            file_path = stripped_command.strip("'\"")
+            expanded_path = Path(file_path).resolve()
             
-            # Generate and execute loading code
-            loading_code = _generate_file_analysis_code(str(expanded_path), str(target_path))
-            print(f"\n# Auto-generated file loading code:\n---\n{loading_code}\n---\n")
+            # Copy to workspace
+            workspace_dirs = _get_workspace_dirs(npc_team_dir)
+            _ensure_workspace_dirs(workspace_dirs)
             
-            state, exec_output = execute_python_code(loading_code, state, locals_dict)
-            return state, exec_output
-        except Exception as e:
-            print(f"[ERROR] Failed to copy or load file: {e}")
-            return state, f"Error loading file: {e}"
+            ext = expanded_path.suffix[1:].upper() if expanded_path.suffix else "OTHERS"
+            category = EXTENSION_MAP.get(ext, "data_inputs")
+            target_dir = workspace_dirs.get(category, workspace_dirs["data_inputs"])
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            new_filename = f"{timestamp}_{expanded_path.name}"
+            target_path = target_dir / new_filename
+            
+            try:
+                shutil.copy2(expanded_path, target_path)
+                print(f"📁 Copied {expanded_path.name} to workspace: {target_path}")
+                
+                # Generate and execute loading code
+                loading_code = _generate_file_analysis_code(str(expanded_path), str(target_path))
+                print(f"\n# Auto-generated file loading code:\n---\n{loading_code}\n---\n")
+                
+                state, exec_output = execute_python_code(loading_code, state, locals_dict)
+                return state, exec_output
+            except Exception as e:
+                print(f"[ERROR] Failed to copy or load file: {e}")
+                return state, f"Error loading file: {e}"
 
     # Handle file drops in text (multiple files or files with other text)
     processed_command, processed_files = _handle_file_drop(stripped_command, npc_team_dir)
@@ -1346,6 +1367,8 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
     if stripped_command in ["/agent", "/chat", "/cmd"]:
         state.current_mode = stripped_command[1:]
         return state, f"Switched to {state.current_mode.upper()} mode."
+
+
 
     # Check if it's a router command (starts with / and not a built-in command)
     if stripped_command.startswith('/') and stripped_command not in ["/refresh", "/agent", "/chat", "/cmd"]:
