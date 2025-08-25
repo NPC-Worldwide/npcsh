@@ -2483,7 +2483,11 @@ def process_result(
     elif result_state.stream_output:
 
 
-        final_output_str = print_and_process_stream_with_markdown(output_content, model_for_stream, provider_for_stream, show=True)
+        final_output_str = print_and_process_stream_with_markdown(output_content, 
+                                                                  model_for_stream, 
+                                                                  provider_for_stream, 
+                                                                  show=True)
+        
     elif output_content is not None:
         final_output_str = str(output_content)
         render_markdown(final_output_str)
