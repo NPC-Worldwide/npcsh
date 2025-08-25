@@ -41,15 +41,27 @@
     /breathe -p ollama -m qwen3:latest 
     ```
 - ## `/compile`: render npcs for use without re-loading npcsh
-  ```bash
-  # npcsh
-  /compile ./npc_team/sibiji.npc      
-  ```
+    ```bash
+    # npcsh
+    /compile ./npc_team/sibiji.npc      
+    ```
+- ## `/corca`: the MCP-powered Agent that helps with software development.
+  <p align="center">
+
+    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/corca.png" alt="logo for deep research", width=250>
+  </p>
+
+    ```bash
+    # npcsh
+    /corca --mcp-server-path /path/to/mcp_server.py
+    # npx links to come soon too
+    ```
+
 - ## `/flush`: flush context  (shell only):
   If you're in the NPC shell and have been in a conversation thats going nowhere and you want to start over... just flush theh contexf.
-  ```bash
-  /flush
-  ```
+    ```bash
+    /flush
+    ```
 
 
 - ## `/guac`
@@ -60,6 +72,26 @@
 
 - a replacement shell for interpreters like python/r/node/julia with an avocado input marker 🥑 that brings a pomodoro-like approach to interactive coding.
 - available as a standalone program runnable via the `guac` command after `npcsh` has been installed via pip.
+    ```
+
+      🟢🟢🟢🟢🟢 
+    🟢          🟢
+    🟢  
+    🟢      
+    🟢      
+    🟢      🟢🟢🟢   🟢    🟢   🟢🟢🟢    🟢🟢🟢
+    🟢           🟢  🟢    🟢    ⚫⚫🟢  🟢
+    🟢           🟢  🟢    🟢  ⚫🥑🧅⚫  🟢
+    🟢           🟢  🟢    🟢  ⚫🥑🍅⚫  🟢
+    🟢🟢🟢🟢🟢🟢    🟢🟢🟢🟢    ⚫⚫🟢   🟢🟢🟢 
+
+    Welcome to Guac Mode! Current mode: AGENT. Type /agent, /chat, or /cmd to switch modes.
+    Workspace: /home/caug/npcww/npcsh/npc_team/guac_workspace
+    💡 You can drag and drop files into the terminal to automatically import them!
+    npcsh:guac:deepseek-chat🥑> 
+    ```
+
+
 
     - Simulation:      
         `🥑 Make a markov chain simulation of a random walk in 2D space with 1000 steps and visualize`
