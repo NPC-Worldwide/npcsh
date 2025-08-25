@@ -48,7 +48,6 @@ DEFAULT_WORKSPACE = os.path.join(os.getcwd(), "workspace")
 os.makedirs(DEFAULT_WORKSPACE, exist_ok=True)
 
 # ==================== SYSTEM TOOLS ====================
-
 @mcp.tool()
 async def run_server_command(command: str) -> str:
     """
@@ -62,36 +61,33 @@ async def run_server_command(command: str) -> str:
     """
     try:
         result = subprocess.run(
-            [sys.executable,command], 
+            command, 
             cwd=DEFAULT_WORKSPACE, 
             shell=True, 
             capture_output=True, 
-            text=True
+            text=True,
+            timeout=30  # Add timeout to prevent hanging
         )
-        return result.stdout or result.stderr
+        return result.stdout or result.stderr or "Command completed with no output"
+    except subprocess.TimeoutExpired:
+        return "Command timed out after 30 seconds"
     except Exception as e:
         return str(e)
+
+
+
 def make_async_wrapper(func: Callable) -> Callable:
-    """Create an async wrapper for sync functions with extensive logging."""
+    """Create an async wrapper for sync functions."""
     
     @wraps(func)
-    async def async_wrapper(*args, **kwargs):
+    async def async_wrapper(**kwargs):
         func_name = func.__name__
-        print(f"MCP SERVER DEBUG: {func_name} called with args={args}, kwargs={kwargs}", flush=True)
+        print(f"MCP SERVER DEBUG: {func_name} called with kwargs={kwargs}", flush=True)
         
         try:
-            if len(args) == 1 and isinstance(args[0], dict):
-                params = args[0]
-                print(f"MCP SERVER DEBUG: {func_name} calling with params={params}", flush=True)
-                
-                result = func(**params)
-                print(f"MCP SERVER DEBUG: {func_name} returned type={type(result)}, len={len(str(result))}", flush=True)
-                return result
-            else:
-                print(f"MCP SERVER DEBUG: {func_name} calling with direct args", flush=True)
-                result = func(*args, **kwargs)
-                print(f"MCP SERVER DEBUG: {func_name} returned type={type(result)}", flush=True)
-                return result
+            result = func(**kwargs)
+            print(f"MCP SERVER DEBUG: {func_name} returned type={type(result)}, result={result[:500] if isinstance(result, str) else result}", flush=True)
+            return result
                 
         except Exception as e:
             print(f"MCP SERVER DEBUG: {func_name} exception: {e}", flush=True)
@@ -106,7 +102,7 @@ def make_async_wrapper(func: Callable) -> Callable:
     return async_wrapper
 
 
-# Update your register_module_tools function to use this improved wrapper
+
 def register_module_tools(module_name: str) -> None:
     """
     Register all suitable functions from a module as MCP tools with improved argument handling.
