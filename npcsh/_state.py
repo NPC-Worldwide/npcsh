@@ -1860,7 +1860,8 @@ def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
 def execute_slash_command(command: str, 
                           stdin_input: Optional[str], 
                           state: ShellState, 
-                          stream: bool, router) -> Tuple[ShellState, Any]:
+                          stream: bool, 
+                          router) -> Tuple[ShellState, Any]:
     """Executes slash commands using the router or checking NPC/Team jinxs."""
     all_command_parts = shlex.split(command)
     command_name = all_command_parts[0].lstrip('/')
@@ -2034,7 +2035,11 @@ def process_pipeline_command(
     exec_provider = provider_override or npc_provider or state.chat_provider
 
     if cmd_to_process.startswith("/"):
-        return execute_slash_command(cmd_to_process, stdin_input, state, stream_final, router)
+        return execute_slash_command(cmd_to_process, 
+                                     stdin_input, 
+                                     state, 
+                                     stream_final, 
+                                     router)
     
     cmd_parts = parse_command_safely(cmd_to_process)
     if not cmd_parts:
@@ -2198,7 +2203,7 @@ def execute_command(
         for i, cmd_segment in enumerate(commands):
             render_markdown(f'- executing command {i+1}/{len(commands)}')
             is_last_command = (i == len(commands) - 1)
-            stream_this_segment = state.stream_output and not is_last_command 
+            stream_this_segment = state.stream_output and is_last_command 
             try:
                 current_state, output = process_pipeline_command(
                     cmd_segment.strip(),

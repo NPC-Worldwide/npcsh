@@ -612,9 +612,7 @@ def brainblast_handler(command: str, **kwargs):
         return {"output": f"Error executing brainblast command: {e}", "messages": messages}
 
 @router.route("rag", "Execute a RAG command using ChromaDB embeddings with optional file input (-f/--file)")
-def rag_handler(command: str, **kwargs):
-    messages = safe_get(kwargs, "messages", [])
-    
+def rag_handler(command: str, **kwargs):    
     parts = shlex.split(command)
     user_command = []
     file_paths = []
@@ -640,7 +638,7 @@ def rag_handler(command: str, **kwargs):
     embedding_provider = safe_get(kwargs, "eprovider", NPCSH_EMBEDDING_PROVIDER)
     
     if not user_command and not file_paths:
-        return {"output": "Usage: /rag [-f file_path] <query>", "messages": messages}
+        return {"output": "Usage: /rag [-f file_path] <query>", "messages": kwargs.get('messages', [])}
     
     try:
         # Process files if provided
@@ -652,9 +650,7 @@ def rag_handler(command: str, **kwargs):
                 file_contents.extend([f"[{file_name}] {chunk}" for chunk in chunks])
             except Exception as file_err:
                 file_contents.append(f"Error processing file {file_path}: {str(file_err)}")
-        
-        # Execute the RAG command
-        return execute_rag_command(
+        exe_rag =  execute_rag_command(
             command=user_command,
             vector_db_path=vector_db_path,
             embedding_model=embedding_model,
@@ -662,10 +658,11 @@ def rag_handler(command: str, **kwargs):
             file_contents=file_contents if file_paths else None,
             **kwargs
         )
+        return {'output':exe_rag.get('response'), 'messages': exe_rag.get('messages', kwargs.get('messages', []))}
     
     except Exception as e:
         traceback.print_exc()
-        return {"output": f"Error executing RAG command: {e}", "messages": messages}
+        return {"output": f"Error executing RAG command: {e}", "messages": kwargs.get('messages', [])}
 @router.route("roll", "generate a video")
 def roll_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])

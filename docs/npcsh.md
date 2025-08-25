@@ -252,11 +252,41 @@
     <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/frederic4.png" alt="npcsh logo of frederic the bear and the pti logo", width=250></a>
   </p>
 
-- ## `/rag`: retrieval
+- ## `/rag`: semantic similarity retrieval with database, knowledge graph, files
     - perform a search through chroma db, optional file input, or through the KG.
-    ```bash
-    /rag
-    ```
+        ```bash
+        /rag  'marcus aurelius'                                                         
+        ----------------------------------------------------------------------------------------------------                                                                                        
+        1. [419.11] The "Aeneid" is an epic poem written by the Roman poet Virgil, composed between 29 an... (2025-02-20)                                                             
+        2. [442.40] The "Aeneid" is an epic poem written by the Roman poet Virgil between 29 and 19 BCE. ... (2025-02-20)                                                             
+        3. [459.75] describe to me the aeneid in length (2025-02-20)                                                                                                                  
+        4. [465.52] config.py README.md (2025-03-20)                                                                                                                    
+        5. [478.31] caug (2025-03-13)                                                                                                                                       
+        6. [478.99]  Error: To https://github.com/cagostino/npcsh.git 33818e6..dda... (2025-04-15)                                                                  
+        7. [481.40] Error executing slash command 'guac': enter_guac_mode() got an unexpected keywor... (2025-06-11)                                                              
+        8. [482.24] Error processing command 'hey whats on at the movies in bloomington?...': name '... (2025-05-09)                                                              
+        9. [483.88] /home/caug/.pyenv/versions/3.11.0/envs/npcsh/bin/python /home/caug/npcww/udacity/cd14... (2025-05-13)                                                             
+        10. [487.71] The moon hung heavy, a bruised silver coin in the velvet sky. It didn’t shine with wa... (2025-08-05)                                                             
+        11. [488.20] Error executing slash command 'guac': guac_handler() takes 0 positional argument... (2025-06-11)                                                              
+        12. [489.30] Error executing slash command 'help': help_handler() takes 0 positional argument... (2025-05-04)                                                              
+        13. [489.48]  Error: To https://github.com/cagostino/npcsh.git 277fce7..cc3... (2025-04-14)                                                                  
+        14. [492.28]  Error: To https://github.com/cagostino/npcsh.git 8d1ab34..a21... (2025-03-01)                                                                  
+        15. [492.35]  Error: Successfully rebased and updated refs/heads/ma... (2025-03-01)    
+        ```
+        ```
+        Based on the knowledge base results, I can see you're asking about Marcus Aurelius, but the search returned information about Virgil's "Aeneid" instead. Let me connect these for you:                                                     
+        Marcus Aurelius was a Roman emperor (161-180 AD) and Stoic philosopher, while the "Aeneid" is Virgil's epic poem about the founding of Rome. Though from different eras, they're both central figures in Roman intellectual history.       
+        The "Aeneid" (as detailed in the search results) explores themes of duty, fate, and leadership - concepts that Marcus Aurelius would later grapple with in his philosophical work "Meditations." Both works reflect Roman values of pietas 
+        (duty/piety) that were central to Roman identity.                                                                                                                                                                                          
+        Would you like me to:                                                                                                                                                                                                                      
+
+        • Search more specifically for Marcus Aurelius in the knowledge base?                                                                                                                                                                     
+
+        • Explain the connection between Stoic philosophy (which Marcus Aurelius practiced) and the values expressed in the Aeneid?                                                                                                               
+
+        • Provide information about Marcus Aurelius based on general knowledge?                                                                                                                                                                   
+        The search seems to have focused on Roman literature rather than the specific philosopher-emperor you asked about.                                                                                                                         
+        ```
 
 
 - ## `/roll`: your video generation assistant
@@ -412,7 +442,6 @@
     ```
 
 - ## `/yap`: an agentic voice control loop
-
 
 <p align="center"><a href ="https://github.com/npc-worldwide/npcsh/blob/main/docs/yap.md"> 
   <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/yap.png" alt="logo for yap ", width=250></a>
