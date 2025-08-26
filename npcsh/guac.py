@@ -9,6 +9,7 @@ import argparse
 import importlib.metadata
 import matplotlib.pyplot as plt 
 
+import logging
 plt.ioff()
 
 import platform
@@ -28,7 +29,7 @@ import sys
 from npcpy.memory.command_history import CommandHistory, start_new_conversation
 from npcpy.npc_compiler import Team, NPC
 from npcpy.llm_funcs import get_llm_response
-from npcpy.npc_sysenv import render_markdown,print_and_process_stream_with_markdown
+from npcpy.npc_sysenv import render_markdown,print_and_process_stream
 
 
 from npcsh._state import (
@@ -434,28 +435,15 @@ def _handle_guac_refresh(state: ShellState, project_name: str, src_dir: Path):
         print(f"Error during /refresh: {e}")
         traceback.print_exc()
 def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None, lang='python', default_mode_choice=None):
-    base_dir = Path.cwd()
-    
-    if config_dir is None:
-        config_dir = base_dir / ".guac"
-    else:
-        config_dir = Path(config_dir)
-        
-    if plots_dir is None:
-        plots_dir = base_dir / "plots"
-    else:
-        plots_dir = Path(plots_dir)
-        
+    base_dir = Path.cwd()                
     if npc_team_dir is None:
         npc_team_dir = base_dir / "npc_team"
     else:
         npc_team_dir = Path(npc_team_dir)
-    
-    for p in [config_dir, plots_dir, npc_team_dir]:
-        p.mkdir(parents=True, exist_ok=True)
-
+    npc_team_dir.mkdir(parents=True, exist_ok=True)
     # Setup Guac workspace
     workspace_dirs = _get_workspace_dirs(npc_team_dir)
+
     _ensure_workspace_dirs(workspace_dirs)
 
     # Rest of existing setup_guac_mode code...
@@ -483,14 +471,8 @@ def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None, lang='py
             package_root = str(base_dir)
             package_name = "project"
 
-    project_name = existing_ctx.get("GUAC_PROJECT_NAME")
     project_description = existing_ctx.get("GUAC_PROJECT_DESCRIPTION")
-    
-    if project_name is None:
-        try:
-            project_name = input("Enter the project name: ").strip() or "unknown_project"
-        except EOFError:
-            project_name = "unknown_project"
+
     if project_description is None:
         try:
             project_description = input("Enter a short description of the project: ").strip() or "No description provided."
@@ -500,35 +482,68 @@ def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None, lang='py
     updated_ctx = {**existing_ctx}
     updated_ctx.update({
         "GUAC_TEAM_NAME": "guac_team",
-        "GUAC_DESCRIPTION": f"A team of NPCs specialized in {lang} analysis for project {project_name}",
+        "GUAC_DESCRIPTION": f"A team of NPCs specialized in {lang} analysis for project {package_name}",
         "GUAC_FORENPC": "guac",
-        "GUAC_PROJECT_NAME": project_name,
         "GUAC_PROJECT_DESCRIPTION": project_description,
         "GUAC_LANG": lang,
         "GUAC_PACKAGE_ROOT": package_root,
         "GUAC_PACKAGE_NAME": package_name,
         "GUAC_WORKSPACE_PATHS": {k: str(v) for k, v in workspace_dirs.items()},
     })
-
+                                                                                          
+    pkg_root_path = Path(package_root)                                                                                                                                           
+    try:                                                                                     
+        pkg_root_path.mkdir(parents=True, exist_ok=True)                                                                                                   
+        package_dir = pkg_root_path / package_name                                           
+                                                                                            
+        if not package_dir.exists():                                            
+            package_dir.mkdir(parents=True, exist_ok=True)                                                                                                  
+            (package_dir / "__init__.py").write_text("# package initialized by setup_guac_mode\n")                                                                                                                                            
+            logging.info("Created minimal package directory at %s", package_dir)              
+    except Exception as e:                                                                                                                                           
+        logging.warning("Could not ensure package root/dir: %s", e)                           
     with open(team_ctx_path, "w") as f:
         yaml.dump(updated_ctx, f, default_flow_style=False)
     print("Updated team.ctx with GUAC-specific information.")
 
+                                                                                          
+                                                                                          
+    setup_py_path = pkg_root_path / "setup.py"                                               
+                                                                                          
+                                                                                          
+    try:                                                                                  
+        if not setup_py_path.exists():                                                       
+            setup_content = f'''
+from setuptools import setup, find_packages                                                                                              
+setup(                                                                 
+ name="{package_name}", 
+ version="{existing_ctx.get("GUAC_PACKAGE_VERSION", "0.0.0")}", 
+ description="{project_description.replace('"', '\\"')}",                                 
+ packages=find_packages(),                                                                
+ include_package_data=True,                                                               
+ install_requires=[],                                                                                                                                                              
+)                                                                                         
+'''                                                                                      
+            setup_py_path.write_text(setup_content)                 
+            logging.info("Created minimal setup.py at %s", setup_py_path)                                               
+    except Exception as e:                                                                             
+        logging.warning("Could not write setup.py: %s", e)                                    
+       
     default_mode_val = default_mode_choice or "agent"
     setup_npc_team(npc_team_dir, lang)
     
+
+
     print(f"\nGuac mode configured for package: {package_name} at {package_root}")
     print(f"Workspace created at: {workspace_dirs['workspace']}")
 
     return {
         "language": lang, 
         "package_root": Path(package_root), 
-        "config_path": config_dir / "config.json",
         "plots_dir": plots_dir, 
         "npc_team_dir": npc_team_dir,
         "config_dir": config_dir, 
         "default_mode": default_mode_val,
-        "project_name": project_name, 
         "project_description": project_description,
         "package_name": package_name
     }
@@ -944,33 +959,11 @@ def _handle_file_drop(input_text: str, npc_team_dir: Path) -> Tuple[str, List[st
     
     if not file_paths:
 
-        return input_text, processed_files
+        return input_text, processed_files, file_paths
     
     modified_input = input_text
-    for file_path in file_paths:
-        expanded_path = Path(file_path.replace('~', str(Path.home()))).resolve()
-        
-        if expanded_path.exists() and expanded_path.is_file():
-            workspace_dirs = _get_workspace_dirs(npc_team_dir)
-            _ensure_workspace_dirs(workspace_dirs)
-            
-            ext = expanded_path.suffix[1:].upper() if expanded_path.suffix else "OTHERS"
-            category = EXTENSION_MAP.get(ext, "data_inputs")
-            target_dir = workspace_dirs.get(category, workspace_dirs["data_inputs"])
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_filename = f"{timestamp}_{expanded_path.name}"
-            target_path = target_dir / new_filename
-            
-            try:
-                shutil.copy2(expanded_path, target_path)
-                processed_files.append(str(target_path))
-                modified_input = modified_input.replace(file_path, str(target_path))
-                print(f"📁 Copied {expanded_path.name} to workspace: {target_path}")
-            except Exception as e:
-                print(f"[ERROR] Failed to copy file: {e}")
-    
-    return modified_input, processed_files
+
+    return modified_input, processed_files, file_paths
 
 
 def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
@@ -1125,19 +1118,22 @@ def _save_matplotlib_figures(npc_team_dir: Path) -> List[str]:
     
     return saved_figures
 
+import sys
+from io import StringIO
+from contextlib import redirect_stdout, redirect_stderr
 
-def _run_agentic_mode(command: str, 
-                      state: ShellState, 
-                      locals_dict: Dict[str, Any], 
+def _run_agentic_mode(command: str,
+                      state: ShellState,
+                      locals_dict: Dict[str, Any],
                       npc_team_dir: Path) -> Tuple[ShellState, Any]:
     """Run agentic mode with continuous iteration based on progress"""
-    max_iterations = 10  # Higher maximum as a safety limit
+    max_iterations = 3  # low maximum as a safety limit
     iteration = 0
     full_output = []
     current_command = command
     consecutive_failures = 0
     max_consecutive_failures = 2
-    
+
     # Build context of existing variables
     existing_vars_context = "EXISTING VARIABLES IN ENVIRONMENT:\n"
     for var_name, var_value in locals_dict.items():
@@ -1150,52 +1146,99 @@ def _run_agentic_mode(command: str,
                 existing_vars_context += f"- {var_name} ({var_type}): {var_repr}\n"
             except:
                 existing_vars_context += f"- {var_name} ({type(var_value).__name__}): <unrepresentable>\n"
-    
+    previous_code = ''
+    next_step = ''
+    steps = []
     while iteration < max_iterations and consecutive_failures < max_consecutive_failures:
         iteration += 1
         print(f"\n🔄 Agentic iteration {iteration}")
-        
+
         prompt = f"""
-        USER REQUEST: {current_command}
-        
+        USER REQUEST: {current_command} {next_step} 
+
+        Here is the existing variable context:
+
+        ```
         {existing_vars_context}
+        ```
+        PREVIOUS ATTEMPTS: ```{full_output[-1] if full_output else 'None'}```
+
+        DO NOT SIMPLY COPY A PREVIOUS ATTEMPT.        
         
-        PREVIOUS ATTEMPTS: {full_output[-1] if full_output else 'None'}
+        Your goal is to generate Python code that BUILDS ON EXISTING VARIABLES to accomplish this task: {current_command}, with this next step planned: `{next_step} `
+
+        Here are all the previous steps: {steps}
         
-        Generate Python code that BUILDS ON EXISTING VARIABLES to accomplish this task.
         DO NOT redefine variables that already exist unless absolutely necessary.
         Use the existing variables and add/modify as needed.
-        Be sure to generate logs and information  that oncne executed provide us with enough information to keep moving forward.
-        log variables and behaviors so we can pinpoint fixes clearly rather than getting stufck in nonsensical problematic loops.
-        
+        Be sure to generate logs and information  that once executed provide us with enough information to keep moving forward.
+        log variables and behaviors so we can pinpoint fixes clearly rather than getting stuck in nonsensical problematic loops.
         
         Provide ONLY executable Python code without any explanations or markdown formatting.
-        Focus on incremental changes rather than rewriting everything. Do not re-write any functions that are currently within the existing vars contxt or which appear to have no need to be changed.
+        Focus on incremental changes rather than rewriting everything. Do not re-write any functions that are currently within the existing vars context or which appear to have no need to be changed.
 
         Do not include any leading ```python. Begin directly with the code.
-        """
-        
-        llm_response = get_llm_response(prompt, 
-                                        npc=state.npc, 
-                                        stream=True)
-      
+        Do not write your code to include a __main__ check or portion unless the user asks.
+        These should be functional components and building blocks that you and the user will take and build a great
+        library of modules. Keep things straightforward and do not do unnecessary exception handling unless requested.
+        Failing fast in research is important and so it is necessary to  
+        No try except blocks unless requested.
+        Determine and log information in a way that helps us move forward rather than by exception handling.
+        Do not simply generate code that resembles the previous code. 
+        While this code may one day be `production` code with such error handling,
+        at the moment, we are simply in the business of experimentation.
+        Do not use the python `input()` function. if you have a question, ask directly by typing <request_for_input> request </request_for_input>        
+    
+        users may ask you to edit code directly. do this by loading the code in and evaluating it. once it is evaluated, you may attempt to write changes to it.
 
-        generated_code = print_and_process_stream_with_markdown(llm_response.get('response'),
-                                                                state.npc.model, 
-                                                                state.npc.provider, 
-                                                                show=True)
+
+        """
+        #
         
+        
+        llm_response = get_llm_response(prompt,
+                                        npc=state.npc,
+                                        stream=True)
+
+        generated_code = print_and_process_stream(llm_response.get('response'),
+                                                  state.npc.model,
+                                                  state.npc.provider
+                                                  )
+
+        if generated_code.startswith('<request_for_input>'):
+            generated_code = generated_code.split('>')[1].split('<')[0]
+            user_feedback = input("\n🤔 Agent requests feedback (press Enter to continue or type your input): ").strip()
+            current_command = f"{current_command} - User feedback: {user_feedback}"
+            continue
+
         if generated_code.startswith('```python'):
             generated_code = generated_code[len('```python'):].strip()
         if generated_code.endswith('```'):
             generated_code = generated_code[:-3].strip()
         
-        print(f"\n# Generated Code (Iteration {iteration}):\n---\n{generated_code}\n---\n")
-        
+        #print(f"\n# Generated Code (Iteration {iteration}):\n---\n{generated_code}\n---\n")
+
         try:
-            state, exec_output = execute_python_code(generated_code, state, locals_dict)
-            full_output.append(f"Iteration {iteration}:\nCode:\n{generated_code}\nOutput:\n{exec_output}")
-            
+            # Capture stdout/stderr during execution
+            stdout_capture = StringIO()
+            stderr_capture = StringIO()
+
+            with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+                state, exec_output = execute_python_code(generated_code, 
+                                                         state, 
+                                                         locals_dict)
+
+            captured_stdout = stdout_capture.getvalue()
+            captured_stderr = stderr_capture.getvalue()
+
+            if captured_stdout:
+                print("\n📤 Captured stdout:\n", captured_stdout)
+            if captured_stderr:
+                print("\n❌ Captured stderr:\n", captured_stderr)
+
+            combined_output = f"{exec_output}\nstdout:\n{captured_stdout}\nstderr:\n{captured_stderr}"
+            full_output.append(f"Iteration {iteration}:\nCode:\n{generated_code}\nOutput:\n{combined_output}")
+
             # Update the context with new variables
             new_vars = []
             for var_name, var_value in locals_dict.items():
@@ -1203,66 +1246,74 @@ def _run_agentic_mode(command: str,
                     var_name not in existing_vars_context and 
                     var_name not in ['In', 'Out', 'exit', 'quit', 'get_ipython']):
                     new_vars.append(var_name)
-            
+
             if new_vars:
                 existing_vars_context += f"\nNEW VARIABLES CREATED: {', '.join(new_vars)}\n"
-            
+
             analysis_prompt = f"""
-            CODE EXECUTION RESULTS: {exec_output}
+            CODE EXECUTION RESULTS: {combined_output}
             
             EXISTING VARIABLES: {existing_vars_context}
+
+            EXECUTED_CODE: {generated_code}
+
+            PREVIOUS_CODE: {previous_code}
             
+            Here are the steps so far: {steps}
+
             ANALYSIS: 
-            - Is there MEANINGFUL PROGRESS? Return 'progress' if making good progress
+            - Is there MEANINGFUL PROGRESS? Return 'progress' if making good progress. If the previous code and current executed code are essentially accomplishing the same thing, that is not progress. If the steps have been too similar or not improved, then consider it a problem.
             - Is there a PROBLEM? Return 'problem' if stuck or error occurred
-    
-            - Return ONLY one of these words followed by a brief explanation.
+            - Is there an ambiguity that should be resolved? Return 'question'.
+            - Return ONLY one of these words followed by a brief explanation to take the next step forward.
             """
-            
             analysis_response = get_llm_response(analysis_prompt,
-                                                 model=state.chat_model, 
-                                                 provider=state.chat_provider, 
-                                                 npc=state.npc, 
+                                                 npc=state.npc,
                                                  stream=False)
-            
+
             analysis = analysis_response.get("response", "").strip().lower()
-            print(f"\n# Analysis:\n{analysis}")
-            
+            next_step = analysis[8:]
+            print(f"\n# Analysis:\n{analysis}") 
+            previous_code = generated_code
+
             if analysis.startswith('complete'):
                 print("✅ Task completed successfully!")
                 break
+            if analysis.startswith('complete'):
+                print('Please help answer')
+                break
             elif analysis.startswith('progress'):
                 consecutive_failures = 0  # Reset failure counter on progress
-                print("➡️  Making progress, continuing to next iteration...")
-                # Continue to next iteration
+                print("➡️ Making progress, continuing to next iteration...")
             elif analysis.startswith('problem'):
                 consecutive_failures += 1
-                print(f"⚠️  Problem detected ({consecutive_failures}/{max_consecutive_failures} consecutive failures)")
-                
-                user_feedback = input("\n🤔 Agent requests feedback (press Enter to continue or type your response): ").strip()
+                print(f"⚠️ Problem detected ({consecutive_failures}/{max_consecutive_failures} consecutive failures)")
+                user_feedback = input("\n🤔 Agent requests feedback (press Enter to continue or type your input): ").strip()
                 if user_feedback:
                     current_command = f"{current_command} - User feedback: {user_feedback}"
                 elif consecutive_failures >= max_consecutive_failures:
-                    print("❌ Too many consecutive failures, stopping iteration")
+                    print("❌ Too many consecutive failures, stopping iteration.")
                     break
             else:
                 # Default behavior for unexpected responses
                 consecutive_failures += 1
                 print(f"❓ Unexpected analysis response, counting as failure ({consecutive_failures}/{max_consecutive_failures})")
-                
+                if consecutive_failures >= max_consecutive_failures:
+                    print("❌ Too many consecutive failures, stopping iteration.")
+                    break
+
         except Exception as e:
             error_msg = f"Error in iteration {iteration}: {str(e)}"
             print(error_msg)
             full_output.append(error_msg)
             consecutive_failures += 1
             current_command = f"{current_command} - Error: {str(e)}"
-            
-            if consecutive_failures >= max_consecutive_failures:
-                print("❌ Too many consecutive errors, stopping iteration")
-                break
-    
-    return state, "# Agentic execution completed\n" + '\n'.join(full_output)
 
+            if consecutive_failures >= max_consecutive_failures:
+                print("❌ Too many consecutive errors, stopping iteration.")
+                break
+
+    return state, "# Agentic execution completed\n" + '\n'.join(full_output)
 
 def print_guac_bowl():
     bowl_art = """
@@ -1353,10 +1404,10 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
                 return state, f"Error loading file: {e}"
 
     # Handle file drops in text (multiple files or files with other text)
-    processed_command, processed_files = _handle_file_drop(stripped_command, npc_team_dir)
+    processed_command, processed_files, file_paths = _handle_file_drop(stripped_command, npc_team_dir)
     if processed_files:
         print(f"📁 Processed {len(processed_files)} files")
-        stripped_command = processed_command
+        stripped_command = processed_command + 'Here are the files associated with the request'
 
     # Handle /refresh command
     if stripped_command == "/refresh":
@@ -1416,7 +1467,6 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
             {locals_context_string}
             Begin directly with the code
             """
-    
         llm_response = get_llm_response(prompt_cmd, 
                                         model=state.chat_model, 
                                         provider=state.chat_provider, 
