@@ -1191,7 +1191,10 @@ def _run_agentic_mode(command: str,
     
         users may ask you to edit code directly. do this by loading the code in and evaluating it. once it is evaluated, you may attempt to write changes to it.
 
+        Always evaluate before attempting to fix. Read first. Gather information. Look at files. This will not be your final code, this is just part of 
+        an ongoing workflow. 
 
+        Do not include any '__name__'=='__main__' block.
         """
         #
         
@@ -1209,6 +1212,8 @@ def _run_agentic_mode(command: str,
             generated_code = generated_code.split('>')[1].split('<')[0]
             user_feedback = input("\n🤔 Agent requests feedback (press Enter to continue or type your input): ").strip()
             current_command = f"{current_command} - User feedback: {user_feedback}"
+            max_iterations += int(max_iterations/2)
+
             continue
 
         if generated_code.startswith('```python'):
@@ -1230,6 +1235,7 @@ def _run_agentic_mode(command: str,
 
             captured_stdout = stdout_capture.getvalue()
             captured_stderr = stderr_capture.getvalue()
+            print(exec_output)
 
             if captured_stdout:
                 print("\n📤 Captured stdout:\n", captured_stdout)
@@ -1291,6 +1297,8 @@ def _run_agentic_mode(command: str,
                 user_feedback = input("\n🤔 Agent requests feedback (press Enter to continue or type your input): ").strip()
                 if user_feedback:
                     current_command = f"{current_command} - User feedback: {user_feedback}"
+                    max_iterations += int(max_iterations/2)
+                    continue
                 elif consecutive_failures >= max_consecutive_failures:
                     print("❌ Too many consecutive failures, stopping iteration.")
                     break
@@ -1308,6 +1316,7 @@ def _run_agentic_mode(command: str,
             full_output.append(error_msg)
             consecutive_failures += 1
             current_command = f"{current_command} - Error: {str(e)}"
+
 
             if consecutive_failures >= max_consecutive_failures:
                 print("❌ Too many consecutive errors, stopping iteration.")
