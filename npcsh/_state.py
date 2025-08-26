@@ -2198,10 +2198,10 @@ def execute_command(
     active_model = npc_model or state.chat_model
     active_provider = npc_provider or state.chat_provider
     if state.current_mode == 'agent':
-        print('# of parsed commands: ', len(commands))
-        print('Commands:' '\n'.join(commands))
+        #print('# of parsed commands: ', len(commands))
+        #print('Commands:' '\n'.join(commands))
         for i, cmd_segment in enumerate(commands):
-            render_markdown(f'- executing command {i+1}/{len(commands)}')
+            render_markdown(f'- Executing command {i+1}/{len(commands)}')
             is_last_command = (i == len(commands) - 1)
             stream_this_segment = state.stream_output and not is_last_command 
             try:
@@ -2353,8 +2353,9 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                 ctx_path = os.path.join(team_dir, "team.ctx")
                 folder_context = input("Enter a short description for this project/team (optional): ").strip()
                 team_ctx_data = {
-                    "forenpc": default_forenpc_name, "model": forenpc_model,
-                    "provider": forenpc_provider, "api_key": None, "api_url": None,
+                    "forenpc": default_forenpc_name, 
+                    "model": forenpc_model,
+                    "provider": forenpc_provider, 
                     "context": folder_context if folder_context else None
                 }
                 use_jinxs = input("Use global jinxs folder (g) or copy to this project (c)? [g/c, default: g]: ").strip().lower()
