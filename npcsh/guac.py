@@ -1132,7 +1132,7 @@ def _run_agentic_mode(command: str,
     full_output = []
     current_command = command
     consecutive_failures = 0
-    max_consecutive_failures = 2
+    max_consecutive_failures = 3
 
     # Build context of existing variables
     existing_vars_context = "EXISTING VARIABLES IN ENVIRONMENT:\n"
@@ -1167,6 +1167,10 @@ def _run_agentic_mode(command: str,
         
         Your goal is to generate Python code that BUILDS ON EXISTING VARIABLES to accomplish this task: {current_command}, with this next step planned: `{next_step} `
 
+        
+        You will notice in the local envs that there are functions for reading, editing, and loading files. 
+        You should use these to your advantage as they will help you to clearly understand the user's system best.
+
         Here are all the previous steps: {steps}
         
         DO NOT redefine variables that already exist unless absolutely necessary.
@@ -1194,6 +1198,12 @@ def _run_agentic_mode(command: str,
         Always evaluate before attempting to fix. Read first. Gather information. Look at files. This will not be your final code, this is just part of 
         an ongoing workflow. 
 
+
+        If a user is asking for help debugging, it's better to figure out what is wrong by attempting to run it yourself, and if they do not prefer that,
+        then it's best to use static parsing methods and arguments based on deduction rather than attempting to just fix everything over and over. 
+
+        Do not over-complicate the code.
+
         Do not include any '__name__'=='__main__' block.
         """
         #
@@ -1201,16 +1211,22 @@ def _run_agentic_mode(command: str,
         
         llm_response = get_llm_response(prompt,
                                         npc=state.npc,
-                                        stream=True)
+                                        stream=True,
+                                        messages=state.messages)
 
         generated_code = print_and_process_stream(llm_response.get('response'),
                                                   state.npc.model,
                                                   state.npc.provider
                                                   )
+        
+
+        state.messages.append({'role':'user', 'content':current_command })
+        state.messages.append({'role':'assistant', 'content': generated_code})        
 
         if generated_code.startswith('<request_for_input>'):
             generated_code = generated_code.split('>')[1].split('<')[0]
             user_feedback = input("\n🤔 Agent requests feedback (press Enter to continue or type your input): ").strip()
+
             current_command = f"{current_command} - User feedback: {user_feedback}"
             max_iterations += int(max_iterations/2)
 
@@ -1265,6 +1281,8 @@ def _run_agentic_mode(command: str,
 
             PREVIOUS_CODE: {previous_code}
             
+            PREVIOUS ATTEMPTS: ```{full_output[-3:] if full_output else 'None'}```
+
             Here are the steps so far: {steps}
 
             ANALYSIS: 
@@ -1279,29 +1297,29 @@ def _run_agentic_mode(command: str,
 
             analysis = analysis_response.get("response", "").strip().lower()
             next_step = analysis[8:]
+            state.messages.append({'role':'assistant', 'content':f'''- Is there MEANINGFUL PROGRESS? Is there a PROBLEM? Is there an ambiguity that should be resolved? 
+                            Indeed: {analysis}   '''})
             print(f"\n# Analysis:\n{analysis}") 
+
             previous_code = generated_code
 
             if analysis.startswith('complete'):
                 print("✅ Task completed successfully!")
                 break
-            if analysis.startswith('complete'):
+            if analysis.startswith('question'):
                 print('Please help answer')
                 break
             elif analysis.startswith('progress'):
                 consecutive_failures = 0  # Reset failure counter on progress
                 print("➡️ Making progress, continuing to next iteration...")
+                current_command = next_step
             elif analysis.startswith('problem'):
-                consecutive_failures += 1
+
                 print(f"⚠️ Problem detected ({consecutive_failures}/{max_consecutive_failures} consecutive failures)")
-                user_feedback = input("\n🤔 Agent requests feedback (press Enter to continue or type your input): ").strip()
-                if user_feedback:
-                    current_command = f"{current_command} - User feedback: {user_feedback}"
-                    max_iterations += int(max_iterations/2)
-                    continue
-                elif consecutive_failures >= max_consecutive_failures:
-                    print("❌ Too many consecutive failures, stopping iteration.")
-                    break
+
+                current_command = f"{current_command} - PROBLEM in addressing it: {analysis}"
+                max_iterations += int(max_iterations/2)
+                continue
             else:
                 # Default behavior for unexpected responses
                 consecutive_failures += 1
@@ -1309,7 +1327,9 @@ def _run_agentic_mode(command: str,
                 if consecutive_failures >= max_consecutive_failures:
                     print("❌ Too many consecutive failures, stopping iteration.")
                     break
-
+        except KeyboardInterrupt as e:
+            user_input = input('User input: ')
+            current_command = current_command+user_input
         except Exception as e:
             error_msg = f"Error in iteration {iteration}: {str(e)}"
             print(error_msg)
@@ -1544,12 +1564,196 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             
     except Exception as e:
         print(f"Warning: Could not load package {package_name}: {e}", file=sys.stderr)
+            
+    from npcpy.data.load import load_file_contents
+
+    def read_file(file_path, max_lines=10000, encoding='utf-8'):
+        """
+        Read and print file contents up to max_lines.
+        Uses npcpy.data.load for specialized file types, falls back to text reading.
+        Returns the content as a string for further processing.
+        """
+        path = Path(file_path).expanduser().resolve()
         
+        if not path.exists():
+            print(f"File not found: {path}")
+            return None
+        
+        if not path.is_file():
+            print(f"Not a file: {path}")
+            return None
+        
+        try:
+            # Try using npcpy's load_file_contents first for specialized formats
+            file_ext = path.suffix.upper().lstrip('.')
+            if file_ext in ['PDF', 'DOCX', 'PPTX', 'HTML', 'HTM', 'CSV', 'XLS', 'XLSX', 'JSON']:
+                chunks = load_file_contents(str(path), chunk_size=10000)  # Large chunk to get full content
+                if chunks and not chunks[0].startswith("Error") and not chunks[0].startswith("Unsupported"):
+                    content = '\n'.join(chunks)
+                    lines = content.split('\n')
+                    
+                    if len(lines) > max_lines:
+                        lines = lines[:max_lines]
+                        print(f"File truncated at {max_lines} lines. Use windowed reading for larger files.")
+                    
+                    print(f"Reading {path.name} ({len(lines)} lines, {len(content)} chars)")
+                    print("=" * 60)
+                    
+                    for i, line in enumerate(lines, 1):
+                        print(f"{i:4d} | {line}")
+                    
+                    print("=" * 60)
+                    print(f"End of {path.name}")
+                    return content
+            
+            # Fall back to regular text reading
+            with open(path, 'r', encoding=encoding) as f:
+                lines = []
+                for i, line in enumerate(f, 1):
+                    if i > max_lines:
+                        print(f"File truncated at {max_lines} lines. Use windowed reading for larger files.")
+                        break
+                    lines.append(line.rstrip('\n\r'))
+            
+            content = '\n'.join(lines)
+            
+            print(f"Reading {path.name} ({len(lines)} lines, {len(content)} chars)")
+            print("=" * 60)
+            
+            for i, line in enumerate(lines, 1):
+                print(f"{i:4d} | {line}")
+            
+            print("=" * 60)
+            print(f"End of {path.name}")
+            
+            return content
+            
+        except UnicodeDecodeError:
+            try:
+                with open(path, 'rb') as f:
+                    data = f.read(min(1024, max_lines * 80))
+                print(f"Binary file {path.name} ({len(data)} bytes)")
+                print("=" * 60)
+                print(data.hex()[:1000] + ("..." if len(data) > 500 else ""))
+                print("=" * 60)
+                return data
+            except Exception as e:
+                print(f"Error reading file: {e}")
+                return None
+        except Exception as e:
+            print(f"Error reading file: {e}")
+            return None
+
+    def edit_file(file_path, content=None, line_number=None, new_line=None, insert_at=None, append=False, backup=True):
+        """
+        Edit file contents in various ways:
+        - edit_file(path, content="new content") - replace entire file
+        - edit_file(path, line_number=5, new_line="new text") - replace specific line
+        - edit_file(path, insert_at=5, new_line="inserted text") - insert at line
+        - edit_file(path, append=True, content="appended") - append to file
+        """
+        path = Path(file_path).expanduser().resolve()
+        
+        # Create parent directories if needed
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Backup original if it exists
+        if backup and path.exists():
+            backup_path = path.with_suffix(path.suffix + '.backup')
+            import shutil
+            shutil.copy2(path, backup_path)
+            print(f"Backup saved: {backup_path.name}")
+        
+        try:
+            # Read existing content if file exists
+            existing_lines = []
+            if path.exists():
+                with open(path, 'r', encoding='utf-8') as f:
+                    existing_lines = [line.rstrip('\n\r') for line in f]
+            
+            if content is not None:
+                if append:
+                    with open(path, 'a', encoding='utf-8') as f:
+                        f.write('\n' + content if existing_lines else content)
+                    print(f"Appended to {path.name}")
+                else:
+                    with open(path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                    print(f"Wrote {path.name} ({len(content)} chars)")
+            
+            elif line_number is not None and new_line is not None:
+                if line_number < 1:
+                    print("Line numbers start at 1")
+                    return False
+                
+                while len(existing_lines) < line_number:
+                    existing_lines.append("")
+                
+                if line_number <= len(existing_lines):
+                    old_line = existing_lines[line_number - 1] if line_number <= len(existing_lines) else ""
+                    existing_lines[line_number - 1] = new_line
+                    
+                    with open(path, 'w', encoding='utf-8') as f:
+                        f.write('\n'.join(existing_lines))
+                    
+                    print(f"Line {line_number} in {path.name}:")
+                    print(f"  - OLD: {old_line}")
+                    print(f"  + NEW: {new_line}")
+                else:
+                    print(f"File only has {len(existing_lines)} lines")
+                    return False
+            
+            elif insert_at is not None and new_line is not None:
+                if insert_at < 1:
+                    insert_at = 1
+                
+                existing_lines.insert(insert_at - 1, new_line)
+                
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(existing_lines))
+                
+                print(f"Inserted at line {insert_at} in {path.name}: {new_line}")
+            
+            else:
+                print("Must specify either 'content', or 'line_number + new_line', or 'insert_at + new_line'")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error editing file: {e}")
+            return False
+
+    def load_file(file_path):
+        """
+        Simple wrapper around npcpy's load_file_contents for direct data loading.
+        Returns the loaded data in appropriate format.
+        """
+        path = Path(file_path).expanduser().resolve()
+        
+        if not path.exists():
+            print(f"File not found: {path}")
+            return None
+        
+        chunks = load_file_contents(str(path))
+        if chunks and not chunks[0].startswith("Error") and not chunks[0].startswith("Unsupported"):
+            content = '\n'.join(chunks)
+            print(f"Loaded {path.name} using npcpy loader")
+            return content
+        else:
+            print(f"Could not load {path.name}: {chunks[0] if chunks else 'Unknown error'}")
+            return None
+                
     core_imports = {
         'pd': pd, 'np': np, 'plt': plt, 'datetime': datetime, 
         'Path': Path, 'os': os, 'sys': sys, 'json': json, 
-        'yaml': yaml, 're': re, 'traceback': traceback
+        'yaml': yaml, 're': re, 'traceback': traceback, 
+        'edit_file': edit_file, 
+        'read_file':read_file, 
+        'load_file':load_file,
     }
+
+
     locals_dict.update(core_imports)
     locals_dict.update({f"guac_{k}": v for k, v in workspace_dirs.items()})
     
@@ -1591,17 +1795,24 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             
             process_result(user_input, state, result, state.command_history)
             
-        except (KeyboardInterrupt, EOFError):
+        except EOFError:
             print("\nExiting Guac Mode...")
+            try:
+                readline.write_history_file(READLINE_HISTORY_FILE)
+            except:
+                pass
             if _guac_monitor_stop_event:
                 _guac_monitor_stop_event.set()
             if _guac_monitor_thread:
                 _guac_monitor_thread.join(timeout=1.0)
             break
-
-            break
         except SystemExit as e:
+            try:
+                readline.write_history_file(READLINE_HISTORY_FILE)
+            except:
+                pass
             print(f"\n{e}")
+
             if _guac_monitor_stop_event:
                 _guac_monitor_stop_event.set()
             if _guac_monitor_thread:
@@ -1611,6 +1822,10 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
         except Exception:
             print("An unexpected error occurred in the REPL:")
             traceback.print_exc()
+            try:
+                readline.write_history_file(READLINE_HISTORY_FILE)
+            except:
+                pass
 
             if _guac_monitor_stop_event:
                 _guac_monitor_stop_event.set()
