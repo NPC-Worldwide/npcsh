@@ -2203,7 +2203,7 @@ def execute_command(
         for i, cmd_segment in enumerate(commands):
             render_markdown(f'- executing command {i+1}/{len(commands)}')
             is_last_command = (i == len(commands) - 1)
-            stream_this_segment = state.stream_output and is_last_command 
+            stream_this_segment = state.stream_output and not is_last_command 
             try:
                 current_state, output = process_pipeline_command(
                     cmd_segment.strip(),
@@ -2222,12 +2222,13 @@ def execute_command(
                         if stream_this_segment:
                             full_stream_output = print_and_process_stream_with_markdown(output, 
                                                                                         state.npc.model, 
-                                                                                        state.npc.provider, show=True)
+                                                                                        state.npc.provider, 
+                                                                                        show=True)
                             stdin_for_next = full_stream_output
                             if is_last_command: 
                                 final_output = full_stream_output
                     except:
-                        if output is not None: # Try converting other types to string
+                        if output is not None:  
                             try: 
                                 stdin_for_next = str(output)
                             except Exception:
@@ -2451,6 +2452,7 @@ def process_result(
     result_state: ShellState,
     output: Any,
     command_history: CommandHistory, 
+
     
 ):
     
@@ -2487,12 +2489,10 @@ def process_result(
         render_markdown(output.get('output'))
     elif result_state.stream_output:
 
-
         final_output_str = print_and_process_stream_with_markdown(output_content, 
-                                                                  model_for_stream, 
-                                                                  provider_for_stream, 
-                                                                  show=True)
-        
+                                                                    model_for_stream, 
+                                                                    provider_for_stream, 
+                                                                    show=True)
     elif output_content is not None:
         final_output_str = str(output_content)
         render_markdown(final_output_str)
@@ -2523,7 +2523,6 @@ def process_result(
             pdb.set_trace()
             try:
                 if not should_skip_kg_processing(user_input, final_output_str):
-
                     npc_kg = load_kg_from_db(engine, team_name, npc_name, result_state.current_path)
                     evolved_npc_kg, _ = kg_evolve_incremental(
                         existing_kg=npc_kg, 
@@ -2533,9 +2532,7 @@ def process_result(
                         get_concepts=True,
                         link_concepts_facts = False, 
                         link_concepts_concepts = False, 
-                        link_facts_facts = False, 
-
-                        
+                        link_facts_facts = False,                         
                     )
                     save_kg_to_db(engine,
                                 evolved_npc_kg, 
@@ -2572,7 +2569,9 @@ def process_result(
                     
                     Respond with JSON: {{"suggestion": "Your sentence."
                     }}"""
-                    response = get_llm_response(prompt, npc=active_npc, format="json")
+                    response = get_llm_response(prompt, 
+                                                npc=active_npc, 
+                                                format="json")
                     suggestion = response.get("response", {}).get("suggestion")
 
                     if suggestion:
