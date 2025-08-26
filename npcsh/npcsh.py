@@ -207,7 +207,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                            state, 
                            output, 
                            command_history, 
-                           already_printed=False)
+                           )
         
         except KeyboardInterrupt:
             if is_windows:
