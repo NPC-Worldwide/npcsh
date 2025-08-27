@@ -5,7 +5,7 @@
 
 # NPC Shell
 
-The NPC shell is the toolkit for tomorrow, providing a suite of programs to make use of multi-modal LLMs and agents in novel interactive modes. `npcsh` is a command-line program, and so can be used wherever you work. `npcsh` is developed to work relibly with small models and performs excellently with the state-of-the-art models from major model providers. 
+The NPC shell is the toolkit for tomorrow, providing a suite of programs to make use of multi-modal LLMs and agents in novel interactive modes. `npcsh` is based in the command line, and so can be used wherever you work. `npcsh` is developed to work relibly with small models and performs excellently with the state-of-the-art models from major model providers.  Fundamentally, the core `npcsh` is a bash replacement shell that lets users execute bash directly, ask an agent questions, and invoke pre- and user-defined macro tools and agents. Switching between agents is a breeze in `npcsh`, letting you quickly and easily take advantage of a variety of agents and personas. 
 
 To get started:
 ```bash
@@ -26,7 +26,7 @@ and you will enter the NPC shell. Additionally, the pip installation includes ma
 # Usage
   - Get help with a task: 
       ```bash
-      npcsh:🤖sibiji:gemini-2.5-flash>can you help me identify what process is listening on port 5337? 
+      npcsh>can you help me identify what process is listening on port 5337? 
       ```
       <p align="center"> 
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/port5337.png" alt="example of running npcsh to check what processes are listening on port 5337", width=600>
