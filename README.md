@@ -5,7 +5,12 @@
 
 # NPC Shell
 
-The NPC shell is the toolkit for tomorrow, providing a suite of programs to make use of multi-modal LLMs and agents in novel interactive modes. `npcsh` is based in the command line, and so can be used wherever you work. It is developed to work reliably with small models and performs excellently with the state-of-the-art models from major model providers.  Fundamentally, the core program of `npcsh` is an intelligent wrapper around bash with users retaining the ability execute bash directly while also being able to ask an agent questions and to invoke pre- and user-defined macro tools and agents. Switching between agents is a breeze in `npcsh`, letting you quickly and easily take advantage of a variety of agents (e.g. coding agents versus tool-calling agents versus prompt-based ReACT Flow agents) and personas (e.g. Data scientist, mapmaker with ennui, etc.).
+The NPC shell is the toolkit for tomorrow, providing a suite of programs to make use of multi-modal LLMs and agents in novel interactive modes. `npcsh` is based in the command line, and so can be used wherever you work. 
+
+- It is developed to work reliably with small models and performs excellently with the state-of-the-art models from major model providers. 
+- Fundamentally, the core program of npcsh extends the familiar bash environment with an intelligent layer that lets users seamlessly ask agents questions, run pre-built or custom macros or agents, all without breaking the flow of command-line work.
+- Switching between agents is a breeze in `npcsh`, letting you quickly and easily take advantage of a variety of agents (e.g. coding agents versus tool-calling agents versus prompt-based ReACT Flow agents) and personas (e.g. Data scientist, mapmaker with ennui, etc.).
+- Project variables and context can be stored in team `.ctx` files, while agents and Jinja execution templates are likewise stored in `yaml` within the global `npcsh` team or your project-specific one, letting you focus on adjusting and engineering context iteratively so you can constantly improve your agent team's performance.
 
 To get started:
 ```bash
