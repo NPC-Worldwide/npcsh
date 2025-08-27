@@ -291,7 +291,7 @@ def guac_handler(command,  **kwargs):
     team = Team(npc_team_dir, db_conn=db_conn)
 
     
-    enter_guac_mode(workspace_dirs,
+    enter_guac_mode(
                     npc=npc, 
                     team=team, 
                     config_dir=config_dir, 
