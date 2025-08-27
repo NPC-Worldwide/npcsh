@@ -163,97 +163,131 @@ class MCPClientNPC:
                     pass
             self.session = None
 
-def execute_command_corca(command: str, state: ShellState, command_history) -> Tuple[ShellState, Any]:
-    mcp_tools = []
-    
-    if hasattr(state, 'mcp_client') and state.mcp_client and state.mcp_client.session:
-        mcp_tools = state.mcp_client.available_tools_llm
-    else:
-        cprint("Warning: Corca agent has no tools. No MCP server connected.", "yellow", file=sys.stderr)
 
-    active_npc = state.npc if isinstance(state.npc, NPC) else NPC(name="default")
-
-    # Get the initial response with tools available but don't auto-process
-    response_dict = get_llm_response(
-        prompt=command,
-        model=active_npc.model or state.chat_model,
-        provider=active_npc.provider or state.chat_provider,
-        npc=state.npc,
-        messages=state.messages,
-        tools=mcp_tools,
-        auto_process_tool_calls=False,
-        stream=state.stream_output
-    )
-    
-    # Process the streaming response to extract tool calls
-    stream_response = response_dict.get('response')
-    messages = response_dict.get('messages', state.messages)
-    
-    # Collect the streamed content and extract tool calls
+def process_mcp_stream(stream_response, active_npc):
+    """Process streaming response and extract content + tool calls for both Ollama and OpenAI providers"""
     collected_content = ""
     tool_calls = []
-    current_tool_call = None
     
-    print("DEBUG: Processing stream response...")
+    interrupted = False
     
-    if hasattr(stream_response, '__iter__'):
-        # Process the stream to extract content and tool calls
-        for chunk in stream_response:
-            print(f"DEBUG: Chunk type: {type(chunk)}")
-            
-            if hasattr(chunk, 'choices') and chunk.choices:
-                delta = chunk.choices[0].delta
-                
-                if hasattr(delta, 'content') and delta.content:
-                    collected_content += delta.content
-                    print(delta.content, end='', flush=True)
-                
-                if hasattr(delta, 'tool_calls') and delta.tool_calls:
-                    for tool_call_delta in delta.tool_calls:
-                        print(f"DEBUG: Tool call delta: {tool_call_delta}")
+    # Save cursor position at the start
+    sys.stdout.write('\033[s')  # Save cursor position
+    sys.stdout.flush()
+    try:
+        for chunk in stream_response:        
+            if hasattr(active_npc, 'provider') and active_npc.provider == "ollama" and 'gpt-oss' not in active_npc.model:
+                if hasattr(chunk, 'message') and hasattr(chunk.message, 'tool_calls') and chunk.message.tool_calls:
+                    for tool_call in chunk.message.tool_calls:
+                        tool_call_data = {
+                            'id': getattr(tool_call, 'id', ''),
+                            'type': 'function',
+                            'function': {
+                                'name': getattr(tool_call.function, 'name', '') if hasattr(tool_call, 'function') else '',
+                                'arguments': getattr(tool_call.function, 'arguments', {}) if hasattr(tool_call, 'function') else {}
+                            }
+                        }
                         
-                        if hasattr(tool_call_delta, 'index'):
-                            idx = tool_call_delta.index
-                            
-                            # Initialize tool call if needed
-                            while len(tool_calls) <= idx:
-                                tool_calls.append({
-                                    'id': '',
-                                    'type': 'function',
-                                    'function': {
-                                        'name': '',
-                                        'arguments': ''
-                                    }
-                                })
-                            
-                            # Update tool call data
-                            if hasattr(tool_call_delta, 'id') and tool_call_delta.id:
-                                tool_calls[idx]['id'] = tool_call_delta.id
-                            
-                            if hasattr(tool_call_delta, 'function'):
-                                if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
-                                    tool_calls[idx]['function']['name'] = tool_call_delta.function.name
+                        if isinstance(tool_call_data['function']['arguments'], str):
+                            try:
+                                tool_call_data['function']['arguments'] = json.loads(tool_call_data['function']['arguments'])
+                            except json.JSONDecodeError:
+                                tool_call_data['function']['arguments'] = {'raw': tool_call_data['function']['arguments']}
+                        
+                        tool_calls.append(tool_call_data)
+                
+                if hasattr(chunk, 'message') and hasattr(chunk.message, 'content') and chunk.message.content:
+                    collected_content += chunk.message.content
+                    print(chunk.message.content, end='', flush=True)
+                    
+            # Handle OpenAI-style responses (including gpt-oss)
+            else:
+                if hasattr(chunk, 'choices') and chunk.choices:
+                    delta = chunk.choices[0].delta
+                    
+                    if hasattr(delta, 'content') and delta.content:
+                        collected_content += delta.content
+                        print(delta.content, end='', flush=True)
+                    
+                    if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                        for tool_call_delta in delta.tool_calls:
+                            if hasattr(tool_call_delta, 'index'):
+                                idx = tool_call_delta.index
                                 
-                                if hasattr(tool_call_delta.function, 'arguments') and tool_call_delta.function.arguments:
-                                    tool_calls[idx]['function']['arguments'] += tool_call_delta.function.arguments
+                                while len(tool_calls) <= idx:
+                                    tool_calls.append({
+                                        'id': '',
+                                        'type': 'function',
+                                        'function': {'name': '', 'arguments': ''}
+                                    })
+                                
+                                if hasattr(tool_call_delta, 'id') and tool_call_delta.id:
+                                    tool_calls[idx]['id'] = tool_call_delta.id
+                                
+                                if hasattr(tool_call_delta, 'function'):
+                                    if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
+                                        tool_calls[idx]['function']['name'] = tool_call_delta.function.name
+                                    
+                                    if hasattr(tool_call_delta.function, 'arguments') and tool_call_delta.function.arguments:
+                                        tool_calls[idx]['function']['arguments'] += tool_call_delta.function.arguments
+    except KeyboardInterrupt:
+        interrupted = True
+        print('\n⚠️ Stream interrupted by user')
+    if interrupted:
+        str_output += "\n\n[⚠️ Response interrupted by user]"
+    # Always restore cursor position and clear everything after it
+    sys.stdout.write('\033[u')  # Restore cursor position
+    sys.stdout.write('\033[J')  # Clear from cursor down
+    sys.stdout.flush()
     
-    print(f"\nDEBUG: Final collected_content: {collected_content}")
-    print(f"DEBUG: Final tool_calls: {tool_calls}")
-    
-    # Update messages with the assistant response
-    state.messages = messages
-    if collected_content or tool_calls:
-        assistant_message = {"role": "assistant", "content": collected_content}
-        if tool_calls:
-            assistant_message["tool_calls"] = tool_calls
-        state.messages.append(assistant_message)
-    
-    return state, {
-        "output": collected_content,
-        "tool_calls": tool_calls,
-        "messages": state.messages
-    }
-        
+    # Now render the markdown at the restored position
+    render_markdown(collected_content)
+    print('\n')
+    return collected_content, tool_calls
+
+def execute_command_corca(command: str, state: ShellState, command_history) -> Tuple[ShellState, Any]:
+   mcp_tools = []
+   
+   if hasattr(state, 'mcp_client') and state.mcp_client and state.mcp_client.session:
+       mcp_tools = state.mcp_client.available_tools_llm
+   else:
+       cprint("Warning: Corca agent has no tools. No MCP server connected.", "yellow", file=sys.stderr)
+
+   active_npc = state.npc if isinstance(state.npc, NPC) else NPC(name="default")
+
+   response_dict = get_llm_response(
+       prompt=command,
+       model=active_npc.model or state.chat_model,
+       provider=active_npc.provider or state.chat_provider,
+       npc=state.npc,
+       messages=state.messages,
+       tools=mcp_tools,
+       auto_process_tool_calls=False,
+       stream=state.stream_output
+   )
+   
+   stream_response = response_dict.get('response')
+   messages = response_dict.get('messages', state.messages)
+   
+   print("DEBUG: Processing stream response...")
+   collected_content, tool_calls = process_mcp_stream(stream_response, active_npc)
+
+   print(f"\nDEBUG: Final collected_content: {collected_content}")
+   print(f"DEBUG: Final tool_calls: {tool_calls}")
+   
+   state.messages = messages
+   if collected_content or tool_calls:
+       assistant_message = {"role": "assistant", "content": collected_content}
+       if tool_calls:
+           assistant_message["tool_calls"] = tool_calls
+       state.messages.append(assistant_message)
+   
+   return state, {
+       "output": collected_content,
+       "tool_calls": tool_calls,
+       "messages": state.messages
+   }
+
 def print_corca_welcome_message():
     turq = "\033[38;2;64;224;208m"
     chrome = "\033[38;2;211;211;211m"
@@ -313,11 +347,13 @@ def process_corca_result(
         tool_responses = []
         for tool_call in tool_calls:
             tool_name = tool_call['function']['name']
-            tool_args_str = tool_call['function']['arguments']
+            tool_args = tool_call['function']['arguments']
             tool_call_id = tool_call['id']
             
             try:
-                tool_args = json.loads(tool_args_str) if tool_args_str.strip() else {}
+                if isinstance(tool_args, str):
+                    tool_args = json.loads(tool_args) if tool_args.strip() else {}
+
             except json.JSONDecodeError:
                 tool_args = {}
             
@@ -389,45 +425,10 @@ def process_corca_result(
             follow_up_tool_calls = []
             
             if result_state.stream_output:
-                collected_content = ""
-                follow_up_tool_calls = []
-                
                 if hasattr(follow_up_content, '__iter__'):
-                    for chunk in follow_up_content:
-                        if hasattr(chunk, 'choices') and chunk.choices:
-                            delta = chunk.choices[0].delta
-                            
-                            if hasattr(delta, 'content') and delta.content:
-                                collected_content += delta.content
-                                print(delta.content, end='', flush=True)
-                            
-                            if hasattr(delta, 'tool_calls') and delta.tool_calls:
-                                for tool_call_delta in delta.tool_calls:
-                                    if hasattr(tool_call_delta, 'index'):
-                                        idx = tool_call_delta.index
-                                        
-                                        while len(follow_up_tool_calls) <= idx:
-                                            follow_up_tool_calls.append({
-                                                'id': '',
-                                                'type': 'function',
-                                                'function': {
-                                                    'name': '',
-                                                    'arguments': ''
-                                                }
-                                            })
-                                        
-                                        if hasattr(tool_call_delta, 'id') and tool_call_delta.id:
-                                            follow_up_tool_calls[idx]['id'] = tool_call_delta.id
-                                        
-                                        if hasattr(tool_call_delta, 'function'):
-                                            if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
-                                                follow_up_tool_calls[idx]['function']['name'] = tool_call_delta.function.name
-                                            
-                                            if hasattr(tool_call_delta.function, 'arguments') and tool_call_delta.function.arguments:
-                                                follow_up_tool_calls[idx]['function']['arguments'] += tool_call_delta.function.arguments
+                    collected_content, follow_up_tool_calls = process_mcp_stream(follow_up_content, active_npc)
                 else:
-                    collected_content = str(follow_up_content)
-                
+                    collected_content = str(follow_up_content)                
                 follow_up_content = collected_content
             else:
                 if follow_up_messages:
@@ -452,11 +453,11 @@ def process_corca_result(
             print(colored("\n🔧 Executing follow-up MCP tools...", "cyan"))
             for tool_call in follow_up_tool_calls:
                 tool_name = tool_call['function']['name']
-                tool_args_str = tool_call['function']['arguments']
+                tool_args = tool_call['function']['arguments']
                 tool_call_id = tool_call['id']
                 
                 try:
-                    tool_args = json.loads(tool_args_str) if tool_args_str.strip() else {}
+                    tool_args = json.loads(tool_args) if tool_args.strip() else {}
                 except json.JSONDecodeError:
                     tool_args = {}
                 
@@ -648,7 +649,7 @@ def enter_corca_mode(command: str,
             if state.npc:
                 prompt_npc_name = state.npc.name
             
-            prompt_str = f"{colored(os.path.basename(state.current_path), 'blue')}:corca:{prompt_npc_name}🦌> "
+            prompt_str = f"{colored(os.path.basename(state.current_path), 'blue')}:{prompt_npc_name}🦌> "
             prompt = readline_safe_prompt(prompt_str)
             
             user_input = get_multiline_input(prompt).strip()
@@ -680,14 +681,31 @@ def enter_corca_mode(command: str,
     
     render_markdown("\n# Exiting Corca Mode")
     return {"output": "", "messages": state.messages}
-
 def main():
     parser = argparse.ArgumentParser(description="Corca - An MCP-powered npcsh shell.")
     parser.add_argument("--mcp-server-path", type=str, help="Path to an MCP server script to connect to.")
     args = parser.parse_args()
 
     command_history, team, default_npc = setup_shell()
-
+    
+    # Override default_npc with corca priority
+    project_team_path = os.path.abspath('./npc_team/')
+    global_team_path = os.path.expanduser('~/.npcsh/npc_team/')
+    
+    project_corca_path = os.path.join(project_team_path, "corca.npc")
+    global_corca_path = os.path.join(global_team_path, "corca.npc")
+    
+    if os.path.exists(project_corca_path):
+        default_npc = NPC(file=project_corca_path, 
+                          db_conn=command_history.engine)
+    elif os.path.exists(global_corca_path):
+        default_npc = NPC(file=global_corca_path, 
+                          db_conn=command_history.engine)
+    print('Team Default: ', team.provider, team.model)
+    if default_npc.model is None:
+        default_npc.model = team.model
+    if default_npc.provider is None:
+        default_npc.provider = team.provider
     from npcsh._state import initial_state
     initial_shell_state = initial_state
     initial_shell_state.team = team
@@ -704,6 +722,5 @@ def main():
     }
     
     enter_corca_mode(**kwargs)
-
 if __name__ == "__main__":
     main()
