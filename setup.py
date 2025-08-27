@@ -74,11 +74,11 @@ voice_requirements = [
     "pyttsx3",
 ]
 
-extra_files = package_files("npcpy/npc_team/")
+extra_files = package_files("npcsh/npc_team/")
 
 setup(
     name="npcsh",
-    version="1.0.21",
+    version="1.0.22",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
