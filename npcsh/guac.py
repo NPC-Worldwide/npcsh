@@ -1223,7 +1223,7 @@ def _run_agentic_mode(command: str,
         state.messages.append({'role':'user', 'content':current_command })
         state.messages.append({'role':'assistant', 'content': generated_code})        
 
-        if generated_code.startswith('<request_for_input>'):
+        if '<request_for_input>' in generated_code:
             generated_code = generated_code.split('>')[1].split('<')[0]
             user_feedback = input("\n🤔 Agent requests feedback (press Enter to continue or type your input): ").strip()
 
@@ -1289,6 +1289,7 @@ def _run_agentic_mode(command: str,
             - Is there MEANINGFUL PROGRESS? Return 'progress' if making good progress. If the previous code and current executed code are essentially accomplishing the same thing, that is not progress. If the steps have been too similar or not improved, then consider it a problem.
             - Is there a PROBLEM? Return 'problem' if stuck or error occurred
             - Is there an ambiguity that should be resolved? Return 'question'.
+            - Is the analysis complete enough to get feedback from the user? If it's pretty much done, return 'complete'
             - Return ONLY one of these words followed by a brief explanation to take the next step forward.
             """
             analysis_response = get_llm_response(analysis_prompt,
