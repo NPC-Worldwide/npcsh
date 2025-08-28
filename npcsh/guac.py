@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 import logging
 plt.ioff()
-
+import shlex
 import platform
 import yaml
 import re
@@ -396,9 +396,13 @@ def _handle_guac_refresh(state: ShellState, project_name: str, src_dir: Path):
     prompt = "\n".join(prompt_parts)
 
     try:
+        # Ensure state.npc is not None before accessing .model or .provider
+        npc_model = state.npc.model if state.npc and state.npc.model else state.chat_model
+        npc_provider = state.npc.provider if state.npc and state.npc.provider else state.chat_provider
+
         response = get_llm_response(prompt, 
-                                    model=state.chat_model, 
-                                    provider=state.chat_provider, 
+                                    model=npc_model, 
+                                    provider=npc_provider, 
                                     npc=state.npc, 
                                     stream=False)
         suggested_code_raw = response.get("response", "").strip()
@@ -434,22 +438,69 @@ def _handle_guac_refresh(state: ShellState, project_name: str, src_dir: Path):
     except Exception as e:
         print(f"Error during /refresh: {e}")
         traceback.print_exc()
-def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None, lang='python', default_mode_choice=None):
+
+
+
+def ensure_global_guac_team():
+    """Ensure a global guac team exists at ~/.npcsh/guac/npc_team/."""
+    base_dir = Path.home() / ".npcsh" / "guac"
+    team_dir = base_dir / "npc_team"
+    team_dir.mkdir(parents=True, exist_ok=True)
+
+    guac_npc_path = team_dir / "guac.npc"
+    if not guac_npc_path.exists():
+        guac = {
+            "name": "guac",
+            "primary_directive": (
+                "You are guac, the global coordinator NPC for Guac Mode. "
+                "Always prioritize Python code, concise answers, and coordination."
+            ),
+            "model": os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b"),
+            "provider": os.environ.get("NPCSH_CHAT_PROVIDER", "ollama")
+        }
+        with open(guac_npc_path, "w") as f:
+            yaml.dump(guac, f, default_flow_style=False)
+        print(f"✅ Created global guac NPC at {guac_npc_path}")
+
+    ctx_path = team_dir / "team.ctx"
+    if not ctx_path.exists():
+        ctx = {
+            "team_name": "guac_global_team",
+            "forenpc": "guac",
+            "model": os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b"),
+            "provider": os.environ.get("NPCSH_CHAT_PROVIDER", "ollama"),
+            "description": "Global guac team context"
+        }
+        with open(ctx_path, "w") as f:
+            yaml.dump(ctx, f, default_flow_style=False)
+        print(f"✅ Created global guac team.ctx at {ctx_path}")
+
+    return team_dir
+def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None,
+                    lang='python', default_mode_choice=None):
     base_dir = Path.cwd()                
+    
+    # Check if we should default to global without prompting
+    if GUAC_GLOBAL_FLAG_FILE.exists():
+        print("💡 Using global Guac team as default (previously set).")
+        team_dir = ensure_global_guac_team()
+        return {
+            "language": lang, "package_root": team_dir, "plots_dir": plots_dir,
+            "npc_team_dir": team_dir, "config_dir": config_dir, "default_mode": default_mode_choice or "agent",
+            "project_description": "Global guac team for analysis.", "package_name": "guac"
+        }
+
+    # default: project npc_team_dir
     if npc_team_dir is None:
         npc_team_dir = base_dir / "npc_team"
     else:
         npc_team_dir = Path(npc_team_dir)
     npc_team_dir.mkdir(parents=True, exist_ok=True)
-    # Setup Guac workspace
     workspace_dirs = _get_workspace_dirs(npc_team_dir)
-
     _ensure_workspace_dirs(workspace_dirs)
 
-    # Rest of existing setup_guac_mode code...
     team_ctx_path = npc_team_dir / "team.ctx"
     existing_ctx = {}
-    
     if team_ctx_path.exists():
         try:
             with open(team_ctx_path, "r") as f:
@@ -459,99 +510,68 @@ def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None, lang='py
 
     package_root = existing_ctx.get("GUAC_PACKAGE_ROOT")
     package_name = existing_ctx.get("GUAC_PACKAGE_NAME")
-    
+
     if package_root is None or package_name is None:
         try:
-            response = input("Enter the path to your Python package root (press Enter for current directory): ").strip()
+            response = input("Enter package root (Enter for current dir): ").strip()
             package_root = response if response else str(base_dir)
-            
-            response = input("Enter your package name (press Enter to use 'project'): ").strip()
+            response = input("Enter package name (Enter for 'project'): ").strip()
             package_name = response if response else "project"
-        except EOFError:
-            package_root = str(base_dir)
-            package_name = "project"
+        except (KeyboardInterrupt, EOFError):
+            print("⚠️ Project setup interrupted. Falling back to global guac team...")
+            GUAC_GLOBAL_FLAG_FILE.touch() # Create the flag file to remember this choice
+            team_dir = ensure_global_guac_team()
+            return {
+                "language": lang, "package_root": team_dir, "plots_dir": plots_dir,
+                "npc_team_dir": team_dir, "config_dir": config_dir, "default_mode": default_mode_choice or "agent",
+                "project_description": "Global guac team for analysis.", "package_name": "guac"
+            }
 
-    project_description = existing_ctx.get("GUAC_PROJECT_DESCRIPTION")
-
-    if project_description is None:
+    project_description = existing_ctx.get("GUAC_PROJECT_DESCRIPTION", "")
+    if not project_description:
         try:
-            project_description = input("Enter a short description of the project: ").strip() or "No description provided."
-        except EOFError:
+            project_description = input("Enter a project description: ").strip() or "No description."
+        except (KeyboardInterrupt, EOFError):
             project_description = "No description provided."
 
     updated_ctx = {**existing_ctx}
     updated_ctx.update({
         "GUAC_TEAM_NAME": "guac_team",
-        "GUAC_DESCRIPTION": f"A team of NPCs specialized in {lang} analysis for project {package_name}",
-        "GUAC_FORENPC": "guac",
-        "GUAC_PROJECT_DESCRIPTION": project_description,
-        "GUAC_LANG": lang,
-        "GUAC_PACKAGE_ROOT": package_root,
-        "GUAC_PACKAGE_NAME": package_name,
+        "GUAC_DESCRIPTION": f"A team for {lang} analysis for project {package_name}",
+        "GUAC_FORENPC": "guac", "GUAC_PROJECT_DESCRIPTION": project_description,
+        "GUAC_LANG": lang, "GUAC_PACKAGE_ROOT": package_root, "GUAC_PACKAGE_NAME": package_name,
         "GUAC_WORKSPACE_PATHS": {k: str(v) for k, v in workspace_dirs.items()},
     })
-                                                                                          
-    pkg_root_path = Path(package_root)                                                                                                                                           
-    try:                                                                                     
-        pkg_root_path.mkdir(parents=True, exist_ok=True)                                                                                                   
-        package_dir = pkg_root_path / package_name                                           
-                                                                                            
-        if not package_dir.exists():                                            
-            package_dir.mkdir(parents=True, exist_ok=True)                                                                                                  
-            (package_dir / "__init__.py").write_text("# package initialized by setup_guac_mode\n")                                                                                                                                            
-            logging.info("Created minimal package directory at %s", package_dir)              
-    except Exception as e:                                                                                                                                           
-        logging.warning("Could not ensure package root/dir: %s", e)                           
+
+    pkg_root_path = Path(package_root)
+    try:
+        pkg_root_path.mkdir(parents=True, exist_ok=True)
+        (pkg_root_path / package_name / "__init__.py").touch()
+    except Exception as e:
+        logging.warning("Could not ensure package root/dir: %s", e)
+
     with open(team_ctx_path, "w") as f:
         yaml.dump(updated_ctx, f, default_flow_style=False)
     print("Updated team.ctx with GUAC-specific information.")
 
-                                                                                          
-                                                                                          
-    setup_py_path = pkg_root_path / "setup.py"                                               
-                                                                                          
-                                                                                          
-    try:                                                                                  
-        if not setup_py_path.exists():                                                       
-            setup_content = f'''
-from setuptools import setup, find_packages                                                                                              
-setup(                                                                 
- name="{package_name}", 
- version="{existing_ctx.get("GUAC_PACKAGE_VERSION", "0.0.0")}", 
- description="{project_description.replace('"', '\\"')}",                                 
- packages=find_packages(),                                                                
- include_package_data=True,                                                               
- install_requires=[],                                                                                                                                                              
-)                                                                                         
-'''                                                                                      
-            setup_py_path.write_text(setup_content)                 
-            logging.info("Created minimal setup.py at %s", setup_py_path)                                               
-    except Exception as e:                                                                             
-        logging.warning("Could not write setup.py: %s", e)                                    
-       
+    setup_py_path = pkg_root_path / "setup.py"
+    if not setup_py_path.exists():
+        setup_content = f'''from setuptools import setup, find_packages
+setup(name="{package_name}", version="0.0.1", description="{project_description.replace('"', '\\"')}", packages=find_packages())
+'''
+        setup_py_path.write_text(setup_content)
+        logging.info("Created minimal setup.py at %s", setup_py_path)
+
     default_mode_val = default_mode_choice or "agent"
     setup_npc_team(npc_team_dir, lang)
-    
-
 
     print(f"\nGuac mode configured for package: {package_name} at {package_root}")
     print(f"Workspace created at: {workspace_dirs['workspace']}")
-
     return {
-        "language": lang, 
-        "package_root": Path(package_root), 
-        "plots_dir": plots_dir, 
-        "npc_team_dir": npc_team_dir,
-        "config_dir": config_dir, 
-        "default_mode": default_mode_val,
-        "project_description": project_description,
-        "package_name": package_name
+        "language": lang, "package_root": Path(package_root), "plots_dir": plots_dir,
+        "npc_team_dir": npc_team_dir, "config_dir": config_dir, "default_mode": default_mode_val,
+        "project_description": project_description, "package_name": package_name
     }
-
-
-
-
-
 def setup_npc_team(npc_team_dir, lang, is_subteam=False):
     # Create Guac-specific NPCs
     guac_npc = {
@@ -566,7 +586,7 @@ def setup_npc_team(npc_team_dir, lang, is_subteam=False):
     }
     caug_npc = {
         "name": "caug",
-        "primary_directive": f"You are caug, a specialist in big data statistical methods in {lang}."
+        "primary_directive": f"You are caug, a specialist in big data statistical methods in {lang}. You never make scatter plots with discrete values unless asked. "
     }
 
     parsely_npc = {
@@ -1005,7 +1025,7 @@ def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
             data_summary=f"{data_points} data points",
             change_significance=1.0 if not last else 0.5
         )
-        
+    
         session.add(plot_state)
         session.commit()
         session.close()
@@ -1122,17 +1142,42 @@ import sys
 from io import StringIO
 from contextlib import redirect_stdout, redirect_stderr
 
+# --- New Emoji Function for Agentic Mode ---
+def _get_guac_agent_emoji(failures: int, max_fail: int = 3) -> str:
+    """
+    Returns an avocado emoji representing the state based on consecutive failures.
+    Includes "puke" emoji for max_fail, and "skull" for exceeding max_fail + 20.
+    """
+    if failures == 0:
+        return "🥑"   # Fresh
+    elif failures == 1:
+        return "🥑🔪" # Sliced, contemplating next steps
+    elif failures == 2:
+        return "🥑🥣" # In the bowl, getting mashed
+    elif failures == max_fail:
+        return "🥑🤢" # Going bad, critical issue (puke)
+    elif failures > max_fail + 20: # Skull for 20+ over max
+        return "🥑💀" # Rotten
+    elif failures > max_fail:
+        return "🥑🟤" # Bruised and bad
+    else:
+        return "🥑❓" # Unknown state
+
+# --- New Helper for Persisting Global Choice ---
+GUAC_GLOBAL_FLAG_FILE = Path.home() / ".npcsh" / ".guac_use_global"
+
+
 def _run_agentic_mode(command: str,
                       state: ShellState,
                       locals_dict: Dict[str, Any],
                       npc_team_dir: Path) -> Tuple[ShellState, Any]:
     """Run agentic mode with continuous iteration based on progress"""
-    max_iterations = 3  # low maximum as a safety limit
+    max_iterations = 5  # Increased slightly for more complex tasks
     iteration = 0
     full_output = []
     current_command = command
     consecutive_failures = 0
-    max_consecutive_failures = 3
+    max_consecutive_failures = 3 # This is the limit before stopping
 
     # Build context of existing variables
     existing_vars_context = "EXISTING VARIABLES IN ENVIRONMENT:\n"
@@ -1151,7 +1196,7 @@ def _run_agentic_mode(command: str,
     steps = []
     while iteration < max_iterations and consecutive_failures < max_consecutive_failures:
         iteration += 1
-        print(f"\n🔄 Agentic iteration {iteration}")
+        print(f"\n{_get_guac_agent_emoji(consecutive_failures, max_consecutive_failures)} Agentic iteration {iteration} ")
 
         prompt = f"""
         USER REQUEST: {current_command} {next_step} 
@@ -1202,12 +1247,13 @@ def _run_agentic_mode(command: str,
         If a user is asking for help debugging, it's better to figure out what is wrong by attempting to run it yourself, and if they do not prefer that,
         then it's best to use static parsing methods and arguments based on deduction rather than attempting to just fix everything over and over. 
 
-        Do not over-complicate the code.
+        Do not over- complicate the code.
 
         Do not include any '__name__'=='__main__' block.
         """
-        #
         
+        npc_model = state.npc.model if state.npc and state.npc.model else state.chat_model
+        npc_provider = state.npc.provider if state.npc and state.npc.provider else state.chat_provider
         
         llm_response = get_llm_response(prompt,
                                         npc=state.npc,
@@ -1215,21 +1261,18 @@ def _run_agentic_mode(command: str,
                                         messages=state.messages)
 
         generated_code = print_and_process_stream(llm_response.get('response'),
-                                                  state.npc.model,
-                                                  state.npc.provider
+                                                  npc_model,
+                                                  npc_provider
                                                   )
         
-
         state.messages.append({'role':'user', 'content':current_command })
         state.messages.append({'role':'assistant', 'content': generated_code})        
 
         if '<request_for_input>' in generated_code:
             generated_code = generated_code.split('>')[1].split('<')[0]
             user_feedback = input("\n🤔 Agent requests feedback (press Enter to continue or type your input): ").strip()
-
             current_command = f"{current_command} - User feedback: {user_feedback}"
             max_iterations += int(max_iterations/2)
-
             continue
 
         if generated_code.startswith('```python'):
@@ -1237,13 +1280,9 @@ def _run_agentic_mode(command: str,
         if generated_code.endswith('```'):
             generated_code = generated_code[:-3].strip()
         
-        #print(f"\n# Generated Code (Iteration {iteration}):\n---\n{generated_code}\n---\n")
-
         try:
-            # Capture stdout/stderr during execution
             stdout_capture = StringIO()
             stderr_capture = StringIO()
-
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
                 state, exec_output = execute_python_code(generated_code, 
                                                          state, 
@@ -1251,97 +1290,73 @@ def _run_agentic_mode(command: str,
 
             captured_stdout = stdout_capture.getvalue()
             captured_stderr = stderr_capture.getvalue()
-            print(exec_output)
-
-            if captured_stdout:
+            if exec_output: print(exec_output)
+            if captured_stdout: 
                 print("\n📤 Captured stdout:\n", captured_stdout)
-            if captured_stderr:
+            if captured_stderr: 
                 print("\n❌ Captured stderr:\n", captured_stderr)
 
             combined_output = f"{exec_output}\nstdout:\n{captured_stdout}\nstderr:\n{captured_stderr}"
             full_output.append(f"Iteration {iteration}:\nCode:\n{generated_code}\nOutput:\n{combined_output}")
 
-            # Update the context with new variables
             new_vars = []
             for var_name, var_value in locals_dict.items():
                 if (not var_name.startswith('_') and 
                     var_name not in existing_vars_context and 
                     var_name not in ['In', 'Out', 'exit', 'quit', 'get_ipython']):
                     new_vars.append(var_name)
-
             if new_vars:
                 existing_vars_context += f"\nNEW VARIABLES CREATED: {', '.join(new_vars)}\n"
 
             analysis_prompt = f"""
             CODE EXECUTION RESULTS: {combined_output}
-            
             EXISTING VARIABLES: {existing_vars_context}
-
             EXECUTED_CODE: {generated_code}
-
             PREVIOUS_CODE: {previous_code}
-            
             PREVIOUS ATTEMPTS: ```{full_output[-3:] if full_output else 'None'}```
-
             Here are the steps so far: {steps}
-
             ANALYSIS: 
-            - Is there MEANINGFUL PROGRESS? Return 'progress' if making good progress. If the previous code and current executed code are essentially accomplishing the same thing, that is not progress. If the steps have been too similar or not improved, then consider it a problem.
-            - Is there a PROBLEM? Return 'problem' if stuck or error occurred
-            - Is there an ambiguity that should be resolved? Return 'question'.
-            - Is the analysis complete enough to get feedback from the user? If it's pretty much done, return 'complete'
-            - Return ONLY one of these words followed by a brief explanation to take the next step forward.
+            - Is there MEANINGFUL PROGRESS? Return 'progress' if making good progress.
+            - Is there a PROBLEM? Return 'problem' if stuck or error occurred.
+            - Is there an AMBIGUITY that should be resolved? Return 'question'.
+            - Is the analysis COMPLETE enough to get feedback? If it's pretty much done, return 'complete'.
+            - Return ONLY one of these words followed by a brief explanation for the next step.
             """
-            analysis_response = get_llm_response(analysis_prompt,
-                                                 npc=state.npc,
-                                                 stream=False)
-
+            analysis_response = get_llm_response(analysis_prompt, npc=state.npc, stream=False)
             analysis = analysis_response.get("response", "").strip().lower()
             next_step = analysis[8:]
-            state.messages.append({'role':'assistant', 'content':f'''- Is there MEANINGFUL PROGRESS? Is there a PROBLEM? Is there an ambiguity that should be resolved? 
-                            Indeed: {analysis}   '''})
-            print(f"\n# Analysis:\n{analysis}") 
-
-            previous_code = generated_code
+            state.messages.append({'role':'assistant', 
+                                   'content':f'Is there progress? is there a problem/ is there ambiguity? is it complete?\n {analysis}'})
 
             if analysis.startswith('complete'):
-                print("✅ Task completed successfully!")
+                print(f"✅ Task completed! {_get_guac_agent_emoji(0, max_consecutive_failures)}")
                 break
-            if analysis.startswith('question'):
-                print('Please help answer')
+            elif analysis.startswith('question'):
+                print(f"🤔 Agent has a question: {next_step} {_get_guac_agent_emoji(consecutive_failures, max_consecutive_failures)}")
                 break
             elif analysis.startswith('progress'):
-                consecutive_failures = 0  # Reset failure counter on progress
-                print("➡️ Making progress, continuing to next iteration...")
+                consecutive_failures = 0
+                print(f"➡️ Making progress... {_get_guac_agent_emoji(consecutive_failures, max_consecutive_failures)}")
                 current_command = next_step
             elif analysis.startswith('problem'):
-
-                print(f"⚠️ Problem detected ({consecutive_failures}/{max_consecutive_failures} consecutive failures)")
-
-                current_command = f"{current_command} - PROBLEM in addressing it: {analysis}"
-                max_iterations += int(max_iterations/2)
-                continue
-            else:
-                # Default behavior for unexpected responses
                 consecutive_failures += 1
-                print(f"❓ Unexpected analysis response, counting as failure ({consecutive_failures}/{max_consecutive_failures})")
-                if consecutive_failures >= max_consecutive_failures:
-                    print("❌ Too many consecutive failures, stopping iteration.")
-                    break
-        except KeyboardInterrupt as e:
+                print(f"⚠️ Problem detected ({consecutive_failures}/{max_consecutive_failures}) {_get_guac_agent_emoji(consecutive_failures, max_consecutive_failures)}")
+                current_command = f"{current_command} - PROBLEM: {analysis}"
+            else:
+                consecutive_failures += 1
+                print(f"❓ Unexpected analysis, counting as failure ({consecutive_failures}/{max_consecutive_failures}) {_get_guac_agent_emoji(consecutive_failures, max_consecutive_failures)}")
+        except KeyboardInterrupt:
             user_input = input('User input: ')
-            current_command = current_command+user_input
+            current_command += user_input
         except Exception as e:
-            error_msg = f"Error in iteration {iteration}: {str(e)}"
+            consecutive_failures += 1
+            error_msg = f"Error in iteration {iteration}: {str(e)} {_get_guac_agent_emoji(consecutive_failures, max_consecutive_failures)}"
             print(error_msg)
             full_output.append(error_msg)
-            consecutive_failures += 1
             current_command = f"{current_command} - Error: {str(e)}"
 
-
-            if consecutive_failures >= max_consecutive_failures:
-                print("❌ Too many consecutive errors, stopping iteration.")
-                break
+    if consecutive_failures >= max_consecutive_failures:
+        print(f"❌ Too many consecutive failures, stopping. {_get_guac_agent_emoji(consecutive_failures, max_consecutive_failures)}")
 
     return state, "# Agentic execution completed\n" + '\n'.join(full_output)
 
@@ -1371,14 +1386,17 @@ def get_guac_prompt_char(command_count: int, guac_refresh_period = 100) -> str:
 def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str, Any], project_name: str, src_dir: Path, router) -> Tuple[ShellState, Any]:
     stripped_command = command.strip()
     output = None 
-    
+    cmd_parts = shlex.split(stripped_command)
+    if cmd_parts and cmd_parts[0] in ["cd", "ls", "pwd"]:
+        return execute_command(stripped_command, state, review=False, router=router)
+
+    npc_team_dir = Path(state.team.team_path) if state.team and hasattr(state.team, 'team_path') else Path.cwd() / "npc_team"
+
     if not stripped_command:
         return state, None
     if stripped_command.lower() in ["exit", "quit", "exit()", "quit()"]:
         raise SystemExit("Exiting Guac Mode.")
 
-    # Get npc_team_dir from current working directory
-    npc_team_dir = Path.cwd() / "npc_team"
     if stripped_command.startswith('run '):
         file_path = stripped_command[4:].strip()
         try:
@@ -1497,14 +1515,20 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
             {locals_context_string}
             Begin directly with the code
             """
+        # Ensure state.npc is not None before accessing .model or .provider
+        npc_model = state.npc.model if state.npc and state.npc.model else state.chat_model
+        npc_provider = state.npc.provider if state.npc and state.npc.provider else state.chat_provider
+
         llm_response = get_llm_response(prompt_cmd, 
-                                        model=state.chat_model, 
-                                        provider=state.chat_provider, 
                                         npc=state.npc, 
                                         stream=True, 
                                         messages=state.messages)
-        
-        if llm_response.get('response', '').startswith('```python'):
+        response = print_and_process_stream(llm_response.get('response'),
+                                            npc_model, 
+                                            npc_provider )
+
+
+        if response.startswith('```python'):
             generated_code = llm_response.get("response", "").strip()[len('```python'):].strip()
             generated_code = generated_code.rsplit('```', 1)[0].strip()
         else:
@@ -1776,6 +1800,7 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             state.current_path = os.getcwd()
             
             display_model = state.chat_model
+            # Ensure state.npc is not None before accessing .model or .provider
             if isinstance(state.npc, NPC) and state.npc.model:
                 display_model = state.npc.model
             
@@ -1860,12 +1885,34 @@ def enter_guac_mode(npc=None,
         default_mode_choice=default_mode_choice
     )
 
-    project_name = setup_result.get("project_name", "project")
+    project_name = setup_result.get("package_name", "project")
     package_root = setup_result["package_root"]
     package_name = setup_result.get("package_name", "project")
+    npc_team_dir = setup_result.get("npc_team_dir")
 
+    # Always call setup_shell to build history, team, and default_npc
     command_history, default_team, default_npc = setup_shell()
-    
+
+    # 🔑 Ensure global guac gets loaded if npc is None
+    if npc is None and default_npc is None:
+        # Construct the path correctly based on where ensure_global_guac_team puts it
+        guac_npc_path = Path(npc_team_dir) / "guac.npc" 
+        if guac_npc_path.exists():
+            npc = NPC(file=str(guac_npc_path), db_conn=command_history.engine)
+            # Ensure the team is also correctly set to the global guac team
+            team_ctx_path = Path(npc_team_dir) / "team.ctx"
+            if team_ctx_path.exists():
+                with open(team_ctx_path, "r") as f:
+                    team_ctx = yaml.safe_load(f) or {}
+                team = Team(team_path=str(npc_team_dir), forenpc=npc, jinxs={}) # Simplified team creation
+                team.name = team_ctx.get("team_name", "guac_global_team")
+        else:
+            raise RuntimeError(f"No NPC loaded and {guac_npc_path} not found!")
+    elif default_npc and npc is None:
+        # If setup_shell provided a default_npc (e.g., sibiji), ensure it's used
+        npc = default_npc
+
+
     state = ShellState(
         conversation_id=start_new_conversation(),
         stream_output=True,
@@ -1873,8 +1920,8 @@ def enter_guac_mode(npc=None,
         chat_model=os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b"),
         chat_provider=os.environ.get("NPCSH_CHAT_PROVIDER", "ollama"),
         current_path=os.getcwd(),
-        npc=npc or default_npc,
-        team=team or default_team
+        npc=npc, # This is now guaranteed to be an NPC object
+        team=team or default_team # Use the correctly loaded team or default
     )
     
     state.command_history = command_history
@@ -1889,8 +1936,6 @@ def enter_guac_mode(npc=None,
         print(f"Warning: Could not read readline history file {READLINE_HISTORY_FILE}: {e}")
 
     run_guac_repl(state, project_name, package_root, package_name)
-
-
         
 def main():
     parser = argparse.ArgumentParser(description="Enter Guac Mode - Interactive Python with LLM assistance.")
