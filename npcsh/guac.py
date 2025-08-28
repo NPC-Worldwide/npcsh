@@ -1529,12 +1529,12 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
 
 
         if response.startswith('```python'):
-            generated_code = llm_response.get("response", "").strip()[len('```python'):].strip()
+            generated_code = response.strip()[len('```python'):].strip()
             generated_code = generated_code.rsplit('```', 1)[0].strip()
         else:
-            generated_code = llm_response.get("response", "").strip()
+            generated_code = response.get("response", "").strip()
         
-        state.messages = llm_response.get("messages", state.messages) 
+        state.messages = response.get("messages", state.messages) 
         
         if generated_code and not generated_code.startswith("# Error:"):
             print(f"\n# LLM Generated Code (Cmd Mode):\n---\n{generated_code}\n---\n")
