@@ -29,7 +29,8 @@ from npcsh._state import (
     readline_safe_prompt,
     setup_shell, 
     should_skip_kg_processing, 
-
+    NPCSH_CHAT_PROVIDER, 
+    NPCSH_CHAT_MODEL,
 )
 import yaml 
 
@@ -257,8 +258,6 @@ def execute_command_corca(command: str, state: ShellState, command_history) -> T
 
    response_dict = get_llm_response(
        prompt=command,
-       model=active_npc.model or state.chat_model,
-       provider=active_npc.provider or state.chat_provider,
        npc=state.npc,
        messages=state.messages,
        tools=mcp_tools,
@@ -703,9 +702,17 @@ def main():
                           db_conn=command_history.engine)
     print('Team Default: ', team.provider, team.model)
     if default_npc.model is None:
-        default_npc.model = team.model
+        if team.model is not None:
+            default_npc.model = team.model
+        else:
+            default_npc.model = NPCSH_CHAT_MODEL
+
     if default_npc.provider is None:
-        default_npc.provider = team.provider
+        if team.provider is not None:
+            default_npc.provider = team.provider
+        else:
+            default_npc.provider = NPCSH_CHAT_PROVIDER
+
     from npcsh._state import initial_state
     initial_shell_state = initial_state
     initial_shell_state.team = team
