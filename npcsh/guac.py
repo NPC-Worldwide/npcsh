@@ -1258,7 +1258,8 @@ def _run_agentic_mode(command: str,
         llm_response = get_llm_response(prompt,
                                         npc=state.npc,
                                         stream=True,
-                                        messages=state.messages)
+                                        messages=state.messages, 
+                                        thinking=False)
 
         generated_code = print_and_process_stream(llm_response.get('response'),
                                                   npc_model,
@@ -1269,12 +1270,14 @@ def _run_agentic_mode(command: str,
         state.messages.append({'role':'assistant', 'content': generated_code})        
 
         if '<request_for_input>' in generated_code:
+
             generated_code = generated_code.split('>')[1].split('<')[0]
             user_feedback = input("\n🤔 Agent requests feedback (press Enter to continue or type your input): ").strip()
             current_command = f"{current_command} - User feedback: {user_feedback}"
             max_iterations += int(max_iterations/2)
             continue
-
+        if '<think>' in generated_code and '</think>' in generated_code:
+            generated_code = generated_code.split('</think>')[1]
         if generated_code.startswith('```python'):
             generated_code = generated_code[len('```python'):].strip()
         if generated_code.endswith('```'):
