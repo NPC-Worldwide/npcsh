@@ -555,9 +555,10 @@ def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None,
     print("Updated team.ctx with GUAC-specific information.")
 
     setup_py_path = pkg_root_path / "setup.py"
+    desc = project_description.replace('"', '\\"')
     if not setup_py_path.exists():
         setup_content = f'''from setuptools import setup, find_packages
-setup(name="{package_name}", version="0.0.1", description="{project_description.replace('"', '\\"')}", packages=find_packages())
+setup(name="{package_name}", version="0.0.1", description="{desc}", packages=find_packages())
 '''
         setup_py_path.write_text(setup_content)
         logging.info("Created minimal setup.py at %s", setup_py_path)
