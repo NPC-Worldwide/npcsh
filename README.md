@@ -25,7 +25,7 @@ Once installed: run
 ```bash
 npcsh
 ```
-and you will enter the NPC shell. Additionally, the pip installation includes making the following CLI tools available in bash: `corca`, `guac`, `npc` cli, `pti`, `spool`, `wander`, and`yap`. 
+and you will enter the NPC shell. Additionally, the pip installation includes the following CLI tools available in bash: `corca`, `guac`, `npc` cli, `pti`, `spool`, `wander`, and`yap`. 
 
 
 # Usage
@@ -104,12 +104,14 @@ The core of npcsh's capabilities is powered by the NPC Data Layer. Upon initiali
 Users can extend NPC capabilities through simple YAML files:
 
 - **NPCs** (.npc): are defined with a name, primary directive, and optional model specifications
-- **Jinxs** (.jinx): specify function-like capabilities with preprocessing, execution, and postprocessing steps
-- **Context** (.ctx): Specify contextual information, team preferences, MCP server paths, database connections, and other environment variables that are loaded for the team. Teams are specified by their path and the team name in the `<team>.ctx` file. Teams organize collections of NPCs with shared context and specify a coordinator within the team context 
+- **Jinxs** (.jinx): Jinja execution templates that provide function-like capabilities and scaleable extensibility through Jinja references to call other jinxs to build upon. Jinxs are executed through prompt-based flows, allowing them to be used by models regardless of their tool-calling capabilities, making it possible then to enable agents at the edge of computing through this simple methodology.
+- **Context** (.ctx): Specify contextual information, team preferences, MCP server paths, database connections, and other environment variables that are loaded for the team or for specific agents (e.g. `GUAC_FORENPC`). Teams are specified by their path and the team name in the `<team>.ctx` file. Teams organize collections of NPCs with shared context and specify a coordinator within the team context who is used whenever the team is called upon for orchestration.
 
 The NPC Shell system integrates the capabilities of `npcpy` to maintain conversation history, track command execution, and provide intelligent autocomplete through an extensible command routing system. State is preserved between sessions, allowing for continuous knowledge building over time.
 
-This architecture enables complex AI workflows while maintaining a simple, declarative syntax that abstracts away implementation complexity. By organizing AI capabilities as composable data structures rather than code, npcsh creates a more accessible and adaptable framework for AI automation.
+This architecture enables users to build complex AI workflows while maintaining a simple, declarative syntax that abstracts away implementation complexity. By organizing AI capabilities in composable data structures rather than code, `npcsh` creates a more accessible and adaptable framework for AI automation that can scale more intentionally. Within teams can be subteams, and these sub-teams may be called upon for orchestration, but importantly, when the orchestrator is deciding between using one of its own team's NPCs versus yielding to a sub-team, they see only the descriptions of the subteams rather than the full persona descriptions for each of the sub-team's agents, making it easier for the orchestrator to better delineate and keep their attention focused by restricting the number of options in each decisino step. Thus, they may yield to the sub-team's orchestrator, letting them decide which sub-team NPC to use based on their own team's agents.
+
+Importantly, users can switch easily between the NPCs they are chatting with by typing `/n npc_name` within the NPC shell. Likewise, they can create Jinxs and then use them from within the NPC shell by invoking the jinx name and the arguments required for the Jinx;  `/<jinx_name> arg1 arg2`
 
 # Macros
 -  activated by invoking `/<command> ...` in `npcsh`, macros can be called in bash or through the `npc` CLI. In our examples, we provide both `npcsh` calls as well as bash calls with the `npc` cli where relevant. For converting any `/<command>` in `npcsh` to a bash version, replace the `/` with `npc ` and the macro command will be invoked as a positional argument. Some, like breathe, flush,
@@ -176,7 +178,11 @@ To see more about how to use the macros and modes in the NPC Shell, read the doc
 - `npcsh` works with local and enterprise LLM providers through its LiteLLM integration, allowing users to run inference from Ollama, LMStudio, vLLM, MLX, OpenAI, Anthropic, Gemini, and Deepseek, making it a versatile tool for both simple commands and sophisticated AI-driven tasks. 
 
 ## NPC Studio
-There is a graphical user interface that makes use of the NPC Toolkit through the NPC Studio. See the open source code for NPC Studio [here](https://github.com/npc-worldwide/npc-studio). Download the executables at [our website](https://enpisi.com/npc-studio).
+There is a graphical user interface that makes use of the NPC Toolkit through the NPC Studio. See the source code for NPC Studio [here](https://github.com/npc-worldwide/npc-studio). Download the executables at [our website](https://enpisi.com/npc-studio). For the most up to date version, you can use NPC Studio by invoking it in npcsh 
+```
+/npc-studio
+```
+which will download and set up and serve the NPC Studio application within your `~/.npcsh` folder. It requires `npm` and `node` to work.
 
 ## Mailing List
 Interested to stay in the loop and to hear the latest and greatest about `npcpy`, `npcsh`, and NPC Studio? Be sure to sign up for the [newsletter](https://forms.gle/n1NzQmwjsV4xv1B2A)!

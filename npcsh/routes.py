@@ -976,8 +976,9 @@ def vixynt_handler(command: str, **kwargs):
     provider = safe_get(kwargs, 'igprovider', NPCSH_IMAGE_GEN_PROVIDER)
     height = safe_get(kwargs, 'height', 1024)
     width = safe_get(kwargs, 'width', 1024)
-    output_file = safe_get(kwargs, 'output_file')
+    output_file_base = safe_get(kwargs, 'output_file')
     attachments = safe_get(kwargs, 'attachments')
+    n_images = safe_get(kwargs, 'n_images', 1) # Get n_images from kwargs
     if isinstance(attachments, str):
         attachments = attachments.split(',')
     
@@ -986,34 +987,51 @@ def vixynt_handler(command: str, **kwargs):
     user_prompt = " ".join(safe_get(kwargs, 'positional_args', []))
 
     if not user_prompt:
-        return {"output": "Usage: /vixynt <prompt> [--output_file path] [--attachments path]", "messages": messages}
+        return {"output": "Usage: /vixynt <prompt> [--output_file path] [--attachments path] [--n_images num]", "messages": messages}
+    
     try:
-        image = gen_image(
+        # Call gen_image, passing n_images and expecting a list of images
+        images_list = gen_image(
             prompt=user_prompt,
             model=model,
             provider=provider,
             npc=npc,
             height=height,
             width=width,
+            n_images=n_images, # Pass n_images
             input_images=attachments
         )
 
-        if output_file is None:
-            os.makedirs(os.path.expanduser("~/.npcsh/images/"), exist_ok=True)
-            output_file = (
-                os.path.expanduser("~/.npcsh/images/")
-                + f"image_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            )
-        else:
-            output_file = os.path.expanduser(output_file)
+        saved_files = []
+        if not isinstance(images_list, list):
+            images_list = [images_list] if images_list is not None else []
 
-        image.save(output_file)
-        image.show()
+        for i, image in enumerate(images_list):
+            if image is None:
+                continue
 
-        if attachments:
-            output = f"Image edited and saved to: {output_file}"
+            if output_file_base is None:
+                os.makedirs(os.path.expanduser("~/.npcsh/images/"), exist_ok=True)
+                current_output_file = (
+                    os.path.expanduser("~/.npcsh/images/")
+                    + f"image_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{i}.png"
+                )
+            else:
+                base_name, ext = os.path.splitext(os.path.expanduser(output_file_base))
+                current_output_file = f"{base_name}_{i}{ext}"
+            
+            image.save(current_output_file)
+            image.show()
+            saved_files.append(current_output_file)
+
+        if saved_files:
+            if attachments:
+                output = f"Image(s) edited and saved to: {', '.join(saved_files)}"
+            else:
+                output = f"Image(s) generated and saved to: {', '.join(saved_files)}"
         else:
-            output = f"Image generated and saved to: {output_file}"
+            output = f"No images {'edited' if attachments else 'generated'}."
+
     except Exception as e:
         traceback.print_exc()
         output = f"Error {'editing' if attachments else 'generating'} image: {e}"
@@ -1024,6 +1042,8 @@ def vixynt_handler(command: str, **kwargs):
         "model": model,
         "provider": provider
     }
+
+
 @router.route("wander", "Enter wander mode (experimental)")
 def wander_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
