@@ -1,7 +1,7 @@
 import sqlite3
 import os
 
-db_path = os.path.expanduser('~/npcsh_history.db')
+db_path = os.path.expanduser(os.environ.get('NPCSH_DB_PATH', '~/npcsh_history.db'))
 
 def migrate_database(db_path):
     print(f"Connecting to database at: {db_path}")
