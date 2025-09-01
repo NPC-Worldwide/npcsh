@@ -25,7 +25,7 @@ Once installed: run
 ```bash
 npcsh
 ```
-and you will enter the NPC shell. Additionally, the pip installation includes making the following CLI tools available in bash: `corca`, `guac`, `npc` cli, `pti`, `spool`, `wander`, and`yap`. 
+and you will enter the NPC shell. Additionally, the pip installation includes the following CLI tools available in bash: `corca`, `guac`, `npc` cli, `pti`, `spool`, `wander`, and`yap`. 
 
 
 # Usage
