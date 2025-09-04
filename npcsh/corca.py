@@ -500,7 +500,6 @@ def process_corca_result(
                 tool_args = {}
             
             try:
-                print(f"  Calling MCP tool: {tool_name} with args: {tool_args}")
                 
                 loop = asyncio.get_event_loop()
                 if loop.is_closed():
@@ -511,9 +510,6 @@ def process_corca_result(
                     result_state.mcp_client.session.call_tool(tool_name, tool_args)
                 )
                 
-                print(f"DEBUG: MCP result type: {type(mcp_result)}")
-                print(f"DEBUG: MCP result: {mcp_result}")
-                print(f"DEBUG: MCP result attributes: {dir(mcp_result)}")
                 
                 tool_content = ""
                 if hasattr(mcp_result, 'content') and mcp_result.content:
@@ -615,26 +611,16 @@ def process_corca_result(
                         result_state.mcp_client.session.call_tool(tool_name, tool_args)
                     )
                     
-                    print(f"DEBUG: MCP result type: {type(mcp_result)}")
-                    print(f"DEBUG: MCP result: {mcp_result}")
-                    print(f"DEBUG: MCP result.isError: {mcp_result.isError}")
-                    print(f"DEBUG: MCP result.meta: {mcp_result.meta}")
-                    print(f"DEBUG: MCP result.content length: {len(mcp_result.content)}")
                     
                     tool_content = ""
                     if hasattr(mcp_result, 'content') and mcp_result.content:
                         for i, content_item in enumerate(mcp_result.content):
-                            print(f"DEBUG: content_item[{i}] full object: {repr(content_item)}")
-                            print(f"DEBUG: content_item[{i}] text attribute: '{content_item.text}'")
-                            print(f"DEBUG: content_item[{i}] text length: {len(content_item.text) if content_item.text else 0}")
                             
                             if hasattr(content_item, 'text') and content_item.text:
                                 tool_content += content_item.text
                             elif hasattr(content_item, 'data'):
-                                print(f"DEBUG: content_item[{i}] has data: {content_item.data}")
                                 tool_content += str(content_item.data)
                             else:
-                                print(f"DEBUG: content_item[{i}] converting to string: {str(content_item)}")
                                 tool_content += str(content_item)                    
                     result_state.messages.append({
                         "role": "tool",
@@ -1063,6 +1049,6 @@ def main():
     }
     
     enter_corca_mode(**kwargs)
-                 
+
 if __name__ == "__main__":
     main()
