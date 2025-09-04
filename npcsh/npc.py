@@ -75,7 +75,7 @@ def main():
         "-n", "--npc", help="Name of the NPC to use (default: sibiji)", type=str, default="sibiji"
     )
 
-    # Parse arguments
+  
     args, all_args = parser.parse_known_args()
     global_model = args.model
     global_provider = args.provider
@@ -105,12 +105,12 @@ def main():
             cmd_parser.add_argument('command_args', nargs=argparse.REMAINDER,
                                     help='Arguments passed directly to the command handler')
 
-        # Re-parse with command subparsers
+      
         args = parser.parse_args([command_name.lstrip('/')] + all_args)
         command_args = args.command_args if hasattr(args, 'command_args') else []
         unknown_args = []
     else:
-        # Treat all arguments as a prompt
+      
         args.command = None
         command_args = []
         unknown_args = all_args
@@ -120,7 +120,7 @@ def main():
     if args.provider is None:
         args.provider = global_provider
 
-    # Use npcsh's setup_shell to get proper team and NPC setup
+  
     try:
         command_history, team, forenpc_obj = setup_shell()
     except Exception as e:
@@ -129,7 +129,7 @@ def main():
         team = None
         forenpc_obj = load_npc_by_name(args.npc, NPCSH_DB_PATH)
 
-    # Determine which NPC to use
+  
     npc_instance = None
     if team and args.npc in team.npcs:
         npc_instance = team.npcs[args.npc]
@@ -142,11 +142,11 @@ def main():
         print(f"Error: Could not load NPC '{args.npc}'", file=sys.stderr)
         sys.exit(1)
 
-    # Now check for jinxs if we haven't identified a command yet
+  
     if not is_valid_command and all_args:
         first_arg = all_args[0]
         
-        # Check if first argument is a jinx name
+      
         jinx_found = False
         if team and first_arg in team.jinxs_dict:
             jinx_found = True
@@ -158,25 +158,25 @@ def main():
             command_name = '/' + first_arg
             all_args = all_args[1:]
 
-    # Create a shell state object similar to npcsh
+  
     shell_state = initial_state
     shell_state.npc = npc_instance
     shell_state.team = team
     shell_state.current_path = os.getcwd()
     shell_state.stream_output = NPCSH_STREAM_OUTPUT
 
-    # Override model/provider if specified
+  
     effective_model = args.model or (npc_instance.model if npc_instance.model else NPCSH_CHAT_MODEL)
     effective_provider = args.provider or (npc_instance.provider if npc_instance.provider else NPCSH_CHAT_PROVIDER)
     
-    # Update the NPC's model/provider for this session if overridden
+  
     if args.model:
         npc_instance.model = effective_model
     if args.provider:
         npc_instance.provider = effective_provider
     try:
         if is_valid_command:
-            # Handle slash command using npcsh's execute_slash_command
+          
             full_command_str = command_name
             if command_args:
                 full_command_str += " " + " ".join(command_args)
@@ -191,7 +191,7 @@ def main():
                 router = router
             )
 
-            # Process and display the result
+          
             if isinstance(result, dict):
                 output = result.get("output") or result.get("response")
                 model_for_stream = result.get('model', effective_model)
@@ -207,21 +207,21 @@ def main():
                 print(f"Command '{command_name}' executed.")
 
         else:
-            # Process as a regular prompt using npcsh's execution logic
+          
             prompt = " ".join(unknown_args)
 
             if not prompt:
-                # If no prompt and no command, show help
+              
                 parser.print_help()
                 sys.exit(1)
 
             print(f"Processing prompt: '{prompt}' with NPC: '{args.npc}'...")
             
-            # Use npcsh's execute_command but force it to chat mode for simple prompts
+          
             shell_state.current_mode = 'chat'
             updated_state, result = execute_command(prompt, shell_state)
 
-            # Process and display the result
+          
             if isinstance(result, dict):
                 output = result.get("output")
                 model_for_stream = result.get('model', effective_model)

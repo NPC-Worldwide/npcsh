@@ -13,6 +13,7 @@
   </p>
 
 - Examples:
+
   ```bash
   # npcsh
   /alicanto "What are the implications of quantum computing for cybersecurity?"
@@ -25,26 +26,34 @@
 
   npc alicanto "What is the future of remote work?" --format report # NOTE: Report generation and formatting requires latex installed.
   ```
+
 - ## `/brainblast`: searching through past messages (soon to incorporate options for knowledge graph)
+
     ```bash
     # npcsh
     /brainblast 'subtle summer winds'  --top_k 10
     ```
+
     ```bash
     # bash
     npc brainblast 'executing a mirror in the wonderous moon'                                        
     ```
+
 - ## `/breathe`: Condense conversation context (shell only):
+
     ```bash
     # npcsh
     /breathe
     /breathe -p ollama -m qwen3:latest 
     ```
+
 - ## `/compile`: render npcs for use without re-loading npcsh
+
     ```bash
     # npcsh
     /compile ./npc_team/sibiji.npc      
     ```
+
 - ## `/corca`: the MCP-powered Agent that helps with software development.
 
   <p align="center">
@@ -156,18 +165,22 @@
 
 
 - ## `/help`: Show help for commands, NPCs, or Jinxs. 
+
       ```bash
       /help 
       ```
       ```
       npc help
       ```
+
 - ## `/init` - Initialize NPC project    
+
     -set up bare bones infra for an npc team
     ```bash
     # npcsh 
     /init
     ```
+
     ```bash
     # bash 
     npc init
@@ -175,6 +188,7 @@
 
 
 - ## `/jinxs` : show available jinxs for team
+
     Jinxs are Jinja execution templates that let users develop small programs that can build on each other and reference each other through jinja templating. Jinx methods allow us to give smaller LLMs the scaffolding to perform `tool calling`, so to speak, reliably
     ```bash
     # npcsh 
@@ -210,27 +224,34 @@
 
 
 - ## `/ots`: Over-the-shoulder screen shot analysis
+
     - Screenshot analysis:     
-    ```bash
-    #npcsh
-    /ots
-    /ots output_filename =...
-    ```
-    ```bash
-    #bash
-    npc ots ...
-    ```
+
+      ```bash
+      #npcsh
+      /ots
+      /ots output_filename =...
+      ```
+
+      ```bash
+      #bash
+      npc ots ...
+      ```
+
 - ## `/plan`: set up cron jobs:
+
     ```bash
     # npcsh
     /plan 'set up a cron job that reminds me to stretch every thirty minutes' -m gemma3:27b -p ollama 
     ```
+
     ```bash
     # bash
     npc plan 'record my cpu usage percentage every 45 minutes' 
     ```
 
 - ## `/plonk`: Computer use:     
+
     ```bash
     # npcsh
     /plonk -n 'npc_name' -sp 'task for plonk to carry out '

@@ -24,13 +24,13 @@ def create_clean_network_viz(G, title="Network", node_attr=None, figsize=(18, 14
     
     plt.figure(figsize=figsize)
     
-    # Better layout with more space
+  
     if len(G.nodes()) > 100:
         pos = nx.spring_layout(G, k=4/np.sqrt(len(G.nodes())), iterations=50)
     else:
         pos = nx.spring_layout(G, k=2, iterations=100)
     
-    # Node sizing - more reasonable range
+  
     degrees = dict(G.degree())
     max_degree = max(degrees.values()) if degrees else 1
     min_size, max_size = 100, 800
@@ -39,7 +39,7 @@ def create_clean_network_viz(G, title="Network", node_attr=None, figsize=(18, 14
         size = min_size + (degrees[node] / max_degree) * (max_size - min_size)
         node_sizes.append(size)
     
-    # Node colors
+  
     if node_attr:
         node_colors = [node_attr.get(node, 0) for node in G.nodes()]
         colormap = 'viridis'
@@ -47,7 +47,7 @@ def create_clean_network_viz(G, title="Network", node_attr=None, figsize=(18, 14
         node_colors = [degrees[node] for node in G.nodes()]
         colormap = 'plasma'
     
-    # Edge styling
+  
     if G.is_directed():
         nx.draw_networkx_edges(G, pos, alpha=0.3, width=0.8, arrows=True, 
                               arrowsize=12, edge_color='#666666')
@@ -64,13 +64,13 @@ def create_clean_network_viz(G, title="Network", node_attr=None, figsize=(18, 14
         nx.draw_networkx_edges(G, pos, alpha=edge_alphas, width=edge_widths, 
                               edge_color='#666666')
     
-    # Draw nodes
+  
     nodes = nx.draw_networkx_nodes(G, pos, node_color=node_colors, 
                                   node_size=node_sizes, alpha=0.8, 
                                   cmap=colormap, linewidths=1, 
                                   edgecolors='white')
     
-    # Smart labeling
+  
     if min_label_degree is None:
         min_label_degree = max(1, np.percentile(list(degrees.values()), 80))
     
@@ -89,7 +89,7 @@ def create_clean_network_viz(G, title="Network", node_attr=None, figsize=(18, 14
                 label = label[:22] + '...'
         labels[node] = label
     
-    # Position labels to avoid overlap
+  
     label_pos = {}
     for node in labels:
         x, y = pos[node]
@@ -99,7 +99,7 @@ def create_clean_network_viz(G, title="Network", node_attr=None, figsize=(18, 14
                            font_weight='bold', bbox=dict(boxstyle='round,pad=0.2',
                            facecolor='white', alpha=0.8, edgecolor='none'))
     
-    # Add colorbar
+  
     if nodes:
         cbar = plt.colorbar(nodes, shrink=0.8, pad=0.02)
         if node_attr:
@@ -117,16 +117,16 @@ def create_concept_cooccurrence_network_original(facts_df, links_df, concepts_df
     print("\n🔗 ORIGINAL CONCEPT CO-OCCURRENCE NETWORK:")
     print("-" * 60)
     
-    # Find concepts that are linked to the same facts
+  
     concept_cooccurrence = defaultdict(int)
     
-    # Group links by source (fact)
+  
     fact_to_concepts = defaultdict(set)
     for _, link in links_df.iterrows():
         if link['type'] == 'fact_to_concept':
             fact_to_concepts[link['source']].add(link['target'])
     
-    # Count co-occurrences
+  
     for fact, concepts in fact_to_concepts.items():
         concepts_list = list(concepts)
         for i, concept1 in enumerate(concepts_list):
@@ -139,17 +139,17 @@ def create_concept_cooccurrence_network_original(facts_df, links_df, concepts_df
                            if count > min_cooccurrence}
     print(f"Strong co-occurrences (>{min_cooccurrence}): {len(strong_cooccurrences)}")
     
-    # Most frequently co-occurring concepts
+  
     print("Most frequently co-occurring concepts:")
     for (c1, c2), freq in sorted(concept_cooccurrence.items(), key=lambda x: x[1], reverse=True)[:10]:
         c1_short = c1[:30] + '...' if len(c1) > 30 else c1
         c2_short = c2[:30] + '...' if len(c2) > 30 else c2
         print(f"  '{c1_short}' + '{c2_short}': {freq} times")
     
-    # Create co-occurrence network
+  
     G_cooccur = nx.Graph()
     for (c1, c2), weight in concept_cooccurrence.items():
-        if weight > min_cooccurrence:  # Only strong co-occurrences
+        if weight > min_cooccurrence:
             G_cooccur.add_edge(c1, c2, weight=weight)
     
     if len(G_cooccur.nodes()) == 0:
@@ -159,20 +159,20 @@ def create_concept_cooccurrence_network_original(facts_df, links_df, concepts_df
     plt.figure(figsize=(16, 12))
     pos = nx.spring_layout(G_cooccur, k=1.5, iterations=50)
     
-    # Draw edges with thickness based on co-occurrence strength
+  
     edges = G_cooccur.edges()
     weights = [G_cooccur[u][v]['weight'] for u, v in edges]
     max_weight = max(weights) if weights else 1
     edge_widths = [w/max_weight * 4 + 0.5 for w in weights]
     nx.draw_networkx_edges(G_cooccur, pos, width=edge_widths, alpha=0.6, edge_color='gray')
     
-    # Draw nodes
+  
     degrees = dict(G_cooccur.degree())
     node_sizes = [degrees[node] * 50 + 200 for node in G_cooccur.nodes()]
     nx.draw_networkx_nodes(G_cooccur, pos, node_size=node_sizes, 
                           node_color='lightblue', alpha=0.8, linewidths=1, edgecolors='navy')
     
-    # Draw labels for important nodes only
+  
     important_nodes = [node for node in G_cooccur.nodes() if G_cooccur.degree(node) > 2]
     labels = {}
     for node in important_nodes:
@@ -201,17 +201,17 @@ def create_fact_network_original(facts_df, links_df):
         print("No fact-to-fact relationships found")
         return nx.DiGraph()
     
-    # Create fact relationship network
+  
     G_facts = nx.DiGraph()
     for _, link in fact_to_fact_links.iterrows():
-        # Truncate fact text for cleaner display
+      
         source_short = link['source'][:50] + '...' if len(link['source']) > 50 else link['source']
         target_short = link['target'][:50] + '...' if len(link['target']) > 50 else link['target']
         G_facts.add_edge(source_short, target_short)
     
     print(f"Fact network has {len(G_facts.nodes())} nodes and {len(G_facts.edges())} edges")
     
-    # Find most connected facts
+  
     in_degrees = dict(G_facts.in_degree())
     out_degrees = dict(G_facts.out_degree())
     
@@ -223,14 +223,14 @@ def create_fact_network_original(facts_df, links_df):
     for fact, degree in sorted(out_degrees.items(), key=lambda x: x[1], reverse=True)[:5]:
         print(f"  {degree} refs: {fact}")
     
-    # Visualize fact network structure
+  
     plt.figure(figsize=(14, 10))
     pos = nx.spring_layout(G_facts, k=0.8, iterations=50)
     
-    # Node sizes based on in-degree (how often referenced)
+  
     node_sizes = [in_degrees[node] * 100 + 100 for node in G_facts.nodes()]
     
-    # Draw network
+  
     nx.draw_networkx_edges(G_facts, pos, alpha=0.6, arrows=True, arrowsize=15, 
                           edge_color='gray', width=1)
     
@@ -238,13 +238,13 @@ def create_fact_network_original(facts_df, links_df):
                                   node_color='orange', alpha=0.7, 
                                   linewidths=1, edgecolors='darkorange')
     
-    # Only label highly connected nodes
+  
     high_degree_nodes = [node for node in G_facts.nodes() 
                         if (in_degrees[node] + out_degrees[node]) > 1]
     
     labels = {}
     for node in high_degree_nodes:
-        # Further truncate for labels
+      
         label = node[:25] + '...' if len(node) > 25 else node
         labels[node] = label
     
@@ -263,7 +263,7 @@ def create_centrality_influence_analysis_original(concepts_df, facts_df, links_d
     print("\n⭐ ORIGINAL CONCEPT CENTRALITY & INFLUENCE ANALYSIS:")
     print("-" * 60)
     
-    # Build full concept network like in original
+  
     G = nx.Graph()
     for concept in concepts_df['name']:
         G.add_node(concept)
@@ -277,10 +277,10 @@ def create_centrality_influence_analysis_original(concepts_df, facts_df, links_d
         print("No concept network to analyze")
         return
     
-    # Calculate different centrality measures
+  
     degree_centrality = nx.degree_centrality(G)
     
-    # Convert to concept-only centralities
+  
     concept_degree = {node: centrality for node, centrality in degree_centrality.items() 
                      if node in concepts_df['name'].values}
     
@@ -288,14 +288,14 @@ def create_centrality_influence_analysis_original(concepts_df, facts_df, links_d
         print("No concept centralities to analyze")
         return
         
-    # Create visualization
+  
     plt.figure(figsize=(16, 12))
     
-    # Degree centrality plot
+  
     top_degree = sorted(concept_degree.items(), key=lambda x: x[1], reverse=True)[:15]
     concepts, scores = zip(*top_degree)
     
-    # Truncate concept names for better display
+  
     display_concepts = []
     for c in concepts:
         if len(c) > 30:
@@ -311,7 +311,7 @@ def create_centrality_influence_analysis_original(concepts_df, facts_df, links_d
     plt.title('Original Concept Degree Centrality Analysis\n(Direct Connections in Network)')
     plt.gca().invert_yaxis()
     
-    # Add value labels on bars
+  
     for i, (bar, score) in enumerate(zip(bars, scores)):
         plt.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height()/2, 
                 f'{score:.3f}', va='center', fontsize=9)
@@ -334,17 +334,17 @@ def plot_network_evolution_original(concepts_df, facts_df):
         print("No generation data available")
         return
     
-    # Track which concepts appear in which generations (original logic)
+  
     gen_concepts = defaultdict(list)
     for _, concept in concepts_df.iterrows():
         gen_concepts[concept['generation']].append(concept['name'])
     
-    # Count concepts per generation
+  
     gen_counts = concepts_df['generation'].value_counts().sort_index()
     
     plt.figure(figsize=(15, 10))
     
-    # Concept creation over generations
+  
     plt.subplot(2, 1, 1)
     plt.plot(gen_counts.index, gen_counts.values, 'o-', linewidth=3, markersize=8, 
              color='steelblue', markerfacecolor='lightblue', markeredgecolor='steelblue')
@@ -354,7 +354,7 @@ def plot_network_evolution_original(concepts_df, facts_df):
     plt.grid(True, alpha=0.3)
     plt.gca().set_facecolor('#f8f9fa')
     
-    # Cumulative concepts
+  
     plt.subplot(2, 1, 2)
     cumulative = gen_counts.cumsum()
     plt.plot(cumulative.index, cumulative.values, 's-', color='darkgreen', linewidth=3, 
@@ -368,7 +368,7 @@ def plot_network_evolution_original(concepts_df, facts_df):
     plt.tight_layout()
     plt.show()
     
-    # Analysis like in original
+  
     max_gen = concepts_df['generation'].max()
     recent_gens = range(max_gen-5, max_gen+1)
     old_gens = range(1, max_gen-5)
@@ -401,13 +401,13 @@ def create_concept_cooccurrence_network(facts_df, links_df, min_cooccurrence=2):
     print("\n🔗 ENHANCED CONCEPT CO-OCCURRENCE NETWORK:")
     print("-" * 50)
     
-    # Build fact-to-concepts mapping
+  
     fact_to_concepts = defaultdict(set)
     for _, link in links_df.iterrows():
         if link['type'] == 'fact_to_concept':
             fact_to_concepts[link['source']].add(link['target'])
     
-    # Count co-occurrences
+  
     concept_cooccurrence = defaultdict(int)
     for fact, concepts in fact_to_concepts.items():
         concepts_list = list(concepts)
@@ -416,7 +416,7 @@ def create_concept_cooccurrence_network(facts_df, links_df, min_cooccurrence=2):
                 pair = tuple(sorted([concept1, concept2]))
                 concept_cooccurrence[pair] += 1
     
-    # Filter by minimum co-occurrence
+  
     strong_cooccurrences = {pair: count for pair, count in concept_cooccurrence.items() 
                            if count >= min_cooccurrence}
     
@@ -427,18 +427,18 @@ def create_concept_cooccurrence_network(facts_df, links_df, min_cooccurrence=2):
         print("No strong co-occurrences found")
         return nx.Graph()
     
-    # Build network
+  
     G = nx.Graph()
     for (c1, c2), weight in strong_cooccurrences.items():
         G.add_edge(c1, c2, weight=weight)
     
-    # Create clean visualization
+  
     create_clean_network_viz(G, 
                            title="Enhanced Concept Co-occurrence Network\n(concepts that appear together in facts)",
                            figsize=(20, 16),
                            max_labels=20)
     
-    # Show top co-occurrences
+  
     print("\nMost frequent co-occurrences:")
     sorted_cooccur = sorted(strong_cooccurrences.items(), key=lambda x: x[1], reverse=True)[:10]
     for (c1, c2), count in sorted_cooccur:
@@ -459,7 +459,7 @@ def create_fact_reference_network(facts_df, links_df):
         print("No fact-to-fact references found")
         return nx.DiGraph()
     
-    # Build network
+  
     G = nx.DiGraph()
     for _, link in fact_links.iterrows():
         G.add_edge(link['source'], link['target'])
@@ -469,7 +469,7 @@ def create_fact_reference_network(facts_df, links_df):
     if G.number_of_nodes() == 0:
         return G
     
-    # Analyze reference patterns
+  
     in_degrees = dict(G.in_degree())
     out_degrees = dict(G.out_degree())
     
@@ -479,10 +479,10 @@ def create_fact_reference_network(facts_df, links_df):
         fact_short = fact[:70] + '...' if len(fact) > 70 else fact
         print(f"  {refs}× {fact_short}")
     
-    # Create node attribute for coloring (in-degree)
+  
     node_attrs = {node: in_degrees[node] for node in G.nodes()}
     
-    # Visualize
+  
     create_clean_network_viz(G, 
                            title="Enhanced Fact Reference Network\n(arrows show which facts reference others)",
                            node_attr=node_attrs,
@@ -505,17 +505,17 @@ def discover_kg_patterns():
     print("🧠 COMPLETE KNOWLEDGE GRAPH NETWORK ANALYSIS")
     print("=" * 80)
     
-    # Original visualizations (cleaned up)
+  
     create_concept_cooccurrence_network_original(facts_df, links_df, concepts_df)
     create_fact_network_original(facts_df, links_df)
     create_centrality_influence_analysis_original(concepts_df, facts_df, links_df)
     plot_network_evolution_original(concepts_df, facts_df)
     
-    # Enhanced visualizations  
+  
     create_concept_cooccurrence_network(facts_df, links_df)
     create_fact_reference_network(facts_df, links_df)
     
-    # Basic stats
+  
     print(f"\n📊 SUMMARY STATISTICS:")
     print("-" * 30)
     print(f"Total concepts: {len(concepts_df):,}")

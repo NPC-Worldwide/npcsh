@@ -192,15 +192,15 @@ def safe_get(kwargs, key, default=None):
 
 @router.route("breathe", "Condense context on a regular cadence")
 def breathe_handler(command: str, **kwargs):
-    #try:
+  
     result = breathe(**kwargs)
     if isinstance(result, dict): 
         return result
-    #except NameError:
-    #     return {"output": "Breathe function not available."}
-    #except Exception as e:
-    #    traceback.print_exc()
-    #    return {"output": f"Error during breathe: {e}"}
+  
+  
+  
+  
+  
 
 @router.route("compile", "Compile NPC profiles")
 def compile_handler(command: str, **kwargs):
@@ -330,7 +330,7 @@ def help_handler(command: str, **kwargs):
             output += f"- **Associated Jinxs**: {jinx_names}\n"
         return {"output": output, "messages": messages}
 
-    # 3. Is it a Jinx?
+  
     npc = safe_get(kwargs, 'npc')
     jinx_obj = None
     source = ""
@@ -363,10 +363,10 @@ def init_handler(command: str, **kwargs):
         directory = "."
         templates = None
         context = None
-        # Basic parsing example (needs improvement for robust flag handling)
+      
         if len(parts) > 1 and not parts[1].startswith("-"):
             directory = parts[1]
-        # Add logic here to parse -t, -ctx flags if needed
+      
 
         initialize_npc_project(
             directory=directory,
@@ -400,10 +400,10 @@ def ensure_repo():
 
 def install_dependencies():
     """Install npm and pip dependencies."""
-    # Install frontend deps
+  
     subprocess.check_call(["npm", "install"], cwd=NPC_STUDIO_DIR)
 
-    # Install backend deps
+  
     req_file = NPC_STUDIO_DIR / "requirements.txt"
     if req_file.exists():
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(req_file)])
@@ -415,21 +415,21 @@ def launch_npc_studio(path_to_open: str = None):
     ensure_repo()
     install_dependencies()
 
-    # Start backend (Flask server)
+  
     backend = subprocess.Popen(
         [sys.executable, "npc_studio_serve.py"],
         cwd=NPC_STUDIO_DIR, 
         shell = False
     )
 
-    # Start server (Electron)
+  
     dev_server = subprocess.Popen(
         ["npm", "run", "dev"],
         cwd=NPC_STUDIO_DIR,
         shell=False
     )
     
-    # Start frontend (Electron)
+  
     frontend = subprocess.Popen(
         ["npm", "start"],
         cwd=NPC_STUDIO_DIR,
@@ -529,13 +529,13 @@ def plan_handler(command: str, **kwargs):
     user_command = " ".join(command.split()[1:])
     if not user_command:
         return {"output": "Usage: /plan <description_of_plan>", "messages": messages}
-    #try:
+  
     return execute_plan_command(command=user_command, **kwargs)
 
-    #return {"output": "Plan function (execute_plan_command) not available.", "messages": messages}
-    #except Exception as e:
-    #    traceback.print_exc()
-    #    return {"output": f"Error executing plan: {e}", "messages": messages}
+  
+  
+  
+  
 
 @router.route("pti", "Enter Pardon-The-Interruption mode for human-in-the-loop reasoning.")
 def pti_handler(command: str, **kwargs):
@@ -545,8 +545,8 @@ def pti_handler(command: str, **kwargs):
 def plonk_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
     
-    # FIXED: Use the pre-parsed positional arguments for the request,
-    # leaving flags to be handled by kwargs.
+  
+  
     positional_args = safe_get(kwargs, 'positional_args', [])
     request_str = " ".join(positional_args)
 
@@ -556,7 +556,7 @@ def plonk_handler(command: str, **kwargs):
     try:
         plonk_context = safe_get(kwargs, 'plonk_context')
         
-        # This part now works automatically with CLI flags because they are in kwargs
+      
         summary_data = execute_plonk_command(
             request=request_str,
             model=safe_get(kwargs, 'vmodel', NPCSH_VISION_MODEL),
@@ -586,11 +586,11 @@ def brainblast_handler(command: str, **kwargs):
     if not search_query:
         return {"output": "Usage: /brainblast <search_terms>", "messages": messages}
     
-    # Get the command history instance
+  
     command_history = kwargs.get('command_history')
     if not command_history:
-        #print('no command history provided to brainblast')
-        # Create a new one if not provided
+      
+      
         db_path = safe_get(kwargs, "history_db_path", os.path.expanduser('~/npcsh_history.db'))
         try:
             command_history = CommandHistory(db_path)
@@ -599,11 +599,11 @@ def brainblast_handler(command: str, **kwargs):
             return {"output": f"Error connecting to command history: {e}", "messages": messages}
     
     try:
-        # Remove messages from kwargs to avoid duplicate argument error
+      
         if 'messages' in kwargs:
             del kwargs['messages']
             
-        # Execute the brainblast command
+      
         return execute_brainblast_command(
                                     command=search_query,
                                     **kwargs)   
@@ -617,17 +617,17 @@ def rag_handler(command: str, **kwargs):
     user_command = []
     file_paths = []
     
-    i = 1  # Skip the first element which is "rag"
+    i = 1
     while i < len(parts):
         if parts[i] == "-f" or parts[i] == "--file":
-            # We found a file flag, get the file path
+          
             if i + 1 < len(parts):
                 file_paths.append(parts[i + 1])
-                i += 2  # Skip both the flag and the path
+                i += 2
             else:
                 return {"output": "Error: -f/--file flag needs a file path", "messages": messages}
         else:
-            # This is part of the user query
+          
             user_command.append(parts[i])
             i += 1
     
@@ -641,7 +641,7 @@ def rag_handler(command: str, **kwargs):
         return {"output": "Usage: /rag [-f file_path] <query>", "messages": kwargs.get('messages', [])}
     
     try:
-        # Process files if provided
+      
         file_contents = []
         for file_path in file_paths:
             try:
@@ -718,7 +718,7 @@ def sample_handler(command: str, **kwargs):
                 "npc":kwargs.get("npc"),
             }
         else:
-            # Handle cases where get_llm_response might fail and return something unexpected
+          
             return {"output": str(result), "messages": messages}
 
     except Exception as e:
@@ -728,16 +728,16 @@ def sample_handler(command: str, **kwargs):
 def search_handler(command: str, **kwargs):
     """    
     Executes a search command.
-    # search commands will bel ike :
-    # '/search "search term" '
-    # '/search -sp perplexity ..
-    # '/search -sp google ..
-    # extract provider if its there
-    # check for either -p or --p        
+  
+  
+  
+  
+  
+  
     """
     messages = safe_get(kwargs, "messages", [])
     
-    # The query is now in 'positional_args'
+  
     positional_args = safe_get(kwargs, 'positional_args', [])
     query = " ".join(positional_args)
     
@@ -764,11 +764,11 @@ def search_handler(command: str, **kwargs):
 
 @router.route("serve", "Serve an NPC Team")
 def serve_handler(command: str, **kwargs):
-    #print('calling serve handler')
-    #print(kwargs)
+  
+  
 
     port   = safe_get(kwargs, "port", 5337)
-    #print(port, type(port))
+  
     messages = safe_get(kwargs, "messages", [])
     cors = safe_get(kwargs, "cors", None)
     if cors:
@@ -821,13 +821,13 @@ def sleep_handler(command: str, **kwargs):
     if operations_str and isinstance(operations_str, str):
         operations_config = [op.strip() for op in operations_str.split(',')]
 
-    # Define the scope variables clearly at the start
+  
     team_name = team.name if team else "__none__"
     npc_name = npc.name if isinstance(npc, NPC) else "__none__"
     current_path = os.getcwd()
     scope_str = f"Team: '{team_name}', NPC: '{npc_name}', Path: '{current_path}'"
 
-    # ADDED: Log the scope being checked for clarity
+  
     render_markdown(f"- Checking knowledge graph for scope: {scope_str}")
 
     try:
@@ -840,20 +840,20 @@ def sleep_handler(command: str, **kwargs):
     try:
         current_kg = load_kg_from_db(engine, team_name, npc_name, current_path)
 
-        # FIXED: Provide a detailed and helpful message when the KG is empty
+      
         if not current_kg or not current_kg.get('facts'):
             output_msg = f"Knowledge graph for the current scope is empty. Nothing to process.\n"
             output_msg += f"  - Scope Checked: {scope_str}\n\n"
             output_msg += "**Hint:** Have a conversation or run some commands first to build up knowledge in this specific context. The KG is unique to each combination of Team, NPC, and directory."
             return {"output": output_msg, "messages": messages}
 
-        # Store initial stats for the final report
+      
         original_facts = len(current_kg.get('facts', []))
         original_concepts = len(current_kg.get('concepts', []))
         
-        # --- SEQUENTIAL EXECUTION ---
+      
 
-        # 1. Always run the sleep process for maintenance first.
+      
         process_type = "Sleep"
         ops_display = f"with operations: {operations_config}" if operations_config else "with random operations"
         render_markdown(f"- Initiating sleep process {ops_display}")
@@ -866,7 +866,7 @@ def sleep_handler(command: str, **kwargs):
             operations_config=operations_config
         )
 
-        # 2. If --dream is specified, run the dream process on the *result* of the sleep process.
+      
         if is_dreaming:
             process_type += " & Dream"
             render_markdown(f"- Initiating dream process on the evolved KG...")
@@ -877,10 +877,10 @@ def sleep_handler(command: str, **kwargs):
                 npc=npc
             )
 
-        # 3. Save the final state of the KG back to the database
+      
         save_kg_to_db(conn, evolved_kg, team_name, npc_name, current_path)
 
-        # 4. Report the final, cumulative changes back to the user
+      
         new_facts = len(evolved_kg.get('facts', []))
         new_concepts = len(evolved_kg.get('concepts', []))
 
@@ -990,7 +990,7 @@ def vixynt_handler(command: str, **kwargs):
         return {"output": "Usage: /vixynt <prompt> [--output_file path] [--attachments path] [--n_images num]", "messages": messages}
     
     try:
-        # Call gen_image, passing n_images and expecting a list of images
+      
         images_list = gen_image(
             prompt=user_prompt,
             model=model,
@@ -1048,33 +1048,33 @@ def vixynt_handler(command: str, **kwargs):
 def wander_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
     
-    # General parser for key=value arguments
+  
     try:
         parts = shlex.split(command)
         problem_parts = []
         wander_params = {}
         
-        i = 1  # Start after the 'wander' command name
+        i = 1
         while i < len(parts):
             part = parts[i]
             
             if '=' in part:
-                # This is the start of a key=value pair
+              
                 key, initial_value = part.split('=', 1)
                 
-                # Consume all subsequent parts that do NOT contain '=' as part of this value
+              
                 value_parts = [initial_value]
                 j = i + 1
                 while j < len(parts) and '=' not in parts[j]:
                     value_parts.append(parts[j])
                     j += 1
                 
-                # Join the reconstructed value and store it
+              
                 wander_params[key] = " ".join(value_parts)
-                # Advance the main loop index past the consumed parts
+              
                 i = j
             else:
-                # This part belongs to the problem string
+              
                 problem_parts.append(part)
                 i += 1
         
@@ -1086,13 +1086,13 @@ def wander_handler(command: str, **kwargs):
         return {"output": "Usage: /wander <problem> [key=value...]", "messages": messages}
 
     try:
-        # Build the argument list for enter_wander_mode
+      
         mode_args = {
             'problem': problem,
             'npc': safe_get(kwargs, 'npc'),
             'model': safe_get(kwargs, 'model'),
             'provider': safe_get(kwargs, 'provider'),
-            # Use parsed params with defaults
+          
             'environment': wander_params.get('environment'),
             'low_temp': float(wander_params.get('low-temp', 0.5)),
             'high_temp': float(wander_params.get('high-temp', 1.9)),
@@ -1131,10 +1131,10 @@ def yap_handler(command: str, **kwargs):
 def alicanto_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
     
-    # Parse command with shlex to properly handle quoted strings
+  
     parts = shlex.split(command)
     
-    # Process arguments
+  
     query = ""
     num_npcs = safe_get(kwargs, 'num_npcs', 5)
     depth = safe_get(kwargs, 'depth', 3)
@@ -1142,11 +1142,11 @@ def alicanto_handler(command: str, **kwargs):
     creativity_factor = safe_get(kwargs, 'creativity', 0.5)
     output_format = safe_get(kwargs, 'format', 'report')
     
-    # Parse command-line arguments
-    i = 1  # Skip "alicanto" command
+  
+    i = 1
     while i < len(parts):
         if parts[i].startswith('--'):
-            option = parts[i][2:]  # Remove '--'
+            option = parts[i][2:]
             if option in ['num-npcs', 'npcs']:
                 if i + 1 < len(parts) and parts[i + 1].isdigit():
                     num_npcs = int(parts[i + 1])
@@ -1178,16 +1178,16 @@ def alicanto_handler(command: str, **kwargs):
                 else:
                     i += 1
             else:
-                # Skip unknown option
+              
                 i += 1
         else:
-            # This is part of the request
+          
             query += parts[i] + " "
             i += 1
     
     query = query.strip()
     
-    # Also apply any kwargs that were passed directly (these override command line args)
+  
     if 'num_npcs' in kwargs:
         try:
             num_npcs = int(kwargs['num_npcs'])
@@ -1230,7 +1230,7 @@ def alicanto_handler(command: str, **kwargs):
             output_format=output_format
         )
         
-        # Format the output based on the result type
+      
         if isinstance(result, dict):
             if "integration" in result:
                 output = result["integration"]

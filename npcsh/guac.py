@@ -75,7 +75,7 @@ _guac_monitor_stop_event = None
 def _clear_readline_buffer():
     """Clear the current readline input buffer and redisplay prompt."""
     try:
-        # Preferred: use Python readline API if available
+      
         if hasattr(readline, "replace_line") and hasattr(readline, "redisplay"):
             readline.replace_line("", 0)
             readline.redisplay()
@@ -83,11 +83,11 @@ def _clear_readline_buffer():
     except Exception:
         pass
 
-    # Fallback: call rl_replace_line and rl_redisplay from the linked readline/libedit
+  
     try:
         libname = ctypes.util.find_library("readline") or ctypes.util.find_library("edit") or "readline"
         rl = ctypes.CDLL(libname)
-        # rl_replace_line(char *text, int clear_undo)
+      
         rl.rl_replace_line.argtypes = [ctypes.c_char_p, ctypes.c_int]
         rl.rl_redisplay.argtypes = []
         rl.rl_replace_line(b"", 0)
@@ -113,44 +113,44 @@ def _file_drop_monitor(npc_team_dir: Path, state: ShellState, locals_dict: Dict[
                 time.sleep(poll_interval)
                 continue
 
-            # Normalize buffer
+          
             candidate = buf.strip()
-            # If quoted, remove quotes
+          
             if (candidate.startswith("'") and candidate.endswith("'")) or (candidate.startswith('"') and candidate.endswith('"')):
                 inner = candidate[1:-1]
             else:
                 inner = candidate
 
-            # quick check: must be single token and existing file
+          
             if " " not in inner and Path(inner.replace('~', str(Path.home()))).expanduser().exists() and Path(inner.replace('~', str(Path.home()))).expanduser().is_file():
-                # Avoid double-processing same buffer
+              
                 if buf in processed_bufs:
                     time.sleep(poll_interval)
                     continue
                 processed_bufs.add(buf)
 
-                # Immediately process: copy and load
+              
                 try:
-                    # Use your existing handler for multi-file copies to ensure directory structure
-                    # But we want immediate execution for a single file: call _handle_file_drop first to copy
+                  
+                  
                     modified_input, processed_files = _handle_file_drop(buf, npc_team_dir)
                     if processed_files:
                         target_path = processed_files[0]
-                        # Generate loading code based on original file (inner) and target_path
+                      
                         loading_code = _generate_file_analysis_code(inner, target_path)
-                        # Execute via your normal execute_python_code so it records in history
+                      
                         print("\n[guac] Detected file drop — processing automatically...")
-                        # Note: execute_python_code expects state and locals_dict
+                      
                         _state, exec_output = execute_python_code(loading_code, state, locals_dict)
-                        # Print whatever result execute_python_code returned (it will already have been captured)
+                      
                         if exec_output:
                             print(exec_output)
-                        # Clear the current readline buffer so user doesn't have to press Enter
+                      
                         _clear_readline_buffer()
                 except Exception as e:
                     print(f"[guac][ERROR] file drop processing failed: {e}")
         except Exception:
-            # Be resilient: don't let thread die
+          
             pass
         time.sleep(poll_interval)
 
@@ -213,7 +213,7 @@ def execute_python_code(code_str: str, state: ShellState, locals_dict: Dict[str,
         final_output_str = output_capture.getvalue().strip()
         output_capture.close()
     
-    # ADD THIS LINE:
+  
     _capture_plot_state(state.conversation_id, state.command_history.db_path, Path.cwd() / "npc_team")
     
     if state.command_history:
@@ -396,7 +396,7 @@ def _handle_guac_refresh(state: ShellState, project_name: str, src_dir: Path):
     prompt = "\n".join(prompt_parts)
 
     try:
-        # Ensure state.npc is not None before accessing .model or .provider
+      
         npc_model = state.npc.model if state.npc and state.npc.model else state.chat_model
         npc_provider = state.npc.provider if state.npc and state.npc.provider else state.chat_provider
 
@@ -480,7 +480,7 @@ def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None,
                     lang='python', default_mode_choice=None):
     base_dir = Path.cwd()                
     
-    # Check if we should default to global without prompting
+  
     if GUAC_GLOBAL_FLAG_FILE.exists():
         print("💡 Using global Guac team as default (previously set).")
         team_dir = ensure_global_guac_team()
@@ -490,7 +490,7 @@ def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None,
             "project_description": "Global guac team for analysis.", "package_name": "guac"
         }
 
-    # default: project npc_team_dir
+  
     if npc_team_dir is None:
         npc_team_dir = base_dir / "npc_team"
     else:
@@ -574,7 +574,7 @@ setup(name="{package_name}", version="0.0.1", description="{desc}", packages=fin
         "project_description": project_description, "package_name": package_name
     }
 def setup_npc_team(npc_team_dir, lang, is_subteam=False):
-    # Create Guac-specific NPCs
+  
     guac_npc = {
         "name": "guac", 
         "primary_directive": (
@@ -602,14 +602,14 @@ def setup_npc_team(npc_team_dir, lang, is_subteam=False):
 
     for npc_data in [guac_npc, caug_npc, parsely_npc, toon_npc]:
         npc_file = npc_team_dir / f"{npc_data['name']}.npc"
-        if not npc_file.exists():  # Don't overwrite existing NPCs
+        if not npc_file.exists():
             with open(npc_file, "w") as f:
                 yaml.dump(npc_data, f, default_flow_style=False)
             print(f"Created NPC: {npc_data['name']}")
         else:
             print(f"NPC already exists: {npc_data['name']}")
 
-    # Only create team.ctx for subteams, otherwise use the main one
+  
     if is_subteam:
         team_ctx_model = os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b")
         team_ctx_provider = os.environ.get("NPCSH_CHAT_PROVIDER", "ollama")
@@ -644,22 +644,22 @@ def _detect_file_drop(input_text: str) -> bool:
     
     stripped = input_text.strip()
     
-    # Remove quotes if present
+  
     if stripped.startswith("'") and stripped.endswith("'"):
         stripped = stripped[1:-1]
     elif stripped.startswith('"') and stripped.endswith('"'):
         stripped = stripped[1:-1]
     
-    # Must be a single token (no spaces) - this is key!
+  
     if len(stripped.split()) != 1:
         return False
     
-    # Must not contain Python operators or syntax
+  
     python_indicators = ['(', ')', '[', ']', '{', '}', '=', '+', '-', '*', '/', '%', '&', '|', '^', '<', '>', '!', '?', ':', ';', ',']
     if any(indicator in stripped for indicator in python_indicators):
         return False
     
-    # Must not start with common Python keywords or look like Python
+  
     python_keywords = ['import', 'from', 'def', 'class', 'if', 'for', 'while', 'try', 'with', 'lambda', 'print', 'len', 'str', 'int', 'float', 'list', 'dict', 'set', 'tuple']
     if any(stripped.startswith(keyword) for keyword in python_keywords):
         return False
@@ -704,12 +704,12 @@ def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
     Session = sessionmaker(bind=engine)
     session = Session()
     
-    # Get plot info
+  
     fig = plt.gcf()
     axes = fig.get_axes()
     data_points = sum(len(line.get_xdata()) for ax in axes for line in ax.get_lines())
     
-    # Create hash and check if different from last
+  
     plot_hash = hashlib.md5(f"{len(axes)}{data_points}".encode()).hexdigest()
     
     last = session.query(PlotState).filter(PlotState.session_id == session_id).order_by(PlotState.timestamp.desc()).first()
@@ -717,13 +717,13 @@ def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
         session.close()
         return
     
-    # Save plot
+  
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     workspace_dirs = _get_workspace_dirs(npc_team_dir)
     plot_path = workspace_dirs["plots"] / f"state_{timestamp}.png"
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
     
-    # Save to DB
+  
     plot_state = PlotState(
         session_id=session_id,
         plot_hash=plot_hash,
@@ -745,14 +745,14 @@ def _capture_file_state(session_id: str, db_path: str, file_path: str, analysis_
     Session = sessionmaker(bind=engine)
     session = Session()
     
-    # Get file hash
+  
     try:
         with open(file_path, 'rb') as f:
             file_hash = hashlib.md5(f.read()).hexdigest()
     except:
         file_hash = "unknown"
     
-    # Get variables created
+  
     file_stem = Path(file_path).stem.lower()
     vars_created = [k for k in locals_dict.keys() if not k.startswith('_') and file_stem in k.lower()]
     
@@ -935,9 +935,9 @@ except Exception as e:
 """
 def _handle_file_drop(input_text: str, npc_team_dir: Path) -> Tuple[str, List[str]]:
     """Handle file drops by copying files to appropriate workspace directories"""
-    #print(f"[DEBUG] _handle_file_drop called with input: '{input_text}'")
+  
     
-    # Immediately check if this is a single file path
+  
     stripped = input_text.strip("'\"")
     if os.path.exists(stripped) and os.path.isfile(stripped):
         print(f"[DEBUG] Direct file drop detected: {stripped}")
@@ -959,11 +959,11 @@ def _handle_file_drop(input_text: str, npc_team_dir: Path) -> Tuple[str, List[st
             shutil.copy2(expanded_path, target_path)
             print(f"📁 Copied {expanded_path.name} to workspace: {target_path}")
             
-            # Generate and execute loading code
+          
             loading_code = _generate_file_analysis_code(str(expanded_path), str(target_path))
             print(f"\n# Auto-generated file loading code:\n---\n{loading_code}\n---\n")
             
-            # Actually execute the loading code
+          
             exec(loading_code)
             
             return "", [str(target_path)]
@@ -971,12 +971,12 @@ def _handle_file_drop(input_text: str, npc_team_dir: Path) -> Tuple[str, List[st
             print(f"[ERROR] Failed to process file drop: {e}")
             return input_text, []
     
-    # Existing multi-file handling logic
+  
     processed_files = []
     file_paths = re.findall(r"'([^']+)'|\"([^\"]+)\"|(\S+)", input_text)
     file_paths = [path for group in file_paths for path in group if path]
     
-    #print(f"[DEBUG] Found file paths: {file_paths}")
+  
     
     if not file_paths:
 
@@ -998,12 +998,12 @@ def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
         Session = sessionmaker(bind=engine)
         session = Session()
         
-        # Get plot info
+      
         fig = plt.gcf()
         axes = fig.get_axes()
         data_points = sum(len(line.get_xdata()) for ax in axes for line in ax.get_lines())
         
-        # Create hash and check if different from last
+      
         plot_hash = hashlib.md5(f"{len(axes)}{data_points}".encode()).hexdigest()
         
         last = session.query(PlotState).filter(PlotState.session_id == session_id).order_by(PlotState.timestamp.desc()).first()
@@ -1011,13 +1011,13 @@ def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
             session.close()
             return
         
-        # Save plot
+      
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         workspace_dirs = _get_workspace_dirs(npc_team_dir)
         plot_path = workspace_dirs["plots"] / f"state_{timestamp}.png"
         plt.savefig(plot_path, dpi=150, bbox_inches='tight')
         
-        # Save to DB
+      
         plot_state = PlotState(
             session_id=session_id,
             plot_hash=plot_hash,
@@ -1043,14 +1043,14 @@ def _capture_file_state(session_id: str, db_path: str, file_path: str, analysis_
         Session = sessionmaker(bind=engine)
         session = Session()
         
-        # Get file hash
+      
         try:
             with open(file_path, 'rb') as f:
                 file_hash = hashlib.md5(f.read()).hexdigest()
         except:
             file_hash = "unknown"
         
-        # Get variables created
+      
         file_stem = Path(file_path).stem.lower()
         vars_created = [k for k in locals_dict.keys() if not k.startswith('_') and file_stem in k.lower()]
         
@@ -1150,7 +1150,7 @@ def _get_guac_agent_emoji(failures: int, max_fail: int = 3) -> str:
     Includes "puke" emoji for max_fail, and "skull" for exceeding max_fail + 20.
     """
     if failures == 0:
-        return "🥑"   # Fresh
+        return "🥑" 
     elif failures == 1:
         return "🥑🔪" # Sliced, contemplating next steps
     elif failures == 2:
@@ -1173,14 +1173,14 @@ def _run_agentic_mode(command: str,
                       locals_dict: Dict[str, Any],
                       npc_team_dir: Path) -> Tuple[ShellState, Any]:
     """Run agentic mode with continuous iteration based on progress"""
-    max_iterations = 5  # Increased slightly for more complex tasks
+    max_iterations = 5
     iteration = 0
     full_output = []
     current_command = command
     consecutive_failures = 0
     max_consecutive_failures = 3 # This is the limit before stopping
 
-    # Build context of existing variables
+  
     existing_vars_context = "EXISTING VARIABLES IN ENVIRONMENT:\n"
     for var_name, var_value in locals_dict.items():
         if not var_name.startswith('_') and var_name not in ['In', 'Out', 'exit', 'quit', 'get_ipython']:
@@ -1420,16 +1420,16 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
 
 
         
-    # Check if this is a file drop (single file path)
+  
     if _detect_file_drop(stripped_command):
         if stripped_command.startswith('run'):
             pass
         else:
-            # Clean the path
+          
             file_path = stripped_command.strip("'\"")
             expanded_path = Path(file_path).resolve()
             
-            # Copy to workspace
+          
             workspace_dirs = _get_workspace_dirs(npc_team_dir)
             _ensure_workspace_dirs(workspace_dirs)
             
@@ -1445,7 +1445,7 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
                 shutil.copy2(expanded_path, target_path)
                 print(f"📁 Copied {expanded_path.name} to workspace: {target_path}")
                 
-                # Generate and execute loading code
+              
                 loading_code = _generate_file_analysis_code(str(expanded_path), str(target_path))
                 print(f"\n# Auto-generated file loading code:\n---\n{loading_code}\n---\n")
                 
@@ -1455,25 +1455,25 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
                 print(f"[ERROR] Failed to copy or load file: {e}")
                 return state, f"Error loading file: {e}"
 
-    # Handle file drops in text (multiple files or files with other text)
+  
     processed_command, processed_files, file_paths = _handle_file_drop(stripped_command, npc_team_dir)
     if processed_files:
         print(f"📁 Processed {len(processed_files)} files")
         stripped_command = processed_command + 'Here are the files associated with the request'
 
-    # Handle /refresh command
+  
     if stripped_command == "/refresh":
         _handle_guac_refresh(state, project_name, src_dir)
         return state, "Refresh process initiated."
 
-    # Handle mode switching commands
+  
     if stripped_command in ["/agent", "/chat", "/cmd"]:
         state.current_mode = stripped_command[1:]
         return state, f"Switched to {state.current_mode.upper()} mode."
 
 
 
-    # Check if it's a router command (starts with / and not a built-in command)
+  
     if stripped_command.startswith('/') and stripped_command not in ["/refresh", "/agent", "/chat", "/cmd"]:
         return execute_command(stripped_command, state, review=True, router=router)
     if is_python_code(stripped_command):
@@ -1487,7 +1487,7 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
         return _run_agentic_mode(stripped_command, state, locals_dict, npc_team_dir) 
     if state.current_mode == "cmd":
        
-        # If not Python, use LLM to generate Python code
+      
         locals_context_string = "Current Python environment variables and functions:\n"
         if locals_dict:
             for k, v in locals_dict.items():
@@ -1496,14 +1496,14 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
                         value_repr = repr(v)
                         if len(value_repr) > 200: 
                             value_repr = value_repr[:197] + "..."
-                        locals_context_string += f"- {k} (type: {type(v).__name__}) = {value_repr}\n"
+                        loaals_context_string += f"- {k} (type: {type(v).__name__}) = {value_repr}\n"
                     except Exception:
                         locals_context_string += f"- {k} (type: {type(v).__name__}) = <unrepresentable>\n"
             locals_context_string += "\n--- End of Environment Context ---\n"
         else:
             locals_context_string += "(Environment is empty)\n"
 
-        # ADD CONTEXT ENHANCEMENT HERE:
+      
         enhanced_prompt = stripped_command
         if any(word in stripped_command.lower() for word in ['plot', 'graph', 'chart', 'figure', 'visualiz']):
             plot_context = _get_plot_context(state.conversation_id, state.command_history.db_path)
@@ -1519,7 +1519,7 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
             {locals_context_string}
             Begin directly with the code
             """
-        # Ensure state.npc is not None before accessing .model or .provider
+      
         npc_model = state.npc.model if state.npc and state.npc.model else state.chat_model
         npc_provider = state.npc.provider if state.npc and state.npc.provider else state.chat_provider
 
@@ -1561,7 +1561,7 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
     from npcsh.routes import router
 
     
-    # Get workspace info 
+  
     npc_team_dir = Path.cwd() / "npc_team"
     workspace_dirs = _get_workspace_dirs(npc_team_dir)
     _ensure_workspace_dirs(workspace_dirs)
@@ -1613,10 +1613,10 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             return None
         
         try:
-            # Try using npcpy's load_file_contents first for specialized formats
+          
             file_ext = path.suffix.upper().lstrip('.')
             if file_ext in ['PDF', 'DOCX', 'PPTX', 'HTML', 'HTM', 'CSV', 'XLS', 'XLSX', 'JSON']:
-                chunks = load_file_contents(str(path), chunk_size=10000)  # Large chunk to get full content
+                chunks = load_file_contents(str(path), chunk_size=10000)
                 if chunks and not chunks[0].startswith("Error") and not chunks[0].startswith("Unsupported"):
                     content = '\n'.join(chunks)
                     lines = content.split('\n')
@@ -1635,7 +1635,7 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
                     print(f"End of {path.name}")
                     return content
             
-            # Fall back to regular text reading
+          
             with open(path, 'r', encoding=encoding) as f:
                 lines = []
                 for i, line in enumerate(f, 1):
@@ -1683,10 +1683,10 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
         """
         path = Path(file_path).expanduser().resolve()
         
-        # Create parent directories if needed
+      
         path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Backup original if it exists
+      
         if backup and path.exists():
             backup_path = path.with_suffix(path.suffix + '.backup')
             import shutil
@@ -1694,7 +1694,7 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             print(f"Backup saved: {backup_path.name}")
         
         try:
-            # Read existing content if file exists
+          
             existing_lines = []
             if path.exists():
                 with open(path, 'r', encoding='utf-8') as f:
@@ -1804,7 +1804,7 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             state.current_path = os.getcwd()
             
             display_model = state.chat_model
-            # Ensure state.npc is not None before accessing .model or .provider
+          
             if isinstance(state.npc, NPC) and state.npc.model:
                 display_model = state.npc.model
             
@@ -1894,16 +1894,16 @@ def enter_guac_mode(npc=None,
     package_name = setup_result.get("package_name", "project")
     npc_team_dir = setup_result.get("npc_team_dir")
 
-    # Always call setup_shell to build history, team, and default_npc
+  
     command_history, default_team, default_npc = setup_shell()
 
-    # 🔑 Ensure global guac gets loaded if npc is None
+  
     if npc is None and default_npc is None:
-        # Construct the path correctly based on where ensure_global_guac_team puts it
+      
         guac_npc_path = Path(npc_team_dir) / "guac.npc" 
         if guac_npc_path.exists():
             npc = NPC(file=str(guac_npc_path), db_conn=command_history.engine)
-            # Ensure the team is also correctly set to the global guac team
+          
             team_ctx_path = Path(npc_team_dir) / "team.ctx"
             if team_ctx_path.exists():
                 with open(team_ctx_path, "r") as f:
@@ -1913,7 +1913,7 @@ def enter_guac_mode(npc=None,
         else:
             raise RuntimeError(f"No NPC loaded and {guac_npc_path} not found!")
     elif default_npc and npc is None:
-        # If setup_shell provided a default_npc (e.g., sibiji), ensure it's used
+      
         npc = default_npc
 
 

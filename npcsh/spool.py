@@ -51,10 +51,10 @@ def enter_spool_mode(
     **kwargs,
 ) -> Dict:
     print_spool_ascii()
-    # Initialize state using existing infrastructure
+  
     command_history, state_team, default_npc = setup_shell()
     
-    # Create spool state, inheriting from initial_state
+  
     spool_state = ShellState(
         npc=npc or default_npc,
         team=team or state_team,
@@ -65,7 +65,7 @@ def enter_spool_mode(
         attachments=None,
     )
     
-    # Override models/providers if specified
+  
     if model:
         spool_state.chat_model = model
     if provider:
@@ -79,7 +79,7 @@ def enter_spool_mode(
     print(f"🧵 Entering spool mode{npc_info}. Type '/sq' to exit spool mode.")
     print("💡 Tip: Press Ctrl+C during streaming to interrupt and continue with a new message.")
 
-    # Handle file loading
+  
     loaded_chunks = {}
     if attachments:
         if isinstance(attachments, str):
@@ -97,14 +97,14 @@ def enter_spool_mode(
             except Exception as e:
                 print(colored(f"Error loading {file_path}: {str(e)}", "red"))
 
-    # Initialize context with system message if needed
+  
     if not spool_state.messages or spool_state.messages[0].get("role") != "system":
         system_message = get_system_message(spool_state.npc) if spool_state.npc else "You are a helpful assistant."
         spool_state.messages.insert(0, {"role": "system", "content": system_message})
 
     while True:
         try:
-            # Use consistent prompt styling with npcsh
+          
             npc_name = spool_state.npc.name if spool_state.npc else "chat"
             display_model = spool_state.npc.model if spool_state.npc and spool_state.npc.model else spool_state.chat_model
             
@@ -123,7 +123,7 @@ def enter_spool_mode(
                 spool_state.messages = enter_yap_mode(spool_state.messages, spool_state.npc)
                 continue
 
-            # Handle vision commands
+          
             if user_input.startswith("/ots"):
                 command_parts = user_input.split()
                 image_paths = []
@@ -146,7 +146,7 @@ def enter_spool_mode(
                 
                 vision_prompt = input("Prompt for image(s) (or press Enter): ").strip() or "Describe these images."
                 
-                # Use vision models for image processing
+              
                 response = get_llm_response(
                     vision_prompt,
                     model=spool_state.vision_model,
@@ -162,11 +162,11 @@ def enter_spool_mode(
                 spool_state.messages = response.get('messages', spool_state.messages)
                 output = response.get('response')
                 
-                # Process and display the result
+              
                 process_result(vision_prompt, spool_state, {'output': output}, command_history)
                 continue
             
-            # Handle RAG context if files are loaded
+          
             current_prompt = user_input
             if loaded_chunks:
                 context_content = ""
@@ -183,7 +183,7 @@ def enter_spool_mode(
                 if context_content:
                     current_prompt += f"\n\n--- Relevant context from loaded files ---\n{context_content}"
             
-            # Use standard LLM processing
+          
             response = get_llm_response(
                 current_prompt,
                 model=spool_state.npc.model if spool_state.npc and spool_state.npc.model else spool_state.chat_model,
@@ -197,7 +197,7 @@ def enter_spool_mode(
             spool_state.messages = response.get('messages', spool_state.messages)
             output = response.get('response')
             
-            # Use existing result processing
+          
             process_result(current_prompt, spool_state, {'output': output}, command_history)
 
         except (EOFError,):
@@ -221,7 +221,7 @@ def main():
     
     args = parser.parse_args()
     
-    # Use existing infrastructure to get NPC
+  
     command_history, team, default_npc = setup_shell()
     
     npc = None

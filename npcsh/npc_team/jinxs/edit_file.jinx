@@ -12,23 +12,23 @@ steps:
       import os
       from npcpy.llm_funcs import get_llm_response
       
-      # Get inputs
+    
       file_path = os.path.expanduser("{{ file_path }}")
       edit_instructions = "{{ edit_instructions }}"
       backup_str = "{{ backup }}"
       create_backup = backup_str.lower() not in ('false', 'no', '0', '')
       
-      # Read file content
+    
       with open(file_path, 'r') as f:
           original_content = f.read()
       
-      # Create backup if requested
+    
       if create_backup:
           backup_path = file_path + ".bak"
           with open(backup_path, 'w') as f:
               f.write(original_content)
       
-      # Make the prompt for the LLM
+    
       prompt = """You are a code editing assistant. Analyze this file and make the requested changes.
 
         File content:
@@ -46,14 +46,14 @@ steps:
         - "insertion": For "insert_after" and "insert_before", the text to insert
         2. "explanation": Brief explanation of the changes made
         """
-      # Get the LLM response with JSON formatting
+    
       response = get_llm_response(prompt, model=npc.model, provider=npc.provider, npc=npc, format="json")
       
       result = response.get("response", {})
       modifications = result.get("modifications", [])
       explanation = result.get("explanation", "No explanation provided")
       
-      # Apply modifications
+    
       updated_content = original_content
       changes_applied = 0
       

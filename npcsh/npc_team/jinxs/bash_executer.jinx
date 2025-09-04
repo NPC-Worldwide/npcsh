@@ -8,7 +8,7 @@ steps:
     code: |
       import subprocess
       import os
-      cmd = '{{bash_command}}'  # Properly quote the command input
+      cmd = '{{bash_command}}'
       def run_command(cmd):
         process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = process.communicate()
