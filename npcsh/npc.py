@@ -21,7 +21,6 @@ from npcsh.routes import router
 from npcpy.llm_funcs import check_llm_command
 from sqlalchemy import create_engine
 
-# Import the key functions from npcsh
 from npcsh._state import (
     setup_shell,
     execute_slash_command,

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+
 """
 Enhanced MCP server that incorporates functionality from npcpy.routes, 
 npcpy.llm_funcs, and npcpy.npc_compiler as tools.
@@ -10,10 +10,10 @@ import json
 import asyncio
 
 from typing import Optional, Dict, Any, List, Union, Callable
-# MCP imports
+
 from mcp.server.fastmcp import FastMCP
 import importlib
-# npcpy imports
+
 
 
 import os
@@ -25,7 +25,7 @@ try:
 except: 
     pass
 from typing import Optional, Dict, Any, List, Union, Callable, get_type_hints
-# Add these imports to the top of your file
+
 from functools import wraps
 import sys 
 
@@ -40,14 +40,13 @@ from npcsh._state import NPCSH_DB_PATH
 
 command_history = CommandHistory(db=NPCSH_DB_PATH)
 
-# Initialize the MCP server
 mcp = FastMCP("npcsh_mcp")
 
-# Define the default workspace
+
 DEFAULT_WORKSPACE = os.path.join(os.getcwd(), "workspace")
 os.makedirs(DEFAULT_WORKSPACE, exist_ok=True)
 
-# ==================== SYSTEM TOOLS ====================
+
 @mcp.tool()
 async def run_server_command(command: str) -> str:
     """
@@ -178,7 +177,7 @@ register_selected_npcpy_tools()
 
 
 
-# ==================== MAIN ENTRY POINT ====================
+
 
 if __name__ == "__main__":
     print(f"Starting enhanced NPCPY MCP server...")

@@ -5,6 +5,8 @@ import shlex
 import argparse
 from contextlib import AsyncExitStack
 from typing import Optional, Callable, Dict, Any, Tuple, List
+import shutil
+import traceback
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -33,13 +35,22 @@ from npcsh._state import (
     NPCSH_CHAT_MODEL,
 )
 import yaml 
-
+from pathlib import Path
 
 class MCPClientNPC:
     def __init__(self, debug: bool = True):
         self.debug = debug
         self.session: Optional[ClientSession] = None
-        self._exit_stack = asyncio.new_event_loop().run_until_complete(self._init_stack())
+        try:
+            self._loop = asyncio.get_event_loop()
+            if self._loop.is_closed():
+                self._loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._loop)
+        except RuntimeError:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            
+        self._exit_stack = self._loop.run_until_complete(self._init_stack())
         self.available_tools_llm: List[Dict[str, Any]] = []
         self.tool_map: Dict[str, Callable] = {}
         self.server_script_path: Optional[str] = None
@@ -67,9 +78,9 @@ class MCPClientNPC:
 
         server_params = StdioServerParameters(
             command=cmd_parts[0], 
-            args=['-c', f'import sys; sys.path.pop(0) if sys.path[0] == "{os.path.dirname(abs_path)}" else None; exec(open("{abs_path}").read())'], 
+            args=[abs_path],
             env=os.environ.copy(),
-            cwd=os.path.dirname(os.path.dirname(abs_path))
+            cwd=Path(abs_path).parent
         )
         if self.session:
             await self._exit_stack.aclose()
@@ -96,43 +107,35 @@ class MCPClientNPC:
                 }
                 self.available_tools_llm.append(tool_def)
                 
-                async def execute_tool(tool_name: str, args: dict):
-                    if not self.session:
-                        return {"error": "No MCP session"}
-                    
-                    print(f"DEBUG: About to call MCP tool {tool_name}")
-                    try:
-                      
-                        result = await asyncio.wait_for(
-                            self.session.call_tool(tool_name, args), 
-                            timeout=30.0
-                        )
-                        print(f"DEBUG: MCP tool {tool_name} returned: {type(result)}")
-                        return result
-                    except asyncio.TimeoutError:
-                        print(f"DEBUG: Tool {tool_name} timed out after 30 seconds")
-                        return {"error": f"Tool {tool_name} timed out"}
-                    except Exception as e:
-                        print(f"DEBUG: Tool {tool_name} error: {e}")
-                        return {"error": str(e)}
-                
-                def make_tool_func(tool_name):
+                def make_tool_func(tool_name_closure):
                     async def tool_func(**kwargs):
-                        print(f"DEBUG: Tool wrapper called for {tool_name} with {kwargs}")
-                      
-                        cleaned_kwargs = {}
-                        for k, v in kwargs.items():
-                            if v == 'None':
-                                cleaned_kwargs[k] = None
-                            else:
-                                cleaned_kwargs[k] = v
-                        result = await execute_tool(tool_name, cleaned_kwargs)
-                        print(f"DEBUG: Tool wrapper got result: {type(result)}")
-                        return result
+                        if not self.session:
+                            return {"error": "No MCP session"}
+                        
+                        self._log(f"About to call MCP tool {tool_name_closure}")
+                        try:
+                            cleaned_kwargs = {}
+                            for k, v in kwargs.items():
+                                if v == 'None':
+                                    cleaned_kwargs[k] = None
+                                else:
+                                    cleaned_kwargs[k] = v
+                            result = await asyncio.wait_for(
+                                self.session.call_tool(tool_name_closure, cleaned_kwargs), 
+                                timeout=30.0
+                            )
+                            self._log(f"MCP tool {tool_name_closure} returned: {type(result)}")
+                            return result
+                        except asyncio.TimeoutError:
+                            self._log(f"Tool {tool_name_closure} timed out after 30 seconds", "red")
+                            return {"error": f"Tool {tool_name_closure} timed out"}
+                        except Exception as e:
+                            self._log(f"Tool {tool_name_closure} error: {e}", "red")
+                            return {"error": str(e)}
                     
                     def sync_wrapper(**kwargs):
-                        print(f"DEBUG: Sync wrapper called for {tool_name}")
-                        return asyncio.run(tool_func(**kwargs))
+                        self._log(f"Sync wrapper called for {tool_name_closure}")
+                        return self._loop.run_until_complete(tool_func(**kwargs))
                     
                     return sync_wrapper
                 self.tool_map[mcp_tool.name] = make_tool_func(mcp_tool.name)
@@ -140,10 +143,12 @@ class MCPClientNPC:
         self._log(f"Connection successful. Tools: {', '.join(tool_names) if tool_names else 'None'}")
 
     def connect_sync(self, server_script_path: str) -> bool:
-        loop = asyncio.get_event_loop_policy().get_event_loop()
+        loop = self._loop
         if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            loop = self._loop
+
         try:
             loop.run_until_complete(self._connect_async(server_script_path))
             return True
@@ -154,25 +159,27 @@ class MCPClientNPC:
     def disconnect_sync(self):
         if self.session:
             self._log("Disconnecting MCP session.")
-            loop = asyncio.get_event_loop_policy().get_event_loop()
+            loop = self._loop
             if not loop.is_closed():
                 try:
                     async def close_session():
                         await self.session.close()
+                        await self._exit_stack.aclose()
                     loop.run_until_complete(close_session())
                 except RuntimeError:
                     pass
+                except Exception as e:
+                    print(f"Error during MCP client disconnect: {e}", file=sys.stderr)
             self.session = None
+            self._exit_stack = None
 
 
 def process_mcp_stream(stream_response, active_npc):
-    """Process streaming response and extract content + tool calls for both Ollama and OpenAI providers"""
     collected_content = ""
     tool_calls = []
     
     interrupted = False
     
-  
     sys.stdout.write('\033[s')
     sys.stdout.flush()
     try:
@@ -201,7 +208,6 @@ def process_mcp_stream(stream_response, active_npc):
                     collected_content += chunk.message.content
                     print(chunk.message.content, end='', flush=True)
                     
-          
             else:
                 if hasattr(chunk, 'choices') and chunk.choices:
                     delta = chunk.choices[0].delta
@@ -234,23 +240,30 @@ def process_mcp_stream(stream_response, active_npc):
     except KeyboardInterrupt:
         interrupted = True
         print('\n⚠️ Stream interrupted by user')
-    if interrupted:
-        str_output += "\n\n[⚠️ Response interrupted by user]"
-  
+    
     sys.stdout.write('\033[u')
     sys.stdout.write('\033[J')
     sys.stdout.flush()
     
-  
     render_markdown(collected_content)
     print('\n')
     return collected_content, tool_calls
 
-def execute_command_corca(command: str, state: ShellState, command_history) -> Tuple[ShellState, Any]:
-   mcp_tools = []
+def execute_command_corca(command: str, state: ShellState, command_history, selected_mcp_tools_names: Optional[List[str]] = None) -> Tuple[ShellState, Any]:
+   mcp_tools_for_llm = []
    
    if hasattr(state, 'mcp_client') and state.mcp_client and state.mcp_client.session:
-       mcp_tools = state.mcp_client.available_tools_llm
+       all_available_mcp_tools = state.mcp_client.available_tools_llm
+       
+       if selected_mcp_tools_names and len(selected_mcp_tools_names) > 0:
+           mcp_tools_for_llm = [
+               tool_def for tool_def in all_available_mcp_tools
+               if tool_def['function']['name'] in selected_mcp_tools_names
+           ]
+           if not mcp_tools_for_llm:
+               cprint("Warning: No selected MCP tools found or matched. Corca will proceed without tools.", "yellow", file=sys.stderr)
+       else:
+           mcp_tools_for_llm = all_available_mcp_tools
    else:
        cprint("Warning: Corca agent has no tools. No MCP server connected.", "yellow", file=sys.stderr)
 
@@ -260,7 +273,7 @@ def execute_command_corca(command: str, state: ShellState, command_history) -> T
        prompt=command,
        npc=state.npc,
        messages=state.messages,
-       tools=mcp_tools,
+       tools=mcp_tools_for_llm,
        auto_process_tool_calls=False,
        stream=state.stream_output
    )
@@ -287,6 +300,88 @@ def execute_command_corca(command: str, state: ShellState, command_history) -> T
        "messages": state.messages
    }
 
+
+def _resolve_and_copy_mcp_server_path(
+    explicit_path: Optional[str],
+    current_path: Optional[str],
+    team_ctx_mcp_servers: Optional[List[Dict[str, str]]],
+    interactive: bool = False,
+    auto_copy_bypass: bool = False # <-- New parameter
+) -> Optional[str]:
+    default_mcp_server_name = "mcp_server.py"
+    npcsh_default_template_path = Path(__file__).parent / default_mcp_server_name
+
+    def _copy_template_if_missing(destination_dir: Path, description: str) -> Optional[Path]:
+        destination_file = destination_dir / default_mcp_server_name
+        if not npcsh_default_template_path.exists():
+            cprint(f"Error: Default {default_mcp_server_name} template not found at {npcsh_default_template_path}", "red")
+            return None
+        
+        if not destination_file.exists():
+            # Check auto_copy_bypass first
+            if auto_copy_bypass or not interactive: # If bypass is true OR not interactive, auto-copy
+                destination_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy(npcsh_default_template_path, destination_file)
+                print(colored(f"Automatically copied default {default_mcp_server_name} to {destination_file}", "green"))
+                return destination_file
+            else: # Only ask if interactive and no bypass
+                choice = input(colored(f"No {default_mcp_server_name} found in {description}. Copy default template to {destination_file}? (y/N): ", "yellow")).strip().lower()
+                if choice == 'y':
+                    destination_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(npcsh_default_template_path, destination_file)
+                    print(colored(f"Copied default {default_mcp_server_name} to {destination_file}", "green"))
+                    return destination_file
+                else:
+                    print(colored("Skipping copy.", "yellow"))
+                    return None
+        return destination_file
+
+    if explicit_path:
+        abs_explicit_path = Path(explicit_path).expanduser().resolve()
+        if abs_explicit_path.exists():
+            print(f"Using explicit MCP server path: {abs_explicit_path}")
+            return str(abs_explicit_path)
+        else:
+            cprint(f"Warning: Explicit MCP server path not found: {abs_explicit_path}", "yellow")
+
+    if team_ctx_mcp_servers:
+        for server_entry in team_ctx_mcp_servers:
+            server_path_from_ctx = server_entry.get("value")
+            if server_path_from_ctx:
+                abs_ctx_path = Path(server_path_from_ctx).expanduser().resolve()
+                if abs_ctx_path.exists():
+                    print(f"Using MCP server path from team context: {abs_ctx_path}")
+                    return str(abs_ctx_path)
+                else:
+                    cprint(f"Warning: MCP server path from team context not found: {abs_ctx_path}", "yellow")
+
+    if current_path:
+        project_npc_team_dir = Path(current_path).resolve() / "npc_team"
+        project_mcp_server_file = project_npc_team_dir / default_mcp_server_name
+        
+        if project_mcp_server_file.exists():
+            print(f"Using project-specific MCP server path: {project_mcp_server_file}")
+            return str(project_mcp_server_file)
+        else:
+            copied_path = _copy_template_if_missing(project_npc_team_dir, "project's npc_team directory")
+            if copied_path:
+                return str(copied_path)
+
+    global_npc_team_dir = Path.home() / ".npcsh" / "npc_team"
+    global_mcp_server_file = global_npc_team_dir / default_mcp_server_name
+    
+    if global_mcp_server_file.exists():
+        print(f"Using global MCP server path: {global_mcp_server_file}")
+        return str(global_mcp_server_file)
+    else:
+        copied_path = _copy_template_if_missing(global_npc_team_dir, "global npc_team directory")
+        if copied_path:
+            return str(copied_path)
+            
+    cprint("No MCP server script found in any expected location.", "yellow")
+    return None
+
+
 def print_corca_welcome_message():
     turq = "\033[38;2;64;224;208m"
     chrome = "\033[38;2;211;211;211m"
@@ -305,6 +400,54 @@ Welcome to {turq}C{chrome}o{turq}r{chrome}c{turq}a{reset}!
 An MCP-powered shell for advanced agentic workflows.
         """
     )
+
+def create_corca_state_and_mcp_client(conversation_id, command_history, npc=None, team=None,
+                                     current_path=None, mcp_server_path_from_request: Optional[str] = None):
+    from npcsh._state import ShellState
+    
+    state = ShellState(
+        conversation_id=conversation_id,
+        stream_output=True,
+        current_mode="corca",
+        chat_model=os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b"),
+        chat_provider=os.environ.get("NPCSH_CHAT_PROVIDER", "ollama"),
+        current_path=current_path or os.getcwd(),
+        npc=npc,
+        team=team
+    )
+    state.command_history = command_history
+    
+    # Read NPCSH_CORCA_AUTO_COPY_MCP_SERVER from environment for non-interactive calls
+    auto_copy_bypass = os.getenv("NPCSH_CORCA_AUTO_COPY_MCP_SERVER", "false").lower() == "true"
+
+    resolved_server_path = _resolve_and_copy_mcp_server_path(
+        explicit_path=mcp_server_path_from_request,
+        current_path=current_path,
+        team_ctx_mcp_servers=team.team_ctx.get('mcp_servers', []) if team and hasattr(team, 'team_ctx') else None,
+        interactive=False, # Always non-interactive for Flask API calls
+        auto_copy_bypass=auto_copy_bypass # Pass env var setting
+    )
+
+    state.mcp_client = None
+    if resolved_server_path:
+        try:
+            client_instance = MCPClientNPC()
+            if client_instance.connect_sync(resolved_server_path):
+                state.mcp_client = client_instance
+                print(f"Successfully connected MCP client for {conversation_id} to {resolved_server_path}")
+            else:
+                print(f"Failed to connect MCP client for {conversation_id} to {resolved_server_path}. Tools will be unavailable.")
+        except ImportError:
+            print("WARNING: npcsh.corca or MCPClientNPC not found. Cannot initialize MCP client.", file=sys.stderr)
+        except FileNotFoundError as e:
+            print(f"MCP Client Error: {e}")
+        except ValueError as e:
+            print(f"MCP Client Error: {e}")
+        except Exception as e:
+            print(f"An unexpected error occurred during MCP client initialization: {e}")
+            traceback.print_exc()
+
+    return state
 
 
 def process_corca_result(
@@ -588,8 +731,11 @@ def process_corca_result(
                     
                     Current Context: "{current_context}". 
                     
-                    Respond with JSON: {{"suggestion": "Your sentence."
-                    }}"""
+                    Respond with JSON: """ + """
+                    {
+                    "suggestion": "Your sentence.
+                    }
+                    """
                     response = get_llm_response(prompt, npc=active_npc, format="json")
                     suggestion = response.get("response", {}).get("suggestion")
 
@@ -608,9 +754,175 @@ def process_corca_result(
                 import traceback
                 print(colored(f"Could not generate team suggestions: {e}", "yellow"))
                 traceback.print_exc()
-                
-def enter_corca_mode(command: str, 
-                     **kwargs):
+             
+             
+
+
+
+def _read_npcsh_global_env() -> Dict[str, str]:
+    global_env_file = Path(".npcsh_global")
+    env_vars = {}
+    if global_env_file.exists():
+        try:
+            with open(global_env_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and '=' in line and not line.startswith('#'):
+                        key, value = line.split('=', 1)
+                        env_vars[key.strip()] = value.strip()
+        except Exception as e:
+            print(f"Warning: Could not read .npcsh_global: {e}")
+    return env_vars
+
+def _write_to_npcsh_global(key: str, value: str) -> None:
+    global_env_file = Path(".npcsh_global")
+    env_vars = _read_npcsh_global_env()
+    env_vars[key] = value
+    
+    try:
+        with open(global_env_file, 'w') as f:
+            for k, v in env_vars.items():
+                f.write(f"{k}={v}\n")
+    except Exception as e:
+        print(f"Warning: Could not write to .npcsh_global: {e}")
+
+def _resolve_and_copy_mcp_server_path(
+    explicit_path: Optional[str],
+    current_path: Optional[str],
+    team_ctx_mcp_servers: Optional[List[Dict[str, str]]],
+    interactive: bool = False,
+    auto_copy_bypass: bool = False,
+    force_global: bool = False
+) -> Optional[str]:
+    default_mcp_server_name = "mcp_server.py"
+    npcsh_default_template_path = Path(__file__).parent / default_mcp_server_name
+    
+    global_env = _read_npcsh_global_env()
+    prefer_global = global_env.get("NPCSH_PREFER_GLOBAL_MCP_SERVER", "false").lower() == "true"
+
+    def _copy_template_if_missing(destination_dir: Path, description: str) -> Optional[Path]:
+        destination_file = destination_dir / default_mcp_server_name
+        if not npcsh_default_template_path.exists():
+            cprint(f"Error: Default {default_mcp_server_name} template not found at {npcsh_default_template_path}", "red")
+            return None
+        
+        if not destination_file.exists():
+            if auto_copy_bypass or not interactive:
+                destination_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy(npcsh_default_template_path, destination_file)
+                print(colored(f"Automatically copied default {default_mcp_server_name} to {destination_file}", "green"))
+                return destination_file
+            else:
+                choice = input(colored(f"No {default_mcp_server_name} found in {description}. Copy default template to {destination_file}? (y/N/g for global): ", "yellow")).strip().lower()
+                if choice == 'y':
+                    destination_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(npcsh_default_template_path, destination_file)
+                    print(colored(f"Copied default {default_mcp_server_name} to {destination_file}", "green"))
+                    return destination_file
+                elif choice == 'g':
+                    _write_to_npcsh_global("NPCSH_PREFER_GLOBAL_MCP_SERVER", "true")
+                    print(colored("Set preference to use global MCP server.", "green"))
+                    return None
+                else:
+                    print(colored("Skipping copy.", "yellow"))
+                    return None
+        return destination_file
+
+    if explicit_path:
+        abs_explicit_path = Path(explicit_path).expanduser().resolve()
+        if abs_explicit_path.exists():
+            print(f"Using explicit MCP server path: {abs_explicit_path}")
+            return str(abs_explicit_path)
+        else:
+            cprint(f"Warning: Explicit MCP server path not found: {abs_explicit_path}", "yellow")
+
+    if team_ctx_mcp_servers:
+        for server_entry in team_ctx_mcp_servers:
+            server_path_from_ctx = server_entry.get("value")
+            if server_path_from_ctx:
+                abs_ctx_path = Path(server_path_from_ctx).expanduser().resolve()
+                if abs_ctx_path.exists():
+                    print(f"Using MCP server path from team context: {abs_ctx_path}")
+                    return str(abs_ctx_path)
+                else:
+                    cprint(f"Warning: MCP server path from team context not found: {abs_ctx_path}", "yellow")
+
+    if not (force_global or prefer_global):
+        if current_path:
+            project_npc_team_dir = Path(current_path).resolve() / "npc_team"
+            project_mcp_server_file = project_npc_team_dir / default_mcp_server_name
+            
+            if project_mcp_server_file.exists():
+                print(f"Using project-specific MCP server path: {project_mcp_server_file}")
+                return str(project_mcp_server_file)
+            else:
+                copied_path = _copy_template_if_missing(project_npc_team_dir, "project's npc_team directory")
+                if copied_path:
+                    return str(copied_path)
+
+    global_npc_team_dir = Path.home() / ".npcsh" / "npc_team"
+    global_mcp_server_file = global_npc_team_dir / default_mcp_server_name
+    
+    if global_mcp_server_file.exists():
+        print(f"Using global MCP server path: {global_mcp_server_file}")
+        return str(global_mcp_server_file)
+    else:
+        copied_path = _copy_template_if_missing(global_npc_team_dir, "global npc_team directory")
+        if copied_path:
+            return str(copied_path)
+            
+    cprint("No MCP server script found in any expected location.", "yellow")
+    return None
+
+def create_corca_state_and_mcp_client(conversation_id, command_history, npc=None, team=None,
+                                     current_path=None, mcp_server_path_from_request: Optional[str] = None):
+    from npcsh._state import ShellState
+    
+    state = ShellState(
+        conversation_id=conversation_id,
+        stream_output=True,
+        current_mode="corca",
+        chat_model=os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b"),
+        chat_provider=os.environ.get("NPCSH_CHAT_PROVIDER", "ollama"),
+        current_path=current_path or os.getcwd(),
+        npc=npc,
+        team=team
+    )
+    state.command_history = command_history
+    
+    auto_copy_bypass = os.getenv("NPCSH_CORCA_AUTO_COPY_MCP_SERVER", "false").lower() == "true"
+
+    resolved_server_path = _resolve_and_copy_mcp_server_path(
+        explicit_path=mcp_server_path_from_request,
+        current_path=current_path,
+        team_ctx_mcp_servers=team.team_ctx.get('mcp_servers', []) if team and hasattr(team, 'team_ctx') else None,
+        interactive=False,
+        auto_copy_bypass=auto_copy_bypass,
+        force_global=False
+    )
+
+    state.mcp_client = None
+    if resolved_server_path:
+        try:
+            client_instance = MCPClientNPC()
+            if client_instance.connect_sync(resolved_server_path):
+                state.mcp_client = client_instance
+                print(f"Successfully connected MCP client for {conversation_id} to {resolved_server_path}")
+            else:
+                print(f"Failed to connect MCP client for {conversation_id} to {resolved_server_path}. Tools will be unavailable.")
+        except ImportError:
+            print("WARNING: npcsh.corca or MCPClientNPC not found. Cannot initialize MCP client.", file=sys.stderr)
+        except FileNotFoundError as e:
+            print(f"MCP Client Error: {e}")
+        except ValueError as e:
+            print(f"MCP Client Error: {e}")
+        except Exception as e:
+            print(f"An unexpected error occurred during MCP client initialization: {e}")
+            traceback.print_exc()
+
+    return state
+
+def enter_corca_mode(command: str, **kwargs):
     state: ShellState = kwargs.get('shell_state')
     command_history: CommandHistory = kwargs.get('command_history')
 
@@ -618,28 +930,43 @@ def enter_corca_mode(command: str,
         return {"output": "Error: Corca mode requires shell state and history.", "messages": kwargs.get('messages', [])}
 
     all_command_parts = shlex.split(command)
-    parsed_args = all_command_parts[1:]
-    
     parser = argparse.ArgumentParser(prog="/corca", description="Enter Corca MCP-powered mode.")
     parser.add_argument("--mcp-server-path", type=str, help="Path to an MCP server script.")
+    parser.add_argument("-g", "--global", dest="force_global", action="store_true", help="Force use of global MCP server.")
     
     try:
-        args = parser.parse_args(parsed_args)
+        known_args, remaining_args = parser.parse_known_args(all_command_parts[1:])
     except SystemExit:
          return {"output": "Invalid arguments for /corca. See /help corca.", "messages": state.messages}
 
     print_corca_welcome_message()
     
-    mcp_client = MCPClientNPC()
-    server_path = args.mcp_server_path
-    if not server_path and state.team and hasattr(state.team, 'team_ctx'):
-        server_path = state.team.team_ctx.get('mcp_server')
-    
-    if server_path:
-        if mcp_client.connect_sync(server_path):
-            state.mcp_client = mcp_client
+    auto_copy_bypass = os.getenv("NPCSH_CORCA_AUTO_COPY_MCP_SERVER", "false").lower() == "true"
+
+    resolved_server_path = _resolve_and_copy_mcp_server_path(
+        explicit_path=known_args.mcp_server_path,
+        current_path=state.current_path,
+        team_ctx_mcp_servers=state.team.team_ctx.get('mcp_servers', []) if state.team and hasattr(state.team, 'team_ctx') else None,
+        interactive=True,
+        auto_copy_bypass=auto_copy_bypass,
+        force_global=known_args.force_global
+    )
+
+    mcp_client = None
+    if resolved_server_path:
+        try:
+            mcp_client = MCPClientNPC()
+            if mcp_client.connect_sync(resolved_server_path):
+                state.mcp_client = mcp_client
+            else:
+                cprint(f"Failed to connect to MCP server at {resolved_server_path}. Corca mode will have limited agent functionality.", "yellow")
+                state.mcp_client = None
+        except Exception as e:
+            cprint(f"Error connecting to MCP server: {e}. Corca mode will have limited agent functionality.", "red")
+            traceback.print_exc()
+            state.mcp_client = None
     else:
-        cprint("No MCP server path provided. Corca mode will have limited agent functionality.", "yellow")
+        cprint("No MCP server path provided or found. Corca mode will have limited agent functionality.", "yellow")
         state.mcp_client = None
 
     while True:
@@ -651,7 +978,11 @@ def enter_corca_mode(command: str,
             prompt_str = f"{colored(os.path.basename(state.current_path), 'blue')}:{prompt_npc_name}🦌> "
             prompt = readline_safe_prompt(prompt_str)
             
-            user_input = get_multiline_input(prompt).strip()
+            if remaining_args:
+                user_input = " ".join(remaining_args)
+                remaining_args = []
+            else:
+                user_input = get_multiline_input(prompt).strip()
             
             if user_input.lower() in ["exit", "quit", "done"]:
                 break
@@ -680,14 +1011,15 @@ def enter_corca_mode(command: str,
     
     render_markdown("\n# Exiting Corca Mode")
     return {"output": "", "messages": state.messages}
+
 def main():
     parser = argparse.ArgumentParser(description="Corca - An MCP-powered npcsh shell.")
     parser.add_argument("--mcp-server-path", type=str, help="Path to an MCP server script to connect to.")
+    parser.add_argument("-g", "--global", dest="force_global", action="store_true", help="Force use of global MCP server.")
     args = parser.parse_args()
 
     command_history, team, default_npc = setup_shell()
     
-  
     project_team_path = os.path.abspath('./npc_team/')
     global_team_path = os.path.expanduser('~/.npcsh/npc_team/')
     
@@ -721,6 +1053,8 @@ def main():
     fake_command_str = "/corca"
     if args.mcp_server_path:
         fake_command_str = f'/corca --mcp-server-path "{args.mcp_server_path}"'
+    elif args.force_global:
+        fake_command_str = "/corca --global"
         
     kwargs = {
         'command': fake_command_str,
@@ -729,5 +1063,6 @@ def main():
     }
     
     enter_corca_mode(**kwargs)
+                 
 if __name__ == "__main__":
     main()

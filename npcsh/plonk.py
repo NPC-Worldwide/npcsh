@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from PIL import Image
 import numpy as np
-import imagehash # Using perceptual hashing for smarter screen comparison
+import imagehash 
 from npcsh._state import NPCSH_VISION_MODEL, NPCSH_VISION_PROVIDER
 import argparse
 from npcpy.npc_compiler import NPC

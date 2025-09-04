@@ -104,16 +104,16 @@ except importlib.metadata.PackageNotFoundError:
 
 
 NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b")
-# print("NPCSH_CHAT_MODEL", NPCSH_CHAT_MODEL)
+
 NPCSH_CHAT_PROVIDER = os.environ.get("NPCSH_CHAT_PROVIDER", "ollama")
-# print("NPCSH_CHAT_PROVIDER", NPCSH_CHAT_PROVIDER)
+
 NPCSH_DB_PATH = os.path.expanduser(
     os.environ.get("NPCSH_DB_PATH", "~/npcsh_history.db")
 )
 NPCSH_VECTOR_DB_PATH = os.path.expanduser(
     os.environ.get("NPCSH_VECTOR_DB_PATH", "~/npcsh_chroma.db")
 )
-#DEFAULT MODES = ['CHAT', 'AGENT', 'CODE', ]
+
 
 NPCSH_DEFAULT_MODE = os.path.expanduser(os.environ.get("NPCSH_DEFAULT_MODE", "agent"))
 NPCSH_VISION_MODEL = os.environ.get("NPCSH_VISION_MODEL", "gemma3:4b")
@@ -181,7 +181,7 @@ class ShellState:
         elif model_type == "video_gen":
             return self.video_gen_model, self.video_gen_provider
         else:
-            return self.chat_model, self.chat_provider # Default fallback
+            return self.chat_model, self.chat_provider 
 CONFIG_KEY_MAP = {
   
     "model": "NPCSH_CHAT_MODEL",
@@ -1009,7 +1009,7 @@ def validate_bash_command(command_parts: list) -> bool:
     base_command = command_parts[0]
 
     if base_command == 'which':
-        return False # disable which arbitrarily cause the command parsing for it is too finnicky.
+        return False 
 
 
   
@@ -1019,7 +1019,7 @@ def validate_bash_command(command_parts: list) -> bool:
         return True
 
     if base_command not in COMMAND_PATTERNS and base_command not in BASH_COMMANDS:
-        return False # Not a recognized command
+        return False 
 
     pattern = COMMAND_PATTERNS.get(base_command)
     if not pattern:
@@ -1303,7 +1303,7 @@ READLINE_HISTORY_FILE = os.path.expanduser("~/.npcsh_readline_history")
 DEFAULT_NPC_TEAM_PATH = os.path.expanduser("~/.npcsh/npc_team/")
 PROJECT_NPC_TEAM_PATH = "./npc_team/"
 
-# --- Global Clients ---
+
 try:
     chroma_client = chromadb.PersistentClient(path=EMBEDDINGS_DB_PATH) if chromadb else None
 except Exception as e:
@@ -1333,11 +1333,11 @@ def get_path_executables() -> List[str]:
 
 import logging
 
-# Set up completion logger
+
 completion_logger = logging.getLogger('npcsh.completion')
 completion_logger.setLevel(logging.WARNING)
 
-# Add handler if not already present
+
 if not completion_logger.handlers:
     handler = logging.StreamHandler(sys.stderr)
     formatter = logging.Formatter('[%(name)s] %(message)s')
@@ -1627,7 +1627,7 @@ def wrap_text(text: str, width: int = 80) -> str:
              lines.append(paragraph)
     return "\n".join(lines)
 
-# --- Readline Setup and Completion ---
+
 
 def setup_readline() -> str:
     """Setup readline with history and completion"""
@@ -1666,7 +1666,7 @@ def store_command_embeddings(command: str, output: Any, state: ShellState):
 
     try:
         output_str = str(output) if output else ""
-        if not command and not output_str: return # Avoid empty embeddings
+        if not command and not output_str: return 
 
         texts_to_embed = [command, output_str]
 
@@ -1735,7 +1735,7 @@ def handle_cd_command(cmd_parts: List[str], state: ShellState) -> Tuple[ShellSta
         output = colored(f"cd: no such file or directory: {target_path}", "red")
     except Exception as e:
         output = colored(f"cd: error changing directory: {e}", "red")
-        os.chdir(original_path) # Revert if error
+        os.chdir(original_path) 
 
     return state, output
 
@@ -1809,18 +1809,18 @@ def parse_generic_command_flags(parts: List[str]) -> Tuple[Dict[str, Any], List[
               
                 if i + 1 < len(parts) and not parts[i + 1].startswith('-'):
                     parsed_kwargs[key_part] = _try_convert_type(parts[i + 1])
-                    i += 1 # Consume the value
+                    i += 1 
                 else:
-                    parsed_kwargs[key_part] = True # Boolean flag
+                    parsed_kwargs[key_part] = True 
         
         elif part.startswith('-'):
             key = part[1:]
           
             if i + 1 < len(parts) and not parts[i + 1].startswith('-'):
                 parsed_kwargs[key] = _try_convert_type(parts[i + 1])
-                i += 1 # Consume the value
+                i += 1 
             else:
-                parsed_kwargs[key] = True # Boolean flag
+                parsed_kwargs[key] = True 
         
         elif '=' in part and not part.startswith('-'):
              key, value = part.split('=', 1)
@@ -2234,7 +2234,7 @@ def execute_command(
                             except Exception:
                                 print(f"Warning: Cannot convert output to string for piping: {type(output)}", file=sys.stderr)
                                 stdin_for_next = None
-                        else: # Output was None
+                        else: 
                             stdin_for_next = None
             except Exception as pipeline_error:
                 import traceback
@@ -2442,7 +2442,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     elif team_dir and os.path.basename(team_dir) != 'npc_team':
         team.name = os.path.basename(team_dir)
     else:
-        team.name = "global_team" # fallback for ~/.npcsh/npc_team
+        team.name = "global_team" 
 
     return command_history, team, forenpc_obj
 
