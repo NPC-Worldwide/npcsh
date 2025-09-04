@@ -37,7 +37,7 @@ def generate_random_events(
             - impact: How this might impact the problem-solving process
             - location: Where in the environment this occurs
     """
-    # If no environment is provided, generate one based on the problem
+  
     if not environment:
         env_prompt = f"""
         I need to create an imaginative environment for an AI to wander through while thinking about this problem:
@@ -65,29 +65,29 @@ def generate_random_events(
         
         environment = env_response.get('response', '')
         if isinstance(environment, (list, dict)) or hasattr(environment, '__iter__') and not isinstance(environment, (str, bytes)):
-            # Handle streaming response
+          
             environment = ''.join([str(chunk) for chunk in environment])
             
         print(f"\nGenerated wandering environment:\n{environment}\n")
     
-    # Define event types with their probability weights
+  
     event_types = [
-        {"type": "encounter", "weight": 0.25},  # Meeting someone/something
-        {"type": "discovery", "weight": 0.2},   # Finding something unexpected
-        {"type": "obstacle", "weight": 0.15},   # Something blocking progress
-        {"type": "insight", "weight": 0.2},     # Sudden realization
-        {"type": "shift", "weight": 0.1},       # Environment changing
-        {"type": "memory", "weight": 0.1}       # Recalling something relevant
+        {"type": "encounter", "weight": 0.25},
+        {"type": "discovery", "weight": 0.2}, 
+        {"type": "obstacle", "weight": 0.15}, 
+        {"type": "insight", "weight": 0.2},   
+        {"type": "shift", "weight": 0.1},     
+        {"type": "memory", "weight": 0.1}     
     ]
     
-    # Calculate cumulative weights for weighted random selection
+  
     cumulative_weights = []
     current_sum = 0
     for event in event_types:
         current_sum += event["weight"]
         cumulative_weights.append(current_sum)
     
-    # Select event types based on their weights
+  
     selected_event_types = []
     for _ in range(num_events):
         r = random.random() * current_sum
@@ -96,7 +96,7 @@ def generate_random_events(
                 selected_event_types.append(event_types[i]["type"])
                 break
     
-    # Generate the actual events based on selected types
+  
     events_prompt = f"""
     I'm wandering through this environment while thinking about a problem:
     
@@ -126,18 +126,18 @@ def generate_random_events(
     
     events_text = events_response.get('response', '')
     if isinstance(events_text, (list, dict)) or hasattr(events_text, '__iter__') and not isinstance(events_text, (str, bytes)):
-        # Handle streaming response
+      
         events_text = ''.join([str(chunk) for chunk in events_text])
     
-    # Try to parse JSON, but have a fallback mechanism
+  
     try:
         import json
         events = json.loads(events_text)
         if not isinstance(events, list):
-            # Handle case where response isn't a list
+          
             events = [{"type": "fallback", "description": events_text, "location": "unknown", "impact": "unknown"}]
     except:
-        # If JSON parsing fails, create structured events from the text
+      
         events = []
         event_chunks = events_text.split("\n\n")
         for i, chunk in enumerate(event_chunks[:num_events]):
@@ -149,7 +149,7 @@ def generate_random_events(
                 "impact": "See description"
             })
     
-    # Ensure we have exactly num_events
+  
     while len(events) < num_events:
         i = len(events)
         event_type = selected_event_types[i] if i < len(selected_event_types) else "unknown"
@@ -197,7 +197,7 @@ def perform_single_wandering(problem,
     Returns:
         tuple: (high_temp_streams, high_temp_samples, assistant_insight, events, environment)
     """
-    # Generate environment and events if needed
+  
     events = []
     if include_events:
         events = generate_random_events(
@@ -209,9 +209,9 @@ def perform_single_wandering(problem,
             num_events=num_events,
             **api_kwargs
         )
-        # Extract the environment if it was generated
+      
         if not environment and events:
-            # The environment was generated in the events function
+          
             environment = get_llm_response(
                 prompt=f"Summarize the environment described in these events: {events}",
                 model=model,
@@ -221,7 +221,7 @@ def perform_single_wandering(problem,
                 **api_kwargs
             ).get('response', '')
             
-    # Initial response with low temperature
+  
     event_context = ""
     if events:
         event_descriptions = [f"• {event['type'].capitalize()} at {event['location']}: {event['description']}" 
@@ -265,17 +265,17 @@ def perform_single_wandering(problem,
     high_temp_streams = []
     high_temp_samples = []
     
-    # Insert events between high-temp streams
+  
     events_to_use = events.copy() if events else []
     
     for n in range(n_high_temp_streams):
         print(f'\nStream #{n+1}')
         
-        # Occasionally inject an event
+      
         if events_to_use and random.random() < 0.1:  
             event = events_to_use.pop(0)
             print(f"\n[EVENT: {event['type']} at {event['location']}]\n{event['description']}\n")
-            # Add the event to the prompt for the next stream
+          
             event_prompt = f"\nSuddenly, {event['description']} This happens at {event['location']}."
         else:
             event_prompt = ""
@@ -336,7 +336,7 @@ def perform_single_wandering(problem,
 
     print('\n\n--- Wandering complete ---\n')
             
-    # Combine the samples and evaluate with initial problem
+  
     event_insights = ""
     if events:
         event_insights = "\n\nDuring your wandering, you encountered these events:\n" + "\n".join(
@@ -434,7 +434,7 @@ def enter_wander_mode(problem,
     while True:
         print(f"\nCurrent exploration: {current_problem}\n")
         
-        # Perform a single wandering session
+      
         high_temp_streams, high_temp_samples, insight, events, env = perform_single_wandering(
             current_problem, 
             npc=npc,
@@ -453,11 +453,11 @@ def enter_wander_mode(problem,
             **api_kwargs
         )
         
-        # If environment was generated, save it
+      
         if not current_environment and env:
             current_environment = env
             
-        # Save this wandering session
+      
         wandering_history.append({
             "problem": current_problem,
             "environment": current_environment,
@@ -468,7 +468,7 @@ def enter_wander_mode(problem,
         })
         if interactive:
             
-            # Ask user if they want to continue wandering
+          
             print("\n\n--- Wandering session complete ---")
             print("Options:")
             print("1. Continue wandering with the same problem and environment")
@@ -480,22 +480,22 @@ def enter_wander_mode(problem,
             choice = input("\nEnter your choice (1-5): ").strip()
             
             if choice == "1":
-                # Continue with the same problem and environment
+              
                 pass
             elif choice == "2":
-                # Continue with a modified problem
+              
                 print("\nBased on the insights gained, what new problem would you like to explore?")
                 new_problem = input("New problem: ").strip()
                 if new_problem:
                     current_problem = new_problem
             elif choice == "3":
-                # Continue with a new environment
+              
                 print("\nDescribe a new environment for your wandering:")
                 new_env = input("New environment: ").strip()
                 if new_env:
                     current_environment = new_env
             elif choice == "4":
-                # Change both problem and environment
+              
                 print("\nBased on the insights gained, what new problem would you like to explore?")
                 new_problem = input("New problem: ").strip()
                 print("\nDescribe a new environment for your wandering:")
@@ -505,17 +505,17 @@ def enter_wander_mode(problem,
                 if new_env:
                     current_environment = new_env
             else:
-                # End wandering mode
+              
                 print("\n=== Exiting Wander Mode ===\n")
                 break
         else:
             break
     
-    # Return the entire wandering history
+  
     return wandering_history
 
 def main():
-    # Example usage
+  
     import argparse    
     parser = argparse.ArgumentParser(description="Enter wander mode for chatting with an LLM")
     parser.add_argument("problem", type=str, help="Problem to solve")
@@ -534,7 +534,7 @@ def main():
     print('npc: ', args.npc)
     print(args.stream)
     
-    # Enter wander mode
+  
     enter_wander_mode(
         args.problem,
         npc=npc,

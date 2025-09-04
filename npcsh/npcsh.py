@@ -68,7 +68,11 @@ Begin by asking a question, issuing a bash command, or typing '/help' for more i
         )
 
 
+### need to incldue auto knowledge graph querying
+
 def run_repl(command_history: CommandHistory, initial_state: ShellState):
+    
+
     '''
     Func for running the npcsh repl    
     '''
@@ -137,7 +141,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
 
                 )
                 
-                # Save the updated KG back to the database under the same exact scope
+              
                 save_kg_to_db(engine,
                               evolved_kg,
                               team_name, 
@@ -181,7 +185,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                 prompt = readline_safe_prompt(f"{cwd_colored}{prompt_end}")
 
             user_input = get_multiline_input(prompt).strip()
-            # Handle Ctrl+Z (ASCII SUB, '\x1a') as exit (Windows and Unix)
+          
             if user_input == "\x1a":
                 exit_shell(state)
 

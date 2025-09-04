@@ -99,7 +99,7 @@ def enter_yap_mode(
 
     system_message = get_system_message(npc) if npc else "You are a helpful assistant."
 
-    # Add conciseness instruction to the system message
+  
     system_message = system_message + " " + concise_instruction
 
     if messages is None or len(messages) == 0:
@@ -117,14 +117,14 @@ def enter_yap_mode(
 
 
 
-    # Initialize PyAudio
+  
     pyaudio_instance = pyaudio.PyAudio()
-    audio_stream = None  # We'll open and close as needed
+    audio_stream = None
     transcription_queue = queue.Queue()
 
-    # Create and properly use the is_speaking event
+  
     is_speaking = threading.Event()
-    is_speaking.clear()  # Not speaking initially
+    is_speaking.clear()
 
     speech_queue = queue.Queue(maxsize=20)
     speech_thread_active = threading.Event()
@@ -134,22 +134,22 @@ def enter_yap_mode(
         nonlocal running, audio_stream
 
         while running and speech_thread_active.is_set():
-            #try:
-            # Get next speech item from queue
+          
+          
             print('.', end='', flush=True)
             if not speech_queue.empty():
                 print('\n')
                 text_to_speak = speech_queue.get(timeout=0.1)
 
-                # Only process if there's text to speak
+              
                 if text_to_speak.strip():
-                    # IMPORTANT: Set is_speaking flag BEFORE starting audio output
+                  
                     is_speaking.set()
 
-                    # Safely close the audio input stream before speaking
+                  
                     current_audio_stream = audio_stream
                     audio_stream = (
-                        None  # Set to None to prevent capture thread from using it
+                        None
                     )
 
                     if current_audio_stream and current_audio_stream.is_active():
@@ -158,21 +158,21 @@ def enter_yap_mode(
 
                     print(f"Speaking full response...")
                     print(text_to_speak)
-                    # Generate and play speech
+                  
                     generate_and_play_speech(text_to_speak)
 
-                    # Delay after speech to prevent echo
+                  
                     time.sleep(0.005 * len(text_to_speak))
                     print(len(text_to_speak))
 
-                    # Clear the speaking flag to allow listening again
+                  
                     is_speaking.clear()
             else:
                 time.sleep(0.5)
-            #except Exception as e:
-            #    print(f"Error in speech thread: {e}")
-            #    is_speaking.clear()  # Make sure to clear the flag if there's an error
-            #    time.sleep(0.1)
+          
+          
+          
+          
 
     def safely_close_audio_stream(stream):
         """Safely close an audio stream with error handling"""
@@ -184,38 +184,38 @@ def enter_yap_mode(
             except Exception as e:
                 print(f"Error closing audio stream: {e}")
 
-    # Start speech thread
+  
     speech_thread = threading.Thread(target=speech_playback_thread)
     speech_thread.daemon = True
     speech_thread.start()
 
     def generate_and_play_speech(text):
         try:
-            # Create a temporary file for audio
+          
             unique_id = str(time.time()).replace(".", "")
             temp_dir = tempfile.gettempdir()
             wav_file = os.path.join(temp_dir, f"temp_{unique_id}.wav")
 
-            # Generate speech based on selected TTS model
+          
             if tts_model == "kokoro" and kokoro_pipeline:
-                # Use Kokoro for generation
+              
                 generator = kokoro_pipeline(text, voice=voice)
 
-                # Get the audio from the generator
+              
                 for _, _, audio in generator:
-                    # Save audio to WAV file
+                  
                     import soundfile as sf
 
                     sf.write(wav_file, audio, 24000)
-                    break  # Just use the first chunk for now
+                    break
             else:
-                # Fall back to gTTS
+              
                 mp3_file = os.path.join(temp_dir, f"temp_{unique_id}.mp3")
                 tts = gTTS(text=text, lang="en", slow=False)
                 tts.save(mp3_file)
                 convert_mp3_to_wav(mp3_file, wav_file)
 
-            # Play the audio
+          
             wf = wave.open(wav_file, "rb")
             p = pyaudio.PyAudio()
 
@@ -235,7 +235,7 @@ def enter_yap_mode(
             stream.close()
             p.terminate()
 
-            # Cleanup temp files
+          
             try:
                 if os.path.exists(wav_file):
                     os.remove(wav_file)
@@ -248,15 +248,15 @@ def enter_yap_mode(
         except Exception as e:
             print(f"Error in TTS process: {e}")
 
-    # Modified speak_text function that just queues text
+  
     def speak_text(text):
         speech_queue.put(text)
 
     def process_input(user_input, messages):
-        #try:
+      
         full_response = ""
 
-        # Use get_stream for streaming response
+      
         check = check_llm_command(
             user_input,
             npc=npc,
@@ -266,48 +266,48 @@ def enter_yap_mode(
             provider=provider,
             stream=False,
         )
-        #mport pdb 
-        #pdb.set_trace()
+      
+      
         assistant_reply = check["output"]
         messages = check['messages']
-        #print(messages)
-        #import pdb 
-        #pdb.set_trace()
+      
+      
+      
         if stream and not isinstance(assistant_reply,str) and not isinstance(assistant_reply, dict):
             assistant_reply = print_and_process_stream_with_markdown(assistant_reply, model, provider)
         elif isinstance(assistant_reply,dict):
-            # assume its a jinx output, to fix later
+          
             assistant_reply = assistant_reply.get('output')
             render_markdown(assistant_reply)
         full_response += assistant_reply
 
-        print("\n")  # End the progress display
+        print("\n")
 
-        # Process and speak the entire response at once
+      
         if full_response.strip():
             processed_text = process_text_for_tts(full_response)
             speak_text(processed_text)
 
-        # Add assistant's response to messages
+      
         messages.append({"role": "assistant", "content": full_response})
         return messages 
-        #except Exception as e:
-        #    print(f"Error in LLM response: {e}")
-        #    speak_text("I'm sorry, there was an error processing your request.")
+      
+      
+      
 
-    # Function to capture and process audio
+  
 
 
     def capture_audio():
         nonlocal is_recording, recording_data, buffer_data, last_speech_time, running, is_speaking
         nonlocal audio_stream, transcription_queue
 
-        # Don't try to record if we're speaking
+      
         if is_speaking.is_set():
             return False
 
         try:
-            # Only create a new audio stream if we don't have one
+          
             if audio_stream is None and not is_speaking.is_set():
                 audio_stream = pyaudio_instance.open(
                     format=FORMAT,
@@ -317,9 +317,9 @@ def enter_yap_mode(
                     frames_per_buffer=CHUNK,
                 )
 
-            # Add timeout counter
+          
             timeout_counter = 0
-            max_timeout = 100  # About 10 seconds at 0.1s intervals
+            max_timeout = 100
 
             print("\nListening for speech...")
 
@@ -331,7 +331,7 @@ def enter_yap_mode(
                 and timeout_counter < max_timeout
             ):
                 try:
-                    # Add non-blocking read with timeout
+                  
                     data = audio_stream.read(CHUNK, exception_on_overflow=False)
                     
                     if not data:
@@ -339,7 +339,7 @@ def enter_yap_mode(
                         time.sleep(0.1)
                         continue
                         
-                    # Reset timeout on successful read
+                  
                     timeout_counter = 0
                     
                     audio_array = np.frombuffer(data, dtype=np.int16)
@@ -349,11 +349,11 @@ def enter_yap_mode(
                     audio_float = audio_array.astype(np.float32) / 32768.0
                     tensor = torch.from_numpy(audio_float).to(device)
                     
-                    # Add timeout to VAD processing
+                  
                     speech_prob = vad_model(tensor, RATE).item()
                     current_time = time.time()
 
-                    if speech_prob > 0.5:  # VAD threshold
+                    if speech_prob > 0.5:
                         last_speech_time = current_time
                         if not is_recording:
                             is_recording = True
@@ -365,28 +365,28 @@ def enter_yap_mode(
                         if is_recording:
                             if (
                                 current_time - last_speech_time > 1
-                            ):  # silence duration
+                            ):
                                 is_recording = False
                                 print("Speech ended, transcribing...")
 
-                                # Stop stream before transcribing
+                              
                                 safely_close_audio_stream(audio_stream)
                                 audio_stream = None
 
-                                # Transcribe in this thread to avoid race conditions
+                              
                                 transcription = transcribe_recording(recording_data)
                                 if transcription:
                                     transcription_queue.put(transcription)
                                 recording_data = []
-                                return True  # Got speech
+                                return True
                         else:
                             buffer_data.append(data)
                             if len(buffer_data) > int(
                                 0.65 * RATE / CHUNK
-                            ):  # buffer duration
+                            ):
                                 buffer_data.pop(0)
 
-                    # Check frequently if we need to stop capturing
+                  
                     if is_speaking.is_set():
                         safely_close_audio_stream(audio_stream)
                         audio_stream = None
@@ -399,30 +399,30 @@ def enter_yap_mode(
         except Exception as e:
             print(f"Error in audio capture: {e}")
 
-        # Close stream if we exit without finding speech
+      
         safely_close_audio_stream(audio_stream)
         audio_stream = None
 
         return False
 
     def process_text_for_tts(text):
-        # Remove special characters that might cause issues in TTS
+      
         text = re.sub(r"[*<>{}()\[\]&%#@^_=+~]", "", text)
         text = text.strip()
-        # Add spaces after periods that are followed by words (for better pronunciation)
+      
         text = re.sub(r"(\w)\.(\w)\.", r"\1 \2 ", text)
         text = re.sub(r"([.!?])(\w)", r"\1 \2", text)
         return text
 
-    # Now that functions are defined, play welcome messages
+  
     speak_text("Entering yap mode. Please wait.")
 
     try:
-        loaded_content = {}  # New dictionary to hold loaded content
+        loaded_content = {}
         if not conversation_id:
             conversation_id = start_new_conversation()
         command_history = CommandHistory()
-        # Load specified files if any
+      
         if files:
             for file in files:
                 extension = os.path.splitext(file)[1].lower()
@@ -503,12 +503,12 @@ def enter_yap_mode(
                     )
 
 
-                    continue  # Skip audio capture this cycle
-            if not is_speaking.is_set():  # Only capture if not currently speaking
+                    continue
+            if not is_speaking.is_set():
                 print('capturing audio')
                 got_speech = capture_audio()
 
-                # If we got speech, process it
+              
                 if got_speech:
                     try:
                         transcription = transcription_queue.get_nowait()
@@ -517,18 +517,18 @@ def enter_yap_mode(
                     except queue.Empty:
                         pass
             else:
-                # If we're speaking, just wait a bit without spamming the console
+              
                 time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("\nInterrupted by user.")
 
     finally:
-        # Set running to False to signal threads to exit
+      
         running = False
         speech_thread_active.clear()
 
-        # Clean up audio resources
+      
         safely_close_audio_stream(audio_stream)
 
         if pyaudio_instance:
@@ -542,7 +542,7 @@ def enter_yap_mode(
     return {"messages": messages, "output": "yap mode session ended."}
 
 def main():
-    # Example usage
+  
     import argparse    
     parser = argparse.ArgumentParser(description="Enter yap mode for chatting with an NPC")
     parser.add_argument("--model", default=NPCSH_CHAT_MODEL, help="Model to use")
@@ -567,7 +567,7 @@ def main():
         provider = args.provider
     else:
         provider = sibiji.provider        
-    # Enter spool mode
+  
     enter_yap_mode(
         messages=None,
         model= model,

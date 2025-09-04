@@ -69,7 +69,7 @@ class MCPClientNPC:
             command=cmd_parts[0], 
             args=['-c', f'import sys; sys.path.pop(0) if sys.path[0] == "{os.path.dirname(abs_path)}" else None; exec(open("{abs_path}").read())'], 
             env=os.environ.copy(),
-            cwd=os.path.dirname(os.path.dirname(abs_path))  # Run from project root
+            cwd=os.path.dirname(os.path.dirname(abs_path))
         )
         if self.session:
             await self._exit_stack.aclose()
@@ -102,7 +102,7 @@ class MCPClientNPC:
                     
                     print(f"DEBUG: About to call MCP tool {tool_name}")
                     try:
-                        # Add a timeout
+                      
                         result = await asyncio.wait_for(
                             self.session.call_tool(tool_name, args), 
                             timeout=30.0
@@ -119,7 +119,7 @@ class MCPClientNPC:
                 def make_tool_func(tool_name):
                     async def tool_func(**kwargs):
                         print(f"DEBUG: Tool wrapper called for {tool_name} with {kwargs}")
-                        # Clean up None string values
+                      
                         cleaned_kwargs = {}
                         for k, v in kwargs.items():
                             if v == 'None':
@@ -172,8 +172,8 @@ def process_mcp_stream(stream_response, active_npc):
     
     interrupted = False
     
-    # Save cursor position at the start
-    sys.stdout.write('\033[s')  # Save cursor position
+  
+    sys.stdout.write('\033[s')
     sys.stdout.flush()
     try:
         for chunk in stream_response:        
@@ -201,7 +201,7 @@ def process_mcp_stream(stream_response, active_npc):
                     collected_content += chunk.message.content
                     print(chunk.message.content, end='', flush=True)
                     
-            # Handle OpenAI-style responses (including gpt-oss)
+          
             else:
                 if hasattr(chunk, 'choices') and chunk.choices:
                     delta = chunk.choices[0].delta
@@ -236,12 +236,12 @@ def process_mcp_stream(stream_response, active_npc):
         print('\n⚠️ Stream interrupted by user')
     if interrupted:
         str_output += "\n\n[⚠️ Response interrupted by user]"
-    # Always restore cursor position and clear everything after it
-    sys.stdout.write('\033[u')  # Restore cursor position
-    sys.stdout.write('\033[J')  # Clear from cursor down
+  
+    sys.stdout.write('\033[u')
+    sys.stdout.write('\033[J')
     sys.stdout.flush()
     
-    # Now render the markdown at the restored position
+  
     render_markdown(collected_content)
     print('\n')
     return collected_content, tool_calls
@@ -687,7 +687,7 @@ def main():
 
     command_history, team, default_npc = setup_shell()
     
-    # Override default_npc with corca priority
+  
     project_team_path = os.path.abspath('./npc_team/')
     global_team_path = os.path.expanduser('~/.npcsh/npc_team/')
     

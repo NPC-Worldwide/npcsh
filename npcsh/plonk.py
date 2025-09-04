@@ -40,7 +40,7 @@ def format_plonk_summary(synthesized_summary: list) -> str:
 def get_image_hash(image_path):
     """Generate a perceptual hash of the image to detect screen changes intelligently."""
     try:
-        # Perceptual hash is more robust to minor changes like a blinking cursor
+      
         return imagehash.phash(Image.open(image_path))
     except Exception as e:
         print(f"Could not generate image hash: {e}")
@@ -59,7 +59,7 @@ def add_click_vector_trail(image_path, click_history, output_path):
         font_size = max(12, min(width, height) // 80)
         colors = plt.cm.viridis(np.linspace(0.3, 1.0, len(click_history)))
         
-        # Draw arrows connecting clicks first
+      
         if len(click_history) > 1:
             for i in range(len(click_history) - 1):
                 x1, y1 = (click_history[i]['x'] * width / 100, click_history[i]['y'] * height / 100)
@@ -68,7 +68,7 @@ def add_click_vector_trail(image_path, click_history, output_path):
                            arrowprops=dict(arrowstyle='->,head_width=0.6,head_length=0.8', 
                                          lw=3, color='cyan', alpha=0.9, shrinkA=25, shrinkB=25))
 
-        # Draw numbered points and coordinate labels for ALL points
+      
         for i, click in enumerate(click_history):
             x_pixel = int(click['x'] * width / 100)
             y_pixel = int(click['y'] * height / 100)
@@ -79,15 +79,15 @@ def add_click_vector_trail(image_path, click_history, output_path):
                                    facecolor=colors[i], alpha=0.9)
             ax.add_patch(circle)
             
-            # Draw the number inside the circle
+          
             ax.text(x_pixel, y_pixel, str(i+1),
                     fontsize=font_size + 4, 
                     color='white', weight='bold', ha='center', va='center')
             
-            # FIXED: Draw the coordinate text label for EVERY point
+          
             coord_text = f"({click['x']}, {click['y']})"
-            ax.text(x_pixel + radius + 5,  # Position text to the right of the circle
-                    y_pixel,              # Vertically centered with the circle
+            ax.text(x_pixel + radius + 5,
+                    y_pixel,            
                     coord_text,
                     fontsize=font_size, 
                     color='white',

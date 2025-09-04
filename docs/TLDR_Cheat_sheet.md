@@ -107,11 +107,11 @@ jinja_env = Environment(loader=FileSystemLoader('.'))
 jinx_data = {
     "jinx_name": "pdf_analyzer",
     "inputs": ["request", "file"],
-    "steps": [{  # Make this a list with one dict inside
+    "steps": [{
         "engine": "python",
         "code": """
 try:
-    import fitz  # PyMuPDF
+    import fitz
 
     shared_context = {}
     shared_context['inputs'] = '{{request}}'
@@ -120,16 +120,16 @@ try:
 
 
 
-    # Open the PDF
+  
     doc = fitz.open(pdf_path)
     text = ""
 
-    # Extract text from each page
+  
     for page_num in range(len(doc)):
         page = doc[page_num]
         text += page.get_text()
 
-    # Close the document
+  
     doc.close()
 
     print(f"Extracted text length: {len(text)}")
@@ -216,14 +216,14 @@ def create_test_data(filepath="sales_data.csv"):
         }
     )
 
-    # Add patterns to make data more realistic
+  
     sales_data["revenue"] *= 1 + 0.3 * np.sin(
         np.pi * np.arange(90) / 30
-    )  # Seasonal pattern
-    sales_data.loc[sales_data["channel"] == "Mobile", "revenue"] *= 1.1  # Mobile growth
+    )
+    sales_data.loc[sales_data["channel"] == "Mobile", "revenue"] *= 1.1
     sales_data.loc[
         sales_data["channel"] == "Online", "customer_count"
-    ] *= 1.2  # Online customer growth
+    ] *= 1.2
 
     sales_data.to_csv(filepath, index=False)
     return filepath, sales_data
@@ -264,27 +264,27 @@ analytics_team = [
         "primary_directive": "You analyze sales performance data, focusing on revenue trends, customer behavior metrics, and market indicators. Your expertise is in extracting actionable insights from complex datasets.",
         "model": "gpt-4o-mini",
         "provider": "openai",
-        "jinxs": [code_execution_jinx],  # Only the code execution jinx
+        "jinxs": [code_execution_jinx],
     },
     {
         "name": "researcher",
         "primary_directive": "You specialize in causal analysis and experimental design. Given data insights, you determine what factors drive observed patterns and design tests to validate hypotheses.",
         "model": "gpt-4o-mini",
         "provider": "openai",
-        "jinxs": [code_execution_jinx],  # Only the code execution jinx
+        "jinxs": [code_execution_jinx],
     },
     {
         "name": "engineer",
         "primary_directive": "You implement data pipelines and optimize data processing. When given analysis requirements, you create efficient workflows to automate insights generation.",
         "model": "gpt-4o-mini",
         "provider": "openai",
-        "jinxs": [code_execution_jinx],  # Only the code execution jinx
+        "jinxs": [code_execution_jinx],
     },
 ]
 
 
 def create_analytics_team():
-    # Initialize NPCs with just the code execution jinx
+  
     npcs = []
     for npc_data in analytics_team:
         npc = NPC(
@@ -292,32 +292,32 @@ def create_analytics_team():
             primary_directive=npc_data["primary_directive"],
             model=npc_data["model"],
             provider=npc_data["provider"],
-            jinxs=[code_execution_jinx],  # Only code execution jinx
+            jinxs=[code_execution_jinx],
         )
         npcs.append(npc)
 
-    # Create coordinator with just code execution jinx
+  
     coordinator = NPC(
         name="coordinator",
         primary_directive="You coordinate the analytics team, ensuring each specialist contributes their expertise effectively. You synthesize insights and manage the workflow.",
         model="gpt-4o-mini",
         provider="openai",
-        jinxs=[code_execution_jinx],  # Only code execution jinx
+        jinxs=[code_execution_jinx],
     )
 
-    # Create team
+  
     team = Team(npcs=npcs, foreman=coordinator)
     return team
 
 
 def main():
-    # Create and save test data
+  
     data_path, sales_data = create_test_data()
 
-    # Initialize team
+  
     team = create_analytics_team()
 
-    # Run analysis - updated prompt to reflect code execution approach
+  
     results = team.orchestrate(
         f"""
     Analyze the sales data at {data_path} to:
@@ -340,7 +340,7 @@ def main():
 
     print(results)
 
-    # Cleanup
+  
     os.remove(data_path)
 
 

@@ -183,43 +183,43 @@ class ShellState:
         else:
             return self.chat_model, self.chat_provider # Default fallback
 CONFIG_KEY_MAP = {
-    # Chat
+  
     "model": "NPCSH_CHAT_MODEL",
     "chatmodel": "NPCSH_CHAT_MODEL",
     "provider": "NPCSH_CHAT_PROVIDER",
     "chatprovider": "NPCSH_CHAT_PROVIDER",
 
-    # Vision
+  
     "vmodel": "NPCSH_VISION_MODEL",
     "visionmodel": "NPCSH_VISION_MODEL",
     "vprovider": "NPCSH_VISION_PROVIDER",
     "visionprovider": "NPCSH_VISION_PROVIDER",
 
-    # Embedding
+  
     "emodel": "NPCSH_EMBEDDING_MODEL",
     "embeddingmodel": "NPCSH_EMBEDDING_MODEL",
     "eprovider": "NPCSH_EMBEDDING_PROVIDER",
     "embeddingprovider": "NPCSH_EMBEDDING_PROVIDER",
 
-    # Reasoning
+  
     "rmodel": "NPCSH_REASONING_MODEL",
     "reasoningmodel": "NPCSH_REASONING_MODEL",
     "rprovider": "NPCSH_REASONING_PROVIDER",
     "reasoningprovider": "NPCSH_REASONING_PROVIDER",
 
-    # Image generation
+  
     "igmodel": "NPCSH_IMAGE_GEN_MODEL",
     "imagegenmodel": "NPCSH_IMAGE_GEN_MODEL",
     "igprovider": "NPCSH_IMAGE_GEN_PROVIDER",
     "imagegenprovider": "NPCSH_IMAGE_GEN_PROVIDER",
 
-    # Video generation
+  
     "vgmodel": "NPCSH_VIDEO_GEN_MODEL",
     "videogenmodel": "NPCSH_VIDEO_GEN_MODEL",
     "vgprovider": "NPCSH_VIDEO_GEN_PROVIDER",
     "videogenprovider": "NPCSH_VIDEO_GEN_PROVIDER",
 
-    # Other
+  
     "sprovider": "NPCSH_SEARCH_PROVIDER",
     "mode": "NPCSH_DEFAULT_MODE",
     "stream": "NPCSH_STREAM_OUTPUT",
@@ -233,13 +233,13 @@ def set_npcsh_config_value(key: str, value: str):
     Set NPCSH config values at runtime using shorthand (case-insensitive) or full keys.
     Updates os.environ, globals, and ShellState defaults.
     """
-    # case-insensitive lookup for shorthand
+  
     env_key = CONFIG_KEY_MAP.get(key.lower(), key)
 
-    # update env
+  
     os.environ[env_key] = value
 
-    # normalize types
+  
     if env_key in ["NPCSH_STREAM_OUTPUT", "NPCSH_BUILD_KG"]:
         parsed_val = value.strip().lower() in ["1", "true", "yes"]
     elif env_key.endswith("_PATH"):
@@ -247,10 +247,10 @@ def set_npcsh_config_value(key: str, value: str):
     else:
         parsed_val = value
 
-    # update global
+  
     globals()[env_key] = parsed_val
 
-    # update ShellState defaults
+  
     field_map = {
         "NPCSH_CHAT_MODEL": "chat_model",
         "NPCSH_CHAT_PROVIDER": "chat_provider",
@@ -298,7 +298,7 @@ def get_npc_path(npc_name: str, db_path: str) -> str:
         except Exception as e:
             print(f"Database query error: {e}")
 
-    # Fallback to file paths
+  
     if os.path.exists(project_npc_path):
         return project_npc_path
 
@@ -327,7 +327,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Create the compiled_npcs table if it doesn't exist
+  
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS compiled_npcs (
@@ -338,7 +338,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
         """
     )
 
-    # Get the path to the npc_team directory in the package
+  
     package_dir = os.path.dirname(__file__)
     package_npc_team_dir = os.path.join(package_dir, "npc_team")
 
@@ -368,7 +368,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                 shutil.copy2(source_path, destination_path)
                 print(f"Copied ctx {filename} to {destination_path}")
 
-    # Copy jinxs from package to user directory
+  
     package_jinxs_dir = os.path.join(package_npc_team_dir, "jinxs")
     if os.path.exists(package_jinxs_dir):
         for filename in os.listdir(package_jinxs_dir):
@@ -416,19 +416,19 @@ def get_shell_config_file() -> str:
     Returns:
         The path to the shell configuration file.
     """
-    # Check the current shell
+  
     shell = os.environ.get("SHELL", "")
 
     if "zsh" in shell:
         return os.path.expanduser("~/.zshrc")
     elif "bash" in shell:
-        # On macOS, use .bash_profile for login shells
+      
         if platform.system() == "Darwin":
             return os.path.expanduser("~/.bash_profile")
         else:
             return os.path.expanduser("~/.bashrc")
     else:
-        # Default to .bashrc if we can't determine the shell
+      
         return os.path.expanduser("~/.bashrc")
 
 
@@ -569,14 +569,14 @@ def get_argument_help() -> Dict[str, List[str]]:
     arg_map = {arg: [] for arg in CANONICAL_ARGS}
     
     for arg in CANONICAL_ARGS:
-        # Generate all possible prefixes for this argument
+      
         for i in range(1, len(arg)):
             prefix = arg[:i]
             
-            # Check if this prefix is an unambiguous shorthand
+          
             matches = [canonical for canonical in CANONICAL_ARGS if canonical.startswith(prefix)]
             
-            # If this prefix uniquely resolves to our current argument, it's a valid shorthand
+          
             if len(matches) == 1 and matches[0] == arg:
                 arg_map[arg].append(prefix)
 
@@ -668,7 +668,7 @@ BASH_COMMANDS = [
     "until",
     "wait",
     "while",
-    # Common Unix commands
+  
     "ls",
     "cp",
     "mv",
@@ -768,23 +768,23 @@ def start_interactive_session(command: str) -> int:
     if ON_WINDOWS or termios is None or tty is None or pty is None or select is None or signal is None:
         print("Interactive terminal sessions are not supported on Windows.")
         return 1
-    # Save the current terminal settings
+  
     old_tty = termios.tcgetattr(sys.stdin)
     try:
-        # Create a pseudo-terminal
+      
         master_fd, slave_fd = pty.openpty()
 
-        # Start the process
+      
         p = subprocess.Popen(
             command,
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
             shell=True,
-            preexec_fn=os.setsid,  # Create a new process group
+            preexec_fn=os.setsid,
         )
 
-        # Set the terminal to raw mode
+      
         tty.setraw(sys.stdin.fileno())
 
         def handle_timeout(signum, frame):
@@ -802,9 +802,9 @@ def start_interactive_session(command: str) -> int:
                 else:
                     break
 
-        # Wait for the process to terminate with a timeout
+      
         signal.signal(signal.SIGALRM, handle_timeout)
-        signal.alarm(5)  # 5 second timeout
+        signal.alarm(5)
         try:
             p.wait()
         except TimeoutError:
@@ -817,7 +817,7 @@ def start_interactive_session(command: str) -> int:
             signal.alarm(0)
 
     finally:
-        # Restore the terminal settings
+      
         termios.tcsetattr(sys.stdin, termios.TCSAFLUSH, old_tty)
 
     return p.returncode
@@ -1012,7 +1012,7 @@ def validate_bash_command(command_parts: list) -> bool:
         return False # disable which arbitrarily cause the command parsing for it is too finnicky.
 
 
-    # Allow interactive commands (ipython, python, sqlite3, r) as valid commands
+  
     INTERACTIVE_COMMANDS = ["ipython", "python", "sqlite3", "r"]
     TERMINAL_EDITORS = ["vim", "nano", "emacs"]
     if base_command in TERMINAL_EDITORS or base_command in INTERACTIVE_COMMANDS:
@@ -1023,7 +1023,7 @@ def validate_bash_command(command_parts: list) -> bool:
 
     pattern = COMMAND_PATTERNS.get(base_command)
     if not pattern:
-        return True  # Allow commands in BASH_COMMANDS but not in COMMAND_PATTERNS
+        return True
 
     args = []
     flags = []
@@ -1033,14 +1033,14 @@ def validate_bash_command(command_parts: list) -> bool:
         if part.startswith("-"):
             flags.append(part)
             if part not in pattern["flags"]:
-                return False  # Invalid flag
+                return False
         else:
             args.append(part)
 
-    # Check if 'who' has any arguments (it shouldn't)
+  
     if base_command == "who" and args:
         return False
-    # Check if any required arguments are missing
+  
     if pattern.get("requires_arg", False) and not args:
         return False
 
@@ -1077,7 +1077,7 @@ def execute_set_command(command: str, value: str) -> str:
 
     config_path = os.path.expanduser("~/.npcshrc")
 
-    # Map command to environment variable name
+  
     var_map = {
         "model": "NPCSH_CHAT_MODEL",
         "provider": "NPCSH_CHAT_PROVIDER",
@@ -1089,14 +1089,14 @@ def execute_set_command(command: str, value: str) -> str:
 
     env_var = var_map[command]
 
-    # Read the current configuration
+  
     if os.path.exists(config_path):
         with open(config_path, "r") as f:
             lines = f.readlines()
     else:
         lines = []
 
-    # Check if the property exists and update it, or add it if it doesn't exist
+  
     property_exists = False
     for i, line in enumerate(lines):
         if line.startswith(f"export {env_var}="):
@@ -1107,7 +1107,7 @@ def execute_set_command(command: str, value: str) -> str:
     if not property_exists:
         lines.append(f"export {env_var}='{value}'\n")
 
-    # Save the updated configuration
+  
     with open(config_path, "w") as f:
         f.writelines(lines)
 
@@ -1139,7 +1139,7 @@ def set_npcsh_initialized() -> None:
             npcshrc.write(content)
             npcshrc.truncate()
 
-    # Also set it for the current session
+  
     os.environ["NPCSH_INITIALIZED"] = "1"
     print("NPCSH initialization flag set in .npcshrc")
 
@@ -1158,7 +1158,7 @@ def file_has_changed(source_path: str, destination_path: str) -> bool:
         A boolean indicating whether the files are different
     """
 
-    # Compare file modification times or contents to decide whether to update the file
+  
     return not filecmp.cmp(source_path, destination_path, shallow=False)
 
 
@@ -1245,7 +1245,7 @@ def read_rc_file_windows(path):
         for line in f:
             line = line.strip()
             if line and not line.startswith("#"):
-                # Match KEY='value' or KEY="value" format
+              
                 match = re.match(r'^([A-Z_]+)\s*=\s*[\'"](.*?)[\'"]$', line)
                 if match:
                     key, value = match.groups()
@@ -1254,11 +1254,11 @@ def read_rc_file_windows(path):
 
 
 def get_setting_windows(key, default=None):
-    # Try environment variable first
+  
     if env_value := os.getenv(key):
         return env_value
 
-    # Fall back to .npcshrc file
+  
     config = read_rc_file_windows(get_npcshrc_path_windows())
     return config.get(key, default)
 
@@ -1335,7 +1335,7 @@ import logging
 
 # Set up completion logger
 completion_logger = logging.getLogger('npcsh.completion')
-completion_logger.setLevel(logging.WARNING)  # Default to WARNING (quiet)
+completion_logger.setLevel(logging.WARNING)
 
 # Add handler if not already present
 if not completion_logger.handlers:
@@ -1356,7 +1356,7 @@ def make_completer(shell_state: ShellState, router: Any):
             
             matches = []
             
-            # Check if we're completing a slash command
+          
             if begidx > 0 and buffer[begidx-1] == '/':
                 completion_logger.debug(f"Slash command completion - text='{text}'")
                 slash_commands = get_slash_commands(shell_state, router)
@@ -1414,19 +1414,19 @@ def get_slash_commands(state: ShellState, router: Any) -> List[str]:
         commands.extend(router_cmds)
         completion_logger.debug(f"Router commands: {router_cmds}")
     
-    # Team jinxs
+  
     if state.team and hasattr(state.team, 'jinxs_dict'):
         jinx_cmds = [f"/{jinx}" for jinx in state.team.jinxs_dict.keys()]
         commands.extend(jinx_cmds)
         completion_logger.debug(f"Jinx commands: {jinx_cmds}")
     
-    # NPC names for switching
+  
     if state.team and hasattr(state.team, 'npcs'):
         npc_cmds = [f"/{npc}" for npc in state.team.npcs.keys()]
         commands.extend(npc_cmds)
         completion_logger.debug(f"NPC commands: {npc_cmds}")
     
-    # Mode switching commands
+  
     mode_cmds = ['/cmd', '/agent', '/chat']
     commands.extend(mode_cmds)
     completion_logger.debug(f"Mode commands: {mode_cmds}")
@@ -1460,7 +1460,7 @@ def get_file_completions(text: str) -> List[str]:
                     else:
                         completion = os.path.join(basedir, item)
                     
-                    # Just return the name, let readline handle spacing/slashes
+                  
                     matches.append(completion)
         except (PermissionError, OSError):
             pass
@@ -1470,15 +1470,15 @@ def get_file_completions(text: str) -> List[str]:
         return []
 def is_command_position(buffer: str, begidx: int) -> bool:
     """Determine if cursor is at a command position"""
-    # Get the part of buffer before the current word
+  
     before_word = buffer[:begidx]
     
-    # Split by command separators 
+  
     parts = re.split(r'[|;&]', before_word)
     current_command_part = parts[-1].strip()
     
-    # If there's nothing before the current word in this command part,
-    # or only whitespace, we're at command position
+  
+  
     return len(current_command_part) == 0
 
 
@@ -1608,10 +1608,10 @@ def format_file_listing(output: str) -> str:
         colored_filepath = colored(filepath_guess, color, attrs=attrs)
 
         if len(parts) > 1 :
-             # Handle cases like 'ls -l' where filename is last
+           
              colored_line = " ".join(parts[:-1] + [colored_filepath])
         else:
-             # Handle cases where line is just the filename
+           
              colored_line = colored_filepath
 
         colored_lines.append(colored_line)
@@ -1635,7 +1635,7 @@ def setup_readline() -> str:
         readline.read_history_file(READLINE_HISTORY_FILE)
         readline.set_history_length(1000)
         
-        # Don't set completer here - it will be set in run_repl with state
+      
         readline.parse_and_bind("tab: complete")
         
         readline.parse_and_bind("set enable-bracketed-paste on")
@@ -1716,7 +1716,7 @@ def handle_interactive_command(cmd_parts: List[str], state: ShellState) -> Tuple
     command_name = cmd_parts[0]
     print(f"Starting interactive {command_name} session...")
     try:
-        # CORRECTED: Join all parts into one string to pass to the function.
+      
         full_command_str = " ".join(cmd_parts)
         return_code = start_interactive_session(full_command_str)
         output = f"Interactive {command_name} session ended with return code {return_code}"
@@ -1806,7 +1806,7 @@ def parse_generic_command_flags(parts: List[str]) -> Tuple[Dict[str, Any], List[
                 key, value = key_part.split('=', 1)
                 parsed_kwargs[key] = _try_convert_type(value)
             else:
-                # Look ahead for a value
+              
                 if i + 1 < len(parts) and not parts[i + 1].startswith('-'):
                     parsed_kwargs[key_part] = _try_convert_type(parts[i + 1])
                     i += 1 # Consume the value
@@ -1815,7 +1815,7 @@ def parse_generic_command_flags(parts: List[str]) -> Tuple[Dict[str, Any], List[
         
         elif part.startswith('-'):
             key = part[1:]
-            # Look ahead for a value
+          
             if i + 1 < len(parts) and not parts[i + 1].startswith('-'):
                 parsed_kwargs[key] = _try_convert_type(parts[i + 1])
                 i += 1 # Consume the value
@@ -1837,7 +1837,7 @@ def parse_generic_command_flags(parts: List[str]) -> Tuple[Dict[str, Any], List[
 def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
     """Determine if this interaction is too trivial for KG processing"""
     
-    # Skip if user input is very short (less than 10 chars)
+  
     if len(user_input.strip()) < 10:
         return True
     
@@ -1866,7 +1866,7 @@ def execute_slash_command(command: str,
     all_command_parts = shlex.split(command)
     command_name = all_command_parts[0].lstrip('/')
     
-    # Handle NPC switching commands
+  
     if command_name in ['n', 'npc']:
         npc_to_switch_to = all_command_parts[1] if len(all_command_parts) > 1 else None
         if npc_to_switch_to and state.team and npc_to_switch_to in state.team.npcs:
@@ -1876,7 +1876,7 @@ def execute_slash_command(command: str,
             available_npcs = list(state.team.npcs.keys()) if state.team else []
             return state, colored(f"NPC '{npc_to_switch_to}' not found. Available NPCs: {', '.join(available_npcs)}", "red")
     
-    # Check router commands first
+  
     handler = router.get_route(command_name)
     if handler:
         parsed_flags, positional_args = parse_generic_command_flags(all_command_parts[1:])
@@ -1892,12 +1892,12 @@ def execute_slash_command(command: str,
             'positional_args': positional_args,
             'plonk_context': state.team.shared_context.get('PLONK_CONTEXT') if state.team and hasattr(state.team, 'shared_context') else None,
             
-            # Default chat model/provider
+          
             'model': state.npc.model if isinstance(state.npc, NPC) and state.npc.model else state.chat_model,
             'provider': state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else state.chat_provider,
             'npc': state.npc,
             
-            # All other specific defaults
+          
             'sprovider': state.search_provider,
             'emodel': state.embedding_model,
             'eprovider': state.embedding_provider,
@@ -1918,7 +1918,7 @@ def execute_slash_command(command: str,
 
         render_markdown(f'- Calling {command_name} handler {kwarg_part} ')
         
-        # Handle model/provider inference
+      
         if 'model' in normalized_flags and 'provider' not in normalized_flags:
             inferred_provider = lookup_provider(normalized_flags['model'])
             if inferred_provider:
@@ -1947,7 +1947,7 @@ def execute_slash_command(command: str,
             traceback.print_exc()
             return state, colored(f"Error executing slash command '{command_name}': {e}", "red")
 
-    # Check for jinxs in active NPC
+  
     active_npc = state.npc if isinstance(state.npc, NPC) else None
     jinx_to_execute = None
     executor = None
@@ -1959,16 +1959,16 @@ def execute_slash_command(command: str,
         jinx_to_execute = state.team.jinxs_dict[command_name]
         executor = state.team
     if jinx_to_execute:
-        args = all_command_parts[1:]  # Fix: use all_command_parts instead of command_parts
+        args = all_command_parts[1:]
         try:
-            # Create input dictionary from args based on jinx inputs
+          
             input_values = {}
             if hasattr(jinx_to_execute, 'inputs') and jinx_to_execute.inputs:
                 for i, input_name in enumerate(jinx_to_execute.inputs):
                     if i < len(args):
                         input_values[input_name] = args[i]
             
-            # Execute the jinx with proper parameters
+          
             if isinstance(executor, NPC):
                 jinx_output = jinx_to_execute.execute(
                     input_values=input_values,
@@ -1976,7 +1976,7 @@ def execute_slash_command(command: str,
                     npc=executor,
                     messages=state.messages
                 )
-            else:  # Team executor
+            else:
                 jinx_output = jinx_to_execute.execute(
                     input_values=input_values,
                     jinxs_dict=executor.jinxs_dict if hasattr(executor, 'jinxs_dict') else {},
@@ -2097,7 +2097,7 @@ def process_pipeline_command(
             stream=stream_final,
             context=info,
         )
-        #
+      
         
         if not review:
             if isinstance(llm_result, dict):
@@ -2131,7 +2131,7 @@ def review_and_iterate_command(
     Simple iteration on LLM command result to improve quality.
     """
     
-    # Extract current state
+  
     if isinstance(initial_result, dict):
         current_output = initial_result.get("output")
         current_messages = initial_result.get("messages", state.messages)
@@ -2139,7 +2139,7 @@ def review_and_iterate_command(
         current_output = initial_result
         current_messages = state.messages
     
-    # Simple refinement prompt
+  
     refinement_prompt = f"""
 The previous response to "{original_command}" was:
 {current_output}
@@ -2147,7 +2147,7 @@ The previous response to "{original_command}" was:
 Please review and improve this response if needed. Provide a better, more complete answer.
 """
     
-    # Iterate with check_llm_command
+  
     refined_result = check_llm_command(
         refinement_prompt,
         model=exec_model,      
@@ -2162,7 +2162,7 @@ Please review and improve this response if needed. Provide a better, more comple
         context=info,
     )
     
-    # Update state and return
+  
     if isinstance(refined_result, dict):
         state.messages = refined_result.get("messages", current_messages)
         return state, refined_result.get("output", current_output)
@@ -2198,8 +2198,8 @@ def execute_command(
     active_model = npc_model or state.chat_model
     active_provider = npc_provider or state.chat_provider
     if state.current_mode == 'agent':
-        #print('# of parsed commands: ', len(commands))
-        #print('Commands:' '\n'.join(commands))
+      
+      
         for i, cmd_segment in enumerate(commands):
             render_markdown(f'- Executing command {i+1}/{len(commands)}')
             is_last_command = (i == len(commands) - 1)
@@ -2249,7 +2249,7 @@ def execute_command(
 
 
     elif state.current_mode == 'chat':
-        # Only treat as bash if it looks like a shell command (starts with known command or is a slash command)
+      
         cmd_parts = parse_command_safely(command)
         is_probably_bash = (
             cmd_parts
@@ -2274,9 +2274,9 @@ def execute_command(
                     except Exception as bash_err:
                         return state, colored(f"Bash execution failed: {bash_err}", "red")
             except Exception:
-                pass  # Fall through to LLM
+                pass
 
-        # Otherwise, treat as chat (LLM)
+      
         response = get_llm_response(
             command, 
             model=active_model,          
@@ -2390,7 +2390,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                 print(f"Warning: Could not load context file {filename}: {e}")
 
     forenpc_name = team_ctx.get("forenpc", default_forenpc_name)
-    #render_markdown(f"- Using forenpc: {forenpc_name}")
+  
 
     if team_ctx.get("use_global_jinxs", False):
         jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
@@ -2404,7 +2404,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
 
 
-    #render_markdown('- Loaded team context'+ json.dumps(team_ctx, indent=2))
+  
 
 
     
@@ -2430,7 +2430,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         if not npc_obj.provider:
             npc_obj.provider = initial_state.chat_provider
 
-    # Also apply to the forenpc specifically
+  
     if team.forenpc and isinstance(team.forenpc, NPC):
         if not team.forenpc.model:
             team.forenpc.model = initial_state.chat_model
@@ -2460,7 +2460,7 @@ def process_result(
     team_name = result_state.team.name if result_state.team else "__none__"
     npc_name = result_state.npc.name if isinstance(result_state.npc, NPC) else "__none__"
     
-    # Determine the actual NPC object to use for this turn's operations
+  
     active_npc = result_state.npc if isinstance(result_state.npc, NPC) else NPC(
         name="default", 
         model=result_state.chat_model, 
@@ -2543,7 +2543,7 @@ def process_result(
             except Exception as e:
                 print(colored(f"Error during real-time KG evolution: {e}", "red"))
 
-        # --- Part 3: Periodic Team Context Suggestions ---
+      
         result_state.turn_count += 1
 
         if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:

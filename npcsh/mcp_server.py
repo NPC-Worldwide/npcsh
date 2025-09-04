@@ -66,7 +66,7 @@ async def run_server_command(command: str) -> str:
             shell=True, 
             capture_output=True, 
             text=True,
-            timeout=30  # Add timeout to prevent hanging
+            timeout=30
         )
         return result.stdout or result.stderr or "Command completed with no output"
     except subprocess.TimeoutExpired:
@@ -109,15 +109,15 @@ def register_module_tools(module_name: str) -> None:
     """
     functions = load_module_functions(module_name)
     for func in functions:
-        # Skip functions that don't have docstrings
+      
         if not func.__doc__:
             print(f"Skipping function without docstring: {func.__name__}")
             continue
             
-        # Create async wrapper with improved argument handling
+      
         async_func = make_async_wrapper(func)
         
-        # Register as MCP tool
+      
         try:
             mcp.tool()(async_func)
             print(f"Registered tool: {func.__name__}")
@@ -129,11 +129,11 @@ def load_module_functions(module_name: str) -> List[Callable]:
     """
     try:
         module = importlib.import_module(module_name)
-        # Get all callables from the module that don't start with underscore
+      
         functions = []
         for name, func in inspect.getmembers(module, callable):
             if not name.startswith('_'):
-                # Check if it's a function, not a class
+              
                 if inspect.isfunction(func) or inspect.ismethod(func):
                     functions.append(func)
         return functions
@@ -159,13 +159,13 @@ def register_selected_npcpy_tools():
              search_web, ]
 
     for func in tools:
-        # Ensure a docstring exists for schema generation
+      
         if not (getattr(func, "__doc__", None) and func.__doc__.strip()):
             fallback_doc = f"Tool wrapper for {func.__name__}."
             try:
                 func.__doc__ = fallback_doc
             except Exception:
-                pass  # Some builtins may not allow setting __doc__
+                pass
 
         try:
             async_func = make_async_wrapper(func)
@@ -184,5 +184,5 @@ if __name__ == "__main__":
     print(f"Starting enhanced NPCPY MCP server...")
     print(f"Workspace: {DEFAULT_WORKSPACE}")
     
-    # Run the server
+  
     mcp.run(transport="stdio")
