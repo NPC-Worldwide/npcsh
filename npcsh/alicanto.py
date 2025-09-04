@@ -28,9 +28,9 @@ def generate_random_npcs(num_npcs: int,
     Generate a diverse set of NPCs with different expertise and perspectives
     related to the research request.
     """
-    # For single NPC, use a simpler approach to avoid unnecessary LLM calls
+  
     if num_npcs == 1:
-        # Generate directly without complex JSON parsing
+      
         name = f"Expert Researcher on {request}"
         expertise = "Interdisciplinary semantic theory researcher"
         background = "Extensive experience in linguistics, cognitive science, and NLP"
@@ -60,7 +60,7 @@ def generate_random_npcs(num_npcs: int,
         npc.system_prompt = system_prompt
         return [npc]
     
-    # Generate diverse expert personas based on the research topic
+  
     prompt = f"""
     For the research topic: "{request}"
     
@@ -80,24 +80,24 @@ def generate_random_npcs(num_npcs: int,
         prompt=prompt, 
         model=model, 
         provider=provider,
-        format="json"  # Directly request JSON format
+        format="json"
     )
     
-    # Response will be properly structured JSON from get_llm_response
+  
     experts_data = response.get('response', [])
     
-    # Create NPC instances from expert data
+  
     npcs = []
     
-    # Handle experts_data safely whether it's a list or not
+  
     if isinstance(experts_data, list):
         experts_to_process = experts_data[:num_npcs]
     else:
-        # If not a list, try to convert or use as a single item
+      
         if isinstance(experts_data, dict):
             experts_to_process = [experts_data]
         else:
-            # Create a basic expert as fallback
+          
             experts_to_process = [{
                 "name": f"Expert_1",
                 "expertise": "Interdisciplinary researcher",
@@ -110,7 +110,7 @@ def generate_random_npcs(num_npcs: int,
     for expert in experts_to_process:
         name = expert.get("name", f"Expert_{len(npcs)}")
         
-        # Create a system prompt that defines this NPC's expertise and perspective
+      
         system_prompt = f"""
         You are {name}, {expert.get('expertise', 'an expert researcher')}.
         
@@ -131,7 +131,7 @@ def generate_random_npcs(num_npcs: int,
         the essence of your insights in the most efficient way possible.
         """
         
-        # Create NPC with name and primary_directive (required parameters)
+      
         npc = NPC(name=name, primary_directive=f"Research expert on {request}")
         npc.system_prompt = system_prompt
         npcs.append(npc)
@@ -165,7 +165,7 @@ def generate_research_chain(request: str,
     """
     chain = []
     
-    # Initial research prompt
+  
     initial_prompt = f"""
     Research request: {request}
     
@@ -186,12 +186,12 @@ def generate_research_chain(request: str,
     
     chain.append(initial_findings)
     
-    # For each level of depth, continue the research
+  
     for i in range(1, depth):
-        # Get recent memory to include as context
+      
         memory_context = "\n\n".join(chain[-memory:]) if len(chain) > 0 else ""
         
-        # Simple follow-up prompt without specific research modes
+      
         next_prompt = f"""
         Research request: {request}
         
@@ -234,22 +234,22 @@ def simulate_experiments(research: Dict[str, Any],
     Returns:
         Dictionary mapping experiment titles to experiment data
     """
-    # Prepare context with key facts
+  
     facts_context = ""
     
-    # Add facts from thematic groups
+  
     if "fact_groups" in research:
-        for group, facts in list(research["fact_groups"].items())[:5]:  # Use top 5 groups
+        for group, facts in list(research["fact_groups"].items())[:5]:
             facts_context += f"\n\nThematic Group: {group}\n"
             facts_context += format_facts_list(facts)
     
-    # Add insights from combinations
+  
     if "combination_insights" in research:
         facts_context += "\n\nEmergent Insights:\n"
-        for combo in research["combination_insights"][:3]:  # Use top 3 insights
+        for combo in research["combination_insights"][:3]:
             facts_context += f"• {combo.get('emergent_insight', '')}\n"
     
-    # Create prompt to design experiments
+  
     prompt = f"""
     You are a creative research scientist exploring the topic: "{request}"
     
@@ -287,9 +287,9 @@ def simulate_experiments(research: Dict[str, Any],
                                 format="json")
     experiments = response.get("response", {})
     
-    # Limit experiments if needed
+  
     if max_experiments and isinstance(experiments, dict) and len(experiments) > max_experiments:
-        # Sort by title length (approximating complexity/interestingness)
+      
         sorted_exps = sorted(experiments.items(), key=lambda x: len(x[0]), reverse=True)
         experiments = dict(sorted_exps[:max_experiments])
     
@@ -334,17 +334,17 @@ def alicanto(request: str,
     Returns:
         Dictionary with research results
     """
-    # Use default model/provider if not specified
+  
     if model is None:
         model = NPCSH_CHAT_MODEL
     if provider is None:
         provider = NPCSH_CHAT_PROVIDER
     
-    # Generate researcher NPCs with diverse expertise
+  
     print(f"Generating {num_npcs} diverse researcher NPCs...")
     researchers = generate_random_npcs(num_npcs, model, provider, request)
     
-    # Generate research chains for each NPC
+  
     print(f"Generating research chains (depth={depth})...")
     research_chains = {}
     facts_by_researcher = {}
@@ -364,18 +364,18 @@ def alicanto(request: str,
         )
         research_chains[npc.name] = chain
         
-        # Extract facts from chain
+      
         print(f"  Extracting facts from {npc.name}'s research...")
         facts = extract_facts("\n\n".join(chain), model=model, provider=provider, npc=npc, context=request)
         
-        # Limit facts if specified
+      
         if max_facts_per_chain is not None and len(facts) > max_facts_per_chain:
             facts = facts[:max_facts_per_chain]
             
         facts_by_researcher[npc.name] = facts
         print({"fact_list": facts})
     
-    # Identify thematic groups across all research
+  
     print("Identifying thematic groups across all research insights...")
     all_facts = []
     for researcher_facts in facts_by_researcher.values():
@@ -383,11 +383,11 @@ def alicanto(request: str,
     
     groups = identify_groups(all_facts, model=model, provider=provider)
     
-    # Limit number of groups if specified
+  
     if max_thematic_groups is not None and len(groups) > max_thematic_groups:
         groups = groups[:max_thematic_groups]
     
-    # Assign facts to groups
+  
     fact_groups = {group: [] for group in groups}
     for fact in all_facts:
         group_assignments = assign_groups_to_fact(fact, groups, model=model, provider=provider)
@@ -396,7 +396,7 @@ def alicanto(request: str,
             if group in fact_groups:
                 fact_groups[group].append(fact)
     
-    # Evaluate thematic groups
+  
     print("Evaluating thematic groups for quality and risk...")
     group_evaluations = evaluate_thematic_groups(
         fact_groups, 
@@ -406,7 +406,7 @@ def alicanto(request: str,
         max_criticisms=max_criticisms_per_group
     )
     
-    # Generate group summaries
+  
     group_summaries = {}
     for group_name, facts in fact_groups.items():
         if not facts:
@@ -433,7 +433,7 @@ def alicanto(request: str,
         
         group_summaries[group_name] = summary
     
-    # Generate conceptual combinations to spark novel ideas
+  
     print("Generating conceptual combinations to spark novel insights...")
     fact_lists = list(facts_by_researcher.values())
     combinations = generate_conceptual_combinations(
@@ -442,7 +442,7 @@ def alicanto(request: str,
         num_combinations=max_conceptual_combinations if max_conceptual_combinations is not None else 5
     )
     
-    # Analyze combinations for emergent insights
+  
     print("Analyzing conceptual combinations for emergent insights...")
     combination_insights = analyze_conceptual_combinations(
         combinations,
@@ -451,31 +451,31 @@ def alicanto(request: str,
         provider=provider
     )
     
-    # Identify meta-patterns
+  
     print("Identifying meta-patterns across research approaches...")
     meta_patterns = identify_patterns_across_chains(research_chains, model=model, provider=provider)
     
-    # Generate consolidated research summary
+  
     print("Consolidating research into comprehensive synthesis...")
     
-    # Extract key points for integration
+  
     integration_points = []
     
-    # Add top facts from each thematic group
+  
     for group, facts in fact_groups.items():
         if facts:
             integration_points.append(f"From thematic group '{group}':")
-            for fact in facts[:3]:  # Top 3 facts per group
+            for fact in facts[:3]:
                 integration_points.append(f"- {fact}")
     
-    # Add insights from combinations
-    for insight in combination_insights[:3]:  # Top 3 insights
+  
+    for insight in combination_insights[:3]:
         integration_points.append(f"Emergent insight: {insight.get('emergent_insight', '')}")
     
-    # Add key points from meta-analysis
+  
     integration_points.append(f"Meta-analysis insight: {meta_patterns.get('meta_analysis', '')[:300]}...")
     
-    # Generate integration
+  
     integration_prompt = f"""
     Consolidate these diverse research findings into a comprehensive, integrative analysis of the topic:
     "{request}"
@@ -498,7 +498,7 @@ def alicanto(request: str,
     if isinstance(integration, (list, dict)) or hasattr(integration, '__iter__') and not isinstance(integration, (str, bytes)):
         integration = ''.join([str(chunk) for chunk in integration])
     
-    # Create concise summary
+  
     summary_prompt = f"""
     Create a concise executive summary (150 words max) of this research on:
     "{request}"
@@ -514,7 +514,7 @@ def alicanto(request: str,
     if isinstance(ideas_summarized, (list, dict)) or hasattr(ideas_summarized, '__iter__') and not isinstance(ideas_summarized, (str, bytes)):
         ideas_summarized = ''.join([str(chunk) for chunk in ideas_summarized])
     
-    # Simulate experiments
+  
     print("Generating simulated experiments...")
     research_results = {
         "research_request": request,
@@ -536,12 +536,12 @@ def alicanto(request: str,
         max_experiments=max_experiments
     )
     
-    # Generate PDF report if requested
+  
     pdf_path = None
     if generate_pdf:
         pdf_path = generate_pdf_report(request, model, provider, research_results, experiments)
     
-    # Final research results
+  
     research_results["experiments"] = experiments
     research_results["pdf_path"] = pdf_path
     
@@ -603,7 +603,7 @@ def evaluate_thematic_groups(fact_groups: Dict[str, List[str]], request: str, mo
         if isinstance(eval_text, (list, dict)) or hasattr(eval_text, '__iter__') and not isinstance(eval_text, (str, bytes)):
             eval_text = ''.join([str(chunk) for chunk in eval_text])
         
-        # Parse scores
+      
         scores = {}
         criticisms = []
         in_criticisms = False
@@ -618,12 +618,12 @@ def evaluate_thematic_groups(fact_groups: Dict[str, List[str]], request: str, mo
                 continue
             
             if in_criticisms:
-                # Parse criticisms
+              
                 if line[0].isdigit() and line[1:].startswith('. '):
                     criticism = line[line.find(' ')+1:].strip()
                     criticisms.append(criticism)
             else:
-                # Parse scores
+              
                 if ':' in line:
                     metric, score_str = line.split(':', 1)
                     metric = metric.strip()
@@ -633,7 +633,7 @@ def evaluate_thematic_groups(fact_groups: Dict[str, List[str]], request: str, mo
                     except ValueError:
                         pass
         
-        # Apply criticism limit if specified
+      
         if max_criticisms is not None and len(criticisms) > max_criticisms:
             criticisms = criticisms[:max_criticisms]
         
@@ -656,13 +656,13 @@ def generate_conceptual_combinations(fact_lists: List[List[str]], sample_size: i
     Returns:
         List of dictionaries containing the combinations and generated insights
     """
-    # Flatten facts with researcher ID
+  
     all_facts_with_source = []
     for i, facts in enumerate(fact_lists):
         for fact in facts:
             all_facts_with_source.append((i, fact))
     
-    # Generate random combinations
+  
     combinations = []
     for _ in range(num_combinations):
         if len(all_facts_with_source) <= sample_size:
@@ -738,7 +738,7 @@ def identify_patterns_across_chains(chains: Dict[str, List[str]], model: str = N
     Returns:
         Dictionary with meta-analysis results
     """
-    # Prepare a summary of each research chain
+  
     chain_summaries = {}
     for name, chain in chains.items():
         full_text = "\n\n".join(chain)
@@ -759,7 +759,7 @@ def identify_patterns_across_chains(chains: Dict[str, List[str]], model: str = N
         
         chain_summaries[name] = summary
     
-    # Generate meta-analysis across all chains
+  
     all_summaries = "\n\n".join([f"[{name}]\n{summary}" for name, summary in chain_summaries.items()])
     
     meta_analysis_prompt = f"""
@@ -783,7 +783,7 @@ def identify_patterns_across_chains(chains: Dict[str, List[str]], model: str = N
     if isinstance(meta_analysis, (list, dict)) or hasattr(meta_analysis, '__iter__') and not isinstance(meta_analysis, (str, bytes)):
         meta_analysis = ''.join([str(chunk) for chunk in meta_analysis])
     
-    # Generate innovative research directions
+  
     directions_prompt = f"""
     Based on this meta-analysis of research approaches to the topic:
     
@@ -825,11 +825,11 @@ def preprocess_content_for_pdf(content: str, model: str = None, provider: str = 
     Returns:
         Formatted content ready for PDF generation
     """
-    # Handle non-string content
+  
     if not isinstance(content, str):
         content = str(content)
     
-    # If in concise mode, create a drastically shortened version
+  
     if concise_mode:
         
         if model is None:
@@ -852,7 +852,7 @@ def preprocess_content_for_pdf(content: str, model: str = None, provider: str = 
         response = get_llm_response(prompt=concise_prompt, model=model, provider=provider)
         content = response.get('response', '')
     
-    # Basic cleanup for any problematic characters that cause PDF issues
+  
     for char, replacement in {
         '%': '',
         '#': '-',
@@ -865,7 +865,7 @@ def preprocess_content_for_pdf(content: str, model: str = None, provider: str = 
     }.items():
         content = content.replace(char, replacement)
     
-    # Apply word count limit if the content is too long
+  
     words = content.split()
     if len(words) > max_words:
         content = ' '.join(words[:max_words]) + '... [truncated]'
@@ -897,13 +897,13 @@ def generate_pdf_report(request: str,
     if output_path is None:
         output_path = os.getcwd()
     
-    # Create filename
+  
     sanitized_request = "".join(c for c in request if c.isalnum() or c.isspace()).strip()
     sanitized_request = sanitized_request.replace(" ", "_")[:50]
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{sanitized_request}_{timestamp}"
     
-    # Check for LaTeX installation
+  
     try:
         subprocess.run(["which", "pdflatex"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except subprocess.CalledProcessError:
@@ -915,32 +915,32 @@ def generate_pdf_report(request: str,
         except subprocess.CalledProcessError as e:
             print(f"Error installing LaTeX: {str(e)}")
             return None
-    # Create chart for thematic groups using matplotlib
+  
     chart_path = None
     try:
         if "group_evaluations" in research and research["group_evaluations"]:
-            # Create basic folder for figures
+          
             figures_dir = os.path.join(output_path, "figures")
             os.makedirs(figures_dir, exist_ok=True)
             
             fig, ax = plt.subplots(figsize=(7.5, 4))
-            plt.style.use('ggplot')  # Clean style without seaborn
+            plt.style.use('ggplot')
             
             groups = []
             scores = []
             
             for group_name, eval_data in research["group_evaluations"].items():
-                groups.append(group_name[:30])  # Truncate long names
+                groups.append(group_name[:30])
                 quality_score = (eval_data.get("Novelty", 5) + eval_data.get("Depth", 5) + 
                                eval_data.get("Practicality", 5) + eval_data.get("Evidence", 5)) / 4
                 scores.append(quality_score)
             
-            # Sort by score
+          
             sorted_data = sorted(zip(groups, scores), key=lambda x: x[1], reverse=True)
             groups = [x[0] for x in sorted_data]
             scores = [x[1] for x in sorted_data]
             
-            # Create horizontal bar chart
+          
             y_pos = range(len(groups))
             ax.barh(y_pos, scores, color='steelblue')
             ax.set_yticks(y_pos)
@@ -949,24 +949,24 @@ def generate_pdf_report(request: str,
             ax.set_title('Thematic Groups by Quality Score')
             plt.tight_layout()
             
-            # Save chart
+          
             chart_path = os.path.join(figures_dir, f"thematic_groups.pdf")
             plt.savefig(chart_path, dpi=300, bbox_inches='tight', format='pdf')
             plt.close()
     except Exception as e:
         print(f"Warning: Could not generate chart: {str(e)}")
     
-    # Create LaTeX document
+  
     latex_content = generate_latex_document(request, model, provider,  research, experiments, chart_path, max_pages)
     
-    # Write LaTeX to file
+  
     tex_path = os.path.join(output_path, f"{filename}.tex")
     with open(tex_path, "w") as f:
         f.write(latex_content)
     
-    # Use subprocess to run pdflatex without check=True to prevent exceptions
+  
     try:
-        # First run
+      
         result = subprocess.run(
             ["pdflatex", "-interaction=nonstopmode", "-output-directory", output_path, tex_path],
             stdout=subprocess.PIPE, 
@@ -975,9 +975,9 @@ def generate_pdf_report(request: str,
         
         if result.returncode != 0:
             print(f"Warning: First LaTeX run had issues (exit code {result.returncode})")
-            # Still continue - sometimes the second run fixes things
+          
         
-        # Second run for references
+      
         result = subprocess.run(
             ["pdflatex", "-interaction=nonstopmode", "-output-directory", output_path, tex_path],
             stdout=subprocess.PIPE, 
@@ -986,7 +986,7 @@ def generate_pdf_report(request: str,
         
         if result.returncode != 0:
             print(f"Warning: Second LaTeX run had issues (exit code {result.returncode})")
-            # Write LaTeX log for debugging
+          
             log_path = os.path.join(output_path, f"{filename}.log")
             if os.path.exists(log_path):
                 print(f"Check LaTeX log for details: {log_path}")
@@ -994,14 +994,14 @@ def generate_pdf_report(request: str,
         print(f"Error during LaTeX compilation: {str(e)}")
         return None
     
-    # Clean up temporary files
+  
     for ext in [".aux", ".out", ".toc"]:
         try:
             os.remove(os.path.join(output_path, f"{filename}{ext}"))
         except OSError:
             pass
     
-    # Check if PDF was generated successfully
+  
     pdf_path = os.path.join(output_path, f"{filename}.pdf")
     if os.path.exists(pdf_path):
         print(f"PDF report successfully generated using LaTeX: {pdf_path}")
@@ -1025,14 +1025,14 @@ def generate_latex_document(request: str, model, provider, research: Dict[str, A
     Returns:
         LaTeX document content as a string
     """
-    # Collect experiment images that might be available
+  
     figure_paths = {}
     if chart_path:
-        # Use relative path instead of absolute path for figure
+      
         figure_paths["thematic_groups"] = os.path.basename(chart_path)
     
-    # Check for experiment images in the current directory
-    # Ensure experiments is a dictionary before trying to get keys
+  
+  
     if isinstance(experiments, dict):
         for title in experiments.keys():
             sanitized_title = title.replace(" ", "_")
@@ -1040,12 +1040,12 @@ def generate_latex_document(request: str, model, provider, research: Dict[str, A
             if os.path.exists(potential_image):
                 figure_paths[sanitized_title] = potential_image
     
-    # Describe available figures to the LLM
+  
     figure_path_description_dict = {}
     for name, path in figure_paths.items():
         figure_path_description_dict[name] = path
     
-    # Create the prompt for generating LaTeX content
+  
     prompt = f'''
     Generate a LaTeX document for a research report on the topic: "{request}"
     Here is the summary of the research: {research}
@@ -1068,14 +1068,14 @@ def generate_latex_document(request: str, model, provider, research: Dict[str, A
     latex_response = get_llm_response(prompt=prompt, model=model, provider=provider )
     latex_content = latex_response.get('response', '')
     
-    # Post-process the LaTeX content to fix common issues
+  
     latex_content = latex_content.replace('\\bibliography{references}', '')
     latex_content = latex_content.replace('\\bibliographystyle{plain}', '')
     
-    # Replace absolute figure paths with relative paths
+  
     latex_content = latex_content.replace('/home/caug/npcww/npcsh/figures/', 'figures/')
     
-    # Add a simple bibliography if none exists
+  
     if '\\begin{thebibliography}' not in latex_content and '\\end{document}' in latex_content:
         bibliography = """
 \\begin{thebibliography}{9}
