@@ -59,7 +59,7 @@ except importlib.metadata.PackageNotFoundError:
 
 GUAC_REFRESH_PERIOD = os.environ.get('GUAC_REFRESH_PERIOD', 100)
 READLINE_HISTORY_FILE = os.path.expanduser("~/.guac_readline_history")
-# File extension mapping for organization
+
 EXTENSION_MAP = {
     "PNG": "images", "JPG": "images", "JPEG": "images", "GIF": "images", "SVG": "images",
     "MP4": "videos", "AVI": "videos", "MOV": "videos", "WMV": "videos", "MPG": "videos", "MPEG": "videos",
@@ -220,20 +220,20 @@ def execute_python_code(code_str: str, state: ShellState, locals_dict: Dict[str,
         state.command_history.add_command(code_str, [final_output_str if final_output_str else ""], "", state.current_path)
     return state, final_output_str
 
-# Modify _generate_file_analysis_code - add the capture call to each code block:
+
 def _generate_file_analysis_code(file_path: str, target_path: str) -> str:
     """Generate Python code to load and analyze the dropped file"""
     ext = Path(file_path).suffix.lower()
     file_var_name = f"file_{datetime.now().strftime('%H%M%S')}"
     
     capture_code = f"""
-# Capture file analysis state
+
 _capture_file_state('{state.conversation_id}', '{state.command_history.db_path}', r'{target_path}', '''AUTO_GENERATED_CODE''', locals())
 """
     
     if ext == '.pdf':
         return f"""
-# Automatically loaded PDF file
+
 import PyPDF2
 import pandas as pd
 try:
@@ -255,7 +255,7 @@ except Exception as e:
     
     elif ext in ['.csv']:
         return f"""
-# Automatically loaded CSV file
+
 import pandas as pd
 try:
     {file_var_name}_df = pd.read_csv(r'{target_path}')
@@ -272,7 +272,7 @@ except Exception as e:
     
     elif ext in ['.xlsx', '.xls']:
         return f"""
-# Automatically loaded Excel file
+
 import pandas as pd
 try:
     {file_var_name}_df = pd.read_excel(r'{target_path}')
@@ -289,7 +289,7 @@ except Exception as e:
     
     elif ext in ['.json']:
         return f"""
-# Automatically loaded JSON file
+
 import json
 try:
     with open(r'{target_path}', 'r') as file:
@@ -308,7 +308,7 @@ except Exception as e:
     
     elif ext in ['.txt', '.md']:
         return f"""
-# Automatically loaded text file
+
 try:
     with open(r'{target_path}', 'r', encoding='utf-8') as file:
         {file_var_name}_text = file.read()
@@ -324,7 +324,7 @@ except Exception as e:
     
     elif ext in ['.png', '.jpg', '.jpeg', '.gif']:
         return f"""
-# Automatically loaded image file
+
 import matplotlib.pyplot as plt
 from PIL import Image
 import numpy as np
@@ -349,7 +349,7 @@ except Exception as e:
     
     else:
         return f"""
-# Automatically loaded file (unknown type)
+
 try:
     with open(r'{target_path}', 'rb') as file:
         {file_var_name}_data = file.read()
@@ -519,7 +519,7 @@ def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None,
             package_name = response if response else "project"
         except (KeyboardInterrupt, EOFError):
             print("⚠️ Project setup interrupted. Falling back to global guac team...")
-            GUAC_GLOBAL_FLAG_FILE.touch() # Create the flag file to remember this choice
+            GUAC_GLOBAL_FLAG_FILE.touch() 
             team_dir = ensure_global_guac_team()
             return {
                 "language": lang, "package_root": team_dir, "plots_dir": plots_dir,
@@ -670,7 +670,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, Float, Date
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# Add these classes after your imports
+
 Base = declarative_base()
 
 class PlotState(Base):
@@ -812,7 +812,7 @@ def _generate_file_analysis_code(file_path: str, target_path: str) -> str:
     
     if ext == '.pdf':
         return f"""
-# Automatically loaded PDF file
+
 import PyPDF2
 import pandas as pd
 try:
@@ -833,7 +833,7 @@ except Exception as e:
     
     elif ext in ['.csv']:
         return f"""
-# Automatically loaded CSV file
+
 import pandas as pd
 try:
     {file_var_name}_df = pd.read_csv(r'{target_path}')
@@ -849,7 +849,7 @@ except Exception as e:
     
     elif ext in ['.xlsx', '.xls']:
         return f"""
-# Automatically loaded Excel file
+
 import pandas as pd
 try:
     {file_var_name}_df = pd.read_excel(r'{target_path}')
@@ -865,7 +865,7 @@ except Exception as e:
     
     elif ext in ['.json']:
         return f"""
-# Automatically loaded JSON file
+
 import json
 try:
     with open(r'{target_path}', 'r') as file:
@@ -883,7 +883,7 @@ except Exception as e:
     
     elif ext in ['.txt', '.md']:
         return f"""
-# Automatically loaded text file
+
 try:
     with open(r'{target_path}', 'r', encoding='utf-8') as file:
         {file_var_name}_text = file.read()
@@ -898,7 +898,7 @@ except Exception as e:
     
     elif ext in ['.png', '.jpg', '.jpeg', '.gif']:
         return f"""
-# Automatically loaded image file
+
 import matplotlib.pyplot as plt
 from PIL import Image
 import numpy as np
@@ -922,7 +922,7 @@ except Exception as e:
     
     else:
         return f"""
-# Automatically loaded file (unknown type)
+
 try:
     with open(r'{target_path}', 'rb') as file:
         {file_var_name}_data = file.read()
@@ -1143,7 +1143,7 @@ import sys
 from io import StringIO
 from contextlib import redirect_stdout, redirect_stderr
 
-# --- New Emoji Function for Agentic Mode ---
+
 def _get_guac_agent_emoji(failures: int, max_fail: int = 3) -> str:
     """
     Returns an avocado emoji representing the state based on consecutive failures.
@@ -1152,19 +1152,19 @@ def _get_guac_agent_emoji(failures: int, max_fail: int = 3) -> str:
     if failures == 0:
         return "🥑" 
     elif failures == 1:
-        return "🥑🔪" # Sliced, contemplating next steps
+        return "🥑🔪" 
     elif failures == 2:
-        return "🥑🥣" # In the bowl, getting mashed
+        return "🥑🥣" 
     elif failures == max_fail:
-        return "🥑🤢" # Going bad, critical issue (puke)
-    elif failures > max_fail + 20: # Skull for 20+ over max
-        return "🥑💀" # Rotten
+        return "🥑🤢" 
+    elif failures > max_fail + 20: 
+        return "🥑💀" 
     elif failures > max_fail:
-        return "🥑🟤" # Bruised and bad
+        return "🥑🟤" 
     else:
-        return "🥑❓" # Unknown state
+        return "🥑❓" 
 
-# --- New Helper for Persisting Global Choice ---
+
 GUAC_GLOBAL_FLAG_FILE = Path.home() / ".npcsh" / ".guac_use_global"
 
 
@@ -1178,7 +1178,7 @@ def _run_agentic_mode(command: str,
     full_output = []
     current_command = command
     consecutive_failures = 0
-    max_consecutive_failures = 3 # This is the limit before stopping
+    max_consecutive_failures = 3 
 
   
     existing_vars_context = "EXISTING VARIABLES IN ENVIRONMENT:\n"
@@ -1908,7 +1908,7 @@ def enter_guac_mode(npc=None,
             if team_ctx_path.exists():
                 with open(team_ctx_path, "r") as f:
                     team_ctx = yaml.safe_load(f) or {}
-                team = Team(team_path=str(npc_team_dir), forenpc=npc, jinxs={}) # Simplified team creation
+                team = Team(team_path=str(npc_team_dir), forenpc=npc, jinxs={}) 
                 team.name = team_ctx.get("team_name", "guac_global_team")
         else:
             raise RuntimeError(f"No NPC loaded and {guac_npc_path} not found!")
@@ -1924,8 +1924,8 @@ def enter_guac_mode(npc=None,
         chat_model=os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b"),
         chat_provider=os.environ.get("NPCSH_CHAT_PROVIDER", "ollama"),
         current_path=os.getcwd(),
-        npc=npc, # This is now guaranteed to be an NPC object
-        team=team or default_team # Use the correctly loaded team or default
+        npc=npc, 
+        team=team or default_team 
     )
     
     state.command_history = command_history

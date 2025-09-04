@@ -1,4 +1,4 @@
-# --- START OF FILE routes.py ---
+
 
 from typing import Callable, Dict, Any, List, Optional, Union
 import functools
@@ -308,7 +308,7 @@ def help_handler(command: str, **kwargs):
     parts = shlex.split(command)
     if len(parts) < 2:
         return {"output": get_help_text(), "messages": messages}
-    target = parts[1].lstrip('/') # User might type /help /sample, so we clean it.
+    target = parts[1].lstrip('/') 
     output = ""
 
 
@@ -437,7 +437,7 @@ def launch_npc_studio(path_to_open: str = None):
     )
 
     return backend, dev_server, frontend
-# ========== Router handler ==========
+
 @router.route("npc-studio", "Start npc studio")
 def npc_studio_handler(command: str, **kwargs):
     messages = kwargs.get("messages", [])
@@ -563,7 +563,7 @@ def plonk_handler(command: str, **kwargs):
             provider=safe_get(kwargs, 'vprovider', NPCSH_VISION_PROVIDER),
             npc=safe_get(kwargs, 'npc'),
             plonk_context=plonk_context,
-            debug=True # Or could be controlled by a flag: safe_get(kwargs, 'debug', False)
+            debug=True 
         )        
         
         if summary_data and isinstance(summary_data, list):
@@ -978,7 +978,7 @@ def vixynt_handler(command: str, **kwargs):
     width = safe_get(kwargs, 'width', 1024)
     output_file_base = safe_get(kwargs, 'output_file')
     attachments = safe_get(kwargs, 'attachments')
-    n_images = safe_get(kwargs, 'n_images', 1) # Get n_images from kwargs
+    n_images = safe_get(kwargs, 'n_images', 1) 
     if isinstance(attachments, str):
         attachments = attachments.split(',')
     
@@ -998,7 +998,7 @@ def vixynt_handler(command: str, **kwargs):
             npc=npc,
             height=height,
             width=width,
-            n_images=n_images, # Pass n_images
+            n_images=n_images, 
             input_images=attachments
         )
 

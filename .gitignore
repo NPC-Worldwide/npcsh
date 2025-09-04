@@ -31,3 +31,5 @@ __pycache__/
 .vscode/mcp.json
 .vscode/settings.json
 .build.py
+.guac_global
+.npcsh_global
