@@ -14,11 +14,11 @@ except:
 from typing import Optional, List, Dict, Any
 from contextlib import AsyncExitStack
 
-# MCP imports
+
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-# Local imports from npcpy
+
 from npcpy.gen.response import get_litellm_response
 from npcsh._state import (
     NPCSH_CHAT_MODEL,

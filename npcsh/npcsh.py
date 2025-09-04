@@ -68,7 +68,6 @@ Begin by asking a question, issuing a bash command, or typing '/help' for more i
         )
 
 
-### need to incldue auto knowledge graph querying
 
 def run_repl(command_history: CommandHistory, initial_state: ShellState):
     
