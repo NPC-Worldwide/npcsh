@@ -213,13 +213,19 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                            )
         
         except KeyboardInterrupt:
-            if is_windows:
-                print("^C")
-                continue
-            else:
+            print("^C")
+            if input("\nExit? (y/n): ").lower().startswith('y'):
                 exit_shell(state)
+            continue
+
         except EOFError:
             exit_shell(state)
+        except Exception as e:            
+            if is_windows and "EOF" in str(e).lower():
+                print("\nHint: On Windows, use Ctrl+Z then Enter for EOF, or type 'exit'")
+                continue
+            raise  # Re-raise if it's not the expected case
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="npcsh - An NPC-powered shell.")
     parser.add_argument(
