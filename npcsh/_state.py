@@ -5,11 +5,18 @@ import filecmp
 import os
 from pathlib import Path
 import platform
-import pty
 try:
+    import pty
+    import tty
+    
+    import termios
+
     import readline
 except:
-    pass 
+    readline = None
+    pty = None
+    tty = None
+
 import re
 import select
 import shlex
@@ -18,11 +25,8 @@ import signal
 import sqlite3
 import subprocess
 import sys
-from termcolor import colored
-import termios
 import time
 from typing import Dict, List,  Any, Tuple, Union, Optional
-import tty
 import logging
 import textwrap
 from termcolor import colored
@@ -765,7 +769,7 @@ def start_interactive_session(command: str) -> int:
     Starts an interactive session. Only works on Unix. On Windows, print a message and return 1.
     """
     ON_WINDOWS = platform.system().lower().startswith("win")
-    if ON_WINDOWS or termios is None or tty is None or pty is None or select is None or signal is None:
+    if ON_WINDOWS or termios is None or tty is None or pty is None or select is None or signal is None or tty is None:
         print("Interactive terminal sessions are not supported on Windows.")
         return 1
   
