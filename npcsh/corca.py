@@ -179,23 +179,22 @@ def process_mcp_stream(stream_response, active_npc):
     tool_calls = []
     
     interrupted = False
-    
+    f
     sys.stdout.write('\033[s')
     sys.stdout.flush()
+    
     try:
         for chunk in stream_response:        
             if hasattr(active_npc, 'provider') and active_npc.provider == "ollama" and 'gpt-oss' not in active_npc.model:
                 if hasattr(chunk, 'message') and hasattr(chunk.message, 'tool_calls') and chunk.message.tool_calls:
                     for tool_call in chunk.message.tool_calls:
-                        tool_call_data = {
-                            'id': getattr(tool_call, 'id', ''),
+                        tool_call_data = {'id': getattr(tool_call, 'id', ''),
                             'type': 'function',
                             'function': {
                                 'name': getattr(tool_call.function, 'name', '') if hasattr(tool_call, 'function') else '',
                                 'arguments': getattr(tool_call.function, 'arguments', {}) if hasattr(tool_call, 'function') else {}
                             }
                         }
-                        
                         if isinstance(tool_call_data['function']['arguments'], str):
                             try:
                                 tool_call_data['function']['arguments'] = json.loads(tool_call_data['function']['arguments'])
@@ -203,7 +202,6 @@ def process_mcp_stream(stream_response, active_npc):
                                 tool_call_data['function']['arguments'] = {'raw': tool_call_data['function']['arguments']}
                         
                         tool_calls.append(tool_call_data)
-                
                 if hasattr(chunk, 'message') and hasattr(chunk.message, 'content') and chunk.message.content:
                     collected_content += chunk.message.content
                     print(chunk.message.content, end='', flush=True)
@@ -230,7 +228,6 @@ def process_mcp_stream(stream_response, active_npc):
                                 
                                 if hasattr(tool_call_delta, 'id') and tool_call_delta.id:
                                     tool_calls[idx]['id'] = tool_call_delta.id
-                                
                                 if hasattr(tool_call_delta, 'function'):
                                     if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
                                         tool_calls[idx]['function']['name'] = tool_call_delta.function.name
@@ -239,66 +236,63 @@ def process_mcp_stream(stream_response, active_npc):
                                         tool_calls[idx]['function']['arguments'] += tool_call_delta.function.arguments
     except KeyboardInterrupt:
         interrupted = True
-        print('\n⚠️ Stream interrupted by user')
+        print('⚠️ Stream interrupted by user')
     
     sys.stdout.write('\033[u')
     sys.stdout.write('\033[J')
     sys.stdout.flush()
     
+    # Use the render_markdown function for proper markdown rendering
     render_markdown(collected_content)
-    print('\n')
     return collected_content, tool_calls
-
 def execute_command_corca(command: str, state: ShellState, command_history, selected_mcp_tools_names: Optional[List[str]] = None) -> Tuple[ShellState, Any]:
-   mcp_tools_for_llm = []
-   
-   if hasattr(state, 'mcp_client') and state.mcp_client and state.mcp_client.session:
-       all_available_mcp_tools = state.mcp_client.available_tools_llm
-       
-       if selected_mcp_tools_names and len(selected_mcp_tools_names) > 0:
-           mcp_tools_for_llm = [
-               tool_def for tool_def in all_available_mcp_tools
-               if tool_def['function']['name'] in selected_mcp_tools_names
-           ]
-           if not mcp_tools_for_llm:
-               cprint("Warning: No selected MCP tools found or matched. Corca will proceed without tools.", "yellow", file=sys.stderr)
-       else:
-           mcp_tools_for_llm = all_available_mcp_tools
-   else:
-       cprint("Warning: Corca agent has no tools. No MCP server connected.", "yellow", file=sys.stderr)
+    mcp_tools_for_llm = []
+    
+    if hasattr(state, 'mcp_client') and state.mcp_client and state.mcp_client.session:
+        all_available_mcp_tools = state.mcp_client.available_tools_llm
+        
+        if selected_mcp_tools_names and len(selected_mcp_tools_names) > 0:
+            mcp_tools_for_llm = [
+                tool_def for tool_def in all_available_mcp_tools
+                if tool_def['function']['name'] in selected_mcp_tools_names
+            ]
+            if not mcp_tools_for_llm:
+                cprint("Warning: No selected MCP tools found or matched. Corca will proceed without tools.", "yellow", file=sys.stderr)
+        else:
+            mcp_tools_for_llm = all_available_mcp_tools
+    else:
+        cprint("Warning: Corca agent has no tools. No MCP server connected.", "yellow", file=sys.stderr)
 
-   active_npc = state.npc if isinstance(state.npc, NPC) else NPC(name="default")
+    active_npc = state.npc if isinstance(state.npc, NPC) else NPC(name="default")
 
-   response_dict = get_llm_response(
-       prompt=command,
-       npc=state.npc,
-       messages=state.messages,
-       tools=mcp_tools_for_llm,
-       auto_process_tool_calls=False,
-       stream=state.stream_output
-   )
+    response_dict = get_llm_response(
+        prompt=command,
+        npc=state.npc,
+        messages=state.messages,
+        tools=mcp_tools_for_llm,
+        auto_process_tool_calls=False,
+        stream=state.stream_output,
+        team=state.team  
+    )
    
-   stream_response = response_dict.get('response')
-   messages = response_dict.get('messages', state.messages)
-   
-   print("DEBUG: Processing stream response...")
-   collected_content, tool_calls = process_mcp_stream(stream_response, active_npc)
+    stream_response = response_dict.get('response')
+    messages = response_dict.get('messages', state.messages)
+    
+    collected_content, tool_calls = process_mcp_stream(stream_response, active_npc)
 
-   print(f"\nDEBUG: Final collected_content: {collected_content}")
-   print(f"DEBUG: Final tool_calls: {tool_calls}")
-   
-   state.messages = messages
-   if collected_content or tool_calls:
-       assistant_message = {"role": "assistant", "content": collected_content}
-       if tool_calls:
-           assistant_message["tool_calls"] = tool_calls
-       state.messages.append(assistant_message)
-   
-   return state, {
-       "output": collected_content,
-       "tool_calls": tool_calls,
-       "messages": state.messages
-   }
+    
+    state.messages = messages
+    if collected_content or tool_calls:
+        assistant_message = {"role": "assistant", "content": collected_content}
+        if tool_calls:
+            assistant_message["tool_calls"] = tool_calls
+        state.messages.append(assistant_message)
+    
+    return state, {
+        "output": collected_content,
+        "tool_calls": tool_calls,
+        "messages": state.messages
+    }
 
 
 def _resolve_and_copy_mcp_server_path(
@@ -306,7 +300,7 @@ def _resolve_and_copy_mcp_server_path(
     current_path: Optional[str],
     team_ctx_mcp_servers: Optional[List[Dict[str, str]]],
     interactive: bool = False,
-    auto_copy_bypass: bool = False # <-- New parameter
+    auto_copy_bypass: bool = False
 ) -> Optional[str]:
     default_mcp_server_name = "mcp_server.py"
     npcsh_default_template_path = Path(__file__).parent / default_mcp_server_name
@@ -318,13 +312,12 @@ def _resolve_and_copy_mcp_server_path(
             return None
         
         if not destination_file.exists():
-            # Check auto_copy_bypass first
-            if auto_copy_bypass or not interactive: # If bypass is true OR not interactive, auto-copy
+            if auto_copy_bypass or not interactive:
                 destination_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy(npcsh_default_template_path, destination_file)
                 print(colored(f"Automatically copied default {default_mcp_server_name} to {destination_file}", "green"))
                 return destination_file
-            else: # Only ask if interactive and no bypass
+            else: 
                 choice = input(colored(f"No {default_mcp_server_name} found in {description}. Copy default template to {destination_file}? (y/N): ", "yellow")).strip().lower()
                 if choice == 'y':
                     destination_dir.mkdir(parents=True, exist_ok=True)
@@ -417,15 +410,31 @@ def create_corca_state_and_mcp_client(conversation_id, command_history, npc=None
     )
     state.command_history = command_history
     
-    # Read NPCSH_CORCA_AUTO_COPY_MCP_SERVER from environment for non-interactive calls
+    team_ctx_mcp_servers = None
+    if team and hasattr(team, 'team_path'):
+        team_ctx = _load_team_context(team.team_path)
+        team_ctx_mcp_servers = team_ctx.get('mcp_servers', [])
+        
+        if npc and isinstance(npc, NPC):
+            if not npc.model and team_ctx.get('model'):
+                npc.model = team_ctx['model']
+            if not npc.provider and team_ctx.get('provider'):
+                npc.provider = team_ctx['provider']
+        
+        if not state.chat_model and team_ctx.get('model'):
+            state.chat_model = team_ctx['model']
+        if not state.chat_provider and team_ctx.get('provider'):
+            state.chat_provider = team_ctx['provider']
+    
     auto_copy_bypass = os.getenv("NPCSH_CORCA_AUTO_COPY_MCP_SERVER", "false").lower() == "true"
 
     resolved_server_path = _resolve_and_copy_mcp_server_path(
         explicit_path=mcp_server_path_from_request,
         current_path=current_path,
-        team_ctx_mcp_servers=team.team_ctx.get('mcp_servers', []) if team and hasattr(team, 'team_ctx') else None,
-        interactive=False, # Always non-interactive for Flask API calls
-        auto_copy_bypass=auto_copy_bypass # Pass env var setting
+        team_ctx_mcp_servers=team_ctx_mcp_servers,
+        interactive=False,
+        auto_copy_bypass=auto_copy_bypass,
+        force_global=False
     )
 
     state.mcp_client = None
@@ -513,9 +522,9 @@ def process_corca_result(
                 
                 tool_content = ""
                 if hasattr(mcp_result, 'content') and mcp_result.content:
-                    print(f"DEBUG: content type: {type(mcp_result.content)}")
+
                     for i, content_item in enumerate(mcp_result.content):
-                        print(f"DEBUG: content_item[{i}]: {content_item} (type: {type(content_item)})")
+
                         if hasattr(content_item, 'text'):
                             tool_content += content_item.text
                         else:
@@ -523,8 +532,7 @@ def process_corca_result(
                 else:
                     tool_content = str(mcp_result)
                 
-                print(f"DEBUG: Extracted content length: {len(tool_content)}")
-                print(f"DEBUG: Extracted content preview: {tool_content[:200]}")
+
                 
                 tool_responses.append({
                     "role": "tool",
@@ -703,11 +711,11 @@ def process_corca_result(
                 characterization = summary.get('output')
 
                 if characterization and result_state.team:
-                    team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
-                    ctx_data = {}
-                    if os.path.exists(team_ctx_path):
-                        with open(team_ctx_path, 'r') as f:
-                            ctx_data = yaml.safe_load(f) or {}
+                    team_ctx_path = _get_team_ctx_path(result_state.team.team_path)
+                    if not team_ctx_path:
+                        team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
+                    
+                    ctx_data = _load_team_context(result_state.team.team_path)
                     current_context = ctx_data.get('context', '')
 
                     prompt = f"""Based on this characterization: {characterization},
@@ -722,7 +730,10 @@ def process_corca_result(
                     "suggestion": "Your sentence.
                     }
                     """
-                    response = get_llm_response(prompt, npc=active_npc, format="json")
+                    response = get_llm_response(prompt, 
+                                            npc=active_npc, 
+                                            format="json",
+                                            team=result_state.team)   
                     suggestion = response.get("response", {}).get("suggestion")
 
                     if suggestion:
@@ -740,10 +751,6 @@ def process_corca_result(
                 import traceback
                 print(colored(f"Could not generate team suggestions: {e}", "yellow"))
                 traceback.print_exc()
-             
-             
-
-
 
 def _read_npcsh_global_env() -> Dict[str, str]:
     global_env_file = Path(".npcsh_global")
@@ -760,6 +767,20 @@ def _read_npcsh_global_env() -> Dict[str, str]:
             print(f"Warning: Could not read .npcsh_global: {e}")
     return env_vars
 
+def _load_team_context(team_path: str) -> Dict[str, Any]:
+    """Load team context from any .ctx file in the team directory"""
+    ctx_path = _get_team_ctx_path(team_path)
+    if not ctx_path or not os.path.exists(ctx_path):
+        return {}
+    
+    try:
+        with open(ctx_path, 'r') as f:
+            return yaml.safe_load(f) or {}
+    except Exception as e:
+        print(f"Warning: Could not load team context from {ctx_path}: {e}")
+        return {}
+
+
 def _write_to_npcsh_global(key: str, value: str) -> None:
     global_env_file = Path(".npcsh_global")
     env_vars = _read_npcsh_global_env()
@@ -771,6 +792,13 @@ def _write_to_npcsh_global(key: str, value: str) -> None:
                 f.write(f"{k}={v}\n")
     except Exception as e:
         print(f"Warning: Could not write to .npcsh_global: {e}")
+
+
+def _get_team_ctx_path(team_path: str) -> Optional[str]:
+    """Find the first .ctx file in the team directory"""
+    team_dir = Path(team_path)
+    ctx_files = list(team_dir.glob("*.ctx"))
+    return str(ctx_files[0]) if ctx_files else None
 
 def _resolve_and_copy_mcp_server_path(
     explicit_path: Optional[str],
@@ -859,7 +887,6 @@ def _resolve_and_copy_mcp_server_path(
             
     cprint("No MCP server script found in any expected location.", "yellow")
     return None
-
 def create_corca_state_and_mcp_client(conversation_id, command_history, npc=None, team=None,
                                      current_path=None, mcp_server_path_from_request: Optional[str] = None):
     from npcsh._state import ShellState
@@ -907,6 +934,11 @@ def create_corca_state_and_mcp_client(conversation_id, command_history, npc=None
             traceback.print_exc()
 
     return state
+def _get_team_ctx_path(team_path: str) -> Optional[str]:
+    """Find the first .ctx file in the team directory"""
+    team_dir = Path(team_path)
+    ctx_files = list(team_dir.glob("*.ctx"))
+    return str(ctx_files[0]) if ctx_files else None
 
 def enter_corca_mode(command: str, **kwargs):
     state: ShellState = kwargs.get('shell_state')
@@ -1018,7 +1050,7 @@ def main():
     elif os.path.exists(global_corca_path):
         default_npc = NPC(file=global_corca_path, 
                           db_conn=command_history.engine)
-    print('Team Default: ', team.provider, team.model)
+
     if default_npc.model is None:
         if team.model is not None:
             default_npc.model = team.model
