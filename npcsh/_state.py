@@ -436,6 +436,12 @@ def get_shell_config_file() -> str:
         return os.path.expanduser("~/.bashrc")
 
 
+def get_team_ctx_path(team_path: str) -> Optional[str]:
+    """Find the first .ctx file in the team directory"""
+    team_dir = Path(team_path)
+    ctx_files = list(team_dir.glob("*.ctx"))
+    return str(ctx_files[0]) if ctx_files else None
+
 
 def add_npcshrc_to_shell_config() -> None:
     """
@@ -2384,17 +2390,16 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         
 
     team_ctx = {}
-    for filename in os.listdir(team_dir):
-        if filename.endswith(".ctx"):
-            try:
-                with open(os.path.join(team_dir, filename), "r") as f:
-                    team_ctx = yaml.safe_load(f) or {}
-                break
-            except Exception as e:
-                print(f"Warning: Could not load context file {filename}: {e}")
-
+    team_ctx_path = get_team_ctx_path(team_dir)
+    if team_ctx_path:
+        try:
+            with open(team_ctx_path, "r") as f:
+                team_ctx = yaml.safe_load(f) or {}
+        except Exception as e:
+            print(f"Warning: Could not load context file {os.path.basename(team_ctx_path)}: {e}")
     forenpc_name = team_ctx.get("forenpc", default_forenpc_name)
   
+    print('forenpc_name:', forenpc_name)
 
     if team_ctx.get("use_global_jinxs", False):
         jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
@@ -2407,11 +2412,8 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     forenpc_obj = None
     forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
 
+    print('forenpc_path:', forenpc_path)
 
-  
-
-
-    
     if os.path.exists(forenpc_path):
         forenpc_obj = NPC(file = forenpc_path, 
                           jinxs=jinxs_list, 
@@ -2558,7 +2560,8 @@ def process_result(
                 characterization = summary.get('output')
 
                 if characterization and result_state.team:
-                    team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
+
+                    team_ctx_path = os.path.join(result_state.team.team_path, ".ctx")
                     ctx_data = {}
                     if os.path.exists(team_ctx_path):
                         with open(team_ctx_path, 'r') as f:
