@@ -33,6 +33,7 @@ from npcsh._state import (
     should_skip_kg_processing, 
     NPCSH_CHAT_PROVIDER, 
     NPCSH_CHAT_MODEL,
+    get_team_ctx_path
 )
 import yaml 
 from pathlib import Path
@@ -711,54 +712,54 @@ def process_corca_result(
                 characterization = summary.get('output')
 
                 if characterization and result_state.team:
-                    team_ctx_path = _get_team_ctx_path(result_state.team.team_path)
+                    team_ctx_path = get_team_ctx_path(result_state.team.team_path)
                     if not team_ctx_path:
                         team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
                     
                     ctx_data = _load_team_context(result_state.team.team_path)
                     current_context = ctx_data.get('context', '')
 
-                        prompt = f"""Based on this characterization: {characterization},
+                    prompt = f"""Based on this characterization: {characterization},
 
-                        suggest changes (additions, deletions, edits) to the team's context. 
-                        Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
-                        
-                        Current Context: "{current_context}". 
-                        
-                        Respond with JSON: """ + """
-                        {
-                        "suggestion": "Your sentence.
-                        }
-                        """
-                        response = get_llm_response(prompt, 
-                                            npc=active_npc, 
-                                            format="json",
-                                            team=result_state.team)   
-                        suggestion = response.get("response", {}).get("suggestion")
+                    suggest changes (additions, deletions, edits) to the team's context. 
+                    Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
+                    
+                    Current Context: "{current_context}". 
+                    
+                    Respond with JSON: """ + """
+                    {
+                    "suggestion": "Your sentence.
+                    }
+                    """
+                    response = get_llm_response(prompt, 
+                                        npc=active_npc, 
+                                        format="json",
+                                        team=result_state.team)   
+                    suggestion = response.get("response", {}).get("suggestion")
 
-                        if suggestion:
-                            new_context = (current_context + " " + suggestion).strip()
-                            print(colored(f"{result_state.npc.name} suggests updating team context:", "yellow"))
-                            print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
-                            
-                            choice = input("Apply? [y/N/e(dit)]: ").strip().lower()
-                            
-                            if choice == 'y':
-                                ctx_data['context'] = new_context
-                                with open(team_ctx_path, 'w') as f:
-                                    yaml.dump(ctx_data, f)
-                                print(colored("Team context updated.", "green"))
-                            elif choice == 'e':
-                                edited_context = input(f"Edit context [{new_context}]: ").strip()
-                                if edited_context:
-                                    ctx_data['context'] = edited_context
-                                else:
-                                    ctx_data['context'] = new_context
-                                with open(team_ctx_path, 'w') as f:
-                                    yaml.dump(ctx_data, f)
-                                print(colored("Team context updated with edits.", "green"))
+                    if suggestion:
+                        new_context = (current_context + " " + suggestion).strip()
+                        print(colored(f"{result_state.npc.name} suggests updating team context:", "yellow"))
+                        print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
+                        
+                        choice = input("Apply? [y/N/e(dit)]: ").strip().lower()
+                        
+                        if choice == 'y':
+                            ctx_data['context'] = new_context
+                            with open(team_ctx_path, 'w') as f:
+                                yaml.dump(ctx_data, f)
+                            print(colored("Team context updated.", "green"))
+                        elif choice == 'e':
+                            edited_context = input(f"Edit context [{new_context}]: ").strip()
+                            if edited_context:
+                                ctx_data['context'] = edited_context
                             else:
-                                print("Suggestion declined.")        
+                                ctx_data['context'] = new_context
+                            with open(team_ctx_path, 'w') as f:
+                                yaml.dump(ctx_data, f)
+                            print(colored("Team context updated with edits.", "green"))
+                        else:
+                            print("Suggestion declined.")        
             except Exception as e:
                 import traceback
                 print(colored(f"Could not generate team suggestions: {e}", "yellow"))
@@ -781,7 +782,7 @@ def _read_npcsh_global_env() -> Dict[str, str]:
 
 def _load_team_context(team_path: str) -> Dict[str, Any]:
     """Load team context from any .ctx file in the team directory"""
-    ctx_path = _get_team_ctx_path(team_path)
+    ctx_path = get_team_ctx_path(team_path)
     if not ctx_path or not os.path.exists(ctx_path):
         return {}
     
@@ -805,12 +806,6 @@ def _write_to_npcsh_global(key: str, value: str) -> None:
     except Exception as e:
         print(f"Warning: Could not write to .npcsh_global: {e}")
 
-
-def _get_team_ctx_path(team_path: str) -> Optional[str]:
-    """Find the first .ctx file in the team directory"""
-    team_dir = Path(team_path)
-    ctx_files = list(team_dir.glob("*.ctx"))
-    return str(ctx_files[0]) if ctx_files else None
 
 def _resolve_and_copy_mcp_server_path(
     explicit_path: Optional[str],
@@ -946,11 +941,6 @@ def create_corca_state_and_mcp_client(conversation_id, command_history, npc=None
             traceback.print_exc()
 
     return state
-def _get_team_ctx_path(team_path: str) -> Optional[str]:
-    """Find the first .ctx file in the team directory"""
-    team_dir = Path(team_path)
-    ctx_files = list(team_dir.glob("*.ctx"))
-    return str(ctx_files[0]) if ctx_files else None
 
 def enter_corca_mode(command: str, **kwargs):
     state: ShellState = kwargs.get('shell_state')

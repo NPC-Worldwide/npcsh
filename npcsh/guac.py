@@ -41,7 +41,7 @@ from npcpy.memory.command_history import CommandHistory, start_new_conversation
 from npcpy.npc_compiler import Team, NPC
 from npcpy.llm_funcs import get_llm_response
 from npcpy.npc_sysenv import render_markdown,print_and_process_stream
-
+from npcpy.data.load import load_file_contents
 
 from npcsh._state import (
     ShellState,
@@ -51,7 +51,8 @@ from npcsh._state import (
     readline_safe_prompt,
     setup_shell,
     get_multiline_input,
-    orange
+    orange, 
+    get_team_ctx_path,
 )
 import threading
 import time
@@ -471,13 +472,43 @@ def ensure_global_guac_team():
         print(f"✅ Created global guac team.ctx at {ctx_path}")
 
     return team_dir
-def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None,
-                    lang='python', default_mode_choice=None):
-    base_dir = Path.cwd()                
+
+
+def setup_guac_mode(config_dir=None, 
+                    plots_dir=None, 
+                    npc_team_dir=None,
+                    lang='python', 
+                    default_mode_choice=None):
+    base_dir = Path.cwd()
     
-  
-    if GUAC_GLOBAL_FLAG_FILE.exists():
-        print("💡 Using global Guac team as default (previously set).")
+    local_npc_team = base_dir / "npc_team"
+    if local_npc_team.exists():
+        npc_team_dir = local_npc_team
+        workspace_dirs = _get_workspace_dirs(npc_team_dir)
+        _ensure_workspace_dirs(workspace_dirs)
+        
+        team_ctx_path = npc_team_dir / "team.ctx"
+        existing_ctx = {}
+        if team_ctx_path.exists():
+            try:
+                with open(team_ctx_path, "r") as f:
+                    existing_ctx = yaml.safe_load(f) or {}
+            except Exception as e:
+                print(f"Warning: Could not read team.ctx: {e}")
+        
+        package_root = existing_ctx.get("GUAC_PACKAGE_ROOT", str(base_dir))
+        package_name = existing_ctx.get("GUAC_PACKAGE_NAME", "project")
+        project_description = existing_ctx.get("GUAC_PROJECT_DESCRIPTION", "Local guac team")
+        
+        return {
+            "language": lang, "package_root": Path(package_root), "plots_dir": plots_dir,
+            "npc_team_dir": npc_team_dir, "config_dir": config_dir, "default_mode": default_mode_choice or "agent",
+            "project_description": project_description, "package_name": package_name
+        }
+
+    global_flag_file = base_dir / ".npcsh_global"
+    if global_flag_file.exists() or os.environ.get("GUAC_USE_GLOBAL") == "1":
+        print("Using global Guac team")
         team_dir = ensure_global_guac_team()
         return {
             "language": lang, "package_root": team_dir, "plots_dir": plots_dir,
@@ -485,7 +516,6 @@ def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None,
             "project_description": "Global guac team for analysis.", "package_name": "guac"
         }
 
-  
     if npc_team_dir is None:
         npc_team_dir = base_dir / "npc_team"
     else:
@@ -513,8 +543,9 @@ def setup_guac_mode(config_dir=None, plots_dir=None, npc_team_dir=None,
             response = input("Enter package name (Enter for 'project'): ").strip()
             package_name = response if response else "project"
         except (KeyboardInterrupt, EOFError):
-            print("⚠️ Project setup interrupted. Falling back to global guac team...")
-            GUAC_GLOBAL_FLAG_FILE.touch() 
+            print("Project setup interrupted. Falling back to global guac team...")
+            global_flag_file.touch()
+            os.environ["GUAC_USE_GLOBAL"] = "1"
             team_dir = ensure_global_guac_team()
             return {
                 "language": lang, "package_root": team_dir, "plots_dir": plots_dir,
@@ -568,6 +599,7 @@ setup(name="{package_name}", version="0.0.1", description="{desc}", packages=fin
         "npc_team_dir": npc_team_dir, "config_dir": config_dir, "default_mode": default_mode_val,
         "project_description": project_description, "package_name": package_name
     }
+
 def setup_npc_team(npc_team_dir, lang, is_subteam=False):
   
     guac_npc = {
@@ -1111,7 +1143,7 @@ def _get_guac_agent_emoji(failures: int, max_fail: int = 3) -> str:
         return "🥑❓" 
 
 
-GUAC_GLOBAL_FLAG_FILE = Path.home() / ".npcsh" / ".guac_use_global"
+
 
 
 def _run_agentic_mode(command: str,
@@ -1157,8 +1189,9 @@ def _run_agentic_mode(command: str,
 
         DO NOT SIMPLY COPY A PREVIOUS ATTEMPT.        
         
-        Your goal is to generate Python code that BUILDS ON EXISTING VARIABLES to accomplish this task: {current_command}, with this next step planned: `{next_step} `
+        Your goal is to generate Python code that BUILDS ON EXISTING VARIABLES to respond to this task: USER TASK: "{current_command}", with this next step planned: `{next_step} `
 
+        If there is no relevant code to build on or the user is simply asking a question, generate new code as needed to respond to their questions.
         
         You will notice in the local envs that there are functions for reading, editing, and loading files. 
         You should use these to your advantage as they will help you to clearly understand the user's system best.
@@ -1196,21 +1229,26 @@ def _run_agentic_mode(command: str,
 
         Do not over- complicate the code.
 
-        Do not include any '__name__'=='__main__' block.
+        DO NOT include any '__name__'=='__main__' block.
         """
         
         npc_model = state.npc.model if state.npc and state.npc.model else state.chat_model
         npc_provider = state.npc.provider if state.npc and state.npc.provider else state.chat_provider
         
+        print(state.npc.model)
+        print(state.chat_model)
         llm_response = get_llm_response(prompt,
                                         npc=state.npc,
                                         stream=True,
                                         messages=state.messages, 
                                         thinking=False)
 
+        print(llm_response.get('response'))
+        print(npc_model, npc_provider)
+
         generated_code = print_and_process_stream(llm_response.get('response'),
                                                   npc_model,
-                                                  npc_provider
+                                                  npc_provider, 
                                                   )
         
         state.messages.append({'role':'user', 'content':current_command })
@@ -1826,25 +1864,6 @@ def enter_guac_mode(npc=None,
   
     command_history, default_team, default_npc = setup_shell()
 
-  
-    if npc is None and default_npc is None:
-      
-        guac_npc_path = Path(npc_team_dir) / "guac.npc" 
-        if guac_npc_path.exists():
-            npc = NPC(file=str(guac_npc_path), db_conn=command_history.engine)
-          
-            team_ctx_path = Path(npc_team_dir) / "team.ctx"
-            if team_ctx_path.exists():
-                with open(team_ctx_path, "r") as f:
-                    team_ctx = yaml.safe_load(f) or {}
-                team = Team(team_path=str(npc_team_dir), forenpc=npc, jinxs={}) 
-                team.name = team_ctx.get("team_name", "guac_global_team")
-        else:
-            raise RuntimeError(f"No NPC loaded and {guac_npc_path} not found!")
-    elif default_npc and npc is None:
-      
-        npc = default_npc
-
 
     state = ShellState(
         conversation_id=start_new_conversation(),
@@ -1858,6 +1877,45 @@ def enter_guac_mode(npc=None,
     )
     
     state.command_history = command_history
+
+    if npc is None and default_npc is None:
+        guac_npc_path = Path(npc_team_dir) / "guac.npc" 
+        if guac_npc_path.exists():
+            npc = NPC(file=str(guac_npc_path), 
+                      db_conn=command_history.engine)
+            print(guac_npc_path, npc)
+
+            team_ctx_path = get_team_ctx_path(str(npc_team_dir))
+            team_ctx = {}
+            if team_ctx_path and Path(team_ctx_path).exists():
+                with open(team_ctx_path, "r") as f:
+                    team_ctx = yaml.safe_load(f) or {}
+            print(team_ctx, team_ctx_path)
+            team = Team(team_path=str(npc_team_dir), 
+                        forenpc=npc, 
+                        jinxs={}) 
+            team.name = team_ctx.get("team_name", "guac_global_team")
+            team.team_ctx = team_ctx
+            print(team)
+            if npc.model is None:
+                npc.model = team_ctx.get("model", state.chat_model)
+            if npc.provider is None:
+                npc.provider = team_ctx.get("provider", state.chat_provider)
+                
+            for npc_name, npc_obj in team.npcs.items():
+                if not npc_obj.model:
+                    npc_obj.model = team_ctx.get("model", state.chat_model)
+                if not npc_obj.provider:
+                    npc_obj.provider = team_ctx.get("provider", state.chat_provider)
+        else:
+            raise RuntimeError(f"No NPC loaded and {guac_npc_path} not found!")
+    elif default_npc and npc is None:
+        npc = default_npc
+    state.npc = npc or default_npc
+    state.team = team or default_team
+
+    state.plots_dir = setup_result.get("plots_dir")
+    state.config_dir = setup_result.get("config_dir")
 
     try:
         readline.read_history_file(READLINE_HISTORY_FILE)
