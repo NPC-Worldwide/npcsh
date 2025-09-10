@@ -718,35 +718,47 @@ def process_corca_result(
                     ctx_data = _load_team_context(result_state.team.team_path)
                     current_context = ctx_data.get('context', '')
 
-                    prompt = f"""Based on this characterization: {characterization},
+                        prompt = f"""Based on this characterization: {characterization},
 
-                    suggest changes (additions, deletions, edits) to the team's context. 
-                    Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
-                    
-                    Current Context: "{current_context}". 
-                    
-                    Respond with JSON: """ + """
-                    {
-                    "suggestion": "Your sentence.
-                    }
-                    """
-                    response = get_llm_response(prompt, 
+                        suggest changes (additions, deletions, edits) to the team's context. 
+                        Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
+                        
+                        Current Context: "{current_context}". 
+                        
+                        Respond with JSON: """ + """
+                        {
+                        "suggestion": "Your sentence.
+                        }
+                        """
+                        response = get_llm_response(prompt, 
                                             npc=active_npc, 
                                             format="json",
                                             team=result_state.team)   
-                    suggestion = response.get("response", {}).get("suggestion")
+                        suggestion = response.get("response", {}).get("suggestion")
 
-                    if suggestion:
-                        new_context = (current_context + " " + suggestion).strip()
-                        print(colored(f"{result_state.npc.name} suggests updating team context:", "yellow"))
-                        print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
-                        if input("Apply? [y/N]: ").strip().lower() == 'y':
-                            ctx_data['context'] = new_context
-                            with open(team_ctx_path, 'w') as f:
-                                yaml.dump(ctx_data, f)
-                            print(colored("Team context updated.", "green"))
-                        else:
-                            print("Suggestion declined.")
+                        if suggestion:
+                            new_context = (current_context + " " + suggestion).strip()
+                            print(colored(f"{result_state.npc.name} suggests updating team context:", "yellow"))
+                            print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
+                            
+                            choice = input("Apply? [y/N/e(dit)]: ").strip().lower()
+                            
+                            if choice == 'y':
+                                ctx_data['context'] = new_context
+                                with open(team_ctx_path, 'w') as f:
+                                    yaml.dump(ctx_data, f)
+                                print(colored("Team context updated.", "green"))
+                            elif choice == 'e':
+                                edited_context = input(f"Edit context [{new_context}]: ").strip()
+                                if edited_context:
+                                    ctx_data['context'] = edited_context
+                                else:
+                                    ctx_data['context'] = new_context
+                                with open(team_ctx_path, 'w') as f:
+                                    yaml.dump(ctx_data, f)
+                                print(colored("Team context updated with edits.", "green"))
+                            else:
+                                print("Suggestion declined.")        
             except Exception as e:
                 import traceback
                 print(colored(f"Could not generate team suggestions: {e}", "yellow"))
