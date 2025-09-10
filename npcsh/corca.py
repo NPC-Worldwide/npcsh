@@ -703,39 +703,55 @@ def process_corca_result(
                 characterization = summary.get('output')
 
                 if characterization and result_state.team:
-                    team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
-                    ctx_data = {}
-                    if os.path.exists(team_ctx_path):
-                        with open(team_ctx_path, 'r') as f:
-                            ctx_data = yaml.safe_load(f) or {}
-                    current_context = ctx_data.get('context', '')
-
-                    prompt = f"""Based on this characterization: {characterization},
-
-                    suggest changes (additions, deletions, edits) to the team's context. 
-                    Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
+                    team_dir = Path(result_state.team.team_path)
+                    ctx_files = list(team_dir.glob("*.ctx"))
                     
-                    Current Context: "{current_context}". 
-                    
-                    Respond with JSON: """ + """
-                    {
-                    "suggestion": "Your sentence.
-                    }
-                    """
-                    response = get_llm_response(prompt, npc=active_npc, format="json")
-                    suggestion = response.get("response", {}).get("suggestion")
+                    if ctx_files:
+                        team_ctx_path = str(ctx_files[0])
+                        ctx_data = {}
+                        if os.path.exists(team_ctx_path):
+                            with open(team_ctx_path, 'r') as f:
+                                ctx_data = yaml.safe_load(f) or {}
+                        current_context = ctx_data.get('context', '')
 
-                    if suggestion:
-                        new_context = (current_context + " " + suggestion).strip()
-                        print(colored(f"{result_state.npc.name} suggests updating team context:", "yellow"))
-                        print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
-                        if input("Apply? [y/N]: ").strip().lower() == 'y':
-                            ctx_data['context'] = new_context
-                            with open(team_ctx_path, 'w') as f:
-                                yaml.dump(ctx_data, f)
-                            print(colored("Team context updated.", "green"))
-                        else:
-                            print("Suggestion declined.")
+                        prompt = f"""Based on this characterization: {characterization},
+
+                        suggest changes (additions, deletions, edits) to the team's context. 
+                        Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
+                        
+                        Current Context: "{current_context}". 
+                        
+                        Respond with JSON: """ + """
+                        {
+                        "suggestion": "Your sentence.
+                        }
+                        """
+                        response = get_llm_response(prompt, npc=active_npc, format="json")
+                        suggestion = response.get("response", {}).get("suggestion")
+
+                        if suggestion:
+                            new_context = (current_context + " " + suggestion).strip()
+                            print(colored(f"{result_state.npc.name} suggests updating team context:", "yellow"))
+                            print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
+                            
+                            choice = input("Apply? [y/N/e(dit)]: ").strip().lower()
+                            
+                            if choice == 'y':
+                                ctx_data['context'] = new_context
+                                with open(team_ctx_path, 'w') as f:
+                                    yaml.dump(ctx_data, f)
+                                print(colored("Team context updated.", "green"))
+                            elif choice == 'e':
+                                edited_context = input(f"Edit context [{new_context}]: ").strip()
+                                if edited_context:
+                                    ctx_data['context'] = edited_context
+                                else:
+                                    ctx_data['context'] = new_context
+                                with open(team_ctx_path, 'w') as f:
+                                    yaml.dump(ctx_data, f)
+                                print(colored("Team context updated with edits.", "green"))
+                            else:
+                                print("Suggestion declined.")        
             except Exception as e:
                 import traceback
                 print(colored(f"Could not generate team suggestions: {e}", "yellow"))
