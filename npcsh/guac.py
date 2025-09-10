@@ -1,4 +1,3 @@
-from chroptiks.plotting_utils import * 
 from datetime import datetime
 import json
 import numpy as np
@@ -7,12 +6,24 @@ import pandas as pd
 import sys
 import argparse
 import importlib.metadata
-import matplotlib.pyplot as plt 
+import matplotlib
+import platform
+import queue
+plot_queue = queue.Queue()
+
+if platform.system() == 'Darwin':
+    try:
+        matplotlib.use('TkAgg')
+    except ImportError:
+        matplotlib.use('Agg')
+else:
+    matplotlib.use('TkAgg')
+
+import matplotlib.pyplot as plt
+from chroptiks.plotting_utils import * 
 
 import logging
-plt.ioff()
 import shlex
-import platform
 import yaml
 import re
 from pathlib import Path
@@ -97,9 +108,6 @@ def _clear_readline_buffer():
         return False
 
 def _file_drop_monitor(npc_team_dir: Path, state: ShellState, locals_dict: Dict[str, Any], poll_interval: float = 0.2):
-    """
-    Background thread: poll readline.get_line_buffer() and process file drops immediately.
-    """
     processed_bufs = set()
     stop_event = _guac_monitor_stop_event
     while stop_event is None or not stop_event.is_set():
@@ -113,46 +121,33 @@ def _file_drop_monitor(npc_team_dir: Path, state: ShellState, locals_dict: Dict[
                 time.sleep(poll_interval)
                 continue
 
-          
             candidate = buf.strip()
-          
             if (candidate.startswith("'") and candidate.endswith("'")) or (candidate.startswith('"') and candidate.endswith('"')):
                 inner = candidate[1:-1]
             else:
                 inner = candidate
 
-          
             if " " not in inner and Path(inner.replace('~', str(Path.home()))).expanduser().exists() and Path(inner.replace('~', str(Path.home()))).expanduser().is_file():
-              
                 if buf in processed_bufs:
                     time.sleep(poll_interval)
                     continue
                 processed_bufs.add(buf)
 
-              
                 try:
-                  
-                  
                     modified_input, processed_files = _handle_file_drop(buf, npc_team_dir)
                     if processed_files:
                         target_path = processed_files[0]
-                      
                         loading_code = _generate_file_analysis_code(inner, target_path)
-                      
-                        print("\n[guac] Detected file drop — processing automatically...")
-                      
-                        _state, exec_output = execute_python_code(loading_code, state, locals_dict)
-                      
-                        if exec_output:
-                            print(exec_output)
-                      
+                        
+                        plot_queue.put(('execute_code', loading_code, state, locals_dict))
+                        print("\n[guac] Detected file drop — queued for processing...")
                         _clear_readline_buffer()
                 except Exception as e:
                     print(f"[guac][ERROR] file drop processing failed: {e}")
         except Exception:
-          
             pass
         time.sleep(poll_interval)
+
 
 
 def is_python_code(text: str) -> bool:
@@ -694,50 +689,6 @@ class FileAnalysisState(Base):
     variable_names = Column(Text)
     timestamp = Column(DateTime, default=func.now())
 
-def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
-    """Capture plot state if significant change"""
-    if not plt.get_fignums():
-        return
-    
-    engine = create_engine(f'sqlite:///{db_path}')
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    
-  
-    fig = plt.gcf()
-    axes = fig.get_axes()
-    data_points = sum(len(line.get_xdata()) for ax in axes for line in ax.get_lines())
-    
-  
-    plot_hash = hashlib.md5(f"{len(axes)}{data_points}".encode()).hexdigest()
-    
-    last = session.query(PlotState).filter(PlotState.session_id == session_id).order_by(PlotState.timestamp.desc()).first()
-    if last and last.plot_hash == plot_hash:
-        session.close()
-        return
-    
-  
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    workspace_dirs = _get_workspace_dirs(npc_team_dir)
-    plot_path = workspace_dirs["plots"] / f"state_{timestamp}.png"
-    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-    
-  
-    plot_state = PlotState(
-        session_id=session_id,
-        plot_hash=plot_hash,
-        plot_description=f"Plot with {len(axes)} axes, {data_points} points",
-        figure_path=str(plot_path),
-        data_summary=f"{data_points} data points",
-        change_significance=1.0 if not last else 0.5
-    )
-    
-    session.add(plot_state)
-    session.commit()
-    session.close()
-    print(f"📊 Plot state captured -> {plot_path.name}")
-
 def _capture_file_state(session_id: str, db_path: str, file_path: str, analysis_code: str, locals_dict: Dict):
     """Capture file analysis state"""
     engine = create_engine(f'sqlite:///{db_path}')
@@ -986,24 +937,23 @@ def _handle_file_drop(input_text: str, npc_team_dir: Path) -> Tuple[str, List[st
 
     return modified_input, processed_files, file_paths
 
-
 def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
-    """Capture plot state if significant change"""
     if not plt.get_fignums():
         return
     
     try:
+        workspace_dirs = _get_workspace_dirs(npc_team_dir)
+        workspace_dirs["plots"].mkdir(parents=True, exist_ok=True)
+        
         engine = create_engine(f'sqlite:///{db_path}')
         Base.metadata.create_all(engine)
         Session = sessionmaker(bind=engine)
         session = Session()
         
-      
         fig = plt.gcf()
         axes = fig.get_axes()
         data_points = sum(len(line.get_xdata()) for ax in axes for line in ax.get_lines())
         
-      
         plot_hash = hashlib.md5(f"{len(axes)}{data_points}".encode()).hexdigest()
         
         last = session.query(PlotState).filter(PlotState.session_id == session_id).order_by(PlotState.timestamp.desc()).first()
@@ -1011,13 +961,10 @@ def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
             session.close()
             return
         
-      
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        workspace_dirs = _get_workspace_dirs(npc_team_dir)
         plot_path = workspace_dirs["plots"] / f"state_{timestamp}.png"
         plt.savefig(plot_path, dpi=150, bbox_inches='tight')
         
-      
         plot_state = PlotState(
             session_id=session_id,
             plot_hash=plot_hash,
@@ -1026,15 +973,14 @@ def _capture_plot_state(session_id: str, db_path: str, npc_team_dir: Path):
             data_summary=f"{data_points} data points",
             change_significance=1.0 if not last else 0.5
         )
-    
+
         session.add(plot_state)
         session.commit()
         session.close()
-        print(f"📊 Plot state captured -> {plot_path.name}")
+        print(f"Plot state captured -> {plot_path.name}")
         
     except Exception as e:
         print(f"Error capturing plot state: {e}")
-
 def _capture_file_state(session_id: str, db_path: str, file_path: str, analysis_code: str, locals_dict: Dict):
     """Capture file analysis state"""
     try:
@@ -1560,8 +1506,6 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
 def run_guac_repl(state: ShellState, project_name: str, package_root: Path, package_name: str):
     from npcsh.routes import router
 
-    
-  
     npc_team_dir = Path.cwd() / "npc_team"
     workspace_dirs = _get_workspace_dirs(npc_team_dir)
     _ensure_workspace_dirs(workspace_dirs)
@@ -1593,15 +1537,8 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             
     except Exception as e:
         print(f"Warning: Could not load package {package_name}: {e}", file=sys.stderr)
-            
-    from npcpy.data.load import load_file_contents
 
     def read_file(file_path, max_lines=10000, encoding='utf-8'):
-        """
-        Read and print file contents up to max_lines.
-        Uses npcpy.data.load for specialized file types, falls back to text reading.
-        Returns the content as a string for further processing.
-        """
         path = Path(file_path).expanduser().resolve()
         
         if not path.exists():
@@ -1613,7 +1550,6 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             return None
         
         try:
-          
             file_ext = path.suffix.upper().lstrip('.')
             if file_ext in ['PDF', 'DOCX', 'PPTX', 'HTML', 'HTM', 'CSV', 'XLS', 'XLSX', 'JSON']:
                 chunks = load_file_contents(str(path), chunk_size=10000)
@@ -1635,7 +1571,6 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
                     print(f"End of {path.name}")
                     return content
             
-          
             with open(path, 'r', encoding=encoding) as f:
                 lines = []
                 for i, line in enumerate(f, 1):
@@ -1674,19 +1609,10 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             return None
 
     def edit_file(file_path, content=None, line_number=None, new_line=None, insert_at=None, append=False, backup=True):
-        """
-        Edit file contents in various ways:
-        - edit_file(path, content="new content") - replace entire file
-        - edit_file(path, line_number=5, new_line="new text") - replace specific line
-        - edit_file(path, insert_at=5, new_line="inserted text") - insert at line
-        - edit_file(path, append=True, content="appended") - append to file
-        """
         path = Path(file_path).expanduser().resolve()
         
-      
         path.parent.mkdir(parents=True, exist_ok=True)
         
-      
         if backup and path.exists():
             backup_path = path.with_suffix(path.suffix + '.backup')
             import shutil
@@ -1694,7 +1620,6 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             print(f"Backup saved: {backup_path.name}")
         
         try:
-          
             existing_lines = []
             if path.exists():
                 with open(path, 'r', encoding='utf-8') as f:
@@ -1754,10 +1679,6 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             return False
 
     def load_file(file_path):
-        """
-        Simple wrapper around npcpy's load_file_contents for direct data loading.
-        Returns the loaded data in appropriate format.
-        """
         path = Path(file_path).expanduser().resolve()
         
         if not path.exists():
@@ -1782,7 +1703,6 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
         'load_file':load_file,
     }
 
-
     locals_dict.update(core_imports)
     locals_dict.update({f"guac_{k}": v for k, v in workspace_dirs.items()})
     
@@ -1801,10 +1721,20 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
     
     while True:
         try:
+            try:
+                while True:
+                    operation, code, exec_state, exec_locals = plot_queue.get_nowait()
+                    if operation == 'execute_code':
+                        print("\n[guac] Processing queued file drop...")
+                        exec_state, exec_output = execute_python_code(code, exec_state, exec_locals)
+                        if exec_output:
+                            print(exec_output)
+            except queue.Empty:
+                pass
+            
             state.current_path = os.getcwd()
             
             display_model = state.chat_model
-          
             if isinstance(state.npc, NPC) and state.npc.model:
                 display_model = state.npc.model
             
@@ -1862,7 +1792,6 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             if _guac_monitor_thread:
                 _guac_monitor_thread.join(timeout=1.0)
             break
-
 
 
 
