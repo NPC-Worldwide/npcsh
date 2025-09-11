@@ -180,7 +180,6 @@ def process_mcp_stream(stream_response, active_npc):
     tool_calls = []
     
     interrupted = False
-    f
     sys.stdout.write('\033[s')
     sys.stdout.flush()
     
