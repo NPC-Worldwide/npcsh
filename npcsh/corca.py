@@ -236,15 +236,20 @@ def process_mcp_stream(stream_response, active_npc):
                                         tool_calls[idx]['function']['arguments'] += tool_call_delta.function.arguments
     except KeyboardInterrupt:
         interrupted = True
-        print('⚠️ Stream interrupted by user')
+        print('\n⚠️ Stream interrupted by user')
     
     sys.stdout.write('\033[u')
-    sys.stdout.write('\033[J')
+    sys.stdout.write('\033[0J')
     sys.stdout.flush()
     
-    # Use the render_markdown function for proper markdown rendering
-    render_markdown(collected_content)
+    if collected_content:
+        render_markdown(collected_content)
+    
     return collected_content, tool_calls
+
+
+
+
 def execute_command_corca(command: str, state: ShellState, command_history, selected_mcp_tools_names: Optional[List[str]] = None) -> Tuple[ShellState, Any]:
     mcp_tools_for_llm = []
     
@@ -265,6 +270,17 @@ def execute_command_corca(command: str, state: ShellState, command_history, sele
 
     active_npc = state.npc if isinstance(state.npc, NPC) else NPC(name="default")
 
+    if len(state.messages) > 20:
+        compressed_state = active_npc.compress_planning_state({
+            "goal": "ongoing session", 
+            "facts": [], 
+            "successes": [], 
+            "mistakes": [],
+            "todos": [],
+            "constraints": []
+        })
+        state.messages = [{"role": "system", "content": f"Session context: {compressed_state}"}]
+
     response_dict = get_llm_response(
         prompt=command,
         npc=state.npc,
@@ -280,7 +296,6 @@ def execute_command_corca(command: str, state: ShellState, command_history, sele
     
     collected_content, tool_calls = process_mcp_stream(stream_response, active_npc)
 
-    
     state.messages = messages
     if collected_content or tool_calls:
         assistant_message = {"role": "assistant", "content": collected_content}
@@ -293,8 +308,6 @@ def execute_command_corca(command: str, state: ShellState, command_history, sele
         "tool_calls": tool_calls,
         "messages": state.messages
     }
-
-
 def _resolve_and_copy_mcp_server_path(
     explicit_path: Optional[str],
     current_path: Optional[str],
