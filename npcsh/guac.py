@@ -1145,12 +1145,10 @@ def _get_guac_agent_emoji(failures: int, max_fail: int = 3) -> str:
 
 
 
-
 def _run_agentic_mode(command: str,
                       state: ShellState,
                       locals_dict: Dict[str, Any],
                       npc_team_dir: Path) -> Tuple[ShellState, Any]:
-    """Run agentic mode with continuous iteration based on progress"""
     max_iterations = 5
     iteration = 0
     full_output = []
@@ -1158,6 +1156,37 @@ def _run_agentic_mode(command: str,
     consecutive_failures = 0
     max_consecutive_failures = 3 
 
+    if len(state.messages) > 15:
+        planning_state = {
+            "goal": "ongoing guac session", 
+            "facts": [f"Working in {state.current_path}", f"Variables: {list(locals_dict.keys())[:10]}"], 
+            "successes": [], 
+            "mistakes": [],
+            "todos": [],
+            "constraints": ["Focus on Python code execution", "Use existing variables when possible"]
+        }
+        compressed_state = state.npc.compress_planning_state(planning_state)
+        state.messages = [{"role": "system", "content": f"Session context: {compressed_state}"}]
+
+    existing_vars_context = "EXISTING VARIABLES IN ENVIRONMENT:\n"
+    for var_name, var_value in locals_dict.items():
+        if not var_name.startswith('_') and var_name not in ['In', 'Out', 'exit', 'quit', 'get_ipython']:
+            try:
+                var_type = type(var_value).__name__
+                var_repr = repr(var_value)
+                if len(var_repr) > 100:
+                    var_repr = var_repr[:97] + "..."
+                existing_vars_context += f"- {var_name} ({var_type}): {var_repr}\n"
+            except:
+                existing_vars_context += f"- {var_name} ({type(var_value).__name__}): <unrepresentable>\n"
+    previous_code = ''
+    next_step = ''
+    steps = []
+    while iteration < max_iterations and consecutive_failures < max_consecutive_failures:
+        iteration += 1
+        print(f"\n{_get_guac_agent_emoji(consecutive_failures, max_consecutive_failures)} Agentic iteration {iteration} ")
+        
+        
   
     existing_vars_context = "EXISTING VARIABLES IN ENVIRONMENT:\n"
     for var_name, var_value in locals_dict.items():
