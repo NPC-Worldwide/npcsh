@@ -68,21 +68,13 @@ Begin by asking a question, issuing a bash command, or typing '/help' for more i
         )
 
 
-
 def run_repl(command_history: CommandHistory, initial_state: ShellState):
-    
-
-    '''
-    Func for running the npcsh repl    
-    '''
     state = initial_state
     print_welcome_message()
-
 
     render_markdown(f'- Using {state.current_mode} mode. Use /agent, /cmd, or /chat to switch to other modes')
     render_markdown(f'- To switch to a different NPC, type /npc <npc_name> or /n <npc_name> to switch to that NPC.')
     render_markdown('\n- Here are the current NPCs available in your team: ' + ', '.join([npc_name for npc_name in state.team.npcs.keys()]))
-
 
     is_windows = platform.system().lower().startswith("win")
     try:
@@ -92,23 +84,16 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
         pass
     session_scopes = set()
 
-
     def exit_shell(current_state: ShellState):
-        """
-        On exit, iterates through all active scopes from the session and
-        creates/updates the specific knowledge graph for each one.
-        """
         print("\nGoodbye!")
         print(colored("Processing and archiving all session knowledge...", "cyan"))
         
         engine = command_history.engine
 
-
         for team_name, npc_name, path in session_scopes:
             try:
                 print(f"  -> Archiving knowledge for: T='{team_name}', N='{npc_name}', P='{path}'")
                 
-
                 convo_id = current_state.conversation_id
                 all_messages = command_history.get_conversations_by_id(convo_id)
                 
@@ -123,10 +108,8 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                     print("     ...No content for this scope, skipping.")
                     continue
 
-
                 current_kg = load_kg_from_db(engine, team_name, npc_name, path)
                 
-
                 evolved_kg, _ = kg_evolve_incremental(
                     existing_kg=current_kg,
                     new_content_text=full_text,
@@ -137,10 +120,8 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                     link_concepts_facts = True, 
                     link_concepts_concepts = True, 
                     link_facts_facts = True, 
-
                 )
                 
-              
                 save_kg_to_db(engine,
                               evolved_kg,
                               team_name, 
@@ -154,10 +135,20 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
 
         sys.exit(0)
 
-
-
     while True:
         try:
+            if len(state.messages) > 20:
+                planning_state = {
+                    "goal": "ongoing npcsh session", 
+                    "facts": [f"Working in {state.current_path}", f"Current mode: {state.current_mode}"], 
+                    "successes": [], 
+                    "mistakes": [],
+                    "todos": [],
+                    "constraints": ["Follow user requests", "Use appropriate mode for tasks"]
+                }
+                compressed_state = state.npc.compress_planning_state(planning_state)
+                state.messages = [{"role": "system", "content": f"Session context: {compressed_state}"}]
+
             try:
                 completer = make_completer(state)
                 readline.set_completer(completer)
@@ -198,6 +189,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                     continue
                 else:
                     exit_shell(state)
+            
             team_name = state.team.name if state.team else "__none__"
             npc_name = state.npc.name if isinstance(state.npc, NPC) else "__none__"
             session_scopes.add((team_name, npc_name, state.current_path))
@@ -224,7 +216,8 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
             if is_windows and "EOF" in str(e).lower():
                 print("\nHint: On Windows, use Ctrl+Z then Enter for EOF, or type 'exit'")
                 continue
-            raise  # Re-raise if it's not the expected case
+            raise
+        
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="npcsh - An NPC-powered shell.")
