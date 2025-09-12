@@ -2018,7 +2018,7 @@ def process_pipeline_command(
     stdin_input: Optional[str],
     state: ShellState,
     stream_final: bool, 
-    review = True, 
+    review = False, 
     router = None,
     ) -> Tuple[ShellState, Any]:
     '''
