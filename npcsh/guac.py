@@ -6,18 +6,9 @@ import pandas as pd
 import sys
 import argparse
 import importlib.metadata
-import matplotlib
-import platform
 import queue
 plot_queue = queue.Queue()
 
-if platform.system() == 'Darwin':
-    try:
-        matplotlib.use('TkAgg')
-    except ImportError:
-        matplotlib.use('Agg')
-else:
-    matplotlib.use('TkAgg')
 
 import matplotlib.pyplot as plt
 from chroptiks.plotting_utils import * 
@@ -155,17 +146,16 @@ def is_python_code(text: str) -> bool:
     text = text.strip()
     if not text:
         return False
+    
     try:
-        compile(text, "<input>", "eval")
+        compile(text, "<input>", "exec")
         return True
     except SyntaxError:
-        try:
-            compile(text, "<input>", "exec")
-            return True
-        except SyntaxError:
-            return False
+        return False
     except (OverflowError, ValueError):
         return False
+    except IndentationError:
+        return True
 def execute_python_code(code_str: str, state: ShellState, locals_dict: Dict[str, Any]) -> Tuple[ShellState, Any]:
     import io
     output_capture = io.StringIO()
@@ -1168,24 +1158,7 @@ def _run_agentic_mode(command: str,
         compressed_state = state.npc.compress_planning_state(planning_state)
         state.messages = [{"role": "system", "content": f"Session context: {compressed_state}"}]
 
-    existing_vars_context = "EXISTING VARIABLES IN ENVIRONMENT:\n"
-    for var_name, var_value in locals_dict.items():
-        if not var_name.startswith('_') and var_name not in ['In', 'Out', 'exit', 'quit', 'get_ipython']:
-            try:
-                var_type = type(var_value).__name__
-                var_repr = repr(var_value)
-                if len(var_repr) > 100:
-                    var_repr = var_repr[:97] + "..."
-                existing_vars_context += f"- {var_name} ({var_type}): {var_repr}\n"
-            except:
-                existing_vars_context += f"- {var_name} ({type(var_value).__name__}): <unrepresentable>\n"
-    previous_code = ''
-    next_step = ''
-    steps = []
-    while iteration < max_iterations and consecutive_failures < max_consecutive_failures:
-        iteration += 1
-        print(f"\n{_get_guac_agent_emoji(consecutive_failures, max_consecutive_failures)} Agentic iteration {iteration} ")
-        
+
         
   
     existing_vars_context = "EXISTING VARIABLES IN ENVIRONMENT:\n"
@@ -1489,6 +1462,7 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
   
     if stripped_command.startswith('/') and stripped_command not in ["/refresh", "/agent", "/chat", "/cmd"]:
         return execute_command(stripped_command, state, review=True, router=router)
+    print(is_python_code(stripped_command))
     if is_python_code(stripped_command):
         try:
             state, exec_output = execute_python_code(stripped_command, state, locals_dict)
@@ -1497,6 +1471,7 @@ def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str,
             print("\nExecution interrupted by user")
             return state, "Execution interrupted"
     if state.current_mode == "agent":
+
         return _run_agentic_mode(stripped_command, state, locals_dict, npc_team_dir) 
     if state.current_mode == "cmd":
        
@@ -1908,38 +1883,78 @@ def enter_guac_mode(npc=None,
     state.command_history = command_history
 
     if npc is None and default_npc is None:
-        guac_npc_path = Path(npc_team_dir) / "guac.npc" 
-        if guac_npc_path.exists():
-            npc = NPC(file=str(guac_npc_path), 
-                      db_conn=command_history.engine)
-            print(guac_npc_path, npc)
+            guac_npc_path = Path(npc_team_dir) / "guac.npc" 
+            if guac_npc_path.exists():
+                npc = NPC(file=str(guac_npc_path), 
+                        db_conn=command_history.engine)
+                print(guac_npc_path, npc)
 
-            team_ctx_path = get_team_ctx_path(str(npc_team_dir))
-            team_ctx = {}
-            if team_ctx_path and Path(team_ctx_path).exists():
-                with open(team_ctx_path, "r") as f:
-                    team_ctx = yaml.safe_load(f) or {}
-            print(team_ctx, team_ctx_path)
-            team = Team(team_path=str(npc_team_dir), 
-                        forenpc=npc, 
-                        jinxs={}) 
-            team.name = team_ctx.get("team_name", "guac_global_team")
-            team.team_ctx = team_ctx
-            print(team)
-            if npc.model is None:
-                npc.model = team_ctx.get("model", state.chat_model)
-            if npc.provider is None:
-                npc.provider = team_ctx.get("provider", state.chat_provider)
+                team_ctx_path = get_team_ctx_path(str(npc_team_dir))
+                team_ctx = {}
+                if team_ctx_path and Path(team_ctx_path).exists():
+                    with open(team_ctx_path, "r") as f:
+                        team_ctx = yaml.safe_load(f) or {}
+                print(team_ctx, team_ctx_path)
+                team = Team(team_path=str(npc_team_dir), 
+                            forenpc=npc, 
+                            jinxs={}) 
+                team.name = team_ctx.get("team_name", "guac_global_team")
+                team.team_ctx = team_ctx
+                print(team)
+                if npc.model is None:
+                    npc.model = team_ctx.get("model", state.chat_model)
+                if npc.provider is None:
+                    npc.provider = team_ctx.get("provider", state.chat_provider)
+                    
+                for npc_name, npc_obj in team.npcs.items():
+                    if not npc_obj.model:
+                        npc_obj.model = team_ctx.get("model", state.chat_model)
+                    if not npc_obj.provider:
+                        npc_obj.provider = team_ctx.get("provider", state.chat_provider)
+            else:
+                print("No local guac.npc found. Checking for global team...")
+                global_team_dir = ensure_global_guac_team()
+                global_guac_npc_path = global_team_dir / "guac.npc"
                 
-            for npc_name, npc_obj in team.npcs.items():
-                if not npc_obj.model:
-                    npc_obj.model = team_ctx.get("model", state.chat_model)
-                if not npc_obj.provider:
-                    npc_obj.provider = team_ctx.get("provider", state.chat_provider)
-        else:
-            raise RuntimeError(f"No NPC loaded and {guac_npc_path} not found!")
+                if global_guac_npc_path.exists():
+                    print("Using global guac team")
+                    npc = NPC(file=str(global_guac_npc_path), 
+                            db_conn=command_history.engine)
+                    team_ctx_path = global_team_dir / "team.ctx"
+                    team_ctx = {}
+                    if team_ctx_path.exists():
+                        with open(team_ctx_path, "r") as f:
+                            team_ctx = yaml.safe_load(f) or {}
+                    
+                    team = Team(team_path=str(global_team_dir), 
+                                forenpc=npc, 
+                                jinxs={})
+                    team.name = team_ctx.get("team_name", "guac_global_team")
+                    team.team_ctx = team_ctx
+                    
+                    if npc.model is None:
+                        npc.model = team_ctx.get("model", state.chat_model)
+                    if npc.provider is None:
+                        npc.provider = team_ctx.get("provider", state.chat_provider)
+                else:
+                    print("Could not find or create global guac team. Please run /init to set up guac properly.")
+                    try:
+                        user_choice = input("Would you like to initialize guac now? (y/n): ").strip().lower()
+                        if user_choice == 'y':
+                            setup_npc_team(Path(npc_team_dir), lang)
+                            npc = NPC(file=str(Path(npc_team_dir) / "guac.npc"), 
+                                    db_conn=command_history.engine)
+                            team = Team(team_path=str(npc_team_dir), forenpc=npc, jinxs={})
+                        else:
+                            print("Exiting guac mode.")
+                            return
+                    except (KeyboardInterrupt, EOFError):
+                        print("Initialization cancelled. Exiting guac mode.")
+                        return
     elif default_npc and npc is None:
         npc = default_npc
+
+
     state.npc = npc or default_npc
     state.team = team or default_team
 
