@@ -1130,18 +1130,11 @@ def yap_handler(command: str, **kwargs):
 @router.route("alicanto", "Conduct deep research with multiple perspectives, identifying gold insights and cliff warnings")
 def alicanto_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
-    
-  
     parts = shlex.split(command)
-    
   
     query = ""
     num_npcs = safe_get(kwargs, 'num_npcs', 5)
     depth = safe_get(kwargs, 'depth', 3)
-    exploration_factor = safe_get(kwargs, 'exploration', 0.3)
-    creativity_factor = safe_get(kwargs, 'creativity', 0.5)
-    output_format = safe_get(kwargs, 'format', 'report')
-    
   
     i = 1
     while i < len(parts):
@@ -1217,17 +1210,25 @@ def alicanto_handler(command: str, **kwargs):
     
     try:
         logging.info(f"Starting Alicanto research on: {query}")
+        model = safe_get(kwargs, 'model')
+        if len(model) == 0 :
+            model = NPCSH_CHAT_MODEL
+        provider = safe_get(kwargs, 'provider')
+        if len(provider) == 0 :
+            provider = NPCSH_CHAT_PROVIDER
+
+
+        print('model: ', model)
+        print('provider: ', provider)
+
         result = alicanto(
-            request=query,
+            query,
             num_npcs=num_npcs,
             depth=depth,
-            memory=3,
-            context=None,
-            model=safe_get(kwargs, 'model', NPCSH_CHAT_MODEL),
-            provider=safe_get(kwargs, 'provider', NPCSH_CHAT_PROVIDER),
-            exploration_factor=exploration_factor,
-            creativity_factor=creativity_factor,
-            output_format=output_format
+            model=model,
+            provider=provider, 
+            max_steps = safe_get(kwargs, 'max_steps', 20),
+
         )
         
       

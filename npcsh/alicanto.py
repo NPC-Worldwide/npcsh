@@ -1,1089 +1,1075 @@
+import json
+import requests
+import argparse
 import os
-import random
-from typing import List, Dict, Any, Optional, Union, Tuple
-import numpy as np
-from collections import defaultdict, Counter
-import itertools
-import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
-from io import BytesIO
-import base64
-import datetime
-import tempfile
 import subprocess
-import networkx as nx
+import tempfile
+import random 
+import shutil
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime
+from dataclasses import dataclass, asdict, field
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
-from npcpy.npc_compiler import NPC
-from npcpy.llm_funcs import get_llm_response, extract_facts, identify_groups, assign_groups_to_fact
+from npcpy.tools import auto_tools
+from npcpy.llm_funcs import get_llm_response
+from npcpy.data.web import search_web
+from npcpy.npc_compiler import NPC, Team
 from npcsh._state import NPCSH_CHAT_MODEL, NPCSH_CHAT_PROVIDER
-from npcpy.npc_sysenv import print_and_process_stream_with_markdown
+
+from litellm.exceptions import Timeout, ContextWindowExceededError
+import pandas as pd
+import numpy as np
+
+from npcsh.wander import perform_single_wandering
+
+@dataclass
+class ResearchStep:
+    step: int
+    thought: str
+    action: str
+    outcome: str
+
+@dataclass
+class SubAgentTrace:
+    hypothesis: str
+    agent_name: str
+    agent_persona: str
+    steps: List[ResearchStep] = field(default_factory=list)
+    final_files: Dict[str, str] = field(default_factory=dict)
+    was_successful: bool = False
+
+@dataclass
+class Paper:
+    title: str = ""
+    abstract: str = ""
+    introduction: List[str] = field(default_factory=list)
+    methods: List[str] = field(default_factory=list)
+    results: List[str] = field(default_factory=list)
+    discussion: List[str] = field(default_factory=list)
+
+def create_file(filename: str, content: str) -> str:
+    filepath = os.path.abspath(filename)
+    if os.path.exists(filepath):
+        return f"Error: File '{filename}' already exists. Use append_to_file or replace_in_file to modify."
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, 'w') as f:
+        f.write(content)
+    return f"File '{filename}' created successfully."
+
+def append_to_file(filename: str, content: str) -> str:
+    filepath = os.path.abspath(filename)
+    if not os.path.exists(filepath):
+        return f"Error: File '{filename}' not found. Use create_file first."
+    with open(filepath, 'a') as f:
+        f.write("\n" + content)
+    return f"Content appended to '{filename}'."
+
+def replace_in_file(filename: str, old_content: str, new_content: str) -> str:
+    filepath = os.path.abspath(filename)
+    if not os.path.exists(filepath):
+        return f"Error: File '{filename}' not found."
+    with open(filepath, 'r') as f:
+        file_contents = f.read()
+    file_contents = file_contents.replace(old_content, new_content)
+    with open(filepath, 'w') as f:
+        f.write(file_contents)
+    return f"Content in '{filename}' replaced."
+
+def read_file(filename: str) -> str:
+    filepath = os.path.abspath(filename)
+    if not os.path.exists(filepath):
+        return f"Error: File '{filename}' not found."
+    with open(filepath, 'r') as f:
+        return f.read()
+
+def list_files(directory: str = ".") -> List[str]:
+    return os.listdir(directory)
 
 
 
-def generate_random_npcs(num_npcs: int, 
-                         model: str, 
-                         provider: str, 
-                         request: str) -> List[NPC]:
-    """
-    Generate a diverse set of NPCs with different expertise and perspectives
-    related to the research request.
-    """
-  
-    if num_npcs == 1:
-      
-        name = f"Expert Researcher on {request}"
-        expertise = "Interdisciplinary semantic theory researcher"
-        background = "Extensive experience in linguistics, cognitive science, and NLP"
-        perspective = "Combines formal logic with empirical linguistic evidence"
-        quirk = "Uses mathematical metaphors to explain language phenomena"
-        biases = "May favor formal approaches over descriptive linguistics"
-        
-        system_prompt = f"""
-        You are {name}, {expertise}.
-        
-        Background: {background}
-        
-        Your perspective: {perspective}
-        
-        Your methodological quirk: {quirk}
-        
-        Note: Be aware that you may have these biases: {biases}
-        
-        Your task is to research the given topic thoroughly, focusing on your unique perspective.
-        Challenge conventional thinking and identify unexpected connections.
-        Your insights should be provocative and novel.
-        
-        IMPORTANT: You must be extremely concise. Limit responses to 50-75 words maximum.
-        """
-        
-        npc = NPC(name=name, primary_directive=f"Research expert on {request}")
-        npc.system_prompt = system_prompt
-        return [npc]
+from datasets import load_dataset
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+DATASET_CACHE = None
+SEARCH_INDEX = None
+
+def load_and_combine_datasets() -> pd.DataFrame:
+    all_papers = []
     
-  
-    prompt = f"""
-    For the research topic: "{request}"
+    try:
+        research_papers = load_dataset("ta-datalab/research_papers", split="train")
+        for paper in research_papers:
+            all_papers.append({
+                'title': paper.get('title', ''),
+                'abstract': paper.get('abstract', ''),
+                'authors': paper.get('authors', []),
+                'year': paper.get('year', None),
+                'venue': paper.get('venue', ''),
+                'url': paper.get('url', ''),
+                'paperId': paper.get('id', ''),
+                'citationCount': 0,
+                'source': 'research_papers'
+            })
+    except Exception as e:
+        print(f"Failed to load ta-datalab/research_papers: {e}")
     
-    Generate {num_npcs} diverse expert personas who would have different valuable perspectives on this topic.
-    I need truly diverse and unusual viewpoints that can lead to innovative insights.
+    try:
+        ml_papers = load_dataset("CShorten/ML-ArXiv-Papers", split="train")
+        for paper in ml_papers:
+            all_papers.append({
+                'title': paper.get('title', ''),
+                'abstract': paper.get('abstract', ''),
+                'authors': paper.get('authors', '').split(', ') if paper.get('authors') else [],
+                'year': paper.get('year', None),
+                'venue': 'arXiv',
+                'url': paper.get('url', ''),
+                'paperId': paper.get('id', ''),
+                'citationCount': 0,
+                'source': 'ml_arxiv'
+            })
+    except Exception as e:
+        print(f"Failed to load CShorten/ML-ArXiv-Papers: {e}")
     
-    For each expert, provide:
-    1. A name
-    2. Their field of expertise (be creative - include unconventional and interdisciplinary fields)
-    3. Their background/experience (include unusual career paths and perspectives)
-    4. Their unique perspective or approach to the topic (emphasize contrarian, minority, or unexpected viewpoints)
-    5. A methodological quirk that makes their research approach unusual
-    6. Any potential biases they might have
-    """
+    try:
+        astro_papers = load_dataset("ashishkgpian/astrorag_papers", split="train")
+        for paper in astro_papers:
+            all_papers.append({
+                'title': paper.get('title', ''),
+                'abstract': paper.get('abstract', ''),
+                'authors': paper.get('authors', []),
+                'year': paper.get('year', None),
+                'venue': paper.get('venue', ''),
+                'url': paper.get('url', ''),
+                'paperId': paper.get('id', ''),
+                'citationCount': 0,
+                'source': 'astrorag'
+            })
+    except Exception as e:
+        print(f"Failed to load ashishkgpian/astrorag_papers: {e}")
     
-    response = get_llm_response(
-        prompt=prompt, 
-        model=model, 
-        provider=provider,
-        format="json"
-    )
+    df = pd.DataFrame(all_papers)
+    df = df.dropna(subset=['title', 'abstract'])
+    df = df[df['abstract'].str.len() > 50]
+    return df
+
+def create_search_index(df: pd.DataFrame):
+    search_texts = df['title'].fillna('') + ' ' + df['abstract'].fillna('')
+    vectorizer = TfidfVectorizer(max_features=10000, stop_words='english', ngram_range=(1, 2))
+    tfidf_matrix = vectorizer.fit_transform(search_texts)
+    return {'vectorizer': vectorizer, 'tfidf_matrix': tfidf_matrix, 'dataframe': df}
+
+def initialize_dataset_search():
+    global DATASET_CACHE, SEARCH_INDEX
+    if DATASET_CACHE is None:
+        DATASET_CACHE = load_and_combine_datasets()
+    if SEARCH_INDEX is None:
+        SEARCH_INDEX = create_search_index(DATASET_CACHE)
+    return SEARCH_INDEX
+
+import time
+
+LAST_S2_REQUEST_TIME = 0
+S2_RATE_LIMIT_DELAY = 1.0
+
+def search_semantic_scholar(query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    global LAST_S2_REQUEST_TIME
     
-  
-    experts_data = response.get('response', [])
+    api_key = os.environ.get('S2_API_KEY')
+    if not api_key:
+        return []
     
-  
-    npcs = []
+    current_time = time.time()
+    time_since_last = current_time - LAST_S2_REQUEST_TIME
     
-  
-    if isinstance(experts_data, list):
-        experts_to_process = experts_data[:num_npcs]
+    if time_since_last < S2_RATE_LIMIT_DELAY:
+        sleep_time = S2_RATE_LIMIT_DELAY - time_since_last
+        print(f"Rate limiting: sleeping {sleep_time:.2f}s before S2 request")
+        time.sleep(sleep_time)
+    
+    LAST_S2_REQUEST_TIME = time.time()
+    
+    url = "https://api.semanticscholar.org/graph/v1/paper/search"
+    headers = {"x-api-key": api_key}
+    params = {
+        "query": query,
+        "limit": limit,
+        "fields": "title,abstract,authors,year,citationCount,url,tldr"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, params=params, 
+                              timeout=30)
+        response.raise_for_status()
+        return response.json().get('data', [])
+    except requests.exceptions.RequestException as e:
+        print(f"Semantic Scholar API error: {e}")
+        return []
+
+def search_papers(query: str, limit: int = 10) -> List[Dict]:
+    s2_results = search_semantic_scholar(query, limit)
+    if s2_results:
+        return s2_results
+    
+    search_index = initialize_dataset_search()
+    query_vector = search_index['vectorizer'].transform([query])
+    similarities = cosine_similarity(query_vector, search_index['tfidf_matrix']).flatten()
+    top_indices = similarities.argsort()[-limit:][::-1]
+    results = [search_index['dataframe'].iloc[idx].to_dict() for idx in top_indices if similarities[idx] > 0.01]
+    return results
+
+def execute_shell_command(command: str) -> Dict[str, Any]:
+    try:
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
+        return {
+            "success": result.returncode == 0,
+            "stdout": result.stdout,
+            "stderr": result.stderr
+        }
+    except Exception as e:
+        return {"success": False, "stderr": str(e)}
+
+def update_paper(paper_state: Paper, section: str, content: str) -> Paper:
+    if not hasattr(paper_state, section):
+        return paper_state
+    target_section = getattr(paper_state, section)
+    if isinstance(target_section, list):
+        target_section.append(content)
     else:
-      
-        if isinstance(experts_data, dict):
-            experts_to_process = [experts_data]
-        else:
-          
-            experts_to_process = [{
-                "name": f"Expert_1",
-                "expertise": "Interdisciplinary researcher",
-                "background": "Diverse academic and practical experience",
-                "perspective": "Balanced analysis with focus on innovative connections",
-                "methodological_quirk": "Uses unconventional conceptual frameworks",
-                "biases": "Tends toward theoretical rather than practical solutions"
-            }]
-    
-    for expert in experts_to_process:
-        name = expert.get("name", f"Expert_{len(npcs)}")
-        
-      
-        system_prompt = f"""
-        You are {name}, {expert.get('expertise', 'an expert researcher')}.
-        
-        Background: {expert.get('background', 'You have extensive knowledge in your field.')}
-        
-        Your perspective: {expert.get('perspective', 'You provide detailed, balanced analysis.')}
-        
-        Your methodological quirk: {expert.get('methodological_quirk', 'You approach problems in unconventional ways.')}
-        
-        Note: Be aware that you may have these biases: {expert.get('biases', 'None specifically noted.')}
-        
-        Your task is to research the given topic thoroughly, focusing on your unique perspective and methodological approach.
-        Challenge conventional thinking, explore neglected angles, and identify unexpected connections or contradictions.
-        Your insights should be provocative and novel, not just rehashing mainstream views.
-        
-        IMPORTANT: You must be extremely concise. Limit responses to 50-75 words maximum. Focus on substance over verbosity.
-        Prioritize precision, clarity, and insight density. Eliminate unnecessary words and focus on communicating 
-        the essence of your insights in the most efficient way possible.
-        """
-        
-      
-        npc = NPC(name=name, primary_directive=f"Research expert on {request}")
-        npc.system_prompt = system_prompt
-        npcs.append(npc)
-    
-    return npcs
+        setattr(paper_state, section, content)
+    return paper_state
 
-def generate_research_chain(request: str, 
-                            npc: NPC, depth: int, 
-                            memory: int = 3, 
-                            context: str = None, 
-                            model: str = None, 
-                            provider: str = None,
-                            exploration_factor: float = 0.3,
-                            creativity_factor: float = 0.5) -> List[str]:
-    """
-    Generate a chain of research thoughts from a single NPC, diving deeper with each step.
-    
-    Args:
-        request: The research question/topic
-        npc: The NPC generating the research
-        depth: How many steps of research to perform
-        memory: How many previous steps to include in context
-        context: Additional context to include
-        model: LLM model to use
-        provider: LLM provider to use
-        exploration_factor: Probability (0-1) of exploring a tangential direction
-        creativity_factor: Probability (0-1) of pursuing highly creative or unusual ideas
-    
-    Returns:
-        List of research findings/thoughts from this chain
-    """
-    chain = []
-    
-  
-    initial_prompt = f"""
-    Research request: {request}
-    
-    {f"Additional context: {context}" if context else ""}
-    
-    As {npc.name}, begin your research process by:
-    1. Analyzing what you know about this topic
-    2. Identifying key questions that need to be explored
-    3. Providing initial insights based on your expertise and unique perspective
-    
-    BE EXTREMELY CONCISE. Focus on substance over wordiness. Provide clear, high-value insights in 50-75 words maximum.
-    """
-    
-    response = get_llm_response(prompt=initial_prompt, model=model, provider=provider, npc=npc, temperature=0.7)
-    initial_findings = response.get('response', '')
-    if isinstance(initial_findings, (list, dict)) or hasattr(initial_findings, '__iter__') and not isinstance(initial_findings, (str, bytes)):
-        initial_findings = ''.join([str(chunk) for chunk in initial_findings])
-    
-    chain.append(initial_findings)
-    
-  
-    for i in range(1, depth):
-      
-        memory_context = "\n\n".join(chain[-memory:]) if len(chain) > 0 else ""
-        
-      
-        next_prompt = f"""
-        Research request: {request}
-        
-        Recent research findings:
-        {memory_context}
-        
-        As {npc.name}, continue your research on this topic. Build on previous insights and explore new aspects.
-        
-        BE EXTREMELY CONCISE. Keep your response to 50-75 words maximum.
-        """
-        
-        response = get_llm_response(prompt=next_prompt, model=model, provider=provider, npc=npc, temperature=0.7)
-        next_findings = response.get('response', '')
-        if isinstance(next_findings, (list, dict)) or hasattr(next_findings, '__iter__') and not isinstance(next_findings, (str, bytes)):
-            next_findings = ''.join([str(chunk) for chunk in next_findings])
-        
-        chain.append(next_findings)
-    
-    return chain
-
-def format_facts_list(facts: List[str]) -> str:
-    """Format a list of facts for display in a report"""
-    return "\n".join([f"• {fact}" for fact in facts])
-
-def simulate_experiments(research: Dict[str, Any], 
-                         request: str, 
-                         model: str = None, 
-                         provider: str = None, 
-                         max_experiments: int = None) -> Dict[str, Dict[str, Any]]:
-    """
-    Simulate thought experiments based on research findings
-    
-    Args:
-        research: Consolidated research data
-        request: Original research question
-        model: LLM model to use
-        provider: LLM provider to use
-        max_experiments: Maximum number of experiments to generate
-        
-    Returns:
-        Dictionary mapping experiment titles to experiment data
-    """
-  
-    facts_context = ""
-    
-  
-    if "fact_groups" in research:
-        for group, facts in list(research["fact_groups"].items())[:5]:
-            facts_context += f"\n\nThematic Group: {group}\n"
-            facts_context += format_facts_list(facts)
-    
-  
-    if "combination_insights" in research:
-        facts_context += "\n\nEmergent Insights:\n"
-        for combo in research["combination_insights"][:3]:
-            facts_context += f"• {combo.get('emergent_insight', '')}\n"
-    
-  
-    prompt = f"""
-    You are a creative research scientist exploring the topic: "{request}"
-    
-    Based on the following research findings:
-    
-    {facts_context}
-    
-    Design {max_experiments if max_experiments else "3-5"} thought experiments that could test, validate, or extend these insights.
-    
-    For each experiment:
-    1. Create a descriptive title that captures the experiment's focus
-    2. Describe the experimental design/methodology (be specific and detailed)
-    3. Predict the potential results and their implications
-    4. Explain how these results would advance our understanding of {request}
-    
-    Format your response as JSON with this structure:
-    {{
-      "experiment_title_1": {{
-        "design": "detailed description of experimental design",
-        "results": "predicted results and implications"
-      }},
-      "experiment_title_2": {{
-        ...
-      }}
-    }}
-    
-    Be bold and imaginative in your experimental designs. Consider unconventional approaches,
-    simulations, thought experiments, and interdisciplinary methods.
-    """
-    
-    response = get_llm_response(prompt=prompt, 
-                                model=model, 
-                                provider=provider,
-                                temperature=0.8, 
-                                format="json")
-    experiments = response.get("response", {})
-    
-  
-    if max_experiments and isinstance(experiments, dict) and len(experiments) > max_experiments:
-      
-        sorted_exps = sorted(experiments.items(), key=lambda x: len(x[0]), reverse=True)
-        experiments = dict(sorted_exps[:max_experiments])
-    
-    return experiments
-
-def alicanto(request: str,
-             num_npcs: int = 5,
-             depth: int = 3, memory: int = 3, 
-             context: str = None, 
-             model: str = None, 
-             provider: str = None,
-             exploration_factor: float = 0.3,
-             creativity_factor: float = 0.5,
-             output_format: str = "report",
-             max_facts_per_chain: int = None,
-             max_thematic_groups: int = None, 
-             max_criticisms_per_group: int = None,
-             max_conceptual_combinations: int = None,
-             max_experiments: int = None,
-             generate_pdf: bool = True) -> Dict[str, Any]:
-    """
-    Alicanto: Generate diverse research insights by coordinating multiple NPCs with different expertise.
-    
-    Args:
-        request: The research question/topic
-        num_npcs: Number of NPCs to generate (with different expertise)
-        depth: Depth of research for each NPC
-        memory: How many previous steps to include in context
-        context: Additional context to include
-        model: LLM model to use
-        provider: LLM provider to use
-        exploration_factor: Probability (0-1) of exploring a tangential direction
-        creativity_factor: Probability (0-1) of pursuing highly creative or unusual ideas
-        output_format: Format of the output ("report", "json", "markdown")
-        max_facts_per_chain: Maximum number of facts to extract per research chain
-        max_thematic_groups: Maximum number of thematic groups to identify
-        max_criticisms_per_group: Maximum number of criticisms per thematic group
-        max_conceptual_combinations: Maximum number of conceptual combinations to generate
-        max_experiments: Maximum number of experiments to generate
-        generate_pdf: Whether to generate a PDF report
-        
-    Returns:
-        Dictionary with research results
-    """
-  
-    if model is None:
-        model = NPCSH_CHAT_MODEL
-    if provider is None:
-        provider = NPCSH_CHAT_PROVIDER
-    
-  
-    print(f"Generating {num_npcs} diverse researcher NPCs...")
-    researchers = generate_random_npcs(num_npcs, model, provider, request)
-    
-  
-    print(f"Generating research chains (depth={depth})...")
-    research_chains = {}
-    facts_by_researcher = {}
-    
-    for npc in researchers:
-        print(f"  Research chain from {npc.name}...")
-        chain = generate_research_chain(
-            request=request,
-            npc=npc,
-            depth=depth,
-            memory=memory,
-            context=context,
-            model=model,
-            provider=provider,
-            exploration_factor=exploration_factor,
-            creativity_factor=creativity_factor
-        )
-        research_chains[npc.name] = chain
-        
-      
-        print(f"  Extracting facts from {npc.name}'s research...")
-        facts = extract_facts("\n\n".join(chain), model=model, provider=provider, npc=npc, context=request)
-        
-      
-        if max_facts_per_chain is not None and len(facts) > max_facts_per_chain:
-            facts = facts[:max_facts_per_chain]
-            
-        facts_by_researcher[npc.name] = facts
-        print({"fact_list": facts})
-    
-  
-    print("Identifying thematic groups across all research insights...")
-    all_facts = []
-    for researcher_facts in facts_by_researcher.values():
-        all_facts.extend(researcher_facts)
-    
-    groups = identify_groups(all_facts, model=model, provider=provider)
-    
-  
-    if max_thematic_groups is not None and len(groups) > max_thematic_groups:
-        groups = groups[:max_thematic_groups]
-    
-  
-    fact_groups = {group: [] for group in groups}
-    for fact in all_facts:
-        group_assignments = assign_groups_to_fact(fact, groups, model=model, provider=provider)
-        assigned_groups = group_assignments.get("groups", [])
-        for group in assigned_groups:
-            if group in fact_groups:
-                fact_groups[group].append(fact)
-    
-  
-    print("Evaluating thematic groups for quality and risk...")
-    group_evaluations = evaluate_thematic_groups(
-        fact_groups, 
-        request,
-        model=model,
-        provider=provider,
-        max_criticisms=max_criticisms_per_group
-    )
-    
-  
-    group_summaries = {}
-    for group_name, facts in fact_groups.items():
-        if not facts:
-            continue
-            
-        prompt = f"""
-        Summarize the key insights from this thematic group of research findings on the topic:
-        "{request}"
-        
-        Thematic Group: {group_name}
-        
-        Findings:
-        {format_facts_list(facts)}
-        
-        Provide a concise, coherent synthesis that captures the core ideas, 
-        emphasizes what's most novel or significant, and suggests potential implications.
-        Keep your response to 200-300 words.
-        """
-        
-        response = get_llm_response(prompt=prompt, model=model, provider=provider)
-        summary = response.get('response', '')
-        if isinstance(summary, (list, dict)) or hasattr(summary, '__iter__') and not isinstance(summary, (str, bytes)):
-            summary = ''.join([str(chunk) for chunk in summary])
-        
-        group_summaries[group_name] = summary
-    
-  
-    print("Generating conceptual combinations to spark novel insights...")
-    fact_lists = list(facts_by_researcher.values())
-    combinations = generate_conceptual_combinations(
-        fact_lists,
-        sample_size=min(3, len(all_facts)),
-        num_combinations=max_conceptual_combinations if max_conceptual_combinations is not None else 5
-    )
-    
-  
-    print("Analyzing conceptual combinations for emergent insights...")
-    combination_insights = analyze_conceptual_combinations(
-        combinations,
-        request,
+def get_creative_ideas_for_stuck_agent(
+    problem_description: str,
+    npc: NPC,
+    model: str,
+    provider: str
+) -> str:
+    print(f"\n--- SUB-AGENT {npc.name} IS STUCK, INITIATING WANDER ---")
+    _, _, raw_brainstorm, _, _ = perform_single_wandering(
+        problem=problem_description,
+        npc=npc,
         model=model,
         provider=provider
     )
+    return raw_brainstorm
+
+
+@dataclass
+class FileProvenance:
+    filename: str
+    step_history: List[Tuple[int, str, str, str]] = field(default_factory=list)  
+
+def get_filesystem_state() -> Dict[str, str]:
+    import hashlib
+    files = {}
+    for f in os.listdir("."):
+        if os.path.isfile(f):
+            with open(f, 'rb') as file:
+                content = file.read()
+                files[f] = hashlib.md5(content).hexdigest()[:8]
+    return files
+
+def summarize_step(thought: str, 
+                   action: str, 
+                   outcome: str, 
+                   fs_before: Dict[str, str], 
+                   fs_after: Dict[str, str], 
+                   file_provenance: Dict[str, FileProvenance], 
+                   step_num: int, 
+                   model: str, 
+                   provider: str, 
+                   npc: NPC) -> str:
     
-  
-    print("Identifying meta-patterns across research approaches...")
-    meta_patterns = identify_patterns_across_chains(research_chains, model=model, provider=provider)
+    import hashlib
+    import os
     
-  
-    print("Consolidating research into comprehensive synthesis...")
     
-  
-    integration_points = []
+    current_files = {}
+    for f in os.listdir("."):
+        if os.path.isfile(f):
+            with open(f, 'rb') as file:
+                content = file.read()
+                current_files[f] = {
+                    'size': len(content),
+                    'checksum': hashlib.md5(content).hexdigest()[:8]
+                }
     
-  
-    for group, facts in fact_groups.items():
-        if facts:
-            integration_points.append(f"From thematic group '{group}':")
-            for fact in facts[:3]:
-                integration_points.append(f"- {fact}")
     
-  
-    for insight in combination_insights[:3]:
-        integration_points.append(f"Emergent insight: {insight.get('emergent_insight', '')}")
+    for f in fs_after:
+        if f not in file_provenance:
+            file_provenance[f] = FileProvenance(filename=f)
+        
+        change_summary = ""
+        if f not in fs_before:
+            change_summary = f"Created with {current_files[f]['size']} bytes"
+            file_provenance[f].step_history.append((step_num, "CREATED", fs_after[f], change_summary))
+        elif fs_before.get(f) != fs_after[f]:
+            change_summary = f"Modified to {current_files[f]['size']} bytes"
+            file_provenance[f].step_history.append((step_num, "MODIFIED", fs_after[f], change_summary))
     
-  
-    integration_points.append(f"Meta-analysis insight: {meta_patterns.get('meta_analysis', '')[:300]}...")
     
-  
-    integration_prompt = f"""
-    Consolidate these diverse research findings into a comprehensive, integrative analysis of the topic:
-    "{request}"
+    provenance_summary = []
+    for filename, prov in file_provenance.items():
+        history = "; ".join([f"Step {step}: {action} ({checksum}) - {changes}" for step, action, checksum, changes in prov.step_history])
+        provenance_summary.append(f"{filename}: {history}")
     
-    Key points from the research:
-    {format_facts_list(integration_points)}
+    prompt = f"""AGENT'S REASONING: {thought}
+
+            AGENT'S ACTION: {action}  
+        AGENT'S CLAIMED OUTCOME: {outcome}
+
+        COMPLETE FILE PROVENANCE:
+        {chr(10).join(provenance_summary)}
+
+        CURRENT FILESYSTEM:
+        Files: {list(current_files.keys())}
+        Details: {current_files}
+
+Explain plainly what happened and whether the actions produced any measurable effects. If the agent thinks then it is likely time to direct it to 
+carry out a specific action. 
+
+Return JSON with "summary" and "next_step" keys.""" + """
+
+{
+    "summary": " a summary of what they did and claimed and the extent to which it produced the intended outcome .", 
+    "next_step": "The concrete next step for the agent to carry out in their research.
+
+}
+"""
     
-    Your consolidation should:
-    1. Provide a coherent synthesis of the diverse perspectives
-    2. Identify the most significant findings and patterns
-    3. Note any tensions, contradictions, or complementary insights
-    4. Suggest an integrated framework for understanding the topic
-    5. Briefly outline implications and future directions
+    response = get_llm_response(prompt, model=model, provider=provider, npc=npc, format='json')
+    summary_data = response.get('response')
+
+    return summary_data
+
+
+
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+import csv
+import os
+from datetime import datetime
+
+Base = declarative_base()
+
+class AlicantoPersona(Base):
+    __tablename__ = 'alicanto_personas'
     
-    Aim for a comprehensive, balanced, and insightful analysis (300-500 words).
-    """
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255))
+    birth_year = Column(Integer)
+    location = Column(Text)
+    leader = Column(Text)
+    interests = Column(Text)
+    worldview = Column(Text)
+    approach = Column(Text)
+    persona_text = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+def save_persona_to_databases(persona_data: dict):
+    """Save persona to both SQLite and CSV for persistence"""
     
-    integration_response = get_llm_response(integration_prompt, model=model, provider=provider)
-    integration = integration_response.get('response', '')
-    if isinstance(integration, (list, dict)) or hasattr(integration, '__iter__') and not isinstance(integration, (str, bytes)):
-        integration = ''.join([str(chunk) for chunk in integration])
     
-  
-    summary_prompt = f"""
-    Create a concise executive summary (150 words max) of this research on:
-    "{request}"
+    db_path = os.path.expanduser("~/npcsh_history.db")
+    engine = create_engine(f'sqlite:///{db_path}')
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
     
-    Integration:
-    {integration}
     
-    Focus on the most significant findings and implications. This should be suitable for someone who only has time to read a brief overview.
-    """
-    
-    summary_response = get_llm_response(summary_prompt, model=model, provider=provider)
-    ideas_summarized = summary_response.get('response', '')
-    if isinstance(ideas_summarized, (list, dict)) or hasattr(ideas_summarized, '__iter__') and not isinstance(ideas_summarized, (str, bytes)):
-        ideas_summarized = ''.join([str(chunk) for chunk in ideas_summarized])
-    
-  
-    print("Generating simulated experiments...")
-    research_results = {
-        "research_request": request,
-        "research_chains": research_chains,
-        "fact_groups": fact_groups,
-        "group_evaluations": group_evaluations,
-        "group_summaries": group_summaries,
-        "combination_insights": combination_insights,
-        "meta_patterns": meta_patterns,
-        "integration": integration,
-        "ideas_summarized": ideas_summarized
-    }
-    
-    experiments = simulate_experiments(
-        research_results,
-        request,
-        model=model,
-        provider=provider,
-        max_experiments=max_experiments
+    persona = AlicantoPersona(
+        name=persona_data.get('name'),
+        birth_year=persona_data.get('birth_year'),
+        location=persona_data.get('location'),
+        leader=persona_data.get('leader'),
+        interests=json.dumps(persona_data.get('interests', [])),
+        worldview=persona_data.get('worldview'),
+        approach=persona_data.get('approach'),
+        persona_text=persona_data.get('persona_text')
     )
     
-  
-    pdf_path = None
-    if generate_pdf:
-        pdf_path = generate_pdf_report(request, model, provider, research_results, experiments)
+    session.add(persona)
+    session.commit()
+    session.close()
     
-  
-    research_results["experiments"] = experiments
-    research_results["pdf_path"] = pdf_path
     
-    return research_results
-
-def evaluate_thematic_groups(fact_groups: Dict[str, List[str]], request: str, model: str = None, provider: str = None, max_criticisms: int = None) -> Dict[str, Dict[str, int]]:
-    """
-    Evaluate each thematic group for quality, potential risks, and biases.
+    csv_dir = os.path.expanduser("~/.npcsh/npc_team")
+    os.makedirs(csv_dir, exist_ok=True)
+    csv_path = os.path.join(csv_dir, "alicanto_personas.csv")
     
-    Args:
-        fact_groups: Dictionary mapping group names to lists of facts
-        request: The original research question
-        model: LLM model to use
-        provider: LLM provider to use
-        max_criticisms: Maximum number of criticisms to generate per group
+    file_exists = os.path.exists(csv_path)
+    with open(csv_path, 'a', newline='') as csvfile:
+        fieldnames = ['name', 'birth_year', 'location', 'leader', 'interests', 
+                     'worldview', 'approach', 'persona_text', 'created_at']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         
-    Returns:
-        Dictionary mapping group names to evaluation metrics
-    """
-    evaluations = {}
-    
-    for group_name, facts in fact_groups.items():
-        facts_text = format_facts_list(facts)
-        
-        prompt = f"""
-        Evaluate this thematic group of research insights on the topic:
-        "{request}"
-        
-        Thematic Group: {group_name}
-        
-        Insights:
-        {facts_text}
-        
-        Evaluate this group of insights on a scale of 1-10 (where 10 is highest) for:
-        1. Novelty: How original and non-obvious are these insights?
-        2. Depth: How deeply do they explore the underlying concepts?
-        3. Practicality: How useful are these insights for further research or application?
-        4. Evidence: How well-supported do these claims appear to be?
-        5. Risk: What is the chance that these insights lead to problematic directions or dead ends?
-        
-        Then identify potential weaknesses, biases, or limitations in these insights.
-        {f"Provide exactly {max_criticisms} criticisms." if max_criticisms is not None else ""}
-        
-        Format your response as:
-        Novelty: [score]
-        Depth: [score]
-        Practicality: [score]
-        Evidence: [score]
-        Risk: [score]
-        
-        Criticisms:
-        1. [First criticism]
-        2. [Second criticism]
-        ...
-        """
-        
-        response = get_llm_response(prompt=prompt, model=model, provider=provider)
-        eval_text = response.get('response', '')
-        if isinstance(eval_text, (list, dict)) or hasattr(eval_text, '__iter__') and not isinstance(eval_text, (str, bytes)):
-            eval_text = ''.join([str(chunk) for chunk in eval_text])
-        
-      
-        scores = {}
-        criticisms = []
-        in_criticisms = False
-        
-        for line in eval_text.split('\n'):
-            line = line.strip()
-            if not line:
-                continue
+        if not file_exists:
+            writer.writeheader()
             
-            if line.lower() == "criticisms:":
-                in_criticisms = True
-                continue
-            
-            if in_criticisms:
-              
-                if line[0].isdigit() and line[1:].startswith('. '):
-                    criticism = line[line.find(' ')+1:].strip()
-                    criticisms.append(criticism)
-            else:
-              
-                if ':' in line:
-                    metric, score_str = line.split(':', 1)
-                    metric = metric.strip()
-                    try:
-                        score = int(score_str.strip())
-                        scores[metric] = score
-                    except ValueError:
-                        pass
-        
-      
-        if max_criticisms is not None and len(criticisms) > max_criticisms:
-            criticisms = criticisms[:max_criticisms]
-        
-        evaluations[group_name] = {
-            **scores,
-            "criticisms": criticisms
-        }
-    
-    return evaluations
-
-def generate_conceptual_combinations(fact_lists: List[List[str]], sample_size: int = 3, num_combinations: int = 5) -> List[Dict]:
-    """
-    Generate interesting combinations of facts from different researchers to spark novel ideas.
-    
-    Args:
-        fact_lists: List of fact lists from different NPCs
-        sample_size: Number of facts to include in each combination
-        num_combinations: Number of combinations to generate
-        
-    Returns:
-        List of dictionaries containing the combinations and generated insights
-    """
-  
-    all_facts_with_source = []
-    for i, facts in enumerate(fact_lists):
-        for fact in facts:
-            all_facts_with_source.append((i, fact))
-    
-  
-    combinations = []
-    for _ in range(num_combinations):
-        if len(all_facts_with_source) <= sample_size:
-            sample = all_facts_with_source
-        else:
-            sample = random.sample(all_facts_with_source, sample_size)
-        
-        combinations.append({
-            "facts": [fact for _, fact in sample],
-            "sources": [source for source, _ in sample]
+        writer.writerow({
+            **persona_data,
+            'interests': json.dumps(persona_data.get('interests', [])),
+            'created_at': datetime.now().isoformat()
         })
-    
-    return combinations
 
-def analyze_conceptual_combinations(combinations: List[Dict], request: str, model: str = None, provider: str = None) -> List[Dict]:
-    """
-    Analyze combinations of facts to identify emergent patterns and generate novel hypotheses.
-    
-    Args:
-        combinations: List of fact combinations
-        request: The original research question
-        model: LLM model to use
-        provider: LLM provider to use
+def generate_sub_agent_personas(topic: str, num_agents: int, model: str, provider: str, npc: NPC) -> List[Dict[str, str]]:
+    personas = []
+    for i in range(num_agents):
+        birth_year = random.randint(-32665, 32665)
+        teen_year = birth_year + 16
         
-    Returns:
-        List of dictionaries with analysis results
-    """
-    results = []
-    
-    for i, combo in enumerate(combinations):
-        facts_formatted = format_facts_list(combo["facts"])
-        
-        prompt = f"""
-        Consider these seemingly unrelated insights from different researchers exploring the topic:
-        "{request}"
-        
-        {facts_formatted}
-        
-        Your task is to identify a non-obvious connection, pattern, or insight that emerges when these ideas are juxtaposed.
-        Focus on discovering something truly novel that none of the individual researchers may have recognized.
-        
-        1. Identify a surprising emergent pattern or connection
-        2. Develop a novel hypothesis or research question based on this pattern
-        3. Explain how this insight challenges or extends conventional thinking on the topic
-        4. Suggest an unconventional methodology or approach to explore this new direction
-        
-        Be bold, imaginative, and interdisciplinary in your thinking.
-        """
-        
-        response = get_llm_response(prompt=prompt, model=model, provider=provider, temperature=0.9)
-        insight = response.get('response', '')
-        if isinstance(insight, (list, dict)) or hasattr(insight, '__iter__') and not isinstance(insight, (str, bytes)):
-            insight = ''.join([str(chunk) for chunk in insight])
-        
-        results.append({
-            "combination_id": i+1,
-            "facts": combo["facts"],
-            "sources": combo["sources"],
-            "emergent_insight": insight
-        })
-    
-    return results
-
-def identify_patterns_across_chains(chains: Dict[str, List[str]], model: str = None, provider: str = None) -> Dict:
-    """
-    Identify meta-patterns across research chains, searching for higher-order insights.
-    
-    Args:
-        chains: Dictionary mapping NPC names to their research chains
-        model: LLM model to use
-        provider: LLM provider to use
-        
-    Returns:
-        Dictionary with meta-analysis results
-    """
-  
-    chain_summaries = {}
-    for name, chain in chains.items():
-        full_text = "\n\n".join(chain)
-        
-        summary_prompt = f"""
-        Summarize the key themes, methodologies, and unusual perspectives in this research chain:
-        
-        {full_text[:2000]}...
-        
-        Focus on what makes this researcher's approach unique or valuable. Identify their core assumptions,
-        methodological innovations, and blindspots (150-200 words).
-        """
-        
-        response = get_llm_response(prompt=summary_prompt, model=model, provider=provider)
-        summary = response.get('response', '')
-        if isinstance(summary, (list, dict)) or hasattr(summary, '__iter__') and not isinstance(summary, (str, bytes)):
-            summary = ''.join([str(chunk) for chunk in summary])
-        
-        chain_summaries[name] = summary
-    
-  
-    all_summaries = "\n\n".join([f"[{name}]\n{summary}" for name, summary in chain_summaries.items()])
-    
-    meta_analysis_prompt = f"""
-    Analyze these research approaches on the topic:
-    
-    {all_summaries}
-    
-    Identify:
-    1. Surprising methodological patterns - how are researchers approaching this problem in innovative ways?
-    2. Conceptual blindspots - what aspects seem to be collectively overlooked?
-    3. Emerging paradigms - are there new frameworks or models taking shape across multiple perspectives?
-    4. Productive tensions - where do disagreements or contradictions suggest valuable new research directions?
-    5. The topology of the problem space - how might we map the conceptual territory in a novel way?
-    
-    Focus on identifying higher-order insights that emerge from comparing these different approaches.
-    Your analysis should challenge conventions and suggest new ways of framing the entire research domain.
-    """
-    
-    response = get_llm_response(prompt=meta_analysis_prompt, model=model, provider=provider, temperature=0.8)
-    meta_analysis = response.get('response', '')
-    if isinstance(meta_analysis, (list, dict)) or hasattr(meta_analysis, '__iter__') and not isinstance(meta_analysis, (str, bytes)):
-        meta_analysis = ''.join([str(chunk) for chunk in meta_analysis])
-    
-  
-    directions_prompt = f"""
-    Based on this meta-analysis of research approaches to the topic:
-    
-    {meta_analysis}
-    
-    Propose 5 highly innovative research directions that could transform this field.
-    For each direction:
-    1. Frame a provocative research question
-    2. Explain why it's both important and neglected
-    3. Suggest an unconventional methodology to explore it
-    4. Describe what a breakthrough in this direction might look like
-    
-    Your suggestions should be bold, interdisciplinary, and challenge fundamental assumptions.
-    Aim for directions that most researchers haven't considered but that could lead to significant advances.
-    """
-    
-    response = get_llm_response(prompt=directions_prompt, model=model, provider=provider, temperature=0.9)
-    new_directions = response.get('response', '')
-    if isinstance(new_directions, (list, dict)) or hasattr(new_directions, '__iter__') and not isinstance(new_directions, (str, bytes)):
-        new_directions = ''.join([str(chunk) for chunk in new_directions])
-    
-    return {
-        "chain_summaries": chain_summaries,
-        "meta_analysis": meta_analysis,
-        "innovative_directions": new_directions
-    }
-
-def preprocess_content_for_pdf(content: str, model: str = None, provider: str = None, max_words: int = 2000, concise_mode: bool = False) -> str:
-    """
-    Quick and lightweight preprocessing for PDF generation.
-    
-    Args:
-        content: Raw content to preprocess
-        model: LLM model to use (optional)
-        provider: LLM provider to use (optional)
-        max_words: Maximum word count (default 2000)
-        concise_mode: If True, creates a very short summary instead of full formatting
-        
-    Returns:
-        Formatted content ready for PDF generation
-    """
-  
-    if not isinstance(content, str):
-        content = str(content)
-    
-  
-    if concise_mode:
-        
-        if model is None:
-            model = NPCSH_CHAT_MODEL
-        if provider is None:
-            provider = NPCSH_CHAT_PROVIDER
-            
-        concise_prompt = f"""
-        Summarize the following content into an extremely concise, no-bullshit format with maximum 500 words:
-        {content}
-        
-        - Use clear section headings
-        - Use bullet points for key ideas
-        - Focus only on essential insights
-        - No verbose academic language
-        - No padding or fillers
-        - Just the core ideas in simple language
-        """
-        
-        response = get_llm_response(prompt=concise_prompt, model=model, provider=provider)
-        content = response.get('response', '')
-    
-  
-    for char, replacement in {
-        '%': '',
-        '#': '-',
-        '_': '-',
-        '~': '-',
-        '^': '',
-        '\\': '/',
-        '{': '(',
-        '}': ')'
-    }.items():
-        content = content.replace(char, replacement)
-    
-  
-    words = content.split()
-    if len(words) > max_words:
-        content = ' '.join(words[:max_words]) + '... [truncated]'
-    
-    return content.strip()
-
-def generate_pdf_report(request: str, 
-                        model, 
-                        provider, 
-                        research: Dict[str, Any], 
-                        experiments: Dict[str, Dict[str, Any]], 
-                        output_path: str = None, 
-                        max_pages: int = 5) -> str:
-    """
-    Generate a professional PDF report using LaTeX for superior formatting, typesetting, and layout.
-    
-    Args:
-        request: The original research question
-        research: The consolidated research results
-        experiments: The simulated experiments and their results
-        output_path: Path to save the PDF report (default: current directory)
-        fast_mode: If True, uses simpler formatting
-        concise_mode: If True, drastically reduces content length
-        max_pages: Maximum number of pages to generate (approximate)
-        
-    Returns:
-        Path to the generated PDF file
-    """
-    if output_path is None:
-        output_path = os.getcwd()
-    
-  
-    sanitized_request = "".join(c for c in request if c.isalnum() or c.isspace()).strip()
-    sanitized_request = sanitized_request.replace(" ", "_")[:50]
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{sanitized_request}_{timestamp}"
-    
-  
-    try:
-        subprocess.run(["which", "pdflatex"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except subprocess.CalledProcessError:
-        print("LaTeX not installed. Attempting to install...")
-        try:
-            subprocess.run(["apt-get", "update"], check=True)
-            subprocess.run(["apt-get", "install", "-y", "texlive-latex-base", "texlive-fonts-recommended", 
-                            "texlive-fonts-extra", "texlive-latex-extra"], check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"Error installing LaTeX: {str(e)}")
-            return None
-  
-    chart_path = None
-    try:
-        if "group_evaluations" in research and research["group_evaluations"]:
-          
-            figures_dir = os.path.join(output_path, "figures")
-            os.makedirs(figures_dir, exist_ok=True)
-            
-            fig, ax = plt.subplots(figsize=(7.5, 4))
-            plt.style.use('ggplot')
-            
-            groups = []
-            scores = []
-            
-            for group_name, eval_data in research["group_evaluations"].items():
-                groups.append(group_name[:30])
-                quality_score = (eval_data.get("Novelty", 5) + eval_data.get("Depth", 5) + 
-                               eval_data.get("Practicality", 5) + eval_data.get("Evidence", 5)) / 4
-                scores.append(quality_score)
-            
-          
-            sorted_data = sorted(zip(groups, scores), key=lambda x: x[1], reverse=True)
-            groups = [x[0] for x in sorted_data]
-            scores = [x[1] for x in sorted_data]
-            
-          
-            y_pos = range(len(groups))
-            ax.barh(y_pos, scores, color='steelblue')
-            ax.set_yticks(y_pos)
-            ax.set_yticklabels(groups)
-            ax.set_xlabel('Quality Score (1-10)')
-            ax.set_title('Thematic Groups by Quality Score')
-            plt.tight_layout()
-            
-          
-            chart_path = os.path.join(figures_dir, f"thematic_groups.pdf")
-            plt.savefig(chart_path, dpi=300, bbox_inches='tight', format='pdf')
-            plt.close()
-    except Exception as e:
-        print(f"Warning: Could not generate chart: {str(e)}")
-    
-  
-    latex_content = generate_latex_document(request, model, provider,  research, experiments, chart_path, max_pages)
-    
-  
-    tex_path = os.path.join(output_path, f"{filename}.tex")
-    with open(tex_path, "w") as f:
-        f.write(latex_content)
-    
-  
-    try:
-      
-        result = subprocess.run(
-            ["pdflatex", "-interaction=nonstopmode", "-output-directory", output_path, tex_path],
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE
-        )
-        
-        if result.returncode != 0:
-            print(f"Warning: First LaTeX run had issues (exit code {result.returncode})")
-          
-        
-      
-        result = subprocess.run(
-            ["pdflatex", "-interaction=nonstopmode", "-output-directory", output_path, tex_path],
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE
-        )
-        
-        if result.returncode != 0:
-            print(f"Warning: Second LaTeX run had issues (exit code {result.returncode})")
-          
-            log_path = os.path.join(output_path, f"{filename}.log")
-            if os.path.exists(log_path):
-                print(f"Check LaTeX log for details: {log_path}")
-    except Exception as e:
-        print(f"Error during LaTeX compilation: {str(e)}")
-        return None
-    
-  
-    for ext in [".aux", ".out", ".toc"]:
-        try:
-            os.remove(os.path.join(output_path, f"{filename}{ext}"))
-        except OSError:
-            pass
-    
-  
-    pdf_path = os.path.join(output_path, f"{filename}.pdf")
-    if os.path.exists(pdf_path):
-        print(f"PDF report successfully generated using LaTeX: {pdf_path}")
-        return pdf_path
-    else:
-        print(f"PDF generation failed. Check the LaTeX log for details.")
-        return None
-
-def generate_latex_document(request: str, model, provider, research: Dict[str, Any], experiments: Dict[str, Dict[str, Any]],
-                            chart_path: str = None, max_pages: int = 5) -> str:
-    """
-    Generate LaTeX document content.
-    
-    Args:
-        request: The research topic
-        research: Research results
-        experiments: Experiments data
-        chart_path: Path to the thematic groups chart
-        max_pages: Maximum number of pages (approximate)
-    
-    Returns:
-        LaTeX document content as a string
-    """
-  
-    figure_paths = {}
-    if chart_path:
-      
-        figure_paths["thematic_groups"] = os.path.basename(chart_path)
-    
-  
-  
-    if isinstance(experiments, dict):
-        for title in experiments.keys():
-            sanitized_title = title.replace(" ", "_")
-            potential_image = f"{sanitized_title}_experiment.png"
-            if os.path.exists(potential_image):
-                figure_paths[sanitized_title] = potential_image
-    
-  
-    figure_path_description_dict = {}
-    for name, path in figure_paths.items():
-        figure_path_description_dict[name] = path
-    
-  
-    prompt = f'''
-    Generate a LaTeX document for a research report on the topic: "{request}"
-    Here is the summary of the research: {research}
-    
-    Here is the summary of the experiments: {experiments}''' +"""
-    Write your response in a way that academically details the research, its motivation, and experiments
-    and ensure any place where a citation may be needed is indicated by including an empty '\\cite{citation_needed}' 
-    
-    IMPORTANT INSTRUCTIONS FOR DOCUMENT PREPARATION:
-    1. DO NOT include \\bibliography{references} or any bibliography commands, as we don't have a references file
-    2. Instead, create a \\begin{thebibliography}{99} ... \\end{thebibliography} section with example references
-    3. For figures, use relative paths like 'figures/thematic_groups.pdf' rather than absolute paths
-    4. Make sure all LaTeX commands are properly formatted and do not use undefined packages
-    5. Keep the document structure simple and robust to avoid compilation errors
-    """+f"""    
-    The figures are located at the following paths: {figure_path_description_dict}
-    """
-    
-    
-    latex_response = get_llm_response(prompt=prompt, model=model, provider=provider )
-    latex_content = latex_response.get('response', '')
-    
-  
-    latex_content = latex_content.replace('\\bibliography{references}', '')
-    latex_content = latex_content.replace('\\bibliographystyle{plain}', '')
-    
-  
-    latex_content = latex_content.replace('/home/caug/npcww/npcsh/figures/', 'figures/')
-    
-  
-    if '\\begin{thebibliography}' not in latex_content and '\\end{document}' in latex_content:
-        bibliography = """
-\\begin{thebibliography}{9}
-\\bibitem{citation1} Author, A. (2023). Title of the work. Journal Name, 10(2), 123-456.
-\\bibitem{citation2} Researcher, B. (2022). Another relevant publication. Conference Proceedings, 789-012.
-\\end{thebibliography}
+        json_template = """
+{
+  "name": "culturally appropriate full name for someone born in """ + str(birth_year) + """",
+  "location": "specific city/region where they were born in """ + str(birth_year) + """",
+  "leader": "who ruled their region when they were 16 years old in """ + str(teen_year) + """",
+  "interests": ["3-5 specific interests/obsessions they had as a teenager in """ + str(teen_year) + """"],
+  "worldview": "one sentence describing their fundamental perspective shaped by growing up in that era",
+  "approach": "how their historical background influences their way of thinking"
+}
 """
-        latex_content = latex_content.replace('\\end{document}', f'{bibliography}\n\\end{{document}}')
-    
-    return latex_content
+        
+        prompt = f"Generate a unique persona for someone born in {birth_year}. Return JSON:\n{json_template}\n\nMake this person feel real and historically grounded. Consider: technological context, cultural movements, economic conditions, wars, discoveries happening in {teen_year}."
+        
 
+        response = get_llm_response(
+            prompt,
+            model=model,
+            provider=provider,
+            npc=npc,
+            format='json'
+        )
+        
+        new_persona = response.get('response')
+        if isinstance(new_persona, str):
+            new_persona = json.loads(new_persona)
+        
+        persona_text = f"You are {new_persona.get('name')}, born {birth_year} in {new_persona.get('location')}, came of age under {new_persona.get('leader')}. Your interests were: {', '.join(new_persona.get('interests', []))}. {new_persona.get('worldview')} {new_persona.get('approach')}"
+        
+        
+        persona_data = {
+            'name': new_persona.get('name'),
+            'birth_year': birth_year,
+            'location': new_persona.get('location'),
+            'leader': new_persona.get('leader'),
+            'interests': new_persona.get('interests', []),
+            'worldview': new_persona.get('worldview'),
+            'approach': new_persona.get('approach'),
+            'persona_text': persona_text
+        }
+        
+        
+        save_persona_to_databases(persona_data)
+        
+        personas.append({
+            "name": new_persona.get('name'),
+            "persona": persona_text
+        })
+    
+    return personas
+    
+
+def create_sub_agent(
+    model: str, 
+    provider: str, 
+    hypothesis: str, 
+    name: str, 
+    persona: str
+) -> NPC:
+    
+    def wander_wrapper(problem_description: str) -> str:
+        return get_creative_ideas_for_stuck_agent(
+            problem_description, 
+            agent, 
+            model, 
+            provider
+        )
+
+
+
+
+
+
+
+    tools = [
+        create_file, 
+        append_to_file, 
+        replace_in_file, 
+        read_file, 
+        list_files, 
+        execute_shell_command, 
+        search_papers, 
+        wander_wrapper, 
+        search_web 
+    ]
+        
+    agent = NPC(
+        name=name,
+        model=model,
+        provider=provider,
+        primary_directive=persona,
+        tools=tools
+    )
+    
+    return agent
+
+
+
+def sub_agent_trace(hypothesis: str, 
+                    persona: Dict[str, str], 
+                    user_query: str, 
+                    model: str, 
+                    provider: str, 
+                    max_steps: int = 50) -> SubAgentTrace:
+    agent_name = persona.get("name")
+    agent_persona = persona.get("persona")
+    agent = create_sub_agent(model, provider, hypothesis, agent_name, agent_persona)
+    
+    trace = SubAgentTrace(hypothesis=hypothesis, agent_name=agent_name, agent_persona=agent_persona)
+    summarized_history = []
+    file_provenance = {}
+    created_files = set()
+    summary = {}
+    
+    major_step = 0
+    
+    while major_step < max_steps:
+        fs_before = get_filesystem_state()
+        
+        provenance_summary = []
+        for filename, prov in file_provenance.items():
+            history = "; ".join([f"Step {step}: {action} ({checksum}) - {changes}" for step, action, checksum, changes in prov.step_history])
+            provenance_summary.append(f"{filename}: {history}")
+        
+        history_str = "\n".join(summarized_history)
+        next_step_text = f"This is the next step suggested by your advisor. : BEGIN NEXT_STEP: {summary.get('next_step')} END NEXT STEP" if summary else ""
+        
+        initial_prompt = f"""
+Test the following hypothesis: '{hypothesis}' as related to the user query: '{user_query}'. 
+Only focus on your specific hypothesis, other agents are being tasked with other aspects of the problem.
+
+Use bash commands to carry out research through the execute_shell_command.
+Adjust files with `replace_in_file` and use `read_file` and `list_files` to verify file states and file creation.
+Create files with create_file()
+
+Test with execute_shell_command when needed
+Get unstuck with wander_wrapper
+
+When you have a definitive result, say RESEARCH_COMPLETE.
+
+FILE PROVENANCE HISTORY:
+{chr(10).join(provenance_summary)}
+
+CURRENT FILES: {list(fs_before.keys())}
+
+COMPLETE ACTION HISTORY:
+BEGIN HISTORY
+`
+{history_str}
+`
+END HISTORy
+
+What specific action will you take next to test your hypothesis?
+AVAILABLE TOOLS: create_file, append_to_file, replace_in_file, read_file, list_files, execute_shell_command, wander_wrapper, search_web .
+
+Do not repeat actions. Do not constantly think unless you need to brainstorm or wander. Use `execute_shell_command` for anything complicated beyond a simple file read, replace, create.
+Use `search_web` with provider of {os.environ.get('NPCSH_SEARCH_PROVIDER') } to look up items if you are struggling to understand why errors are happening with code execution.
+Do not waste time re-verifying the same package versins or libraries when you can explicitly look up usage patterns that are up to date. Do not assume that your generated code will be correct the first time or up to date
+amd if you are finding irreconcilable errors that you cannot seem to figure out locally then you need to search. For example, if you assume a python package you installed like `sqlite-vector' is importable like
+"from sqlite.vector" and keep running into import or module errors, it it probably because you need to look up the correct way to access the library. It may have been that you would need to import "sqlite_vector" or "sql_vector".
+There is no way to know this information a priori and instead of wasting time verifying pip installations, its better to look for actual usage patterns, either by inspecting the source code of the pip package itself or simply by
+searching the web.
+
+This should guide your next steps:
+
+`{next_step_text} `
+
+Your goal is to research. To set up experiments, create figures that can be included in a latex document report, and  produce data outputs as well in csvs for verification and reusability and reproducibility.
+
+
+Do not use seaborn. On matplotlib plots, do not use grids or titles. 
+"""
+        
+        print(f"\n{'='*80}")
+        print(f"AUTONOMOUS LOOP {major_step + 1} FOR {agent_name}")
+        print(f"{'='*80}")
+        print(f"HYPOTHESIS: {hypothesis}")
+        print(f"FILES BEFORE: {list(fs_before.keys())}")
+        
+        messages = []
+        all_thoughts = []
+        all_actions = []
+        all_outcomes = []
+        
+        for micro_step in range(5):
+            print(f"\n--- Micro-step {micro_step + 1}/4 ---")
+            
+            if micro_step == 0:
+                current_prompt = initial_prompt
+                print("SENDING INITIAL RESEARCH PROMPT")
+            else:
+                current_prompt = "Continue your work. What's your next action?"
+                print(f"SENDING CONTINUATION PROMPT: '{current_prompt}'")
+            try:
+                response = agent.get_llm_response(current_prompt, 
+                                                messages=messages, 
+                                                auto_process_tool_calls=True)
+            except Timeout:
+                continue
+            except ContextWindowExceededError:
+                break
+            messages = response.get('messages', [])
+            
+            thought = response.get('response') 
+            if thought is None:
+                thought = ''
+                print("WARNING: No thought received from agent")
+            else:
+                print(f"AGENT THOUGHT: {thought[:200]}{'...' if len(thought) > 200 else ''}")
+                all_thoughts.append(thought)
+            
+            if thought and "RESEARCH_COMPLETE" in thought.upper():
+                print(f"✓ RESEARCH COMPLETED at micro-step {micro_step + 1}")
+                break
+            
+            if response.get('tool_results'):
+                tool_results = response['tool_results']
+                print(f"TOOLS USED: {len(tool_results)} tool(s)")
+                
+                for i, res in enumerate(tool_results):
+                    tool_name = res.get('tool_name')
+                    args = res.get('arguments', {})
+                    result = res.get('result')
+                    
+                    print(f"  Tool {i+1}: {tool_name}({args})")
+                    for arg, item in args.items():
+                        print(f"    {arg}: {item}")
+                    if isinstance(result, str) and len(result) > 150:
+                        print(f"    Result: {result[:150]}...")
+                    else:
+                        print(f"    Result: {result}")
+                
+                action_str = ", ".join([f"{res['tool_name']}({res.get('arguments', {})})" for res in tool_results])
+                outcomes = []
+                
+                for res in tool_results:
+                    if res['tool_name'] in ['create_file', 'append_to_file', 'replace_in_file']:
+                        filename = res.get('arguments', {}).get('filename')
+                        if filename:
+                            created_files.add(filename)
+                            if os.path.exists(filename):
+                                trace.was_successful = True
+                                print(f"  ✓ File created: {filename}")
+                    
+                    result_data = res.get('result')
+                    outcomes.append(str(result_data))
+                
+                outcome_str = " | ".join(outcomes)
+                all_actions.append(action_str)
+                all_outcomes.append(outcome_str)
+            else:
+                print("NO TOOLS USED - Agent only provided reasoning")
+        
+        fs_after = get_filesystem_state()
+        print(f"\nFILES AFTER: {list(fs_after.keys())}")
+        
+        new_files = set(fs_after.keys()) - set(fs_before.keys())
+        if new_files:
+            print(f"NEW FILES CREATED: {list(new_files)}")
+        
+        combined_thought = " ".join(all_thoughts)
+        combined_action = " | ".join(filter(None, all_actions))
+        combined_outcome = " | ".join(filter(None, all_outcomes))
+        
+        print(f"\nCOMPRESSING AUTONOMOUS SESSION...")
+        print(f"THOUGHTS: {len(all_thoughts)} messages")
+        print(f"ACTIONS: {len(all_actions)} tool uses")
+        
+        summary = summarize_step(combined_thought, 
+                                 combined_action,
+                                 combined_outcome,
+                                 fs_before, 
+                                 fs_after, 
+                                 file_provenance, 
+                                 major_step + 1, 
+                                 model, 
+                                 provider, 
+                                 agent)
+        
+        print(f"SUMMARY: {summary.get('summary', 'No summary')}")
+        print(f"NEXT STEP: {summary.get('next_step', 'No next step')}")
+        
+        summarized_history.append(f"Step {major_step + 1}: {summary.get('summary')} ")
+        
+        trace.steps.append(ResearchStep(
+            step=major_step + 1,
+            thought=combined_thought,
+            action=combined_action,
+            outcome=combined_outcome
+        ))
+        
+        if combined_thought and "RESEARCH_COMPLETE" in combined_thought.upper():
+            print(f"✓ RESEARCH COMPLETED FOR {agent_name}")
+            break
+            
+        major_step += 1
+    
+    for filename in created_files:
+        if os.path.exists(filename):
+            trace.final_files[filename] = read_file(filename)
+    
+    print(f"\nFINAL RESULTS FOR {agent_name}:")
+    print(f"SUCCESS: {trace.was_successful}")
+    print(f"FILES CREATED: {list(trace.final_files.keys())}")
+    
+    return trace
+
+
+
+
+def save_trace_for_training(
+        
+
+    traces: List[SubAgentTrace],
+    output_dir: str = "./alicanto_traces"
+):
+    os.makedirs(output_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"trace_{timestamp}.csv"
+    filepath = os.path.join(output_dir, filename)
+    
+    flattened_data = []
+    for trace in traces:
+        for step in trace.steps:
+            flattened_data.append({
+                "hypothesis": trace.hypothesis,
+                "agent_name": trace.agent_name,
+                "agent_persona": trace.agent_persona,
+                "was_successful": trace.was_successful,
+                "step": step.step,
+                "thought": step.thought,
+                "action": step.action,
+                "outcome": step.outcome,
+                "final_files": json.dumps(trace.final_files)
+            })
+            
+    if not flattened_data:
+        return
+
+    df = pd.DataFrame(flattened_data)
+    df.to_csv(filepath, index=False)
+    
+    print(f"Full research trace saved to {filepath}")
+    return filepath
+def compress_traces_for_synthesis(traces: List[SubAgentTrace], model: str, provider: str, npc: NPC) -> str:
+    compressed_summaries = []
+    
+    for trace in traces:
+        steps_summary = []
+        for step in trace.steps[-3:]:  # Only last 3 steps
+            if step.thought:
+                thought_short = step.thought[:100] + "..." if len(step.thought) > 100 else step.thought
+            else:
+                thought_short = "No thought recorded"
+            
+            if step.action:
+                action_short = step.action[:100] + "..." if len(step.action) > 100 else step.action
+            else:
+                action_short = "No action taken"
+                
+            steps_summary.append(f"Step {step.step}: {thought_short} | {action_short}")
+        
+        files_created = list(trace.final_files.keys()) if trace.final_files else []
+        
+        compressed_summaries.append({
+            "agent": trace.agent_name,
+            "hypothesis": trace.hypothesis,
+            "success": trace.was_successful,
+            "key_steps": steps_summary,
+            "files_created": files_created,
+            "final_file_count": len(files_created)
+        })
+    
+    return json.dumps(compressed_summaries, indent=2)
+def format_paper_as_latex(paper: Paper, authors: List[str]) -> str:
+    author_string = ", ".join(authors)
+    introduction_content = "\n\n".join(paper.introduction)
+    methods_content = "\n\n".join(paper.methods)
+    results_content = "\n\n".join(paper.results)
+    discussion_content = "\n\n".join(paper.discussion)
+
+    return f"""
+\\documentclass{{article}}
+\\title{{{paper.title}}}
+\\author{{{author_string}}}
+\\date{{\\today}}
+\\begin{{document}}
+\\maketitle
+\\begin{{abstract}}
+{paper.abstract}
+\\end{{abstract}}
+\\section*{{Introduction}}
+{introduction_content}
+\\section*{{Methods}}
+{methods_content}
+\\section*{{Results}}
+{results_content}
+\\section*{{Discussion}}
+{discussion_content}
+\\end{{document}}
+"""
+
+
+
+def alicanto(
+    query: str,
+    num_agents: int = 3,
+    max_steps: int = 10,
+    model: str = NPCSH_CHAT_MODEL,
+    provider: str = NPCSH_CHAT_PROVIDER,
+    **kwargs
+) -> None:
+
+    print("=== ALICANTO RESEARCH SYSTEM STARTING ===")
+    print(f"Query: {query}")
+    print(f"Agents: {num_agents}, Max steps per agent: {max_steps}")
+    print(f"Model: {model}, Provider: {provider}")
+    
+    def wander_wrapper_coordinator(problem_description: str) -> str:
+        return get_creative_ideas_for_stuck_agent(
+            problem_description, 
+            alicanto_coordinator, 
+            model, 
+            provider
+        )
+    
+    alicanto_coordinator = NPC(
+        name="Alicanto",
+        model=model,
+        provider=provider,
+        primary_directive="You are Alicanto the mythical bird. You research topics iteratively by writing to LaTeX files and searching for more information.",
+        tools=[
+            create_file,
+            append_to_file,
+            replace_in_file,
+            read_file,
+            list_files,
+            execute_shell_command,
+            search_papers,
+            search_web,
+            wander_wrapper_coordinator
+        ]
+    )
+
+    print("\n--- Step 1: Generating hypotheses and personas ---")
+    
+    one_shot_example_hypotheses = """
+"example_input": "Investigate the impact of quantum annealing on protein folding.",
+"example_output": {
+    "hypotheses": [
+        "Implementing a quantum annealer simulation for a small peptide chain will identify lower energy states faster than a classical simulated annealing approach.",
+        "The choice of qubit connectivity in the quantum annealer's topology significantly impacts the final folded state's accuracy for proteins with long-range interactions.",
+        "Encoding the protein's residue interactions as a QUBO problem is feasible for structures up to 50 amino acids before qubit requirements become prohibitive."
+    ]
+}
+"""
+    hypotheses_prompt = f"""Based on the following research topic, generate a list of {num_agents} distinct, specific, and empirically testable hypotheses.
+
+TOPIC: "{query}"
+
+Return a JSON object with a single key "hypotheses" which is a list of strings.
+
+Here is an example of the expected input and output format:
+{one_shot_example_hypotheses}
+
+Return ONLY the JSON object.
+"""
+    
+    print("Generating hypotheses...")
+    response = get_llm_response(
+        hypotheses_prompt,
+        model=model,
+        provider=provider,
+        npc=alicanto_coordinator,
+        format='json'
+    )
+    
+    if not response or not response.get('response'):
+        print("ERROR: Failed to get hypotheses response")
+        return
+    
+    hypotheses = response.get('response').get('hypotheses')
+    if not hypotheses:
+        print("ERROR: No hypotheses generated")
+        return
+    
+    print(f"Generated {len(hypotheses)} hypotheses:")
+    for i, h in enumerate(hypotheses):
+        print(f"  {i+1}. {h}")
+    
+    print("\nGenerating agent personas...")
+    personas = generate_sub_agent_personas(
+        query,
+        num_agents,
+        model,
+        provider,
+        alicanto_coordinator
+    )
+    
+    if not personas:
+        print("ERROR: No personas generated")
+        return
+    
+    print(f"Generated {len(personas)} personas:")
+    for i, p in enumerate(personas):
+        print(f"  {i+1}. {p.get('name')}: {p.get('persona')}")
+
+    print("\n--- Step 2: Delegating hypotheses to Sub-Agents for serial execution ---")
+    
+    all_traces = []
+    for i, hypo in enumerate(hypotheses):
+        persona = personas[i % len(personas)]
+        print(f"\nStarting sub-agent {i+1}/{len(hypotheses)}")
+        trace = sub_agent_trace(
+            hypo,
+            persona,
+            query,
+            model,
+            provider,
+            max_steps
+        )
+        all_traces.append(trace)
+        print(f"Sub-agent {i+1} completed. Success: {trace.was_successful}")
+
+    print(f"\nAll sub-agents completed. Saving traces...")
+    save_trace_for_training(all_traces)
+    compressed_research = compress_traces_for_synthesis(all_traces, model, provider, alicanto_coordinator)
+
+    print("\n--- Step 3: Creating initial paper structure ---")
+    
+    author_list = [trace.agent_name for trace in all_traces]
+    author_string = ", ".join(author_list)
+    
+    initial_latex = f"""\\documentclass{{article}}
+\\title{{% TODO: TITLE}}
+\\author{{{author_string}}}
+\\date{{\\today}}
+\\begin{{document}}
+\\maketitle
+
+\\begin{{abstract}}
+% TODO: ABSTRACT
+\\end{{abstract}}
+
+\\section{{Introduction}}
+% TODO: INTRODUCTION
+
+\\section{{Methods}}
+% TODO: METHODS
+
+\\section{{Results}}
+% TODO: RESULTS
+
+\\section{{Discussion}}
+% TODO: DISCUSSION
+
+\\end{{document}}"""
+
+    create_file("paper.tex", initial_latex)
+
+    print("\n--- Step 4: Iterative paper writing ---")
+    
+    todo_sections = ["TITLE", "ABSTRACT", "INTRODUCTION", "METHODS", "RESULTS", "DISCUSSION"]
+    
+    for section_round in range(len(todo_sections)):
+        print(f"\n--- Section Round {section_round + 1} ---")
+        
+        current_paper = read_file("paper.tex")
+        sections_status = {section: "EMPTY" if f"% TODO: {section}" in current_paper else "COMPLETE" 
+                          for section in todo_sections}
+        
+        print(f"Section status: {sections_status}")
+        
+        # Find next section to work on
+        next_section = None
+        for section in todo_sections:
+            if sections_status[section] == "EMPTY":
+                next_section = section
+                break
+        
+        if not next_section:
+            print("All sections complete")
+            break
+        
+        print(f"Working on section: {next_section}")
+        
+        # Autonomous loop for this section (like sub-agents)
+        messages = []
+        
+        initial_prompt = f"""You are writing a research paper about: "{query}"
+
+Research data from sub-agents: {compressed_research}
+
+Current paper content:
+{current_paper}
+
+Your task: Complete the {next_section} section by replacing "% TODO: {next_section}" with actual content.
+
+Use replace_in_file to update the paper. Use search_papers or search_web if you need more information.
+
+Focus ONLY on the {next_section} section. Write 2-4 paragraphs of substantial academic content.
+
+Available tools: replace_in_file, read_file, search_papers, search_web"""
+
+        for micro_step in range(5):  # 5 turns per section like sub-agents
+            print(f"\n--- Micro-step {micro_step + 1}/5 for {next_section} ---")
+            
+            if micro_step == 0:
+                current_prompt = initial_prompt
+            else:
+                current_prompt = f"Continue working on the {next_section} section. What's your next action?"
+            
+            try:
+                response = alicanto_coordinator.get_llm_response(
+                    current_prompt, 
+                    messages=messages, 
+                    auto_process_tool_calls=True
+                )
+            except (Timeout, ContextWindowExceededError):
+                break
+                
+            messages = response.get('messages', [])
+            
+            
+    final_paper = read_file("paper.tex")
+    print(f"\n{'='*60}")
+    print("FINAL RESEARCH PAPER (LATEX)")
+    print("="*60)
+    print(final_paper)
+    print(f"\nPaper saved as paper.tex")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Alicanto Multi-Agent Research System")
+    parser.add_argument("topic", help="Research topic to investigate")
+    parser.add_argument("--num-agents", type=int, default=3, help="Number of sub-agents to run.")
+    parser.add_argument("--max-steps", type=int, default=10, help="Maximum steps for each sub-agent.")
+    parser.add_argument("--model", default=NPCSH_CHAT_MODEL, help="LLM model to use")
+    parser.add_argument("--provider", default=NPCSH_CHAT_PROVIDER, help="LLM provider to use")
+    
+    args = parser.parse_args()
+    
+    alicanto(
+        query=args.topic,
+        num_agents=args.num_agents,
+        max_steps=args.max_steps,
+        model=args.model,
+        provider=args.provider
+    )
+
+if __name__ == "__main__":
+    main()
