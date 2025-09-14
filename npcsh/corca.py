@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack
 from typing import Optional, Callable, Dict, Any, Tuple, List
 import shutil
 import traceback
+from litellm.exceptions import Timeout, ContextWindowExceededError, RateLimitError
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -250,6 +251,7 @@ def process_mcp_stream(stream_response, active_npc):
 
 
 
+
 def execute_command_corca(command: str, state: ShellState, command_history, selected_mcp_tools_names: Optional[List[str]] = None) -> Tuple[ShellState, Any]:
     mcp_tools_for_llm = []
     
@@ -270,27 +272,63 @@ def execute_command_corca(command: str, state: ShellState, command_history, sele
 
     active_npc = state.npc if isinstance(state.npc, NPC) else NPC(name="default")
 
-    if len(state.messages) > 20:
-        compressed_state = active_npc.compress_planning_state({
-            "goal": "ongoing session", 
-            "facts": [], 
-            "successes": [], 
-            "mistakes": [],
-            "todos": [],
-            "constraints": []
-        })
-        state.messages = [{"role": "system", "content": f"Session context: {compressed_state}"}]
+    if len(state.messages) > 50:
+        compressed_state = active_npc.compress_planning_state(state.messages)
+        state.messages = [{"role": "system", "content": compressed_state}]
+        print(compressed_state)
+        
+    try:
+        response_dict = get_llm_response(
+            prompt=command,
+            npc=state.npc,
+            messages=state.messages,
+            tools=mcp_tools_for_llm,
+            auto_process_tool_calls=False,
+            stream=state.stream_output,
+            team=state.team  
+        )
+    except Timeout:
+        response_dict = get_llm_response(
+            prompt=command,
+            npc=state.npc,
+            messages=state.messages,
+            tools=mcp_tools_for_llm,
+            auto_process_tool_calls=False,
+            stream=state.stream_output,
+            team=state.team  
+        )
+    except ContextWindowExceededError:
+        compressed_state = active_npc.compress_planning_state(state.messages)
+        state.messages = [{"role": "system", "content": compressed_state}]
+        
+        response_dict = get_llm_response(
+            prompt=command,
+            npc=state.npc,
+            messages=state.messages,
+            tools=mcp_tools_for_llm,
+            auto_process_tool_calls=False,
+            stream=state.stream_output,
+            team=state.team  
+        )
+    except RateLimitError:
+        import time
+        print('rate limit hit... waiting 60 seconds')
+        time.sleep(60)
+        print('compressing..... ')
+        compressed_state = active_npc.compress_planning_state(state.messages)
+        state.messages = [{"role": "system", "content": compressed_state}]
+        
+        response_dict = get_llm_response(
+            prompt=command,
+            npc=state.npc,
+            messages=state.messages,
+            tools=mcp_tools_for_llm,
+            auto_process_tool_calls=False,
+            stream=state.stream_output,
+            team=state.team  
+        )
+         
 
-    response_dict = get_llm_response(
-        prompt=command,
-        npc=state.npc,
-        messages=state.messages,
-        tools=mcp_tools_for_llm,
-        auto_process_tool_calls=False,
-        stream=state.stream_output,
-        team=state.team  
-    )
-   
     stream_response = response_dict.get('response')
     messages = response_dict.get('messages', state.messages)
     
@@ -308,6 +346,8 @@ def execute_command_corca(command: str, state: ShellState, command_history, sele
         "tool_calls": tool_calls,
         "messages": state.messages
     }
+
+
 def _resolve_and_copy_mcp_server_path(
     explicit_path: Optional[str],
     current_path: Optional[str],
