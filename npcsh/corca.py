@@ -946,8 +946,12 @@ def _resolve_and_copy_mcp_server_path(
             
     cprint("No MCP server script found in any expected location.", "yellow")
     return None
-def create_corca_state_and_mcp_client(conversation_id, command_history, npc=None, team=None,
-                                     current_path=None, mcp_server_path_from_request: Optional[str] = None):
+def create_corca_state_and_mcp_client(conversation_id, 
+                                      command_history, 
+                                      npc=None, 
+                                      team=None,
+                                      current_path=None, 
+                                      mcp_server_path: Optional[str] = None):
     from npcsh._state import ShellState
     
     state = ShellState(
@@ -965,7 +969,7 @@ def create_corca_state_and_mcp_client(conversation_id, command_history, npc=None
     auto_copy_bypass = os.getenv("NPCSH_CORCA_AUTO_COPY_MCP_SERVER", "false").lower() == "true"
 
     resolved_server_path = _resolve_and_copy_mcp_server_path(
-        explicit_path=mcp_server_path_from_request,
+        explicit_path=mcp_server_path,
         current_path=current_path,
         team_ctx_mcp_servers=team.team_ctx.get('mcp_servers', []) if team and hasattr(team, 'team_ctx') else None,
         interactive=False,
