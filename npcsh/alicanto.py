@@ -133,23 +133,7 @@ def load_and_combine_datasets() -> pd.DataFrame:
     except Exception as e:
         print(f"Failed to load CShorten/ML-ArXiv-Papers: {e}")
     
-    try:
-        astro_papers = load_dataset("ashishkgpian/astrorag_papers", split="train")
-        for paper in astro_papers:
-            all_papers.append({
-                'title': paper.get('title', ''),
-                'abstract': paper.get('abstract', ''),
-                'authors': paper.get('authors', []),
-                'year': paper.get('year', None),
-                'venue': paper.get('venue', ''),
-                'url': paper.get('url', ''),
-                'paperId': paper.get('id', ''),
-                'citationCount': 0,
-                'source': 'astrorag'
-            })
-    except Exception as e:
-        print(f"Failed to load ashishkgpian/astrorag_papers: {e}")
-    
+
     df = pd.DataFrame(all_papers)
     df = df.dropna(subset=['title', 'abstract'])
     df = df[df['abstract'].str.len() > 50]
@@ -172,7 +156,7 @@ def initialize_dataset_search():
 import time
 
 LAST_S2_REQUEST_TIME = 0
-S2_RATE_LIMIT_DELAY = 1.0
+S2_RATE_LIMIT_DELAY = 30
 
 def search_semantic_scholar(query: str, limit: int = 10) -> List[Dict[str, Any]]:
     global LAST_S2_REQUEST_TIME
@@ -186,8 +170,8 @@ def search_semantic_scholar(query: str, limit: int = 10) -> List[Dict[str, Any]]
     
     if time_since_last < S2_RATE_LIMIT_DELAY:
         sleep_time = S2_RATE_LIMIT_DELAY - time_since_last
-        print(f"Rate limiting: sleeping {sleep_time:.2f}s before S2 request")
-        time.sleep(sleep_time)
+        print(f"Rate limiting: still need {sleep_time:.2f}s before S2 request")
+        return None
     
     LAST_S2_REQUEST_TIME = time.time()
     
@@ -198,10 +182,11 @@ def search_semantic_scholar(query: str, limit: int = 10) -> List[Dict[str, Any]]
         "limit": limit,
         "fields": "title,abstract,authors,year,citationCount,url,tldr"
     }
-    
+    print('Semantic SCholar calls')
     try:
         response = requests.get(url, headers=headers, params=params, 
                               timeout=30)
+        print('semantic scholar response')
         response.raise_for_status()
         return response.json().get('data', [])
     except requests.exceptions.RequestException as e:
@@ -605,7 +590,7 @@ Do not use seaborn. On matplotlib plots, do not use grids or titles.
         all_actions = []
         all_outcomes = []
         
-        for micro_step in range(5):
+        for micro_step in range(11):
             print(f"\n--- Micro-step {micro_step + 1}/4 ---")
             
             if micro_step == 0:
@@ -823,20 +808,24 @@ def format_paper_as_latex(paper: Paper, authors: List[str]) -> str:
 \\end{{document}}
 """
 
-
-
 def alicanto(
     query: str,
     num_agents: int = 3,
     max_steps: int = 10,
     model: str = NPCSH_CHAT_MODEL,
     provider: str = NPCSH_CHAT_PROVIDER,
+    skip_research: bool = True,
     **kwargs
 ) -> None:
 
     print("=== ALICANTO RESEARCH SYSTEM STARTING ===")
     print(f"Query: {query}")
-    print(f"Agents: {num_agents}, Max steps per agent: {max_steps}")
+    
+    if skip_research:
+        print("SKIPPING RESEARCH - GOING DIRECTLY TO PAPER WRITING")
+    else:
+        print(f"Agents: {num_agents}, Max steps per agent: {max_steps}")
+    
     print(f"Model: {model}, Provider: {provider}")
     
     def wander_wrapper_coordinator(problem_description: str) -> str:
@@ -865,9 +854,14 @@ def alicanto(
         ]
     )
 
-    print("\n--- Step 1: Generating hypotheses and personas ---")
-    
-    one_shot_example_hypotheses = """
+    messages = []
+    summarized_history = []
+    file_provenance = {}
+
+    if not skip_research:
+        print("\n--- Step 1: Generating hypotheses and personas ---")
+        
+        one_shot_example_hypotheses = """
 "example_input": "Investigate the impact of quantum annealing on protein folding.",
 "example_output": {
     "hypotheses": [
@@ -877,7 +871,7 @@ def alicanto(
     ]
 }
 """
-    hypotheses_prompt = f"""Based on the following research topic, generate a list of {num_agents} distinct, specific, and empirically testable hypotheses.
+        hypotheses_prompt = f"""Based on the following research topic, generate a list of {num_agents} distinct, specific, and empirically testable hypotheses.
 
 TOPIC: "{query}"
 
@@ -888,73 +882,73 @@ Here is an example of the expected input and output format:
 
 Return ONLY the JSON object.
 """
-    
-    print("Generating hypotheses...")
-    response = get_llm_response(
-        hypotheses_prompt,
-        model=model,
-        provider=provider,
-        npc=alicanto_coordinator,
-        format='json'
-    )
-    
-    if not response or not response.get('response'):
-        print("ERROR: Failed to get hypotheses response")
-        return
-    
-    hypotheses = response.get('response').get('hypotheses')
-    if not hypotheses:
-        print("ERROR: No hypotheses generated")
-        return
-    
-    print(f"Generated {len(hypotheses)} hypotheses:")
-    for i, h in enumerate(hypotheses):
-        print(f"  {i+1}. {h}")
-    
-    print("\nGenerating agent personas...")
-    personas = generate_sub_agent_personas(
-        query,
-        num_agents,
-        model,
-        provider,
-        alicanto_coordinator
-    )
-    
-    if not personas:
-        print("ERROR: No personas generated")
-        return
-    
-    print(f"Generated {len(personas)} personas:")
-    for i, p in enumerate(personas):
-        print(f"  {i+1}. {p.get('name')}: {p.get('persona')}")
-
-    print("\n--- Step 2: Delegating hypotheses to Sub-Agents for serial execution ---")
-    
-    all_traces = []
-    for i, hypo in enumerate(hypotheses):
-        persona = personas[i % len(personas)]
-        print(f"\nStarting sub-agent {i+1}/{len(hypotheses)}")
-        trace = sub_agent_trace(
-            hypo,
-            persona,
+        
+        print("Generating hypotheses...")
+        response = get_llm_response(
+            hypotheses_prompt,
+            model=model,
+            provider=provider,
+            npc=alicanto_coordinator,
+            format='json'
+        )
+        
+        if not response or not response.get('response'):
+            print("ERROR: Failed to get hypotheses response")
+            return
+        
+        hypotheses = response.get('response').get('hypotheses')
+        if not hypotheses:
+            print("ERROR: No hypotheses generated")
+            return
+        
+        print(f"Generated {len(hypotheses)} hypotheses:")
+        for i, h in enumerate(hypotheses):
+            print(f"  {i+1}. {h}")
+        
+        print("\nGenerating agent personas...")
+        personas = generate_sub_agent_personas(
             query,
+            num_agents,
             model,
             provider,
-            max_steps
+            alicanto_coordinator
         )
-        all_traces.append(trace)
-        print(f"Sub-agent {i+1} completed. Success: {trace.was_successful}")
+        
+        if not personas:
+            print("ERROR: No personas generated")
+            return
+        
+        print(f"Generated {len(personas)} personas:")
+        for i, p in enumerate(personas):
+            print(f"  {i+1}. {p.get('name')}: {p.get('persona')}")
 
-    print(f"\nAll sub-agents completed. Saving traces...")
-    save_trace_for_training(all_traces)
-    compressed_research = compress_traces_for_synthesis(all_traces, model, provider, alicanto_coordinator)
+        print("\n--- Step 2: Delegating hypotheses to Sub-Agents for serial execution ---")
+        
+        all_traces = []
+        for i, hypo in enumerate(hypotheses):
+            persona = personas[i % len(personas)]
+            print(f"\nStarting sub-agent {i+1}/{len(hypotheses)}")
+            trace = sub_agent_trace(
+                hypo,
+                persona,
+                query,
+                model,
+                provider,
+                max_steps
+            )
+            all_traces.append(trace)
+            print(f"Sub-agent {i+1} completed. Success: {trace.was_successful}")
 
-    print("\n--- Step 3: Creating initial paper structure ---")
-    
-    author_list = [trace.agent_name for trace in all_traces]
-    author_string = ", ".join(author_list)
-    
-    initial_latex = f"""\\documentclass{{article}}
+        print(f"\nAll sub-agents completed. Saving traces...")
+        save_trace_for_training(all_traces)
+        compressed_research = compress_traces_for_synthesis(all_traces, model, provider, alicanto_coordinator)
+
+        print("\n--- Step 3: Creating initial paper structure ---")
+        
+        author_list = [trace.agent_name for trace in all_traces]
+        author_string = ", ".join(author_list)
+        
+        initial_latex = f"""\\documentclass{{article}}
 \\title{{% TODO: TITLE}}
 \\author{{{author_string}}}
 \\date{{\\today}}
@@ -979,59 +973,106 @@ Return ONLY the JSON object.
 
 \\end{{document}}"""
 
-    create_file("paper.tex", initial_latex)
+        create_file("paper.tex", initial_latex)
+    else:
+        print("\n--- Skipping research phase - loading existing data ---")
+        
+        if os.path.exists("paper.tex"):
+            print("Found existing paper.tex")
+        else:
+            print("No existing paper.tex found, creating basic template...")
+            basic_latex = f"""\\documentclass{{article}}
+\\title{{{query.title()}}}
+\\author{{Research Team}}
+\\date{{\\today}}
+\\begin{{document}}
+\\maketitle
+
+\\begin{{abstract}}
+% TODO: ABSTRACT
+\\end{{abstract}}
+
+\\section{{Introduction}}
+% TODO: INTRODUCTION
+
+\\section{{Methods}}
+% TODO: METHODS
+
+\\section{{Results}}
+% TODO: RESULTS
+
+\\section{{Discussion}}
+% TODO: DISCUSSION
+
+\\end{{document}}"""
+            create_file("paper.tex", basic_latex)
+        
+        compressed_research = f"Research topic: {query}. Previous research data should be available in local files."
 
     print("\n--- Step 4: Iterative paper writing ---")
     
-    todo_sections = ["TITLE", "ABSTRACT", "INTRODUCTION", "METHODS", "RESULTS", "DISCUSSION"]
-    
-    for section_round in range(len(todo_sections)):
+    for section_round in range(25):
         print(f"\n--- Section Round {section_round + 1} ---")
         
+        fs_before = get_filesystem_state()
+        
+        provenance_summary = []
+        for filename, prov in file_provenance.items():
+            history = "; ".join([f"Step {step}: {action} ({checksum}) - {changes}" for step, action, checksum, changes in prov.step_history])
+            provenance_summary.append(f"{filename}: {history}")
+        
+        history_str = "\n".join(summarized_history)
         current_paper = read_file("paper.tex")
-        sections_status = {section: "EMPTY" if f"% TODO: {section}" in current_paper else "COMPLETE" 
-                          for section in todo_sections}
         
-        print(f"Section status: {sections_status}")
-        
-        # Find next section to work on
-        next_section = None
-        for section in todo_sections:
-            if sections_status[section] == "EMPTY":
-                next_section = section
-                break
-        
-        if not next_section:
-            print("All sections complete")
-            break
-        
-        print(f"Working on section: {next_section}")
-        
-        # Autonomous loop for this section (like sub-agents)
-        messages = []
-        
-        initial_prompt = f"""You are writing a research paper about: "{query}"
+        initial_prompt = f"""You are writing a research paper about: "{query}" located at ./paper.tex
 
 Research data from sub-agents: {compressed_research}
 
 Current paper content:
 {current_paper}
 
-Your task: Complete the {next_section} section by replacing "% TODO: {next_section}" with actual content.
+FILE PROVENANCE HISTORY:
+{chr(10).join(provenance_summary)}
+
+COMPLETE ACTION HISTORY:
+BEGIN HISTORY
+{history_str}
+END HISTORY
+
+Ensure the paper contains the following sections and that they have a coherent narrative by the end of your work.
+work iteratively, so do not worry about making it all in one step.
+
+SECTIONS: Title, Abstract, Intro, Methods, Results, Discussion, Conclusions,
+
+You may choose to add subsections as you wish, but do not do so for the introduction. 
+
+You must ensure citations are properly included in your results and cited with the \cite{{author_year}} format , keeping in mind
+to also start and maintain a .bib file separate from any currently provided. be sure to reference this as well. 
+
+Your title short be short, informative, and eye-catching. 
+Every section and paragraph should be written in a formal academic style, motivating pieces of information and ensuring
+each sentence must flow well into the last, and the paper must have a strong motivation with substantial literature review to establish
+the need for the investigation. The paper should focus only on 1-2 major findings, with 5-10 minor findings detailed in the conclusions.
+The discussion should primarily focus on commenting on how previous work may be re-interpreted in light of your findings. Do not simply splatter text
+into a discussion but be thoughtful and helpful. The discussion should connect to broader works and discuss specifics of those works. Do not simply regurgitate the
 
 Use replace_in_file to update the paper. Use search_papers or search_web if you need more information.
 
-Focus ONLY on the {next_section} section. Write 2-4 paragraphs of substantial academic content.
+Write 2-4 paragraphs of substantial academic content. Include figures and tables based on the results of the experiments.
 
-Available tools: replace_in_file, read_file, search_papers, search_web"""
+Available tools: replace_in_file, read_file, search_papers, search_web, list_files"""
 
-        for micro_step in range(5):  # 5 turns per section like sub-agents
-            print(f"\n--- Micro-step {micro_step + 1}/5 for {next_section} ---")
+        all_thoughts = []
+        all_actions = []
+        all_outcomes = []
+
+        for micro_step in range(5):
+            print(f"\n--- Micro-step {micro_step + 1}/5  ---")
             
             if micro_step == 0:
                 current_prompt = initial_prompt
             else:
-                current_prompt = f"Continue working on the {next_section} section. What's your next action?"
+                current_prompt = f"continue "
             
             try:
                 response = alicanto_coordinator.get_llm_response(
@@ -1039,11 +1080,54 @@ Available tools: replace_in_file, read_file, search_papers, search_web"""
                     messages=messages, 
                     auto_process_tool_calls=True
                 )
+                print('response: ', response['response'])
+                print('tool calls: ', response['tool_calls'])
+                print('tool results: ', response['tool_results'])
+                
+                messages = response.get('messages', [])
+                
+                thought = response.get('response') or ""  # Handle None case
+                all_thoughts.append(thought)
+                
+                if response.get('tool_results'):
+                    tool_results = response['tool_results']
+                    action_str = ", ".join([f"{res['tool_name']}({res.get('arguments', {})})" for res in tool_results])
+                    outcomes = [str(res.get('result', '')) for res in tool_results]
+                    outcome_str = " | ".join(outcomes)
+                    all_actions.append(action_str)
+                    all_outcomes.append(outcome_str)
+                
             except (Timeout, ContextWindowExceededError):
                 break
-                
-            messages = response.get('messages', [])
-            
+            except Exception as e:
+                print(f"Error in micro-step: {e}")
+                break
+        
+        fs_after = get_filesystem_state()
+        
+        combined_thought = " ".join(filter(None, all_thoughts))  # Filter out None values
+        combined_action = " | ".join(filter(None, all_actions))
+        combined_outcome = " | ".join(filter(None, all_outcomes))
+        
+        print(f"\nCOMPRESSING WRITING SESSION...")
+        print(f"THOUGHTS: {len(all_thoughts)} messages")
+        print(f"ACTIONS: {len(all_actions)} tool uses")
+        
+        summary = summarize_step(combined_thought, 
+                                 combined_action,
+                                 combined_outcome,
+                                 fs_before, 
+                                 fs_after, 
+                                 file_provenance, 
+                                 section_round + 1, 
+                                 model, 
+                                 provider, 
+                                 alicanto_coordinator)
+        
+        print(f"SUMMARY: {summary.get('summary', 'No summary')}")
+        print(f"NEXT STEP: {summary.get('next_step', 'No next step')}")
+        
+        summarized_history.append(f"Round {section_round + 1}: {summary.get('summary')} ")
             
     final_paper = read_file("paper.tex")
     print(f"\n{'='*60}")
@@ -1051,8 +1135,9 @@ Available tools: replace_in_file, read_file, search_papers, search_web"""
     print("="*60)
     print(final_paper)
     print(f"\nPaper saved as paper.tex")
-
-
+    
+    
+    
 def main():
     parser = argparse.ArgumentParser(description="Alicanto Multi-Agent Research System")
     parser.add_argument("topic", help="Research topic to investigate")
@@ -1060,6 +1145,7 @@ def main():
     parser.add_argument("--max-steps", type=int, default=10, help="Maximum steps for each sub-agent.")
     parser.add_argument("--model", default=NPCSH_CHAT_MODEL, help="LLM model to use")
     parser.add_argument("--provider", default=NPCSH_CHAT_PROVIDER, help="LLM provider to use")
+    parser.add_argument("--skip-research", action="store_true", help="Skip research phase and go directly to paper writing")
     
     args = parser.parse_args()
     
@@ -1068,8 +1154,6 @@ def main():
         num_agents=args.num_agents,
         max_steps=args.max_steps,
         model=args.model,
-        provider=args.provider
+        provider=args.provider,
+        skip_research=args.skip_research
     )
-
-if __name__ == "__main__":
-    main()

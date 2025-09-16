@@ -232,7 +232,13 @@ def compile_handler(command: str, **kwargs):
 
 @router.route("corca", "Enter the Corca MCP-powered agentic shell. Usage: /corca [--mcp-server-path path]")
 def corca_handler(command: str, **kwargs):
-    return enter_corca_mode(command=command, **kwargs)
+    from npcsh._state import initial_state, setup_shell 
+    command_history, team, default_npc = setup_shell()
+    
+    
+    return enter_corca_mode(command=command, 
+                            command_history = command_history, 
+                            shell_state=initial_state)
     
 @router.route("flush", "Flush the last N messages")
 def flush_handler(command: str, **kwargs):
@@ -1131,7 +1137,7 @@ def yap_handler(command: str, **kwargs):
 def alicanto_handler(command: str, **kwargs):
     messages = safe_get(kwargs, "messages", [])
     parts = shlex.split(command)
-  
+    skip_research = safe_get(kwargs, "skip_research", True)
     query = ""
     num_npcs = safe_get(kwargs, 'num_npcs', 5)
     depth = safe_get(kwargs, 'depth', 3)
@@ -1228,6 +1234,7 @@ def alicanto_handler(command: str, **kwargs):
             model=model,
             provider=provider, 
             max_steps = safe_get(kwargs, 'max_steps', 20),
+            skip_research = skip_research
 
         )
         
