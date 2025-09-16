@@ -250,8 +250,6 @@ def process_mcp_stream(stream_response, active_npc):
 
 
 
-
-
 def execute_command_corca(command: str, state: ShellState, command_history, selected_mcp_tools_names: Optional[List[str]] = None) -> Tuple[ShellState, Any]:
     mcp_tools_for_llm = []
     
@@ -271,6 +269,13 @@ def execute_command_corca(command: str, state: ShellState, command_history, sele
         cprint("Warning: Corca agent has no tools. No MCP server connected.", "yellow", file=sys.stderr)
 
     active_npc = state.npc if isinstance(state.npc, NPC) else NPC(name="default")
+
+    if not state.messages or not any("working directory" in msg.get("content", "").lower() for msg in state.messages):
+        context_message = {
+            "role": "system", 
+            "content": f"You are currently operating in the directory: {state.current_path}. All file operations should be relative to this location unless explicitly specified otherwise."
+        }
+        state.messages.insert(0, context_message)
 
     if len(state.messages) > 50:
         compressed_state = active_npc.compress_planning_state(state.messages)
@@ -328,7 +333,6 @@ def execute_command_corca(command: str, state: ShellState, command_history, sele
             team=state.team  
         )
          
-
     stream_response = response_dict.get('response')
     messages = response_dict.get('messages', state.messages)
     
@@ -1065,15 +1069,17 @@ def enter_corca_mode(command: str, **kwargs):
             
             if not user_input:
                 continue
-
-            state, output = execute_command_corca(user_input, state, command_history)
+            try:
+                state, output = execute_command_corca(user_input, state, command_history)
             
-            process_corca_result(user_input, 
-                           state, 
-                           output, 
-                           command_history, 
-                            )
-            
+                process_corca_result(user_input, 
+                            state, 
+                            output, 
+                            command_history, 
+                                )
+            except Exception as e:
+                print(f'An Exception has occurred {e}')   
+                         
         except KeyboardInterrupt:
             print()
             continue
