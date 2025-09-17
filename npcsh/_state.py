@@ -2013,6 +2013,9 @@ def execute_slash_command(command: str,
 
     return state, colored(f"Unknown slash command, jinx, or NPC: {command_name}", "red")
 
+
+
+
 def process_pipeline_command(
     cmd_segment: str,
     stdin_input: Optional[str],
@@ -2454,24 +2457,115 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
 
 
 
+                
+from npcpy.memory.memory_processor import MemoryApprovalQueue, MemoryItem, memory_approval_ui
+from npcpy.ft.memory_trainer import MemoryTrainer
+from npcpy.llm_funcs import get_facts
+
+_memory_queue = None
+
+def get_memory_queue(command_history):
+    global _memory_queue
+    if _memory_queue is None:
+        _memory_queue = MemoryApprovalQueue(command_history)
+        _memory_queue.start_background_processing()
+    return _memory_queue
+
+def format_memory_context(memory_examples):
+    if not memory_examples:
+        return ""
+    
+    context_parts = []
+    
+    approved_examples = memory_examples.get("approved", [])
+    rejected_examples = memory_examples.get("rejected", [])
+    
+    if approved_examples:
+        context_parts.append("EXAMPLES OF GOOD MEMORIES:")
+        for ex in approved_examples[:5]:
+            final = ex.get("final_memory") or ex.get("initial_memory")
+            context_parts.append(f"- {final}")
+    
+    if rejected_examples:
+        context_parts.append("\nEXAMPLES OF POOR MEMORIES TO AVOID:")
+        for ex in rejected_examples[:3]:
+            context_parts.append(f"- {ex.get('initial_memory')}")
+    
+    if context_parts:
+        context_parts.append("\nLearn from these examples to generate similar high-quality memories.")
+        return "\n".join(context_parts)
+    
+    return ""
+
+def process_memory_approvals(command_history, memory_queue):
+    pending_memories = memory_queue.get_approval_batch(max_items=5)
+    
+    if not pending_memories:
+        return
+        
+    print(f"\n🧠 Processing {len(pending_memories)} memories...")
+    
+    try:
+        trainer = MemoryTrainer()
+        auto_processed = []
+        need_human_review = []
+        
+        for memory in pending_memories:
+            result = trainer.auto_approve_memory(
+                memory['content'], 
+                memory['context'],
+                confidence_threshold=0.85
+            )
+            
+            if result['auto_processed']:
+                auto_processed.append((memory, result))
+            else:
+                need_human_review.append(memory)
+        
+        for memory, result in auto_processed:
+            command_history.update_memory_status(
+                memory['memory_id'], 
+                result['action']
+            )
+            print(f"  Auto-{result['action']}: {memory['content'][:50]}... (confidence: {result['confidence']:.2f})")
+        
+        if need_human_review:
+            approvals = memory_approval_ui(need_human_review)
+            
+            for approval in approvals:
+                command_history.update_memory_status(
+                    approval['memory_id'],
+                    approval['decision'],
+                    approval.get('final_memory')
+                )
+    
+    except Exception as e:
+        print(f"Auto-approval failed: {e}")
+        approvals = memory_approval_ui(pending_memories)
+        
+        for approval in approvals:
+            command_history.update_memory_status(
+                approval['memory_id'],
+                approval['decision'], 
+                approval.get('final_memory')
+            )
+
 def process_result(
     user_input: str,
     result_state: ShellState,
     output: Any,
-    command_history: CommandHistory, 
-
-    
+    command_history: CommandHistory,
 ):
-    
     team_name = result_state.team.name if result_state.team else "__none__"
     npc_name = result_state.npc.name if isinstance(result_state.npc, NPC) else "__none__"
     
-  
     active_npc = result_state.npc if isinstance(result_state.npc, NPC) else NPC(
         name="default", 
         model=result_state.chat_model, 
         provider=result_state.chat_provider, 
-        db_conn=command_history.engine)
+        db_conn=command_history.engine
+    )
+    
     save_conversation_message(
         command_history,
         result_state.conversation_id,
@@ -2492,23 +2586,27 @@ def process_result(
     provider_for_stream = output.get('provider', active_npc.provider) if isinstance(output, dict) else active_npc.provider
 
     print('\n')
-    if user_input =='/help':
+    if user_input == '/help':
         render_markdown(output.get('output'))
     elif result_state.stream_output:
-
-        final_output_str = print_and_process_stream_with_markdown(output_content, 
-                                                                    model_for_stream, 
-                                                                    provider_for_stream, 
-                                                                    show=True)
+        final_output_str = print_and_process_stream_with_markdown(
+            output_content, 
+            model_for_stream, 
+            provider_for_stream, 
+            show=True
+        )
     elif output_content is not None:
         final_output_str = str(output_content)
         render_markdown(final_output_str)
 
     if final_output_str:
         if result_state.messages:
-            if result_state.messages[-1].get("role") != "assistant":
-                result_state.messages.append({"role": "assistant", 
-                                          "content": final_output_str})
+            if not result_state.messages or result_state.messages[-1].get("role") != "assistant":
+                result_state.messages.append({
+                    "role": "assistant", 
+                    "content": final_output_str
+                })
+        
         save_conversation_message(
             command_history,
             result_state.conversation_id,
@@ -2524,80 +2622,154 @@ def process_result(
         conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
         engine = command_history.engine
 
+        memory_examples = command_history.get_memory_examples_for_context(
+            npc=npc_name,
+            team=team_name, 
+            directory_path=result_state.current_path
+        )
+        
+        memory_context = format_memory_context(memory_examples)
+        
+        approved_facts = []
+        try:
+            facts = get_facts(
+                conversation_turn_text,
+                model=active_npc.model,
+                provider=active_npc.provider,
+                npc=active_npc,
+                context=memory_context
+            )
+            
+            if facts:
+                memories_for_approval = []
+                for i, fact in enumerate(facts):
+                    memories_for_approval.append({
+                        "memory_id": f"temp_{i}",
+                        "content": fact['statement'],
+                        "context": f"Type: {fact.get('type', 'unknown')}, Source: {fact.get('source_text', '')}",
+                        "npc": npc_name,
+                        "fact_data": fact
+                    })
+                
+                approvals = memory_approval_ui(memories_for_approval)
+                
+                for approval in approvals:
+                    fact_data = next(m['fact_data'] for m in memories_for_approval 
+                                   if m['memory_id'] == approval['memory_id'])
+                    
+                    command_history.add_memory_to_database(
+                        message_id=f"{result_state.conversation_id}_{len(result_state.messages)}",
+                        conversation_id=result_state.conversation_id,
+                        npc=npc_name,
+                        team=team_name,
+                        directory_path=result_state.current_path,
+                        initial_memory=fact_data['statement'],
+                        status=approval['decision'],
+                        model=active_npc.model,
+                        provider=active_npc.provider,
+                        final_memory=approval.get('final_memory')
+                    )
+                    
+                    if approval['decision'] in ['human-approved', 'human-edited']:
+                        approved_fact = {
+                            'statement': approval.get('final_memory') or fact_data['statement'],
+                            'source_text': fact_data.get('source_text', ''),
+                            'type': fact_data.get('type', 'explicit'),
+                            'generation': 0
+                        }
+                        approved_facts.append(approved_fact)
+                
+        except Exception as e:
+            print(colored(f"Memory generation error: {e}", "yellow"))
 
-        if result_state.build_kg:
-            import pdb 
-            pdb.set_trace()
+        if result_state.build_kg and approved_facts:
             try:
                 if not should_skip_kg_processing(user_input, final_output_str):
                     npc_kg = load_kg_from_db(engine, team_name, npc_name, result_state.current_path)
                     evolved_npc_kg, _ = kg_evolve_incremental(
                         existing_kg=npc_kg, 
-                        new_content_text=conversation_turn_text,
+                        new_facts=approved_facts,
                         model=active_npc.model, 
                         provider=active_npc.provider, 
+                        npc=active_npc,
                         get_concepts=True,
-                        link_concepts_facts = False, 
-                        link_concepts_concepts = False, 
-                        link_facts_facts = False,                         
+                        link_concepts_facts=False, 
+                        link_concepts_concepts=False, 
+                        link_facts_facts=False,                         
                     )
-                    save_kg_to_db(engine,
-                                evolved_npc_kg, 
-                                team_name, 
-                                npc_name, 
-                                result_state.current_path)
+                    save_kg_to_db(
+                        engine,
+                        evolved_npc_kg, 
+                        team_name, 
+                        npc_name, 
+                        result_state.current_path
+                    )
             except Exception as e:
                 print(colored(f"Error during real-time KG evolution: {e}", "red"))
 
-      
         result_state.turn_count += 1
 
-        if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:
+        if result_state.turn_count % 10 == 0:
             print(colored("\nChecking for potential team improvements...", "cyan"))
             try:
-                summary = breathe(messages=result_state.messages[-20:], 
-                                npc=active_npc)
+                summary = breathe(messages=result_state.messages[-20:], npc=active_npc)
                 characterization = summary.get('output')
 
                 if characterization and result_state.team:
-
-                    team_ctx_path = os.path.join(result_state.team.team_path, ".ctx")
+                    team_ctx_path = get_team_ctx_path(result_state.team.team_path)
+                    if not team_ctx_path:
+                        team_ctx_path = os.path.join(result_state.team.team_path, "team.ctx")
+                    
                     ctx_data = {}
                     if os.path.exists(team_ctx_path):
                         with open(team_ctx_path, 'r') as f:
                             ctx_data = yaml.safe_load(f) or {}
+                    
                     current_context = ctx_data.get('context', '')
 
                     prompt = f"""Based on this characterization: {characterization},
-
                     suggest changes (additions, deletions, edits) to the team's context. 
                     Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
                     
                     Current Context: "{current_context}". 
                     
-                    Respond with JSON: {{"suggestion": "Your sentence."
-                    }}"""
-                    response = get_llm_response(prompt, 
-                                                npc=active_npc, 
-                                                format="json")
+                    Respond with JSON: {{"suggestion": "Your sentence."}}"""
+                    
+                    response = get_llm_response(
+                        prompt, 
+                        npc=active_npc, 
+                        format="json"
+                    )
                     suggestion = response.get("response", {}).get("suggestion")
 
                     if suggestion:
                         new_context = (current_context + " " + suggestion).strip()
-                        print(colored(f"{result_state.npc.name} suggests updating team context:", "yellow"))
+                        print(colored(f"{npc_name} suggests updating team context:", "yellow"))
                         print(f"  - OLD: {current_context}\n  + NEW: {new_context}")
-                        if input("Apply? [y/N]: ").strip().lower() == 'y':
+                        
+                        choice = input("Apply? [y/N/e(dit)]: ").strip().lower()
+                        
+                        if choice == 'y':
                             ctx_data['context'] = new_context
                             with open(team_ctx_path, 'w') as f:
                                 yaml.dump(ctx_data, f)
                             print(colored("Team context updated.", "green"))
+                        elif choice == 'e':
+                            edited_context = input(f"Edit context [{new_context}]: ").strip()
+                            if edited_context:
+                                ctx_data['context'] = edited_context
+                            else:
+                                ctx_data['context'] = new_context
+                            with open(team_ctx_path, 'w') as f:
+                                yaml.dump(ctx_data, f)
+                            print(colored("Team context updated with edits.", "green"))
                         else:
                             print("Suggestion declined.")
             except Exception as e:
                 import traceback
                 print(colored(f"Could not generate team suggestions: {e}", "yellow"))
                 traceback.print_exc()
-                
+                                                
 initial_state = ShellState(
     conversation_id=start_new_conversation(),
     stream_output=NPCSH_STREAM_OUTPUT,
