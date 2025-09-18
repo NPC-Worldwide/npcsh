@@ -7,7 +7,7 @@ from contextlib import AsyncExitStack
 from typing import Optional, Callable, Dict, Any, Tuple, List
 import shutil
 import traceback
-from litellm.exceptions import Timeout, ContextWindowExceededError, RateLimitError
+from litellm.exceptions import Timeout, ContextWindowExceededError, RateLimitError, BadRequestError
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -248,6 +248,133 @@ def process_mcp_stream(stream_response, active_npc):
     
     return collected_content, tool_calls
 
+def clean_orphaned_tool_calls(messages):
+    cleaned_messages = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        
+        if msg.get("role") == "tool":
+            # Check if there's a preceding assistant message with tool_calls
+            found_preceding_assistant = False
+            for j in range(i-1, -1, -1):
+                prev_msg = messages[j]
+                if prev_msg.get("role") == "assistant" and prev_msg.get("tool_calls"):
+                    # Check if this tool response matches any tool call
+                    tool_call_ids = {tc["id"] for tc in prev_msg["tool_calls"]}
+                    if msg.get("tool_call_id") in tool_call_ids:
+                        found_preceding_assistant = True
+                        break
+                elif prev_msg.get("role") in ["user", "assistant"]:
+                    break
+            
+            if found_preceding_assistant:
+                cleaned_messages.append(msg)
+            # Skip orphaned tool responses
+            
+        elif (msg.get("role") == "assistant" and msg.get("tool_calls")):
+            tool_call_ids = {tc["id"] for tc in msg["tool_calls"]}
+            j = i + 1
+            found_responses = set()
+            
+            while j < len(messages):
+                next_msg = messages[j]
+                if next_msg.get("role") == "tool":
+                    if next_msg.get("tool_call_id") in tool_call_ids:
+                        found_responses.add(next_msg.get("tool_call_id"))
+                elif next_msg.get("role") in ["user", "assistant"]:
+                    break
+                j += 1
+            
+            missing_responses = tool_call_ids - found_responses
+            if missing_responses:
+                assistant_msg = msg.copy()
+                assistant_msg["tool_calls"] = [
+                    tc for tc in msg["tool_calls"] 
+                    if tc["id"] not in missing_responses
+                ]
+                if not assistant_msg["tool_calls"]:
+                    del assistant_msg["tool_calls"]
+                cleaned_messages.append(assistant_msg)
+            else:
+                cleaned_messages.append(msg)
+        else:
+            cleaned_messages.append(msg)
+        i += 1
+    
+    return cleaned_messages
+
+
+def get_llm_response_with_handling(prompt, npc, messages, tools, stream, team, context=None):
+    """Unified LLM response with exception handling."""
+    messages = clean_orphaned_tool_calls(messages)
+    
+    try:
+        return get_llm_response(
+            prompt=prompt,
+            npc=npc,
+            messages=messages,
+            tools=tools,
+            auto_process_tool_calls=False,
+            stream=stream,
+            team=team,
+            context=context
+        )
+    except Timeout:
+        return get_llm_response(
+            prompt=prompt,
+            npc=npc,
+            messages=messages,
+            tools=tools,
+            auto_process_tool_calls=False,
+            stream=stream,
+            team=team
+        )
+    except ContextWindowExceededError:
+        print('compressing..... ')
+        compressed_state = npc.compress_planning_state(messages)
+        compressed_messages = [{"role": "system", "content": compressed_state}]
+        return get_llm_response(
+            prompt=prompt,
+            npc=npc,
+            messages=compressed_messages,
+            tools=tools,
+            auto_process_tool_calls=False,
+            stream=stream,
+            team=team
+        )
+    except RateLimitError:
+        import time
+        print('rate limit hit... waiting 60 seconds')
+        time.sleep(60)
+        print('compressing..... ')
+        compressed_state = npc.compress_planning_state(messages)
+        compressed_messages = [{"role": "system", "content": compressed_state}]
+        return get_llm_response(
+            prompt=prompt,
+            npc=npc,
+            messages=compressed_messages,
+            tools=tools,
+            auto_process_tool_calls=False,
+            stream=stream,
+            team=team
+        )
+    except BadRequestError as e:
+        if "tool_call_id" in str(e).lower():
+            cleaned_messages = clean_orphaned_tool_calls(messages)
+            return get_llm_response(
+                prompt=prompt,
+                npc=npc,
+                messages=cleaned_messages,
+                tools=tools,
+                auto_process_tool_calls=False,
+                stream=stream,
+                team=team,
+                context=context
+            )
+        else:
+            raise e
+
 
 
 def execute_command_corca(command: str, state: ShellState, command_history, selected_mcp_tools_names: Optional[List[str]] = None) -> Tuple[ShellState, Any]:
@@ -268,82 +395,42 @@ def execute_command_corca(command: str, state: ShellState, command_history, sele
     else:
         cprint("Warning: Corca agent has no tools. No MCP server connected.", "yellow", file=sys.stderr)
 
-    active_npc = state.npc if isinstance(state.npc, NPC) else NPC(name="default")
-
-    if not state.messages or not any("working directory" in msg.get("content", "").lower() for msg in state.messages):
-        context_message = {
-            "role": "system", 
-            "content": f"You are currently operating in the directory: {state.current_path}. All file operations should be relative to this location unless explicitly specified otherwise."
-        }
-        state.messages.insert(0, context_message)
-
-    if len(state.messages) > 50:
-        compressed_state = active_npc.compress_planning_state(state.messages)
-        state.messages = [{"role": "system", "content": compressed_state}]
-        print(compressed_state)
-        
-    try:
-        response_dict = get_llm_response(
-            prompt=command,
-            npc=state.npc,
-            messages=state.messages,
-            tools=mcp_tools_for_llm,
-            auto_process_tool_calls=False,
-            stream=state.stream_output,
-            team=state.team  
-        )
-    except Timeout:
-        response_dict = get_llm_response(
-            prompt=command,
-            npc=state.npc,
-            messages=state.messages,
-            tools=mcp_tools_for_llm,
-            auto_process_tool_calls=False,
-            stream=state.stream_output,
-            team=state.team  
-        )
-    except ContextWindowExceededError:
-        compressed_state = active_npc.compress_planning_state(state.messages)
-        state.messages = [{"role": "system", "content": compressed_state}]
-        
-        response_dict = get_llm_response(
-            prompt=command,
-            npc=state.npc,
-            messages=state.messages,
-            tools=mcp_tools_for_llm,
-            auto_process_tool_calls=False,
-            stream=state.stream_output,
-            team=state.team  
-        )
-    except RateLimitError:
-        import time
-        print('rate limit hit... waiting 60 seconds')
-        time.sleep(60)
-        print('compressing..... ')
-        compressed_state = active_npc.compress_planning_state(state.messages)
-        state.messages = [{"role": "system", "content": compressed_state}]
-        
-        response_dict = get_llm_response(
-            prompt=command,
-            npc=state.npc,
-            messages=state.messages,
-            tools=mcp_tools_for_llm,
-            auto_process_tool_calls=False,
-            stream=state.stream_output,
-            team=state.team  
-        )
+    if len(state.messages) > 20:
+        compressed_state = state.npc.compress_planning_state(messages)
+        state.messages = [{"role": "system", "content": state.npc.get_system_message() + f' Your current task: {compressed_state}'}]
+        print("Compressed messages during tool execution.")
+    
+    response_dict = get_llm_response_with_handling(
+        prompt=command,
+        npc=state.npc,
+        messages=state.messages,
+        tools=mcp_tools_for_llm,
+        stream=state.stream_output,
+        team=state.team,
+        context=f' The users working directory is {state.current_path}'
+    )
          
     stream_response = response_dict.get('response')
     messages = response_dict.get('messages', state.messages)
+    tool_calls = response_dict.get('tool_calls', [])
     
-    collected_content, tool_calls = process_mcp_stream(stream_response, active_npc)
+    collected_content, stream_tool_calls = process_mcp_stream(stream_response, state.npc)
+    
+    if stream_tool_calls:
+        tool_calls = stream_tool_calls
 
     state.messages = messages
-    if collected_content or tool_calls:
-        assistant_message = {"role": "assistant", "content": collected_content}
-        if tool_calls:
-            assistant_message["tool_calls"] = tool_calls
-        state.messages.append(assistant_message)
+    
+    if tool_calls and hasattr(state, 'mcp_client') and state.mcp_client:
+        final_content, state.messages = execute_mcp_tool_calls(
+            tool_calls, 
+            state.mcp_client, 
+            state.messages, 
+            state.npc, 
+            state.stream_output
+        )
+        if final_content:
+            collected_content = final_content
     
     return state, {
         "output": collected_content,
@@ -351,6 +438,129 @@ def execute_command_corca(command: str, state: ShellState, command_history, sele
         "messages": state.messages
     }
 
+
+def execute_mcp_tool_calls(tool_calls, mcp_client, messages, npc, stream_output):
+    if not tool_calls or not mcp_client:
+        return None, messages
+
+    messages = clean_orphaned_tool_calls(messages)
+    
+    print(colored("\n🔧 Executing MCP tools...", "cyan"))
+    
+    while tool_calls:
+        tool_responses = []
+
+        if len(messages) > 20:
+            compressed_state = npc.compress_planning_state(messages)
+            messages = [{"role": "system", "content": npc.get_system_prompt() + f' Your current task: {compressed_state}'}]
+            print("Compressed messages during tool execution.")
+        
+        
+        for tool_call in tool_calls:
+            tool_name = tool_call['function']['name']
+            tool_args = tool_call['function']['arguments']
+            tool_call_id = tool_call['id']
+            
+            if isinstance(tool_args, str):
+                try:
+                    tool_args = json.loads(tool_args) if tool_args.strip() else {}
+                except json.JSONDecodeError:
+                    tool_args = {}
+            
+            try:
+                print(f"  Calling MCP tool: {tool_name} with args: {tool_args}")
+                
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                mcp_result = loop.run_until_complete(
+                    mcp_client.session.call_tool(tool_name, tool_args)
+                )
+                
+                tool_content = ""
+                if hasattr(mcp_result, 'content') and mcp_result.content:
+                    for content_item in mcp_result.content:
+                        if hasattr(content_item, 'text'):
+                            tool_content += content_item.text
+                        elif hasattr(content_item, 'data'):
+                            tool_content += str(content_item.data)
+                        else:
+                            tool_content += str(content_item)
+                else:
+                    tool_content = str(mcp_result)
+                
+                tool_responses.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": tool_content
+                })
+                
+                print(colored(f"  ✓ {tool_name} completed", "green"))
+                
+            except KeyboardInterrupt:
+                print(colored(f"\n  ⚠️ Tool execution interrupted", "yellow"))
+                return None, messages
+            except Exception as e:
+                print(colored(f"  ✗ {tool_name} failed: {e}", "red"))
+                tool_responses.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": f"Error: {str(e)}"
+                })
+        
+        current_messages = messages + tool_responses
+        
+        try:
+            follow_up_response = get_llm_response_with_handling(
+                prompt="",
+                npc=npc,
+                messages=current_messages,
+                tools=mcp_client.available_tools_llm,
+                stream=stream_output,
+                team=None
+            )
+        except KeyboardInterrupt:
+            print(colored(f"\n  ⚠️ Follow-up response interrupted", "yellow"))
+            return None, messages
+        
+        follow_up_messages = follow_up_response.get('messages', current_messages)
+        follow_up_content = follow_up_response.get('response', '')
+        follow_up_tool_calls = []
+        
+        if stream_output:
+            if hasattr(follow_up_content, '__iter__'):
+                collected_content, follow_up_tool_calls = process_mcp_stream(follow_up_content, npc)
+            else:
+                collected_content = str(follow_up_content)
+            follow_up_content = collected_content
+        else:
+            if follow_up_messages:
+                last_message = follow_up_messages[-1]
+                if last_message.get("role") == "assistant" and "tool_calls" in last_message:
+                    follow_up_tool_calls = last_message["tool_calls"]
+        
+        messages = follow_up_messages
+        
+        if not follow_up_tool_calls:
+            if not stream_output:
+                print('\n')
+                render_markdown(follow_up_content)
+            return follow_up_content, messages
+        else:
+            if follow_up_content or follow_up_tool_calls:
+                assistant_message = {"role": "assistant", "content": follow_up_content}
+                if follow_up_tool_calls:
+                    assistant_message["tool_calls"] = follow_up_tool_calls
+                messages.append(assistant_message)
+        
+        tool_calls = follow_up_tool_calls
+        print(colored("\n🔧 Executing follow-up MCP tools...", "cyan"))
+    
+    return None, messages
 
 def _resolve_and_copy_mcp_server_path(
     explicit_path: Optional[str],
@@ -515,13 +725,17 @@ def create_corca_state_and_mcp_client(conversation_id, command_history, npc=None
 
     return state
 
-
+                
 def process_corca_result(
     user_input: str,
     result_state: ShellState,
     output: Any,
     command_history: CommandHistory,
 ):
+    from npcpy.llm_funcs import get_facts
+    from npcpy.memory.memory_processor import memory_approval_ui
+    from npcsh._state import format_memory_context
+    
     team_name = result_state.team.name if result_state.team else "__none__"
     npc_name = result_state.npc.name if isinstance(result_state.npc, NPC) else "__none__"
     
@@ -529,7 +743,8 @@ def process_corca_result(
         name="default", 
         model=result_state.chat_model, 
         provider=result_state.chat_provider, 
-        db_conn=command_history.engine)
+        db_conn=command_history.engine
+    )
     
     save_conversation_message(
         command_history,
@@ -550,167 +765,20 @@ def process_corca_result(
     final_output_str = None
     
     if tool_calls and hasattr(result_state, 'mcp_client') and result_state.mcp_client:
-        print(colored("\n🔧 Executing MCP tools...", "cyan"))
-        
-        tool_responses = []
-        for tool_call in tool_calls:
-            tool_name = tool_call['function']['name']
-            tool_args = tool_call['function']['arguments']
-            tool_call_id = tool_call['id']
-            
-            try:
-                if isinstance(tool_args, str):
-                    tool_args = json.loads(tool_args) if tool_args.strip() else {}
-
-            except json.JSONDecodeError:
-                tool_args = {}
-            
-            try:
-                
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                
-                mcp_result = loop.run_until_complete(
-                    result_state.mcp_client.session.call_tool(tool_name, tool_args)
-                )
-                
-                
-                tool_content = ""
-                if hasattr(mcp_result, 'content') and mcp_result.content:
-
-                    for i, content_item in enumerate(mcp_result.content):
-
-                        if hasattr(content_item, 'text'):
-                            tool_content += content_item.text
-                        else:
-                            tool_content += str(content_item)
-                else:
-                    tool_content = str(mcp_result)
-                
-
-                
-                tool_responses.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "name": tool_name,
-                    "content": tool_content
-                })
-                
-                print(colored(f"  ✓ {tool_name} completed", "green"))
-                
-            except Exception as e:
-                print(colored(f"  ✗ {tool_name} failed: {e}", "red"))
-                tool_responses.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "name": tool_name,
-                    "content": f"Error: {str(e)}"
-                })
-        
-        result_state.messages.extend(tool_responses)
-        
-        while True:
-            follow_up_response = get_llm_response(
-                prompt="",
-                model=active_npc.model,
-                provider=active_npc.provider,
-                npc=active_npc,
-                messages=result_state.messages,
-                tools=result_state.mcp_client.available_tools_llm,
-                auto_process_tool_calls=False,
-                stream=result_state.stream_output
-            )
-            
-            follow_up_messages = follow_up_response.get('messages', [])
-            follow_up_content = follow_up_response.get('response', '')
-            follow_up_tool_calls = []
-            
-            if result_state.stream_output:
-                if hasattr(follow_up_content, '__iter__'):
-                    collected_content, follow_up_tool_calls = process_mcp_stream(follow_up_content, active_npc)
-                else:
-                    collected_content = str(follow_up_content)                
-                follow_up_content = collected_content
-            else:
-                if follow_up_messages:
-                    last_message = follow_up_messages[-1]
-                    if last_message.get("role") == "assistant" and "tool_calls" in last_message:
-                        follow_up_tool_calls = last_message["tool_calls"]
-            
-            result_state.messages = follow_up_messages
-            if follow_up_content or follow_up_tool_calls:
-                assistant_message = {"role": "assistant", "content": follow_up_content}
-                if follow_up_tool_calls:
-                    assistant_message["tool_calls"] = follow_up_tool_calls
-                result_state.messages.append(assistant_message)
-            
-            if not follow_up_tool_calls:
-                final_output_str = follow_up_content
-                if not result_state.stream_output:
-                    print('\n')
-                    render_markdown(final_output_str)
-                break
-            
-            print(colored("\n🔧 Executing follow-up MCP tools...", "cyan"))
-            for tool_call in follow_up_tool_calls:
-                tool_name = tool_call['function']['name']
-                tool_args = tool_call['function']['arguments']
-                tool_call_id = tool_call['id']
-                
-                try:
-                    tool_args = json.loads(tool_args) if tool_args.strip() else {}
-                except json.JSONDecodeError:
-                    tool_args = {}
-                
-                try:
-                    print(f"  Calling MCP tool: {tool_name} with args: {tool_args}")
-                    
-                    loop = asyncio.get_event_loop()
-                    if loop.is_closed():
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                    
-                    mcp_result = loop.run_until_complete(
-                        result_state.mcp_client.session.call_tool(tool_name, tool_args)
-                    )
-                    
-                    
-                    tool_content = ""
-                    if hasattr(mcp_result, 'content') and mcp_result.content:
-                        for i, content_item in enumerate(mcp_result.content):
-                            
-                            if hasattr(content_item, 'text') and content_item.text:
-                                tool_content += content_item.text
-                            elif hasattr(content_item, 'data'):
-                                tool_content += str(content_item.data)
-                            else:
-                                tool_content += str(content_item)                    
-                    result_state.messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "name": tool_name,
-                        "content": tool_content
-                    })
-                    
-                    print(colored(f"  ✓ {tool_name} completed", "green"))
-                    
-                except Exception as e:
-                    print(colored(f"  ✗ {tool_name} failed: {e}", "red"))
-                    result_state.messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "name": tool_name,
-                        "content": f"Error: {str(e)}"
-                    })
+        final_output_str, result_state.messages = execute_mcp_tool_calls(
+            tool_calls, 
+            result_state.mcp_client, 
+            result_state.messages, 
+            result_state.npc, 
+            result_state.stream_output
+        )
     else:
         print('\n')
         if result_state.stream_output:
             final_output_str = print_and_process_stream_with_markdown(
                 output_content, 
-                active_npc.model, 
-                active_npc.provider, 
+                result_state.npc.model, 
+                result_state.npc.provider, 
                 show=True
             )
         else:
@@ -736,25 +804,88 @@ def process_corca_result(
         conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
         engine = command_history.engine
 
-        if result_state.build_kg:
+        memory_examples = command_history.get_memory_examples_for_context(
+            npc=npc_name,
+            team=team_name, 
+            directory_path=result_state.current_path
+        )
+        
+        memory_context = format_memory_context(memory_examples)
+        
+        approved_facts = []
+        try:
+            facts = get_facts(
+                conversation_turn_text,
+                model=active_npc.model,
+                provider=active_npc.provider,
+                npc=active_npc,
+                context=memory_context
+            )
+            
+            if facts:
+                memories_for_approval = []
+                for i, fact in enumerate(facts):
+                    memories_for_approval.append({
+                        "memory_id": f"temp_{i}",
+                        "content": fact['statement'],
+                        "context": f"Type: {fact.get('type', 'unknown')}, Source: {fact.get('source_text', '')}",
+                        "npc": npc_name,
+                        "fact_data": fact
+                    })
+                
+                approvals = memory_approval_ui(memories_for_approval)
+                
+                for approval in approvals:
+                    fact_data = next(m['fact_data'] for m in memories_for_approval 
+                                   if m['memory_id'] == approval['memory_id'])
+                    
+                    command_history.add_memory_to_database(
+                        message_id=f"{result_state.conversation_id}_{len(result_state.messages)}",
+                        conversation_id=result_state.conversation_id,
+                        npc=npc_name,
+                        team=team_name,
+                        directory_path=result_state.current_path,
+                        initial_memory=fact_data['statement'],
+                        status=approval['decision'],
+                        model=active_npc.model,
+                        provider=active_npc.provider,
+                        final_memory=approval.get('final_memory')
+                    )
+                    
+                    if approval['decision'] in ['human-approved', 'human-edited']:
+                        approved_fact = {
+                            'statement': approval.get('final_memory') or fact_data['statement'],
+                            'source_text': fact_data.get('source_text', ''),
+                            'type': fact_data.get('type', 'explicit'),
+                            'generation': 0
+                        }
+                        approved_facts.append(approved_fact)
+                
+        except Exception as e:
+            print(colored(f"Memory generation error: {e}", "yellow"))
+
+        if result_state.build_kg and approved_facts:
             try:
                 if not should_skip_kg_processing(user_input, final_output_str):
                     npc_kg = load_kg_from_db(engine, team_name, npc_name, result_state.current_path)
                     evolved_npc_kg, _ = kg_evolve_incremental(
                         existing_kg=npc_kg, 
-                        new_content_text=conversation_turn_text,
+                        new_facts=approved_facts,
                         model=active_npc.model, 
                         provider=active_npc.provider, 
+                        npc=active_npc,
                         get_concepts=True,
-                        link_concepts_facts = False, 
-                        link_concepts_concepts = False, 
-                        link_facts_facts = False, 
+                        link_concepts_facts=False, 
+                        link_concepts_concepts=False, 
+                        link_facts_facts=False,                         
                     )
-                    save_kg_to_db(engine,
-                                evolved_npc_kg, 
-                                team_name, 
-                                npc_name, 
-                                result_state.current_path)
+                    save_kg_to_db(
+                        engine,
+                        evolved_npc_kg, 
+                        team_name, 
+                        npc_name, 
+                        result_state.current_path
+                    )
             except Exception as e:
                 print(colored(f"Error during real-time KG evolution: {e}", "red"))
 
@@ -819,8 +950,9 @@ def process_corca_result(
             except Exception as e:
                 import traceback
                 print(colored(f"Could not generate team suggestions: {e}", "yellow"))
-                traceback.print_exc()
-
+                traceback.print_exc()                
+                
+                
 def _read_npcsh_global_env() -> Dict[str, str]:
     global_env_file = Path(".npcsh_global")
     env_vars = {}
