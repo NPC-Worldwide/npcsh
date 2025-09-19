@@ -2458,18 +2458,10 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
 
 
                 
-from npcpy.memory.memory_processor import MemoryApprovalQueue, MemoryItem, memory_approval_ui
+from npcpy.memory.memory_processor import  memory_approval_ui
 from npcpy.ft.memory_trainer import MemoryTrainer
 from npcpy.llm_funcs import get_facts
 
-_memory_queue = None
-
-def get_memory_queue(command_history):
-    global _memory_queue
-    if _memory_queue is None:
-        _memory_queue = MemoryApprovalQueue(command_history)
-        _memory_queue.start_background_processing()
-    return _memory_queue
 
 def format_memory_context(memory_examples):
     if not memory_examples:
