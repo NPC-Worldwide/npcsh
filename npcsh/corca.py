@@ -640,27 +640,28 @@ def _resolve_and_copy_mcp_server_path(
             
     cprint("No MCP server script found in any expected location.", "yellow")
     return None
-
-
 def print_corca_welcome_message():
     turq = "\033[38;2;64;224;208m"
     chrome = "\033[38;2;211;211;211m"
+    orange = "\033[38;2;255;165;0m"
     reset = "\033[0m"
     
     print(
         f"""
-Welcome to {turq}C{chrome}o{turq}r{chrome}c{turq}a{reset}!
-{turq}       {turq}       {turq}      {chrome}      {chrome}     
-{turq}   ____ {turq}  ___  {turq} ____ {chrome}  ____  {chrome} __ _ 
-{turq}  /  __|{turq} / _ \\ {turq}|  __\\{chrome} /  __| {chrome}/ _` |
-{turq} |  |__ {turq}| (_) |{turq}| |   {chrome}|  |__{chrome} | (_| |
-{turq}  \\____| {turq}\\___/ {turq}| |    {chrome}\\____| {chrome}\\__,_|
-{turq}       {turq}            {turq}        {chrome}      {chrome}                      
-{reset}
-An MCP-powered shell for advanced agentic workflows.
-        """
-    )
+{turq} ██████    ██████    ██████    ██████    ██████{reset}
+{turq}██    ██  ██    ██  ██    ██  ██    ██  ██🦌🦌██{reset}
+{turq}██        ██    ██  ██    ██  ██        ██🦌🦌██{reset}
+{chrome}██        ██    ██  ████████  ██        ████████{reset}
+{chrome}██        ██    ██  ██  ███   ██        ██    ██{reset}
+{chrome}██    ██  ██    ██  ██   ███  ██    ██  ██    ██{reset}
+{orange} ██████    ██████   ██    ███  ███████  ██    ██{reset}
 
+{chrome}                🦌 C O R C A 🦌{reset}
+                        
+    {turq}MCP-powered shell for agentic workflows{reset}
+        """
+    )    
+    
 def create_corca_state_and_mcp_client(conversation_id, command_history, npc=None, team=None,
                                      current_path=None, mcp_server_path_from_request: Optional[str] = None):
     from npcsh._state import ShellState
