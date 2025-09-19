@@ -14,6 +14,7 @@ from typing import Optional, Dict, Any, List, Union, Callable
 from mcp.server.fastmcp import FastMCP
 import importlib
 
+from sqlalchemy import text
 
 
 import os
@@ -46,14 +47,129 @@ mcp = FastMCP("npcsh_mcp")
 DEFAULT_WORKSPACE = os.path.join(os.getcwd(), "workspace")
 os.makedirs(DEFAULT_WORKSPACE, exist_ok=True)
 
+@mcp.tool()
+async def add_memory(
+    npc_name: str,
+    team_name: str,
+    content: str,
+    memory_type: str = "observation",
+    directory_path: str = None
+) -> str:
+    """
+    Add a memory entry to the database.
+    
+    Args:
+        npc_name: Name of the NPC this memory belongs to
+        team_name: Name of the team the NPC belongs to
+        content: The memory content to store
+        memory_type: Type of memory (observation, preference, achievement, etc.)
+        directory_path: Directory path context (defaults to current working directory)
+        
+    Returns:
+        Success message with memory ID or error message
+    """
+    if directory_path is None:
+        directory_path = os.getcwd()
+    
+    try:
+        from npcpy.memory.command_history import generate_message_id
+        message_id = generate_message_id()
+        
+        memory_id = command_history.add_memory_to_database(
+            message_id=message_id,
+            conversation_id='mcp_direct',
+            npc=npc_name,
+            team=team_name,
+            directory_path=directory_path,
+            initial_memory=content,
+            status='active',
+            model=None,
+            provider=None
+        )
+        return f"Memory created successfully with ID: {memory_id}"
+    except Exception as e:
+        return f"Error creating memory: {str(e)}"
 
 @mcp.tool()
-async def run_server_command(command: str) -> str:
+async def search_memory(
+    query: str,
+    npc_name: str = None,
+    team_name: str = None,
+    directory_path: str = None,
+    status_filter: str = None,
+    limit: int = 10
+) -> str:
+    """
+    Search memories in the database.
+    
+    Args:
+        query: Search query text
+        npc_name: Filter by specific NPC (optional)
+        team_name: Filter by specific team (optional)
+        directory_path: Filter by directory path (optional)
+        status_filter: Filter by memory status (active, archived, etc.)
+        limit: Maximum number of results to return
+        
+    Returns:
+        JSON string of matching memories or error message
+    """
+    if directory_path is None:
+        directory_path = os.getcwd()
+    
+    try:
+        results = command_history.search_memory(
+            query=query,
+            npc=npc_name,
+            team=team_name,
+            directory_path=directory_path,
+            status_filter=status_filter,
+            limit=limit
+        )
+        return json.dumps(results, indent=2)
+    except Exception as e:
+        return f"Error searching memories: {str(e)}"
+
+@mcp.tool()
+async def query_npcsh_database(sql_query: str) -> str:
+    """
+    Execute a SQL query against the npcsh_history.db database.
+    
+    Args:
+        sql_query: SQL query to execute (SELECT statements only for safety)
+        
+    Returns:
+        JSON string of query results or error message
+    """
+    # Safety check - only allow SELECT queries
+    if not sql_query.strip().upper().startswith('SELECT'):
+        return "Error: Only SELECT queries are allowed for safety"
+    
+    try:
+        with command_history.engine.connect() as conn:
+            result = conn.execute(text(sql_query))
+            rows = result.fetchall()
+            
+            if not rows:
+                return "Query executed successfully but returned no results"
+            
+            # Convert to list of dictionaries
+            columns = result.keys()
+            results = []
+            for row in rows:
+                row_dict = dict(zip(columns, row))
+                results.append(row_dict)
+            
+            return json.dumps(results, indent=2, default=str)
+    except Exception as e:
+        return f"Database query error: {str(e)}"
+@mcp.tool()
+async def run_server_command(command: str, wd: str) -> str:
     """
     Run a terminal command in the workspace.
     
     Args:
         command: The shell command to run
+        wd: The working directory to run the command in
         
     Returns:
         The command output or an error message.
@@ -61,7 +177,7 @@ async def run_server_command(command: str) -> str:
     try:
         result = subprocess.run(
             command, 
-            cwd=DEFAULT_WORKSPACE, 
+            cwd=wd,
             shell=True, 
             capture_output=True, 
             text=True,
@@ -147,11 +263,7 @@ print("Loading tools from npcpy modules...")
 
 
 def register_selected_npcpy_tools():
-    tools = [generate_group_candidates, 
-             abstract, 
-             extract_facts, 
-             zoom_in, 
-             execute_llm_command, 
+    tools = [              
              gen_image, 
              load_file_contents, 
              capture_screenshot, 

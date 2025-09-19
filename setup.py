@@ -78,7 +78,7 @@ extra_files = package_files("npcsh/npc_team/")
 
 setup(
     name="npcsh",
-    version="1.0.36",
+    version="1.0.37",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
@@ -96,7 +96,7 @@ setup(
             "pti=npcsh.pti:main",
             "guac=npcsh.guac:main",
             "wander=npcsh.wander:main",
-            "spool=npcsh.spool:main",
+            "spool=npcsh.spool:main", 
         ],
     },
     author="Christopher Agostino",
