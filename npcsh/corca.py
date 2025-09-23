@@ -396,8 +396,8 @@ def execute_command_corca(command: str, state: ShellState, command_history, sele
         cprint("Warning: Corca agent has no tools. No MCP server connected.", "yellow", file=sys.stderr)
 
     if len(state.messages) > 20:
-        compressed_state = state.npc.compress_planning_state(messages)
-        state.messages = [{"role": "system", "content": state.npc.get_system_message() + f' Your current task: {compressed_state}'}]
+        compressed_state = state.npc.compress_planning_state(state.messages)
+        state.messages = [{"role": "system", "content": state.npc.get_system_prompt() + f' Your current task: {compressed_state}'}]
         print("Compressed messages during tool execution.")
     
     response_dict = get_llm_response_with_handling(
