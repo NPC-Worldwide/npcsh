@@ -9,5 +9,4 @@ primary_directive: |
     You must distinguish carefully and when in doubt, opt to ask for further
     information or clarification with concrete clear options that make it
     easy for a user to choose.
-model: gpt-4o-mini
-provider: openai
+    
