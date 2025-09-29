@@ -1,0 +1,43 @@
+jinx_name: search_kg
+description: Search knowledge graph for relevant facts
+inputs:
+  - query
+steps:
+  - name: retrieve_facts
+    engine: python
+    code: |
+      from npcpy.memory.command_history import load_kg_from_db
+      import os
+      
+      kg = load_kg_from_db(
+          command_history.engine,
+          team.name if team else '__none__',
+          npc.name if hasattr(npc, 'name') else '__none__',
+          os.getcwd()
+      )
+      
+      query_lower = '{{ query }}'.lower()
+      matching_facts = []
+      
+      if kg and 'facts' in kg:
+          for fact in kg['facts']:
+              statement = fact.get('statement', '').lower()
+              if query_lower in statement:
+                  matching_facts.append(fact)
+      
+      output = []
+      for i, fact in enumerate(matching_facts[:10], 1):
+          statement = fact.get('statement', '')
+          fact_type = fact.get('type', 'unknown')
+          output.append(f"{i}. [{fact_type}] {statement}")
+      
+      output = "\n".join(output) if output else "No facts found"
+  
+  - name: analyze_facts
+    engine: natural
+    code: |
+      Knowledge graph facts for query "{{ query }}":
+      
+      {{ retrieve_facts }}
+      
+      Analyze how these facts relate to the query.

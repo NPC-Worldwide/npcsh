@@ -1,0 +1,36 @@
+jinx_name: search_memories
+description: Search through approved memories for relevant context
+inputs:
+  - query
+steps:
+  - name: retrieve_memories
+    engine: python
+    code: |
+      from npcsh._state import get_relevant_memories
+      import os
+      
+      memories = get_relevant_memories(
+          command_history=command_history,
+          npc_name=npc.name if hasattr(npc, 'name') else '__none__',
+          team_name=team.name if team else '__none__',
+          path=os.getcwd(),
+          query='{{ query }}',
+          max_memories=10,
+          state=state
+      )
+      
+      output = []
+      for i, mem in enumerate(memories, 1):
+          content = mem.get('final_memory', mem.get('initial_memory', ''))
+          output.append(f"{i}. {content}")
+      
+      output = "\n".join(output) if output else "No memories found"
+  
+  - name: format_results
+    engine: natural
+    code: |
+      Found memories for query "{{ query }}":
+      
+      {{ retrieve_memories }}
+      
+      Summarize the key points from these memories.

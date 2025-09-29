@@ -2193,16 +2193,51 @@ def execute_command(
     state: ShellState,
     review = True, 
     router = None,
+    command_history = None,
     ) -> Tuple[ShellState, Any]:
 
     if not command.strip():
         return state, ""
+    
     mode_change, state = check_mode_switch(command, state)
     if mode_change:
         return state, 'Mode changed.'
 
+    npc_name = state.npc.name if isinstance(state.npc, NPC) else "__none__"
+    team_name = state.team.name if state.team else "__none__"
+    
+    if command_history:
+        relevant_memories = get_relevant_memories(
+            command_history=command_history,
+            npc_name=npc_name,
+            team_name=team_name,
+            path=state.current_path,
+            query=command,
+            max_memories=5,
+            state=state
+        )
+        print('Memory jogged...')
+        print(relevant_memories)
+        
+        if relevant_memories:
+            memory_context = "\n".join([
+                f"- {m.get('final_memory', '')}" 
+                for m in relevant_memories
+            ])
+            memory_msg = {
+                "role": "system",
+                "content": f"Relevant memories:\n{memory_context}"
+            }
+            if not state.messages or \
+               state.messages[0].get("role") != "system":
+                state.messages.insert(0, memory_msg)
+            else:
+                state.messages[0]["content"] += \
+                    f"\n\n{memory_msg['content']}"
+
     original_command_for_embedding = command
     commands = split_by_pipes(command)
+
     stdin_for_next = None
     final_output = None
     current_state = state 
@@ -2448,10 +2483,16 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     team_name_from_ctx = team_ctx.get("name")
     if team_name_from_ctx:
         team.name = team_name_from_ctx
-    elif team_dir and os.path.basename(team_dir) != 'npc_team':
-        team.name = os.path.basename(team_dir)
+    elif team_dir:
+        normalized_dir = os.path.normpath(team_dir)
+        basename = os.path.basename(normalized_dir)
+        if basename and basename != 'npc_team':
+            team.name = basename
+        else:
+            team.name = "npcsh"
     else:
-        team.name = "global_team" 
+        team.name = "npcsh"
+
 
     return command_history, team, forenpc_obj
 
@@ -2462,6 +2503,109 @@ from npcpy.memory.memory_processor import  memory_approval_ui
 from npcpy.ft.memory_trainer import MemoryTrainer
 from npcpy.llm_funcs import get_facts
 
+def get_relevant_memories(
+    command_history: CommandHistory,
+    npc_name: str,
+    team_name: str,
+    path: str,
+    query: Optional[str] = None,
+    max_memories: int = 10,
+    state: Optional[ShellState] = None
+) -> List[Dict]:
+    
+    engine = command_history.engine
+    
+    all_memories = command_history.get_memories_for_scope(
+        npc=npc_name,
+        team=team_name,
+        directory_path=path,
+        status='human-approved'
+    )
+    
+    if not all_memories:
+        return []
+    
+    if len(all_memories) <= max_memories and not query:
+        return all_memories
+    
+    if query:
+        query_lower = query.lower()
+        keyword_matches = [
+            m for m in all_memories 
+            if query_lower in (m.get('final_memory') or m.get('initial_memory') or '').lower()
+        ]
+        
+        if keyword_matches:
+            return keyword_matches[:max_memories]
+
+    if state and state.embedding_model and state.embedding_provider:
+        try:
+            from npcpy.gen.embeddings import get_embeddings
+            
+            search_text = query if query else "recent context"
+            query_embedding = get_embeddings(
+                [search_text],
+                state.embedding_model,
+                state.embedding_provider
+            )[0]
+            
+            memory_texts = [
+                m.get('final_memory', '') for m in all_memories
+            ]
+            memory_embeddings = get_embeddings(
+                memory_texts,
+                state.embedding_model,
+                state.embedding_provider
+            )
+            
+            import numpy as np
+            similarities = []
+            for mem_emb in memory_embeddings:
+                similarity = np.dot(query_embedding, mem_emb) / (
+                    np.linalg.norm(query_embedding) * 
+                    np.linalg.norm(mem_emb)
+                )
+                similarities.append(similarity)
+            
+            sorted_indices = np.argsort(similarities)[::-1]
+            return [all_memories[i] for i in sorted_indices[:max_memories]]
+            
+        except Exception as e:
+            print(colored(
+                f"RAG search failed, using recent: {e}", 
+                "yellow"
+            ))
+    
+    return all_memories[-max_memories:]
+
+
+def search_kg_facts(
+    self,
+    npc: str,
+    team: str,
+    directory_path: str,
+    query: str
+) -> List[Dict]:
+    
+    kg = load_kg_from_db(
+        self.engine, 
+        team, 
+        npc, 
+        directory_path
+    )
+    
+    if not kg or 'facts' not in kg:
+        return []
+    
+    query_lower = query.lower()
+    matching_facts = []
+    
+    for fact in kg['facts']:
+        statement = fact.get('statement', '').lower()
+        if query_lower in statement:
+            matching_facts.append(fact)
+    
+    return matching_facts
 
 def format_memory_context(memory_examples):
     if not memory_examples:
@@ -2548,8 +2692,8 @@ def process_result(
     output: Any,
     command_history: CommandHistory,
 ):
-    team_name = result_state.team.name if result_state.team else "__none__"
-    npc_name = result_state.npc.name if isinstance(result_state.npc, NPC) else "__none__"
+    team_name = result_state.team.name if result_state.team else "npcsh"
+    npc_name = result_state.npc.name if isinstance(result_state.npc, NPC) else "npcsh"
     
     active_npc = result_state.npc if isinstance(result_state.npc, NPC) else NPC(
         name="default", 
@@ -2629,7 +2773,7 @@ def process_result(
                 model=active_npc.model,
                 provider=active_npc.provider,
                 npc=active_npc,
-                context=memory_context
+                context=memory_context + 'Memories should be fully self contained. They should not use vague pronouns or words like that or this or it.  Do not generate more than 1-2 memories at a time.'
             )
             
             if facts:
