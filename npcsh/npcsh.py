@@ -59,7 +59,7 @@ ___________________________________________
 Welcome to \033[1;94mnpc\033[0m\033[1;38;5;202msh\033[0m!
 \033[1;94m                    \033[0m\033[1;38;5;202m        _       \\\\
 \033[1;94m _ __   _ __    ___ \033[0m\033[1;38;5;202m  ___  | |___    \\\\
-\033[1;94m| '_ \\ |'_  \\  / __|\033[0m\033[1;38;5;202m / __/ | |_ _|    \\\\
+\033[1;94m| '_ \\ | '_ \\  / __|\033[0m\033[1;38;5;202m / __/ | |_ _|    \\\\
 \033[1;94m| | | || |_) |( |__ \033[0m\033[1;38;5;202m \\_  \\ | | | |    //
 \033[1;94m|_| |_|| .__/  \\___|\033[0m\033[1;38;5;202m |___/ |_| |_|   //
        \033[1;94m|🤖|          \033[0m\033[1;38;5;202m               //
@@ -204,7 +204,9 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
             state, output = execute_command(user_input, 
                                             state, 
                                             review = True, 
-                                            router=router)
+                                            router=router, 
+                                            command_history=command_history)
+
             process_result(user_input, 
                            state, 
                            output, 
