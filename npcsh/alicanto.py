@@ -12,6 +12,16 @@ from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
+
+try:
+    from datasets import load_dataset
+except:
+    load_dataset = None
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+
 from npcpy.tools import auto_tools
 from npcpy.llm_funcs import get_llm_response
 from npcpy.data.web import search_web
@@ -87,11 +97,6 @@ def read_file(filename: str) -> str:
 def list_files(directory: str = ".") -> List[str]:
     return os.listdir(directory)
 
-
-
-from datasets import load_dataset
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 DATASET_CACHE = None
 SEARCH_INDEX = None
