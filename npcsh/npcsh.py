@@ -203,7 +203,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
 
             state, output = execute_command(user_input, 
                                             state, 
-                                            review = True, 
+                                            review = False, 
                                             router=router, 
                                             command_history=command_history)
 
