@@ -645,7 +645,6 @@ BASH_COMMANDS = [
     "fg",
     "getopts",
     "hash",
-    "help",
     "history",
     "if",
     "jobs",
