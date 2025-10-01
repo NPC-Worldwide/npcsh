@@ -56,7 +56,9 @@ from npcsh._state import (
     NPCSH_SEARCH_PROVIDER,
     CANONICAL_ARGS, 
     normalize_and_expand_flags, 
-    get_argument_help
+    get_argument_help, 
+    get_relevant_memories
+
 )
 from npcsh.corca import enter_corca_mode
 from npcsh.guac import enter_guac_mode
@@ -730,40 +732,211 @@ def sample_handler(command: str, **kwargs):
     except Exception as e:
         traceback.print_exc()
         return {"output": f"Error sampling LLM: {e}", "messages": messages}
-@router.route("search", "Execute a web search command")
+
+
+
+@router.route("search", "Execute web search or memory/KG search")
 def search_handler(command: str, **kwargs):
-    """    
-    Executes a search command.
-  
-  
-  
-  
-  
-  
-    """
     messages = safe_get(kwargs, "messages", [])
     
-  
     positional_args = safe_get(kwargs, 'positional_args', [])
-    query = " ".join(positional_args)
+    
+    search_type = None
+    query_parts = []
+    
+    i = 0
+    while i < len(positional_args):
+        arg = positional_args[i]
+        if arg in ['-m', '-mem', '--memory']:
+            search_type = 'memory'
+            i += 1
+        elif arg in ['-kg', '--knowledge-graph']:
+            search_type = 'kg'
+            i += 1
+        else:
+            query_parts.append(arg)
+            i += 1
+    
+    query = " ".join(query_parts)
     
     if not query:
-        return {"output": "Usage: /search [-sp name --sprovider name] query", 
-                "messages": messages}
+        return {
+            "output": (
+                "Usage:\n"
+                "  /search <query>              - Web search\n"
+                "  /search -m <query>           - Memory search\n"
+                "  /search -kg <query>          - Knowledge graph search"
+            ), 
+            "messages": messages
+        }
+    
+    if search_type == 'memory':
+        return search_memories(query, kwargs, messages)
+    elif search_type == 'kg':
+        return search_knowledge_graph(query, kwargs, messages)
+    else:
+        return search_web_default(query, kwargs, messages)
+
+def search_memories(query: str, kwargs: dict, messages: list):
+    command_history = kwargs.get('command_history')
+    
+    if not command_history:
+        db_path = safe_get(
+            kwargs, 
+            "history_db_path", 
+            os.path.expanduser('~/npcsh_history.db')
+        )
+        try:
+            command_history = CommandHistory(db_path)
+        except Exception as e:
+            return {
+                "output": f"Error connecting to history: {e}", 
+                "messages": messages
+            }
+    
+    state = kwargs.get('state')
+    npc = safe_get(kwargs, 'npc')
+    team = safe_get(kwargs, 'team')
+    
+    npc_name = npc.name if isinstance(npc, NPC) else "__none__"
+    team_name = team.name if team else "__none__"
+    current_path = safe_get(kwargs, 'current_path', os.getcwd())
+    
+    try:
+        memories = get_relevant_memories(
+            command_history=command_history,
+            npc_name=npc_name,
+            team_name=team_name,
+            path=current_path,
+            query=query,
+            max_memories=10,
+            state=state
+        )
+        
+        if not memories:
+            output = f"No memories found for query: '{query}'"
+        else:
+            output = f"Found {len(memories)} memories:\n\n"
+            for i, mem in enumerate(memories, 1):
+                final_mem = (
+                    mem.get('final_memory') or 
+                    mem.get('initial_memory')
+                )
+                timestamp = mem.get('timestamp', 'unknown')
+                output += f"{i}. [{timestamp}] {final_mem}\n"
+        
+        return {"output": output, "messages": messages}
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "output": f"Error searching memories: {e}", 
+            "messages": messages
+        }
+
+def search_knowledge_graph(query: str, kwargs: dict, messages: list):
+    command_history = kwargs.get('command_history')
+    
+    if not command_history:
+        db_path = safe_get(
+            kwargs, 
+            "history_db_path", 
+            os.path.expanduser('~/npcsh_history.db')
+        )
+        try:
+            command_history = CommandHistory(db_path)
+        except Exception as e:
+            return {
+                "output": f"Error connecting to history: {e}", 
+                "messages": messages
+            }
+    
+    npc = safe_get(kwargs, 'npc')
+    team = safe_get(kwargs, 'team')
+    
+    npc_name = npc.name if isinstance(npc, NPC) else "__none__"
+    team_name = team.name if team else "__none__"
+    current_path = safe_get(kwargs, 'current_path', os.getcwd())
+    
+    try:
+        engine = command_history.engine
+        kg = load_kg_from_db(
+            engine, 
+            team_name, 
+            npc_name, 
+            current_path
+        )
+        
+        if not kg or not kg.get('facts'):
+            return {
+                "output": (
+                    f"No knowledge graph found for current scope.\n"
+                    f"Scope: Team='{team_name}', "
+                    f"NPC='{npc_name}', Path='{current_path}'"
+                ),
+                "messages": messages
+            }
+        
+        query_lower = query.lower()
+        matching_facts = []
+        matching_concepts = []
+        
+        for fact in kg.get('facts', []):
+            statement = fact.get('statement', '').lower()
+            if query_lower in statement:
+                matching_facts.append(fact)
+        
+        for concept in kg.get('concepts', []):
+            name = concept.get('name', '').lower()
+            desc = concept.get('description', '').lower()
+            if query_lower in name or query_lower in desc:
+                matching_concepts.append(concept)
+        
+        output = f"Knowledge Graph Search Results for '{query}':\n\n"
+        
+        if matching_facts:
+            output += f"## Facts ({len(matching_facts)}):\n"
+            for i, fact in enumerate(matching_facts, 1):
+                output += f"{i}. {fact.get('statement')}\n"
+            output += "\n"
+        
+        if matching_concepts:
+            output += f"## Concepts ({len(matching_concepts)}):\n"
+            for i, concept in enumerate(matching_concepts, 1):
+                name = concept.get('name')
+                desc = concept.get('description', '')
+                output += f"{i}. {name}: {desc}\n"
+        
+        if not matching_facts and not matching_concepts:
+            output += "No matching facts or concepts found."
+        
+        return {"output": output, "messages": messages}
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "output": f"Error searching KG: {e}", 
+            "messages": messages
+        }
+
+def search_web_default(query: str, kwargs: dict, messages: list):
     search_provider = safe_get(kwargs, 'sprovider', NPCSH_SEARCH_PROVIDER)
-    render_markdown(f'- Searching {search_provider} for "{query}"'    )
-
-
+    render_markdown(f'- Searching {search_provider} for "{query}"')
     
-    if not query:
-        return {"output": "Usage: /search <query>", "messages": messages}
-    search_provider = safe_get(kwargs, 'search_provider', NPCSH_SEARCH_PROVIDER)
     try:
         search_results = search_web(query, provider=search_provider)
-        output = "\n".join([f"- {res}" for res in search_results]) if search_results else "No results found."
+        output = (
+            "\n".join([f"- {res}" for res in search_results]) 
+            if search_results 
+            else "No results found."
+        )
     except Exception as e:
+        import traceback
         traceback.print_exc()
         output = f"Error during web search: {e}"
+    
     return {"output": output, "messages": messages}
 
 

@@ -2205,34 +2205,6 @@ def execute_command(
     npc_name = state.npc.name if isinstance(state.npc, NPC) else "__none__"
     team_name = state.team.name if state.team else "__none__"
     
-    if command_history:
-        relevant_memories = get_relevant_memories(
-            command_history=command_history,
-            npc_name=npc_name,
-            team_name=team_name,
-            path=state.current_path,
-            query=command,
-            max_memories=5,
-            state=state
-        )
-        print('Memory jogged...')
-        print(relevant_memories)
-        
-        if relevant_memories:
-            memory_context = "\n".join([
-                f"- {m.get('final_memory', '')}" 
-                for m in relevant_memories
-            ])
-            memory_msg = {
-                "role": "system",
-                "content": f"Relevant memories:\n{memory_context}"
-            }
-            if not state.messages or \
-               state.messages[0].get("role") != "system":
-                state.messages.insert(0, memory_msg)
-            else:
-                state.messages[0]["content"] += \
-                    f"\n\n{memory_msg['content']}"
 
     original_command_for_embedding = command
     commands = split_by_pipes(command)
