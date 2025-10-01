@@ -192,6 +192,41 @@ def get_help_text():
 def safe_get(kwargs, key, default=None):
     return kwargs.get(key, default)
 
+
+@router.route("build", "Build deployment artifacts for NPC team")
+def build_handler(command: str, **kwargs):
+    parts = shlex.split(command)
+    
+    target = safe_get(kwargs, 'target', 'flask')
+    output_dir = safe_get(kwargs, 'output', './build')
+    team_path = safe_get(kwargs, 'team', './npc_team')
+    
+    if len(parts) > 1:
+        target = parts[1]
+    
+    build_config = {
+        'team_path': os.path.abspath(team_path),
+        'output_dir': os.path.abspath(output_dir),
+        'target': target,
+        'port': safe_get(kwargs, 'port', 5337),
+        'cors_origins': safe_get(kwargs, 'cors', None),
+    }
+    
+    builders = {
+        'flask': build_flask_server,
+        'docker': build_docker_compose,
+        'cli': build_cli_executable,
+        'static': build_static_site,
+    }
+    
+    if target not in builders:
+        return {
+            "output": f"Unknown target: {target}. Available: {list(builders.keys())}", 
+            "messages": kwargs.get('messages', [])
+        }
+    
+    return builders[target](build_config, **kwargs)
+
 @router.route("breathe", "Condense context on a regular cadence")
 def breathe_handler(command: str, **kwargs):
   
