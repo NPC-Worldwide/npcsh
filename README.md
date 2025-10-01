@@ -94,6 +94,14 @@ and you will enter the NPC shell. Additionally, the pip installation includes th
     /corca --mcp-server-path /path.to.server.py
     ```
 
+  - **Build an NPC Team**: 
+
+    ``` bash
+    npc build flask --output ./dist --port 5337
+    npc build docker --output ./deploy
+    npc build cli --output ./bin
+    npc build static --api_url https://api.example.com
+    ```
 
 # NPC Data Layer
 
@@ -117,6 +125,7 @@ Importantly, users can switch easily between the NPCs they are chatting with by 
 -  activated by invoking `/<command> ...` in `npcsh`, macros can be called in bash or through the `npc` CLI. In our examples, we provide both `npcsh` calls as well as bash calls with the `npc` cli where relevant. For converting any `/<command>` in `npcsh` to a bash version, replace the `/` with `npc ` and the macro command will be invoked as a positional argument. Some, like breathe, flush,
     
     - `/alicanto` - Conduct deep research with multiple perspectives, identifying gold insights and cliff warnings. Usage: `/alicanto 'query to be researched' --num-npcs <int> --depth <int>`
+    - `/build` - Builds the current npc team to an executable format . Usage: `/build <output[flask,docker,cli,static]> --options`
     - `/brainblast` - Execute an advanced chunked search on command history. Usage:     `/brainblast 'query'  --top_k 10`
     - `/breathe` - Condense context on a regular cadence. Usage: `/breathe -p <provider: NPCSH_CHAT_PROVIDER> -m <model: NPCSH_CHAT_MODEL>`
     - `/compile` - Compile NPC profiles. Usage: `/compile <path_to_npc> `
