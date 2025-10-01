@@ -2190,7 +2190,7 @@ def check_mode_switch(command:str , state: ShellState):
 def execute_command(
     command: str,
     state: ShellState,
-    review = True, 
+    review = False, 
     router = None,
     command_history = None,
     ) -> Tuple[ShellState, Any]:
