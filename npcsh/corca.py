@@ -377,75 +377,87 @@ def get_llm_response_with_handling(prompt, npc, messages, tools, stream, team, c
 
 
 
-def execute_command_corca(command: str, state: ShellState, command_history, selected_mcp_tools_names: Optional[List[str]] = None) -> Tuple[ShellState, Any]:
-    mcp_tools_for_llm = []
+def process_mcp_stream(stream_response, active_npc):
+    collected_content = ""
+    tool_calls = []
     
-    if hasattr(state, 'mcp_client') and state.mcp_client and state.mcp_client.session:
-        all_available_mcp_tools = state.mcp_client.available_tools_llm
-        
-        if selected_mcp_tools_names and len(selected_mcp_tools_names) > 0:
-            mcp_tools_for_llm = [
-                tool_def for tool_def in all_available_mcp_tools
-                if tool_def['function']['name'] in selected_mcp_tools_names
-            ]
-            if not mcp_tools_for_llm:
-                cprint("Warning: No selected MCP tools found or matched. Corca will proceed without tools.", "yellow", file=sys.stderr)
-        else:
-            mcp_tools_for_llm = all_available_mcp_tools
-    else:
-        cprint("Warning: Corca agent has no tools. No MCP server connected.", "yellow", file=sys.stderr)
-
-    if len(state.messages) > 20:
-        compressed_state = state.npc.compress_planning_state(state.messages)
-        state.messages = [{"role": "system", "content": state.npc.get_system_prompt() + f' Your current task: {compressed_state}'}]
-        print("Compressed messages during tool execution.")
+    interrupted = False
+    sys.stdout.write('\033[s')
+    sys.stdout.flush()
     
-    response_dict = get_llm_response_with_handling(
-        prompt=command,
-        npc=state.npc,
-        messages=state.messages,
-        tools=mcp_tools_for_llm,
-        stream=state.stream_output,
-        team=state.team,
-        context=f' The users working directory is {state.current_path}'
-    )
-         
-    stream_response = response_dict.get('response')
-    messages = response_dict.get('messages', state.messages)
-    tool_calls = response_dict.get('tool_calls', [])
+    try:
+        for chunk in stream_response:        
+            if hasattr(active_npc, 'provider') and active_npc.provider == "ollama" and 'gpt-oss' not in active_npc.model:
+                if hasattr(chunk, 'message') and hasattr(chunk.message, 'tool_calls') and chunk.message.tool_calls:
+                    for tool_call in chunk.message.tool_calls:
+                        tool_call_data = {'id': getattr(tool_call, 'id', ''),
+                            'type': 'function',
+                            'function': {
+                                'name': getattr(tool_call.function, 'name', '') if hasattr(tool_call, 'function') else '',
+                                'arguments': getattr(tool_call.function, 'arguments', {}) if hasattr(tool_call, 'function') else {}
+                            }
+                        }
+                        if isinstance(tool_call_data['function']['arguments'], str):
+                            try:
+                                tool_call_data['function']['arguments'] = json.loads(tool_call_data['function']['arguments'])
+                            except json.JSONDecodeError:
+                                tool_call_data['function']['arguments'] = {'raw': tool_call_data['function']['arguments']}
+                        
+                        tool_calls.append(tool_call_data)
+                if hasattr(chunk, 'message') and hasattr(chunk.message, 'content') and chunk.message.content:
+                    collected_content += chunk.message.content
+                    print(chunk.message.content, end='', flush=True)
+                    
+            else:
+                if hasattr(chunk, 'choices') and chunk.choices:
+                    delta = chunk.choices[0].delta
+                    
+                    if hasattr(delta, 'content') and delta.content:
+                        collected_content += delta.content
+                        print(delta.content, end='', flush=True)
+                    
+                    if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                        for tool_call_delta in delta.tool_calls:
+                            if hasattr(tool_call_delta, 'index'):
+                                idx = tool_call_delta.index
+                                
+                                while len(tool_calls) <= idx:
+                                    tool_calls.append({
+                                        'id': '',
+                                        'type': 'function',
+                                        'function': {'name': '', 'arguments': ''}
+                                    })
+                                
+                                if hasattr(tool_call_delta, 'id') and tool_call_delta.id:
+                                    tool_calls[idx]['id'] = tool_call_delta.id
+                                if hasattr(tool_call_delta, 'function'):
+                                    if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
+                                        tool_calls[idx]['function']['name'] = tool_call_delta.function.name
+                                    
+                                    if hasattr(tool_call_delta.function, 'arguments') and tool_call_delta.function.arguments:
+                                        tool_calls[idx]['function']['arguments'] += tool_call_delta.function.arguments
+    except KeyboardInterrupt:
+        interrupted = True
+        print('\n⚠️ Stream interrupted by user')
     
-    collected_content, stream_tool_calls = process_mcp_stream(stream_response, state.npc)
+    sys.stdout.write('\033[u')
+    sys.stdout.write('\033[0J')
+    sys.stdout.flush()
     
-    if stream_tool_calls:
-        tool_calls = stream_tool_calls
-
-    state.messages = messages
+    if collected_content:
+        render_markdown(collected_content)
     
-    if tool_calls and hasattr(state, 'mcp_client') and state.mcp_client:
-        final_content, state.messages = execute_mcp_tool_calls(
-            tool_calls, 
-            state.mcp_client, 
-            state.messages, 
-            state.npc, 
-            state.stream_output
-        )
-        if final_content:
-            collected_content = final_content
-    
-    return state, {
-        "output": collected_content,
-        "tool_calls": tool_calls,
-        "messages": state.messages
-    }
+    return collected_content, tool_calls, interrupted
 
 
 def execute_mcp_tool_calls(tool_calls, mcp_client, messages, npc, stream_output):
     if not tool_calls or not mcp_client:
-        return None, messages
+        return None, messages, False
 
     messages = clean_orphaned_tool_calls(messages)
     
     print(colored("\n🔧 Executing MCP tools...", "cyan"))
+    user_interrupted = False
     
     while tool_calls:
         tool_responses = []
@@ -454,7 +466,6 @@ def execute_mcp_tool_calls(tool_calls, mcp_client, messages, npc, stream_output)
             compressed_state = npc.compress_planning_state(messages)
             messages = [{"role": "system", "content": npc.get_system_prompt() + f' Your current task: {compressed_state}'}]
             print("Compressed messages during tool execution.")
-        
         
         for tool_call in tool_calls:
             tool_name = tool_call['function']['name']
@@ -501,8 +512,9 @@ def execute_mcp_tool_calls(tool_calls, mcp_client, messages, npc, stream_output)
                 print(colored(f"  ✓ {tool_name} completed", "green"))
                 
             except KeyboardInterrupt:
-                print(colored(f"\n  ⚠️ Tool execution interrupted", "yellow"))
-                return None, messages
+                print(colored(f"\n  ⚠️ Tool execution interrupted by user", "yellow"))
+                user_interrupted = True
+                break
             except Exception as e:
                 print(colored(f"  ✗ {tool_name} failed: {e}", "red"))
                 tool_responses.append({
@@ -512,6 +524,9 @@ def execute_mcp_tool_calls(tool_calls, mcp_client, messages, npc, stream_output)
                     "content": f"Error: {str(e)}"
                 })
         
+        if user_interrupted:
+            return None, messages, True
+            
         current_messages = messages + tool_responses
         
         try:
@@ -524,16 +539,17 @@ def execute_mcp_tool_calls(tool_calls, mcp_client, messages, npc, stream_output)
                 team=None
             )
         except KeyboardInterrupt:
-            print(colored(f"\n  ⚠️ Follow-up response interrupted", "yellow"))
-            return None, messages
+            print(colored(f"\n  ⚠️ Follow-up response interrupted by user", "yellow"))
+            return None, messages, True
         
         follow_up_messages = follow_up_response.get('messages', current_messages)
         follow_up_content = follow_up_response.get('response', '')
         follow_up_tool_calls = []
+        follow_up_interrupted = False
         
         if stream_output:
             if hasattr(follow_up_content, '__iter__'):
-                collected_content, follow_up_tool_calls = process_mcp_stream(follow_up_content, npc)
+                collected_content, follow_up_tool_calls, follow_up_interrupted = process_mcp_stream(follow_up_content, npc)
             else:
                 collected_content = str(follow_up_content)
             follow_up_content = collected_content
@@ -543,13 +559,16 @@ def execute_mcp_tool_calls(tool_calls, mcp_client, messages, npc, stream_output)
                 if last_message.get("role") == "assistant" and "tool_calls" in last_message:
                     follow_up_tool_calls = last_message["tool_calls"]
         
+        if follow_up_interrupted:
+            return follow_up_content, follow_up_messages, True
+            
         messages = follow_up_messages
         
         if not follow_up_tool_calls:
             if not stream_output:
                 print('\n')
                 render_markdown(follow_up_content)
-            return follow_up_content, messages
+            return follow_up_content, messages, False
         else:
             if follow_up_content or follow_up_tool_calls:
                 assistant_message = {"role": "assistant", "content": follow_up_content}
@@ -560,7 +579,87 @@ def execute_mcp_tool_calls(tool_calls, mcp_client, messages, npc, stream_output)
         tool_calls = follow_up_tool_calls
         print(colored("\n🔧 Executing follow-up MCP tools...", "cyan"))
     
-    return None, messages
+    return None, messages, False
+
+
+def execute_command_corca(command: str, state: ShellState, command_history, selected_mcp_tools_names: Optional[List[str]] = None) -> Tuple[ShellState, Any]:
+    mcp_tools_for_llm = []
+    
+    if hasattr(state, 'mcp_client') and state.mcp_client and state.mcp_client.session:
+        all_available_mcp_tools = state.mcp_client.available_tools_llm
+        
+        if selected_mcp_tools_names and len(selected_mcp_tools_names) > 0:
+            mcp_tools_for_llm = [
+                tool_def for tool_def in all_available_mcp_tools
+                if tool_def['function']['name'] in selected_mcp_tools_names
+            ]
+            if not mcp_tools_for_llm:
+                cprint("Warning: No selected MCP tools found or matched. Corca will proceed without tools.", "yellow", file=sys.stderr)
+        else:
+            mcp_tools_for_llm = all_available_mcp_tools
+    else:
+        cprint("Warning: Corca agent has no tools. No MCP server connected.", "yellow", file=sys.stderr)
+
+    if len(state.messages) > 20:
+        compressed_state = state.npc.compress_planning_state(state.messages)
+        state.messages = [{"role": "system", "content": state.npc.get_system_prompt() + f' Your current task: {compressed_state}'}]
+        print("Compressed messages during tool execution.")
+    
+    response_dict = get_llm_response_with_handling(
+        prompt=command,
+        npc=state.npc,
+        messages=state.messages,
+        tools=mcp_tools_for_llm,
+        stream=state.stream_output,
+        team=state.team,
+        context=f' The users working directory is {state.current_path}'
+    )
+         
+    stream_response = response_dict.get('response')
+    messages = response_dict.get('messages', state.messages)
+    tool_calls = response_dict.get('tool_calls', [])
+    
+    collected_content, stream_tool_calls, stream_interrupted = process_mcp_stream(stream_response, state.npc)
+    
+    if stream_interrupted:
+        state.messages = messages
+        return state, {
+            "output": collected_content + "\n[Interrupted by user]",
+            "tool_calls": [],
+            "messages": state.messages,
+            "interrupted": True
+        }
+    
+    if stream_tool_calls:
+        tool_calls = stream_tool_calls
+
+    state.messages = messages
+    
+    if tool_calls and hasattr(state, 'mcp_client') and state.mcp_client:
+        final_content, state.messages, tools_interrupted = execute_mcp_tool_calls(
+            tool_calls, 
+            state.mcp_client, 
+            state.messages, 
+            state.npc, 
+            state.stream_output
+        )
+        if tools_interrupted:
+            return state, {
+                "output": (final_content or collected_content) + "\n[Interrupted by user]",
+                "tool_calls": tool_calls,
+                "messages": state.messages,
+                "interrupted": True
+            }
+        if final_content:
+            collected_content = final_content
+    
+    return state, {
+        "output": collected_content,
+        "tool_calls": tool_calls,
+        "messages": state.messages,
+        "interrupted": False
+    }
+
 
 def _resolve_and_copy_mcp_server_path(
     explicit_path: Optional[str],
@@ -766,13 +865,15 @@ def process_corca_result(
     final_output_str = None
     
     if tool_calls and hasattr(result_state, 'mcp_client') and result_state.mcp_client:
-        final_output_str, result_state.messages = execute_mcp_tool_calls(
+        final_output_str, result_state.messages, tools_interrupted = execute_mcp_tool_calls(
             tool_calls, 
             result_state.mcp_client, 
             result_state.messages, 
             result_state.npc, 
             result_state.stream_output
         )
+        if tools_interrupted:
+            print(colored("\n⚠️  Tool execution interrupted", "yellow"))
     else:
         print('\n')
         if result_state.stream_output:
@@ -802,97 +903,97 @@ def process_corca_result(
             team=team_name,
         )
 
-        conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
-        engine = command_history.engine
-
-        memory_examples = command_history.get_memory_examples_for_context(
-            npc=npc_name,
-            team=team_name, 
-            directory_path=result_state.current_path
-        )
-        
-        memory_context = format_memory_context(memory_examples)
-        
-        approved_facts = []
-        try:
-            facts = get_facts(
-                conversation_turn_text,
-                model=active_npc.model,
-                provider=active_npc.provider,
-                npc=active_npc,
-                context=memory_context
-            )
-            
-            if facts:
-                memories_for_approval = []
-                for i, fact in enumerate(facts):
-                    memories_for_approval.append({
-                        "memory_id": f"temp_{i}",
-                        "content": fact['statement'],
-                        "context": f"Type: {fact.get('type', 'unknown')}, Source: {fact.get('source_text', '')}",
-                        "npc": npc_name,
-                        "fact_data": fact
-                    })
-                
-                approvals = memory_approval_ui(memories_for_approval)
-                
-                for approval in approvals:
-                    fact_data = next(m['fact_data'] for m in memories_for_approval 
-                                   if m['memory_id'] == approval['memory_id'])
-                    
-                    command_history.add_memory_to_database(
-                        message_id=f"{result_state.conversation_id}_{len(result_state.messages)}",
-                        conversation_id=result_state.conversation_id,
-                        npc=npc_name,
-                        team=team_name,
-                        directory_path=result_state.current_path,
-                        initial_memory=fact_data['statement'],
-                        status=approval['decision'],
-                        model=active_npc.model,
-                        provider=active_npc.provider,
-                        final_memory=approval.get('final_memory')
-                    )
-                    
-                    if approval['decision'] in ['human-approved', 'human-edited']:
-                        approved_fact = {
-                            'statement': approval.get('final_memory') or fact_data['statement'],
-                            'source_text': fact_data.get('source_text', ''),
-                            'type': fact_data.get('type', 'explicit'),
-                            'generation': 0
-                        }
-                        approved_facts.append(approved_fact)
-                
-        except Exception as e:
-            print(colored(f"Memory generation error: {e}", "yellow"))
-
-        if result_state.build_kg and approved_facts:
-            try:
-                if not should_skip_kg_processing(user_input, final_output_str):
-                    npc_kg = load_kg_from_db(engine, team_name, npc_name, result_state.current_path)
-                    evolved_npc_kg, _ = kg_evolve_incremental(
-                        existing_kg=npc_kg, 
-                        new_facts=approved_facts,
-                        model=active_npc.model, 
-                        provider=active_npc.provider, 
-                        npc=active_npc,
-                        get_concepts=True,
-                        link_concepts_facts=False, 
-                        link_concepts_concepts=False, 
-                        link_facts_facts=False,                         
-                    )
-                    save_kg_to_db(
-                        engine,
-                        evolved_npc_kg, 
-                        team_name, 
-                        npc_name, 
-                        result_state.current_path
-                    )
-            except Exception as e:
-                print(colored(f"Error during real-time KG evolution: {e}", "red"))
-
         result_state.turn_count += 1
 
         if result_state.turn_count > 0 and result_state.turn_count % 10 == 0:
+            conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
+            engine = command_history.engine
+
+            memory_examples = command_history.get_memory_examples_for_context(
+                npc=npc_name,
+                team=team_name, 
+                directory_path=result_state.current_path
+            )
+            
+            memory_context = format_memory_context(memory_examples)
+            
+            approved_facts = []
+            try:
+                facts = get_facts(
+                    conversation_turn_text,
+                    model=active_npc.model,
+                    provider=active_npc.provider,
+                    npc=active_npc,
+                    context=memory_context
+                )
+                
+                if facts:
+                    memories_for_approval = []
+                    for i, fact in enumerate(facts):
+                        memories_for_approval.append({
+                            "memory_id": f"temp_{i}",
+                            "content": fact['statement'],
+                            "context": f"Type: {fact.get('type', 'unknown')}, Source: {fact.get('source_text', '')}",
+                            "npc": npc_name,
+                            "fact_data": fact
+                        })
+                    
+                    approvals = memory_approval_ui(memories_for_approval)
+                    
+                    for approval in approvals:
+                        fact_data = next(m['fact_data'] for m in memories_for_approval 
+                                       if m['memory_id'] == approval['memory_id'])
+                        
+                        command_history.add_memory_to_database(
+                            message_id=f"{result_state.conversation_id}_{len(result_state.messages)}",
+                            conversation_id=result_state.conversation_id,
+                            npc=npc_name,
+                            team=team_name,
+                            directory_path=result_state.current_path,
+                            initial_memory=fact_data['statement'],
+                            status=approval['decision'],
+                            model=active_npc.model,
+                            provider=active_npc.provider,
+                            final_memory=approval.get('final_memory')
+                        )
+                        
+                        if approval['decision'] in ['human-approved', 'human-edited']:
+                            approved_fact = {
+                                'statement': approval.get('final_memory') or fact_data['statement'],
+                                'source_text': fact_data.get('source_text', ''),
+                                'type': fact_data.get('type', 'explicit'),
+                                'generation': 0
+                            }
+                            approved_facts.append(approved_fact)
+                    
+            except Exception as e:
+                print(colored(f"Memory generation error: {e}", "yellow"))
+
+            if result_state.build_kg and approved_facts:
+                try:
+                    if not should_skip_kg_processing(user_input, final_output_str):
+                        npc_kg = load_kg_from_db(engine, team_name, npc_name, result_state.current_path)
+                        evolved_npc_kg, _ = kg_evolve_incremental(
+                            existing_kg=npc_kg, 
+                            new_facts=approved_facts,
+                            model=active_npc.model, 
+                            provider=active_npc.provider, 
+                            npc=active_npc,
+                            get_concepts=True,
+                            link_concepts_facts=False, 
+                            link_concepts_concepts=False, 
+                            link_facts_facts=False,                         
+                        )
+                        save_kg_to_db(
+                            engine,
+                            evolved_npc_kg, 
+                            team_name, 
+                            npc_name, 
+                            result_state.current_path
+                        )
+                except Exception as e:
+                    print(colored(f"Error during real-time KG evolution: {e}", "red"))
+
             print(colored("\nChecking for potential team improvements...", "cyan"))
             try:
                 summary = breathe(messages=result_state.messages[-20:], 
@@ -916,7 +1017,7 @@ def process_corca_result(
                     
                     Respond with JSON: """ + """
                     {
-                    "suggestion": "Your sentence.
+                    "suggestion": "Your sentence."
                     }
                     """
                     response = get_llm_response(prompt, 
@@ -951,9 +1052,8 @@ def process_corca_result(
             except Exception as e:
                 import traceback
                 print(colored(f"Could not generate team suggestions: {e}", "yellow"))
-                traceback.print_exc()                
-                
-                
+                traceback.print_exc()
+                                                
 def _read_npcsh_global_env() -> Dict[str, str]:
     global_env_file = Path(".npcsh_global")
     env_vars = {}
@@ -1135,6 +1235,7 @@ def create_corca_state_and_mcp_client(conversation_id,
 
     return state
 
+
 def enter_corca_mode(command: str, **kwargs):
     state: ShellState = kwargs.get('shell_state')
     command_history: CommandHistory = kwargs.get('command_history')
@@ -1202,19 +1303,28 @@ def enter_corca_mode(command: str, **kwargs):
             
             if not user_input:
                 continue
+            
             try:
                 state, output = execute_command_corca(user_input, state, command_history)
+                
+                if isinstance(output, dict) and output.get('interrupted'):
+                    print(colored("\n⚠️  Command interrupted. MCP session maintained.", "yellow"))
+                    continue
             
                 process_corca_result(user_input, 
                             state, 
                             output, 
                             command_history, 
                                 )
+            except KeyboardInterrupt:
+                print(colored("\n⚠️  Interrupted. Type 'exit' to quit Corca mode.", "yellow"))
+                continue
             except Exception as e:
-                print(f'An Exception has occurred {e}')   
+                print(colored(f'An Exception has occurred: {e}', "red"))
+                traceback.print_exc()
                          
         except KeyboardInterrupt:
-            print()
+            print(colored("\n⚠️  Interrupted. Type 'exit' to quit Corca mode.", "yellow"))
             continue
         except EOFError:
             print("\nExiting Corca Mode.")
@@ -1226,7 +1336,6 @@ def enter_corca_mode(command: str, **kwargs):
     
     render_markdown("\n# Exiting Corca Mode")
     return {"output": "", "messages": state.messages}
-
 def main():
     parser = argparse.ArgumentParser(description="Corca - An MCP-powered npcsh shell.")
     parser.add_argument("--mcp-server-path", type=str, help="Path to an MCP server script to connect to.")
