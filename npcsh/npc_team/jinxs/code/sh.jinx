@@ -1,4 +1,4 @@
-jinx_name: bash_executor
+jinx_name: sh
 description: Execute bash queries. Should be used to grep for file contents, list directories, explore information to answer user questions more practically.
 inputs:
 - bash_command
