@@ -1,0 +1,20 @@
+jinx_name: "breathe"
+description: "Condense context on a regular cadence"
+inputs: [] # The breathe command takes all relevant context from the NPC's environment
+steps:
+  - name: "condense_context"
+    engine: "python"
+    code: |
+      from npcpy.llm_funcs import breathe
+      
+      output_messages = context.get('messages', [])
+
+      # Pass all current context as kwargs to breathe
+      result = breathe(**context) 
+      
+      if isinstance(result, dict):
+          context['output'] = result.get('output', 'Context condensed.')
+          context['messages'] = result.get('messages', output_messages)
+      else:
+          context['output'] = "Context condensation process initiated."
+          context['messages'] = output_messages

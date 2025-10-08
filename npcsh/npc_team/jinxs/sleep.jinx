@@ -1,0 +1,116 @@
+jinx_name: "sleep"
+description: "Evolve knowledge graph. Use --dream to also run creative synthesis."
+inputs:
+  - dream: False # Boolean flag to also run creative synthesis (dream process).
+  - ops: "" # Comma-separated list of operations to configure KG sleep process.
+  - model: "" # LLM model to use for KG evolution. Defaults to NPC's model.
+  - provider: "" # LLM provider to use for KG evolution. Defaults to NPC's provider.
+steps:
+  - name: "evolve_knowledge_graph"
+    engine: "python"
+    code: |
+      import os
+      import traceback
+      from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db
+      from npcpy.memory.knowledge_graph import kg_sleep_process, kg_dream_process
+      # Assuming render_markdown is available if needed for logging progress
+
+      is_dreaming = context.get('dream')
+      operations_str = context.get('ops')
+      llm_model = context.get('model')
+      llm_provider = context.get('provider')
+      output_messages = context.get('messages', [])
+      current_npc = context.get('npc')
+      current_team = context.get('team')
+
+      operations_config = None
+      if operations_str and isinstance(operations_str, str):
+          operations_config = [op.strip() for op in operations_str.split(',')]
+      
+      # Fallback for model/provider if not explicitly set in Jinx inputs
+      if not llm_model and current_npc and current_npc.model:
+          llm_model = current_npc.model
+      if not llm_provider and current_npc and current_npc.provider:
+          llm_provider = current_npc.provider
+      
+      # Final fallbacks (these would ideally come from npcsh._state config)
+      if not llm_model: llm_model = "gemini-1.5-pro" # Example default
+      if not llm_provider: llm_provider = "gemini" # Example default
+
+      team_name = current_team.name if current_team else "__none__"
+      npc_name = current_npc.name if isinstance(current_npc, type(None).__class__) else "__none__"
+      current_path = os.getcwd()
+      scope_str = f"Team: '{team_name}', NPC: '{npc_name}', Path: '{current_path}'"
+
+      # Assume render_markdown exists
+      # render_markdown(f"- Checking knowledge graph for scope: {scope_str}")
+
+      command_history = None
+      try:
+          db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
+          command_history = CommandHistory(db_path)
+          engine = command_history.engine
+      except Exception as e:
+          context['output'] = f"Error connecting to history database for KG access: {e}"
+          context['messages'] = output_messages
+          exit()
+
+      output_result = ""
+      try:
+          current_kg = load_kg_from_db(engine, team_name, npc_name, current_path)
+
+          if not current_kg or not current_kg.get('facts'):
+              output_msg = f"Knowledge graph for the current scope is empty. Nothing to process.\n"
+              output_msg += f"  - Scope Checked: {scope_str}\n\n"
+              output_msg += "**Hint:** Have a conversation or run some commands first to build up knowledge in this specific context. The KG is unique to each combination of Team, NPC, and directory."
+              context['output'] = output_msg
+              context['messages'] = output_messages
+              exit()
+
+          original_facts = len(current_kg.get('facts', []))
+          original_concepts = len(current_kg.get('concepts', []))
+          
+          process_type = "Sleep"
+          ops_display = f"with operations: {operations_config}" if operations_config else "with random operations"
+          # render_markdown(f"- Initiating sleep process {ops_display}")
+          
+          evolved_kg, _ = kg_sleep_process(
+              existing_kg=current_kg,
+              model=llm_model,
+              provider=llm_provider,
+              npc=current_npc,
+              operations_config=operations_config
+          )
+
+          if is_dreaming:
+              process_type += " & Dream"
+              # render_markdown(f"- Initiating dream process on the evolved KG...")
+              evolved_kg, _ = kg_dream_process(
+                  existing_kg=evolved_kg,
+                  model=llm_model,
+                  provider=llm_provider,
+                  npc=current_npc
+              )
+
+          save_kg_to_db(engine, evolved_kg, team_name, npc_name, current_path) # Changed conn to engine
+
+          new_facts = len(evolved_kg.get('facts', []))
+          new_concepts = len(evolved_kg.get('concepts', []))
+
+          output_result = f"{process_type} process complete.\n"
+          output_result += f"- Facts: {original_facts} -> {new_facts} ({new_facts - original_facts:+})\n"
+          output_result += f"- Concepts: {original_concepts} -> {new_concepts} ({new_concepts - original_concepts:+})"
+          
+          print('Evolved facts:', evolved_kg.get('facts'))
+          print('Evolved concepts:', evolved_kg.get('concepts'))
+          
+          context['output'] = output_result
+          context['messages'] = output_messages
+
+      except Exception as e:
+          traceback.print_exc()
+          context['output'] = f"Error during KG evolution process: {e}"
+          context['messages'] = output_messages
+      finally:
+          if command_history: # Check if it was successfully initialized
+              command_history.close()

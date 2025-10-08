@@ -1,0 +1,50 @@
+jinx_name: "compile"
+description: "Compile NPC profiles"
+inputs:
+  - npc_file_path: "" # Optional path to a specific NPC file to compile.
+  - npc_team_dir: "./npc_team" # Directory containing NPC profiles to compile, if no specific file is given.
+steps:
+  - name: "compile_npcs"
+    engine: "python"
+    code: |
+      import os
+      import traceback
+      from npcpy.npc_compiler import NPC, Team # Assuming Team might be needed for full directory compilation
+      
+      npc_file_path_arg = context.get('npc_file_path')
+      npc_team_dir = context.get('npc_team_dir')
+      output_messages = context.get('messages', [])
+      
+      output_result = ""
+      compiled_npc_object = None
+      
+      try:
+          if npc_file_path_arg and npc_file_path_arg.strip():
+              npc_full_path = os.path.abspath(os.path.expanduser(npc_file_path_arg))
+              if os.path.exists(npc_full_path):
+                  # Assuming NPC() constructor "compiles" it by loading its definition
+                  compiled_npc_object = NPC(file=npc_full_path, db_conn=context.get('db_conn'))
+                  output_result = f"Compiled NPC: {npc_full_path}"
+              else:
+                  output_result = f"Error: NPC file not found: {npc_full_path}"
+          else:
+              # Compile all NPCs in the directory. This would typically involve iterating and loading.
+              # For simplicity in this Jinx, we just acknowledge the directory.
+              # A more robust implementation would loop through .npc files and compile them.
+              abs_npc_team_dir = os.path.abspath(os.path.expanduser(npc_team_dir))
+              if os.path.exists(abs_npc_team_dir):
+                  output_result = f"Acknowledged compilation for all NPCs in directory: {abs_npc_team_dir}"
+                  # Example of loading a Team and setting the compiled_npc_object to its forenpc if available
+                  # team = Team(team_path=abs_npc_team_dir, db_conn=context.get('db_conn'))
+                  # if team.forenpc:
+                  #    compiled_npc_object = team.forenpc 
+              else:
+                  output_result = f"Error: NPC team directory not found: {npc_team_dir}"
+      except Exception as e:
+          traceback.print_exc()
+          output_result = f"Error compiling: {e}"
+      
+      context['output'] = output_result
+      context['messages'] = output_messages
+      if compiled_npc_object:
+          context['compiled_npc_object'] = compiled_npc_object # Store the compiled NPC object if any

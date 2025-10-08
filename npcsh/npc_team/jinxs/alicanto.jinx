@@ -1,0 +1,88 @@
+jinx_name: "alicanto"
+description: "Conduct deep research with multiple perspectives, identifying gold insights and cliff warnings"
+inputs:
+  - query: "" # Required research query.
+  - num_npcs: 5 # Number of NPCs to involve in research.
+  - depth: 3 # Depth of research.
+  - model: "" # LLM model to use. Defaults to NPCSH_CHAT_MODEL or NPC's model.
+  - provider: "" # LLM provider to use. Defaults to NPCSH_CHAT_PROVIDER or NPC's provider.
+  - max_steps: 20 # Maximum number of steps in Alicanto research.
+  - skip_research: True # Whether to skip the research phase.
+  - exploration: "" # Exploration factor (float).
+  - creativity: "" # Creativity factor (float).
+  - format: "" # Output format (report, summary, full).
+steps:
+  - name: "conduct_alicanto_research"
+    engine: "python"
+    code: |
+      import traceback
+      import logging
+      from npcsh.alicanto import alicanto
+      # Assuming NPCSH_CHAT_MODEL and NPCSH_CHAT_PROVIDER are accessible
+
+      query = context.get('query')
+      num_npcs = int(context.get('num_npcs', 5)) # Ensure int type
+      depth = int(context.get('depth', 3)) # Ensure int type
+      llm_model = context.get('model')
+      llm_provider = context.get('provider')
+      max_steps = int(context.get('max_steps', 20)) # Ensure int type
+      skip_research = context.get('skip_research', True)
+      exploration_factor = context.get('exploration')
+      creativity_factor = context.get('creativity')
+      output_format = context.get('format')
+      output_messages = context.get('messages', [])
+      current_npc = context.get('npc')
+      
+      if not query or not query.strip():
+          context['output'] = "Usage: /alicanto <research query> [--num-npcs N] [--depth N] [--exploration 0.3] [--creativity 0.5] [--format report|summary|full]"
+          context['messages'] = output_messages
+          exit()
+
+      # Fallback for model/provider if not explicitly set in Jinx inputs
+      if not llm_model and current_npc and current_npc.model:
+          llm_model = current_npc.model
+      if not llm_provider and current_npc and current_npc.provider:
+          llm_provider = current_npc.provider
+      
+      # Final fallbacks (these would ideally come from npcsh._state config)
+      # Assuming NPCSH_CHAT_MODEL and NPCSH_CHAT_PROVIDER exist and are imported implicitly or set by environment
+      # Hardcoding defaults for demonstration if not available through NPC or _state
+      if not llm_model: llm_model = "gemini-1.5-pro" 
+      if not llm_provider: llm_provider = "gemini" 
+
+      try:
+          logging.info(f"Starting Alicanto research on: {query}")
+
+          alicanto_kwargs = {
+              'query': query,
+              'num_npcs': num_npcs,
+              'depth': depth,
+              'model': llm_model,
+              'provider': llm_provider, 
+              'max_steps': max_steps,
+              'skip_research': skip_research,
+          }
+
+          if exploration_factor: alicanto_kwargs['exploration_factor'] = float(exploration_factor)
+          if creativity_factor: alicanto_kwargs['creativity_factor'] = float(creativity_factor)
+          if output_format: alicanto_kwargs['output_format'] = output_format
+
+          result = alicanto(**alicanto_kwargs)
+          
+          output_result = ""
+          if isinstance(result, dict):
+              if "integration" in result:
+                  output_result = result["integration"]
+              else:
+                  output_result = "Alicanto research completed. Full results available in returned data."
+          else:
+              output_result = str(result)
+              
+          context['output'] = output_result
+          context['messages'] = output_messages
+          context['alicanto_result'] = result # Store full result in context
+      except Exception as e:
+          traceback.print_exc()
+          logging.error(f"Error during Alicanto research: {e}")
+          context['output'] = f"Error during Alicanto research: {e}"
+          context['messages'] = output_messages

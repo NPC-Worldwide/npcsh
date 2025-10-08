@@ -1,0 +1,36 @@
+jinx_name: "trigger"
+description: "Execute a trigger command"
+inputs:
+  - trigger_description: "" # Required description of the trigger to execute.
+steps:
+  - name: "execute_trigger"
+    engine: "python"
+    code: |
+      import traceback
+      from npcpy.work.trigger import execute_trigger_command
+      
+      trigger_description = context.get('trigger_description')
+      output_messages = context.get('messages', [])
+      
+      if not trigger_description or not trigger_description.strip():
+          context['output'] = "Usage: /trigger <trigger_description>"
+          context['messages'] = output_messages
+          exit()
+      
+      try:
+          # Pass all current context as kwargs to execute_trigger_command
+          result = execute_trigger_command(command=trigger_description, **context)
+          
+          if isinstance(result, dict):
+              context['output'] = result.get('output', 'Trigger executed.')
+              context['messages'] = result.get('messages', output_messages)
+          else:
+              context['output'] = str(result)
+              context['messages'] = output_messages
+      except NameError:
+          context['output'] = "Trigger function (execute_trigger_command) not available."
+          context['messages'] = output_messages
+      except Exception as e:
+          traceback.print_exc()
+          context['output'] = f"Error executing trigger: {e}"
+          context['messages'] = output_messages
