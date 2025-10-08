@@ -1,0 +1,46 @@
+jinx_name: "guac"
+description: "Enter guac mode for plotting and data visualization."
+inputs:
+  - config_dir: "" # Optional configuration directory.
+  - plots_dir: "" # Optional directory for plots.
+  - refresh_period: 100 # Refresh period for guac mode.
+  - lang: "" # Language setting for guac mode.
+steps:
+  - name: "enter_guac"
+    engine: "python"
+    code: |
+      import os
+      from sqlalchemy import create_engine
+      from npcpy.npc_compiler import NPC, Team
+      from npcsh.guac import enter_guac_mode
+      
+      config_dir = context.get('config_dir')
+      plots_dir = context.get('plots_dir')
+      refresh_period = context.get('refresh_period')
+      lang = context.get('lang')
+      output_messages = context.get('messages', [])
+      
+      db_path = os.path.expanduser('~/npcsh_history.db')
+      db_conn = create_engine(f'sqlite:///{db_path}')
+      
+      npc_file = os.path.expanduser('~/.npcsh/guac/npc_team/guac.npc')
+      npc_team_dir = os.path.expanduser('~/.npcsh/guac/npc_team/')
+      
+      # Ensure directories exist for guac NPC/Team
+      os.makedirs(os.path.dirname(npc_file), exist_ok=True)
+      
+      guac_npc = NPC(file=npc_file, db_conn=db_conn)
+      guac_team = Team(npc_team_dir, db_conn=db_conn)
+      
+      enter_guac_mode(
+          npc=guac_npc, 
+          team=guac_team, 
+          config_dir=config_dir, 
+          plots_dir=plots_dir,
+          npc_team_dir=npc_team_dir,
+          refresh_period=int(refresh_period), # Ensure int type
+          lang=lang
+      )
+      
+      context['output'] = 'Exiting Guac Mode'
+      context['messages'] = output_messages

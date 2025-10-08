@@ -1,0 +1,39 @@
+jinx_name: "flush"
+description: "Flush the last N messages from the conversation history."
+inputs:
+  - n: 1 # The number of messages to flush (default to 1).
+steps:
+  - name: "flush_messages"
+    engine: "python"
+    code: |
+      n = int(context.get('n', 1))
+      output_messages = context.get('messages', [])
+      
+      if n <= 0:
+          context['output'] = "Error: Number of messages must be positive."
+          context['messages'] = output_messages
+          exit()
+
+      new_messages = list(output_messages)
+      original_len = len(new_messages)
+      removed_count = 0
+
+      if new_messages and new_messages[0].get("role") == "system":
+          system_message = new_messages[0]
+          working_messages = new_messages[1:]
+          num_to_remove = min(n, len(working_messages))
+          if num_to_remove > 0:
+              final_messages = [system_message] + working_messages[:-num_to_remove]
+              removed_count = num_to_remove
+          else:
+              final_messages = [system_message]
+      else:
+          num_to_remove = min(n, original_len)
+          if num_to_remove > 0:
+              final_messages = new_messages[:-num_to_remove]
+              removed_count = num_to_remove
+          else:
+              final_messages = []
+
+      context['output'] = f"Flushed {removed_count} message(s). Context is now {len(final_messages)} messages."
+      context['messages'] = final_messages
