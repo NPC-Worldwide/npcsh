@@ -1,0 +1,28 @@
+jinx_name: "pti"
+description: "Enter Pardon-The-Interruption mode for human-in-the-loop reasoning."
+inputs:
+  - command_args: "" # The full command string or specific arguments for PTI mode.
+steps:
+  - name: "enter_pti"
+    engine: "python"
+    code: |
+      import traceback
+      from npcsh.pti import enter_pti_mode
+      
+      command_args = context.get('command_args', '') # The full command string from router
+      output_messages = context.get('messages', [])
+      
+      try:
+          # enter_pti_mode likely expects the full command string for its own parsing
+          result = enter_pti_mode(command=command_args, **context)
+          
+          if isinstance(result, dict):
+              context['output'] = result.get('output', 'Entered PTI mode.')
+              context['messages'] = result.get('messages', output_messages)
+          else:
+              context['output'] = str(result)
+              context['messages'] = output_messages
+      except Exception as e:
+          traceback.print_exc()
+          context['output'] = f"Error entering pti mode: {e}"
+          context['messages'] = output_messages
