@@ -1,0 +1,52 @@
+jinx_name: help
+description: Show help for commands, NPCs, or Jinxs
+inputs:
+  - topic: null
+steps:
+  - name: show_help
+    engine: python
+    code: |
+      import json
+      from npcsh._state import CANONICAL_ARGS, get_argument_help
+      
+      topic = context.get('topic')
+      
+      if not topic:
+          output_lines = ["# Available Commands\n\n"]
+          
+          all_jinxs = {}
+          if hasattr(npc, 'team') and npc.team and hasattr(npc.team, 'jinxs_dict'):
+              all_jinxs.update(npc.team.jinxs_dict)
+          if hasattr(npc, 'jinxs_dict') and npc.jinxs_dict:
+              all_jinxs.update(npc.jinxs_dict)
+          
+          for cmd in sorted(all_jinxs.keys()):
+              jinx_obj = all_jinxs[cmd]
+              desc = getattr(jinx_obj, 'description', 'No description')
+              output_lines.append(f"/{cmd} - {desc}\n\n")
+          
+          arg_help_map = get_argument_help()
+          if arg_help_map:
+              output_lines.append("## Common Command-Line Flags\n\n")
+              output_lines.append("The shortest unambiguous prefix works.\n")
+              
+              for arg in sorted(CANONICAL_ARGS):
+                  aliases = arg_help_map.get(arg, [])
+                  alias_str = f"(-{min(aliases, key=len)})" if aliases else ""
+                  output_lines.append(f"--{arg:<20} {alias_str}\n")
+          
+          output = "".join(output_lines)
+      else:
+          jinx_obj = None
+          if hasattr(npc, 'team') and npc.team and hasattr(npc.team, 'jinxs_dict'):
+              jinx_obj = npc.team.jinxs_dict.get(topic)
+          if not jinx_obj and hasattr(npc, 'jinxs_dict'):
+              jinx_obj = npc.jinxs_dict.get(topic)
+          
+          if jinx_obj:
+              output = f"## Help for Jinx: `/{topic}`\n\n"
+              output += f"- **Description**: {jinx_obj.description}\n"
+              if hasattr(jinx_obj, 'inputs') and jinx_obj.inputs:
+                  output += f"- **Inputs**: {json.dumps(jinx_obj.inputs, indent=2)}\n"
+          else:
+              output = f"No help topic found for `{topic}`."

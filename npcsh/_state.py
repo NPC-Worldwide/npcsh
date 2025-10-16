@@ -1875,17 +1875,15 @@ def execute_slash_command(command: str,
     all_command_parts = shlex.split(command)
     command_name = all_command_parts[0].lstrip('/')
     
-  
     if command_name in ['n', 'npc']:
         npc_to_switch_to = all_command_parts[1] if len(all_command_parts) > 1 else None
         if npc_to_switch_to and state.team and npc_to_switch_to in state.team.npcs:
             state.npc = state.team.npcs[npc_to_switch_to]
-            return state, f"Switched to NPC: {npc_to_switch_to}"
+            return state, {"output": f"Switched to NPC: {npc_to_switch_to}", "messages": state.messages}
         else:
             available_npcs = list(state.team.npcs.keys()) if state.team else []
-            return state, colored(f"NPC '{npc_to_switch_to}' not found. Available NPCs: {', '.join(available_npcs)}", "red")
+            return state, {"output": colored(f"NPC '{npc_to_switch_to}' not found. Available NPCs: {', '.join(available_npcs)}", "red"), "messages": state.messages}
     
-  
     handler = router.get_route(command_name)
     if handler:
         parsed_flags, positional_args = parse_generic_command_flags(all_command_parts[1:])
@@ -1901,12 +1899,10 @@ def execute_slash_command(command: str,
             'positional_args': positional_args,
             'plonk_context': state.team.shared_context.get('PLONK_CONTEXT') if state.team and hasattr(state.team, 'shared_context') else None,
             
-          
             'model': state.npc.model if isinstance(state.npc, NPC) and state.npc.model else state.chat_model,
             'provider': state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else state.chat_provider,
             'npc': state.npc,
             
-          
             'sprovider': state.search_provider,
             'emodel': state.embedding_model,
             'eprovider': state.embedding_provider,
@@ -1927,7 +1923,6 @@ def execute_slash_command(command: str,
 
         render_markdown(f'- Calling {command_name} handler {kwarg_part} ')
         
-      
         if 'model' in normalized_flags and 'provider' not in normalized_flags:
             inferred_provider = lookup_provider(normalized_flags['model'])
             if inferred_provider:
@@ -1943,20 +1938,22 @@ def execute_slash_command(command: str,
         handler_kwargs.update(normalized_flags)
         
         try:
-            result_dict = handler(command=command, 
-                                  **handler_kwargs)
-            if isinstance(result_dict, dict):
-                state.messages = result_dict.get("messages", state.messages)
-                return state, result_dict
+            result = handler(command=command, **handler_kwargs)
+            
+            if isinstance(result, dict):
+                state.messages = result.get("messages", state.messages)
+                return state, result
+            elif isinstance(result, str):
+                return state, {"output": result, "messages": state.messages}
             else:
-                return state, result_dict
+                return state, {"output": str(result), "messages": state.messages}
+                
         except Exception as e:
             import traceback
             print(f"Error executing slash command '{command_name}':", file=sys.stderr)
             traceback.print_exc()
-            return state, colored(f"Error executing slash command '{command_name}': {e}", "red")
+            return state, {"output": colored(f"Error executing slash command '{command_name}': {e}", "red"), "messages": state.messages}
 
-  
     active_npc = state.npc if isinstance(state.npc, NPC) else None
     jinx_to_execute = None
     executor = None
@@ -1970,14 +1967,12 @@ def execute_slash_command(command: str,
     if jinx_to_execute:
         args = all_command_parts[1:]
         try:
-          
             input_values = {}
             if hasattr(jinx_to_execute, 'inputs') and jinx_to_execute.inputs:
                 for i, input_name in enumerate(jinx_to_execute.inputs):
                     if i < len(args):
                         input_values[input_name] = args[i]
             
-          
             if isinstance(executor, NPC):
                 jinx_output = jinx_to_execute.execute(
                     input_values=input_values,
@@ -1994,25 +1989,24 @@ def execute_slash_command(command: str,
                 )
             if isinstance(jinx_output, dict) and 'messages' in jinx_output:
                 state.messages = jinx_output['messages']
-                return state, str(jinx_output.get('output', jinx_output))
-            elif isinstance(jinx_output, dict):
-                return state, str(jinx_output.get('output', jinx_output))
-            else:
                 return state, jinx_output
+            elif isinstance(jinx_output, dict):
+                return state, jinx_output
+            else:
+                return state, {"output": str(jinx_output), "messages": state.messages}
             
         except Exception as e:
             import traceback
             print(f"Error executing jinx '{command_name}':", file=sys.stderr)
             traceback.print_exc()
-            return state, colored(f"Error executing jinx '{command_name}': {e}", "red")
+            return state, {"output": colored(f"Error executing jinx '{command_name}': {e}", "red"), "messages": state.messages}
+    
     if state.team and command_name in state.team.npcs:
         new_npc = state.team.npcs[command_name]
         state.npc = new_npc
-        return state, f"Switched to NPC: {new_npc.name}"
+        return state, {"output": f"Switched to NPC: {new_npc.name}", "messages": state.messages}
 
-    return state, colored(f"Unknown slash command, jinx, or NPC: {command_name}", "red")
-
-
+    return state, {"output": colored(f"Unknown slash command, jinx, or NPC: {command_name}", "red"), "messages": state.messages}
 
 
 def process_pipeline_command(
@@ -2319,7 +2313,6 @@ def execute_command(
         return state, response['response']
 
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
-
     setup_npcsh_config()
 
     db_path = os.getenv("NPCSH_DB_PATH", HISTORY_DB_DEFAULT_PATH)
@@ -2327,13 +2320,10 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     command_history = CommandHistory(db_path)
 
-
     if not is_npcsh_initialized():
         print("Initializing NPCSH...")
         initialize_base_npcs_if_needed(db_path)
         print("NPCSH initialization complete. Restart or source ~/.npcshrc.")
-
-
 
     try:
         history_file = setup_readline()
@@ -2397,7 +2387,6 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
             team_dir = global_team_path
             default_forenpc_name = "sibiji"            
         
-
     team_ctx = {}
     team_ctx_path = get_team_ctx_path(team_dir)
     if team_ctx_path:
@@ -2410,34 +2399,12 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
   
     print('forenpc_name:', forenpc_name)
 
-    if team_ctx.get("use_global_jinxs", False):
-        jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
-    else:
-        jinxs_dir = os.path.join(team_dir, "jinxs")
-        
-    jinxs_list = load_jinxs_from_directory(jinxs_dir)
-    jinxs_dict = {jinx.jinx_name: jinx for jinx in jinxs_list}
-
-    forenpc_obj = None
     forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
-
     print('forenpc_path:', forenpc_path)
 
-    if os.path.exists(forenpc_path):
-        forenpc_obj = NPC(file = forenpc_path, 
-                          jinxs=jinxs_list, 
-                          db_conn=command_history.engine)
-        if forenpc_obj.model is None:
-            forenpc_obj.model= team_ctx.get("model", initial_state.chat_model)
-        if forenpc_obj.provider is None:
-            forenpc_obj.provider=team_ctx.get('provider', initial_state.chat_provider)
-            
-    else:
-        print(f"Warning: Forenpc file '{forenpc_name}.npc' not found in {team_dir}.")
-
-    team = Team(team_path=team_dir, 
-                forenpc=forenpc_obj, 
-                jinxs=jinxs_dict)
+    team = Team(team_path=team_dir, db_conn=command_history.engine)
+    
+    forenpc_obj = team.forenpc if hasattr(team, 'forenpc') and team.forenpc else None
 
     for npc_name, npc_obj in team.npcs.items():
         if not npc_obj.model:
@@ -2445,12 +2412,12 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         if not npc_obj.provider:
             npc_obj.provider = initial_state.chat_provider
 
-  
     if team.forenpc and isinstance(team.forenpc, NPC):
         if not team.forenpc.model:
             team.forenpc.model = initial_state.chat_model
         if not team.forenpc.provider:
             team.forenpc.provider = initial_state.chat_provider
+    
     team_name_from_ctx = team_ctx.get("name")
     if team_name_from_ctx:
         team.name = team_name_from_ctx
@@ -2464,11 +2431,19 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     else:
         team.name = "npcsh"
 
-
     return command_history, team, forenpc_obj
 
-
-
+def initialize_router_with_jinxs(team, router):
+    """Load global and team Jinxs into router"""
+    global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
+    router.load_jinx_routes(global_jinxs_dir)
+    
+    if team and team.team_path:
+        team_jinxs_dir = os.path.join(team.team_path, "jinxs")
+        if os.path.exists(team_jinxs_dir):
+            router.load_jinx_routes(team_jinxs_dir)
+    
+    return router
                 
 from npcpy.memory.memory_processor import  memory_approval_ui
 from npcpy.ft.memory_trainer import MemoryTrainer
@@ -2688,13 +2663,22 @@ def process_result(
     result_state.attachments = None
 
     final_output_str = None
-    output_content = output.get('output') if isinstance(output, dict) else output
-    model_for_stream = output.get('model', active_npc.model) if isinstance(output, dict) else active_npc.model
-    provider_for_stream = output.get('provider', active_npc.provider) if isinstance(output, dict) else active_npc.provider
+    
+    if isinstance(output, dict):
+        output_content = output.get('output')
+        model_for_stream = output.get('model', active_npc.model)
+        provider_for_stream = output.get('provider', active_npc.provider)
+    else:
+        output_content = output
+        model_for_stream = active_npc.model
+        provider_for_stream = active_npc.provider
 
     print('\n')
     if user_input == '/help':
-        render_markdown(output.get('output'))
+        if isinstance(output_content, str):
+            render_markdown(output_content)
+        else:
+            render_markdown(str(output_content))
     elif result_state.stream_output:
         final_output_str = print_and_process_stream_with_markdown(
             output_content, 
