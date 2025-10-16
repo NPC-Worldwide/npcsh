@@ -1,0 +1,25 @@
+jinx_name: "yap"
+description: "Enter voice chat (yap) mode"
+inputs: [] # Yap mode takes its parameters directly from the environment/kwargs
+steps:
+  - name: "enter_yap"
+    engine: "python"
+    code: |
+      import traceback
+      from npcsh.yap import enter_yap_mode
+      
+      output_messages = context.get('messages', [])
+
+      try:
+          result = enter_yap_mode(**context) # Pass all context as kwargs
+          
+          if isinstance(result, dict):
+              context['output'] = result.get('output', 'Exited Yap Mode.')
+              context['messages'] = result.get('messages', output_messages)
+          else:
+              context['output'] = str(result)
+              context['messages'] = output_messages
+      except Exception as e:
+          traceback.print_exc()
+          context['output'] = f"Error entering yap mode: {e}"
+          context['messages'] = output_messages

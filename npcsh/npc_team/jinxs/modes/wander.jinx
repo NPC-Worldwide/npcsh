@@ -1,0 +1,81 @@
+jinx_name: "wander"
+description: "Enter wander mode (experimental)"
+inputs:
+  - problem: "" # The problem to wander about.
+  - environment: "" # Optional environment for wander mode.
+  - low_temp: 0.5 # Low temperature setting for LLM.
+  - high_temp: 1.9 # High temperature setting for LLM.
+  - interruption_likelihood: 1.0 # Likelihood of interruption.
+  - sample_rate: 0.4 # Sample rate.
+  - n_high_temp_streams: 5 # Number of high temperature streams.
+  - include_events: False # Whether to include events.
+  - num_events: 3 # Number of events to include.
+steps:
+  - name: "enter_wander"
+    engine: "python"
+    code: |
+      import traceback
+      from npcsh.wander import enter_wander_mode
+      
+      problem = context.get('problem')
+      environment = context.get('environment')
+      low_temp = float(context.get('low_temp', 0.5)) # Ensure float type
+      high_temp = float(context.get('high_temp', 1.9)) # Ensure float type
+      interruption_likelihood = float(context.get('interruption_likelihood', 1.0)) # Ensure float type
+      sample_rate = float(context.get('sample_rate', 0.4)) # Ensure float type
+      n_high_temp_streams = int(context.get('n_high_temp_streams', 5)) # Ensure int type
+      include_events = context.get('include_events', False) # Boolean type
+      num_events = int(context.get('num_events', 3)) # Ensure int type
+      
+      current_npc = context.get('npc')
+      llm_model = context.get('model')
+      llm_provider = context.get('provider')
+      output_messages = context.get('messages', [])
+
+      if not problem or not problem.strip():
+          context['output'] = "Usage: /wander <problem> [key=value...]"
+          context['messages'] = output_messages
+          exit()
+      
+      # Fallback for model/provider if not explicitly set in Jinx inputs
+      if not llm_model and current_npc and current_npc.model:
+          llm_model = current_npc.model
+      if not llm_provider and current_npc and current_npc.provider:
+          llm_provider = current_npc.provider
+      
+      # Final fallbacks (these would ideally come from npcsh._state config)
+      if not llm_model: llm_model = "gemini-1.5-pro" # Example default
+      if not llm_provider: llm_provider = "gemini" # Example default
+
+      try:
+          mode_args = {
+              'problem': problem,
+              'npc': current_npc,
+              'model': llm_model,
+              'provider': llm_provider,
+              'environment': environment,
+              'low_temp': low_temp,
+              'high_temp': high_temp,
+              'interruption_likelihood': interruption_likelihood,
+              'sample_rate': sample_rate,
+              'n_high_temp_streams': n_high_temp_streams,
+              'include_events': include_events,
+              'num_events': num_events
+          }
+          
+          result = enter_wander_mode(**mode_args)
+          
+          output_result = ""
+          if isinstance(result, list) and result:
+              output_result = result[-1].get("insight", "Wander mode session complete.")
+          else:
+              output_result = str(result) if result else "Wander mode session complete."
+              
+          output_messages.append({"role": "assistant", "content": output_result})
+          context['output'] = output_result
+          context['messages'] = output_messages
+          
+      except Exception as e:
+          traceback.print_exc()
+          context['output'] = f"Error during wander mode: {e}"
+          context['messages'] = output_messages

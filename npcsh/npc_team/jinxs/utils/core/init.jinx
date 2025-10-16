@@ -1,0 +1,41 @@
+jinx_name: "init"
+description: "Initialize NPC project"
+inputs:
+  - directory: "." # The directory where the NPC project should be initialized.
+  - templates: "" # Optional templates to use for initialization.
+  - context: "" # Optional context for project initialization.
+  - model: "" # Optional LLM model to set as default for the project.
+  - provider: "" # Optional LLM provider to set as default for the project.
+steps:
+  - name: "initialize_project"
+    engine: "python"
+    code: |
+      import os
+      import traceback
+      from npcpy.npc_compiler import initialize_npc_project
+      
+      directory = context.get('directory')
+      templates = context.get('templates')
+      context_param = context.get('context') # Renamed to avoid conflict with Jinx context
+      model = context.get('model')
+      provider = context.get('provider')
+      output_messages = context.get('messages', [])
+      
+      output_result = ""
+      try:
+          initialize_npc_project(
+              directory=directory,
+              templates=templates,
+              context=context_param, # Use the renamed context parameter
+              model=model,
+              provider=provider
+          )
+          output_result = f"NPC project initialized in {os.path.abspath(directory)}."
+      except NameError:
+          output_result = "Init function (initialize_npc_project) not available."
+      except Exception as e:
+          traceback.print_exc()
+          output_result = f"Error initializing project: {e}"
+      
+      context['output'] = output_result
+      context['messages'] = output_messages
