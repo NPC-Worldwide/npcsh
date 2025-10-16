@@ -1,42 +1,32 @@
-jinx_name: "jinxs"
-description: "Show available jinxs for the current NPC/Team"
-inputs: [] # This command does not take specific inputs, it queries the current context
+jinx_name: jinxs
+description: Show available jinxs for the current NPC/Team
+inputs: []
 steps:
-  - name: "list_jinxs"
-    engine: "python"
+  - name: list_jinxs
+    engine: python
     code: |
-      from npcpy.npc_compiler import NPC, Team
-      
-      current_npc = context.get('npc')
-      current_team = context.get('team')
-      output_messages = context.get('messages', [])
-      
-      output = "Available Jinxs:\n"
+      output_lines = ["Available Jinxs:\n"]
       jinxs_listed = set()
-
-      def format_jinx(name, jinx_obj):
-          desc = getattr(jinx_obj, 'description', 'No description available.')
-          return f"- /{name}: {desc}\n"
-
-      if current_npc and isinstance(current_npc, NPC) and hasattr(current_npc, 'jinxs_dict') and current_npc.jinxs_dict:
-          output += f"\n--- Jinxs for NPC: {current_npc.name} ---\n"
-          for name, jinx in sorted(current_npc.jinxs_dict.items()):
-              output += format_jinx(name, jinx)
-              jinxs_listed.add(name)
-
-      if current_team and hasattr(current_team, 'jinxs_dict') and current_team.jinxs_dict:
-           team_has_jinxs = False
-           team_output = ""
-           for name, jinx in sorted(current_team.jinxs_dict.items()):
-               if name not in jinxs_listed:
-                   team_output += format_jinx(name, jinx)
-                   team_has_jinxs = True
-           if team_has_jinxs:
-               output += f"\n--- Jinxs for Team: {getattr(current_team, 'name', 'Unnamed Team')} ---\n"
-               output += team_output
-
-      if not jinxs_listed and not (current_team and hasattr(current_team, 'jinxs_dict') and current_team.jinxs_dict):
+      
+      if hasattr(npc, 'team') and npc.team:
+          team = npc.team
+          
+          if hasattr(team, 'jinxs_dict') and team.jinxs_dict:
+              output_lines.append(f"\n--- Team Jinxs ---\n")
+              for name, jinx_obj in sorted(team.jinxs_dict.items()):
+                  desc = getattr(jinx_obj, 'description', 'No description available.')
+                  output_lines.append(f"- /{name}: {desc}\n")
+                  jinxs_listed.add(name)
+      
+      if hasattr(npc, 'jinxs_dict') and npc.jinxs_dict:
+          output_lines.append(f"\n--- NPC Jinxs for {npc.name} ---\n")
+          for name, jinx_obj in sorted(npc.jinxs_dict.items()):
+              if name not in jinxs_listed:
+                  desc = getattr(jinx_obj, 'description', 'No description available.')
+                  output_lines.append(f"- /{name}: {desc}\n")
+                  jinxs_listed.add(name)
+      
+      if not jinxs_listed:
           output = "No jinxs available for the current context."
-
-      context['output'] = output.strip()
-      context['messages'] = output_messages
+      else:
+          output = "".join(output_lines)

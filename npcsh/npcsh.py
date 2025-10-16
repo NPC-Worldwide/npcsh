@@ -21,7 +21,6 @@ from npcpy.memory.knowledge_graph import (
     kg_evolve_incremental
 )
 
-from npcsh.routes import router
 try:
     import readline
 except:
@@ -46,10 +45,6 @@ from npcsh._state import (
 
 
 def print_welcome_message():
-    '''
-    function for printing npcsh graphic
-    '''
-
     print(
             """
 ___________________________________________          
@@ -75,8 +70,9 @@ Begin by asking a question, issuing a bash command, or typing '/help' for more i
         )
 
 
-def run_repl(command_history: CommandHistory, initial_state: ShellState):
+def run_repl(command_history: CommandHistory, initial_state: ShellState, router):
     state = initial_state
+        
     print_welcome_message()
 
     render_markdown(f'- Using {state.current_mode} mode. Use /agent, /cmd, or /chat to switch to other modes')
@@ -85,7 +81,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
 
     is_windows = platform.system().lower().startswith("win")
     try:
-        completer = make_completer(state)
+        completer = make_completer(state, router)
         readline.set_completer(completer)
     except:
         pass
@@ -157,7 +153,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
                 state.messages = [{"role": "system", "content": f"Session context: {compressed_state}"}]
 
             try:
-                completer = make_completer(state)
+                completer = make_completer(state, router)
                 readline.set_completer(completer)
             except:
                 pass
@@ -229,6 +225,8 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState):
         
 
 def main() -> None:
+    from npcsh.routes import router
+    
     parser = argparse.ArgumentParser(description="npcsh - An NPC-powered shell.")
     parser.add_argument(
         "-v", "--version", action="version", version=f"npcsh version {VERSION}"
@@ -239,13 +237,17 @@ def main() -> None:
     args = parser.parse_args()
 
     command_history, team, default_npc = setup_shell()
+    
+    if team and hasattr(team, 'jinxs_dict'):
+        for jinx_name, jinx_obj in team.jinxs_dict.items():
+            router.register_jinx(jinx_obj)
 
     initial_state.npc = default_npc 
     initial_state.team = team    
     if args.command:
          state = initial_state
          state.current_path = os.getcwd()
-         final_state, output = execute_command(args.command, state)
+         final_state, output = execute_command(args.command, state, router=router, command_history=command_history)
          if final_state.stream_output:
               for chunk in output: 
                   print(str(chunk), end='')
@@ -253,7 +255,7 @@ def main() -> None:
          elif output is not None:
               print(output)
     else:
-        run_repl(command_history, initial_state)
-
+        run_repl(command_history, initial_state, router)
+        
 if __name__ == "__main__":
     main()
