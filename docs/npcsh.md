@@ -65,6 +65,9 @@
     /corca --mcp-server-path /path/to/mcp_server.py
     # npx links to come soon too
     ```
+  <p align="center">
+    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/npcsh/npc_team/corca_example.png" alt="logo for corca", width=500>
+  </p>
 
 - ## `/flush`: flush context  (shell only):
   If you're in the NPC shell and have been in a conversation thats going nowhere and you want to start over... just flush theh contexf.
