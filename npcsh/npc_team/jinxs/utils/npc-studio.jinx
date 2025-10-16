@@ -1,0 +1,82 @@
+jinx_name: "npc-studio"
+description: "Start npc studio"
+inputs:
+  - user_command: "" # Any additional arguments to pass to the npc studio launch.
+steps:
+  - name: "launch_npc_studio"
+    engine: "python"
+    code: |
+      import os
+      import subprocess
+      import sys
+      from pathlib import Path
+      import traceback
+      
+      NPC_STUDIO_DIR = Path.home() / ".npcsh" / "npc-studio"
+
+      def ensure_repo():
+          """Clone or update the npc-studio repo."""
+          if not NPC_STUDIO_DIR.exists():
+              os.makedirs(NPC_STUDIO_DIR.parent, exist_ok=True)
+              subprocess.check_call([
+                  "git", "clone",
+                  "https://github.com/npc-worldwide/npc-studio.git",
+                  str(NPC_STUDIO_DIR)
+              ])
+          else:
+              subprocess.check_call(
+                  ["git", "pull"],
+                  cwd=NPC_STUDIO_DIR
+              )
+
+      def install_dependencies():
+          """Install npm and pip dependencies."""
+          subprocess.check_call(["npm", "install"], cwd=NPC_STUDIO_DIR)
+
+          req_file = NPC_STUDIO_DIR / "requirements.txt"
+          if req_file.exists():
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(req_file)])
+
+      def launch_npc_studio(path_to_open: str = None):
+          """
+          Launch the NPC Studio backend + frontend.
+          Returns PIDs for processes.
+          """
+          ensure_repo()
+          install_dependencies()
+
+          backend = subprocess.Popen(
+              [sys.executable, "npc_studio_serve.py"],
+              cwd=NPC_STUDIO_DIR, 
+              shell = False
+          )
+          
+          # npm run dev is typically for the frontend development server
+          dev_server = subprocess.Popen(
+              ["npm", "run", "dev"],
+              cwd=NPC_STUDIO_DIR,
+              shell=False
+          )
+          
+          # npm start is typically for electron or other packaged frontend
+          frontend = subprocess.Popen(
+              ["npm", "start"],
+              cwd=NPC_STUDIO_DIR,
+              shell=False
+          )
+
+          return backend, dev_server, frontend
+      
+      user_command = context.get('user_command')
+      output_messages = context.get('messages', [])
+      output_result = ""
+
+      try:
+          backend, electron, frontend = launch_npc_studio(user_command or None)
+          output_result = f"NPC Studio started!\nBackend PID={backend.pid}, Electron PID={electron.pid} Frontend PID={frontend.pid}"
+      except Exception as e:
+          traceback.print_exc()
+          output_result = f"Failed to start NPC Studio: {e}"
+      
+      context['output'] = output_result
+      context['messages'] = output_messages

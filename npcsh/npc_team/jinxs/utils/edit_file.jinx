@@ -1,4 +1,4 @@
-jinx_name: file_editor
+jinx_name: edit_file
 description: Examines a file, determines what changes are needed, and applies those
   changes.
 inputs:

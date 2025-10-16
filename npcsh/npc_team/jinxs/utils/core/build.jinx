@@ -1,0 +1,65 @@
+jinx_name: "build"
+description: "Build deployment artifacts for NPC team"
+inputs:
+  - target: "flask" # The type of deployment target (e.g., flask, docker, cli, static).
+  - output: "./build" # The output directory for built artifacts.
+  - team: "./npc_team" # The path to the NPC team directory.
+  - port: 5337 # The port for flask server builds.
+  - cors: "" # Comma-separated CORS origins for flask server builds.
+steps:
+  - name: "execute_build"
+    engine: "python"
+    code: |
+      import os
+      
+      # Assume these build functions are available in the execution environment
+      # from a larger project context, e.g., from npcpy.build_funcs
+      try:
+          from npcpy.build_funcs import (
+              build_flask_server,
+              build_docker_compose,
+              build_cli_executable,
+              build_static_site,
+          )
+      except ImportError:
+          # Provide mock functions for demonstration or error handling
+          def build_flask_server(config, **kwargs): return {"output": f"Mock build flask: {config}", "messages": []}
+          def build_docker_compose(config, **kwargs): return {"output": f"Mock build docker: {config}", "messages": []}
+          def build_cli_executable(config, **kwargs): return {"output": f"Mock build cli: {config}", "messages": []}
+          def build_static_site(config, **kwargs): return {"output": f"Mock build static: {config}", "messages": []}
+
+      target = context.get('target')
+      output_dir = context.get('output')
+      team_path = context.get('team')
+      port = context.get('port')
+      cors_origins_str = context.get('cors')
+      
+      cors_origins = [origin.strip() for origin in cors_origins_str.split(',')] if cors_origins_str.strip() else None
+
+      build_config = {
+          'team_path': os.path.abspath(os.path.expanduser(team_path)),
+          'output_dir': os.path.abspath(os.path.expanduser(output_dir)),
+          'target': target,
+          'port': port,
+          'cors_origins': cors_origins,
+      }
+      
+      builders = {
+          'flask': build_flask_server,
+          'docker': build_docker_compose,
+          'cli': build_cli_executable,
+          'static': build_static_site,
+      }
+      
+      output_messages = context.get('messages', [])
+      output_result = ""
+
+      if target not in builders:
+          output_result = f"Unknown target: {target}. Available: {list(builders.keys())}"
+      else:
+          result = builders[target](build_config, messages=output_messages)
+          output_result = result.get('output', 'Build command executed.')
+          output_messages = result.get('messages', output_messages) # Update messages from builder call
+      
+      context['output'] = output_result
+      context['messages'] = output_messages
