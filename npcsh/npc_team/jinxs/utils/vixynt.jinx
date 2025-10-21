@@ -2,13 +2,13 @@ jinx_name: "vixynt"
 description: "Generates images from text descriptions or edits existing ones."
 inputs:
   - prompt # Required, the text description for image generation or editing.
+  - model: "" # Optional string, specific model to use for image generation. Defaults to NPC's model or 'runwayml/stable-diffusion-v1-5'.
+  - provider: "" # Optional string, specific provider for image generation. Defaults to NPC's provider or 'diffusers'.
   - output_file_base: "" # Optional string, e.g., './my_image', used as base for output file name.
   - attachments: "" # Optional string, comma-separated image paths for editing existing images.
   - n_images: 1 # Optional integer, number of images to generate.
   - height: 1024 # Optional integer, height of the generated image.
   - width: 1024 # Optional integer, width of the generated image.
-  - model: "" # Optional string, specific model to use for image generation. Defaults to NPC's model or 'runwayml/stable-diffusion-v1-5'.
-  - provider: "" # Optional string, specific provider for image generation. Defaults to NPC's provider or 'diffusers'.
 steps:
   - name: "generate_or_edit_image"
     engine: "python"
@@ -21,9 +21,11 @@ steps:
       from npcpy.llm_funcs import gen_image
       
       # Extract inputs from context (Jinx execution environment passes them here)
+      print(context)
       image_prompt = context.get('prompt', '').strip()
       output_file_base = context.get('output_file_base')
       attachments_str = context.get('attachments')
+
       n_images = int(context.get('n_images', 1)) # Ensure it's an integer
       height = int(context.get('height', 1024)) # Ensure it's an integer
       width = int(context.get('width', 1024)) # Ensure it's an integer
