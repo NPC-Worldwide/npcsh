@@ -42,15 +42,6 @@ and you will enter the NPC shell. Additionally, the pip installation includes th
       npcsh>please read through the markdown files in the docs folder and suggest changes based on the current implementation in the src folder
       ```
 
-  - **Ask a Generic Question**
-    ```bash
-    npcsh> has there ever been a better pasta shape than bucatini?
-    ```
-    ```                              
-    Bucatini is certainly a favorite for many due to its unique hollow center, which holds sauces beautifully. Whether it's "better" is subjective and depends on the dish and personal        
-    preference. Shapes like orecchiette, rigatoni, or trofie excel in different recipes. Bucatini stands out for its versatility and texture, making it a top contender among pasta shapes!    
-    ```
-
 
   - **Search the Web**
     ```bash
