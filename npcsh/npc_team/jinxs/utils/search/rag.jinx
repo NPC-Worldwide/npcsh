@@ -1,70 +1,61 @@
 jinx_name: "rag"
 description: "Execute a RAG command using ChromaDB embeddings with optional file input (-f/--file)"
 inputs:
-  - query: "" # Required search query for RAG.
-  - file_paths: "" # Optional comma-separated file paths to include in RAG.
-  - vector_db_path: "~/npcsh_chroma.db" # Path to the ChromaDB vector database.
-  - emodel: "" # Embedding model to use. Defaults to NPCSH_EMBEDDING_MODEL or NPC's model.
-  - eprovider: "" # Embedding provider to use. Defaults to NPCSH_EMBEDDING_PROVIDER or NPC's provider.
+  - query: ""
+  - file_paths: ""
+  - vector_db_path: "~/npcsh_chroma.db"
+  - emodel: ""
+  - eprovider: ""
 steps:
   - name: "execute_rag"
     engine: "python"
     code: |
-      import os
-      import traceback
-      from npcpy.data.load import load_file_contents
-      from npcpy.memory.search import execute_rag_command
-      # Assuming NPCSH_EMBEDDING_MODEL and NPCSH_EMBEDDING_PROVIDER are accessible
-      
-      query = context.get('query')
-      file_paths_str = context.get('file_paths')
-      vector_db_path = context.get('vector_db_path')
-      embedding_model = context.get('emodel')
-      embedding_provider = context.get('eprovider')
-      output_messages = context.get('messages', [])
-      current_npc = context.get('npc')
-
-      file_paths = []
-      if file_paths_str and file_paths_str.strip():
-          file_paths = [os.path.abspath(os.path.expanduser(p.strip())) for p in file_paths_str.split(',')]
-      
-      if not query and not file_paths:
-          context['output'] = "Usage: /rag [-f file_path] <query>"
-          context['messages'] = output_messages
-          exit()
-
-      # Fallback for model/provider if not explicitly set in Jinx inputs
-      if not embedding_model and current_npc and current_npc.model:
-          embedding_model = current_npc.model
-      if not embedding_provider and current_npc and current_npc.provider:
-          embedding_provider = current_npc.provider
-      
-      # Final fallbacks (these would ideally come from npcsh._state config)
-      if not embedding_model: embedding_model = "nomic-ai/nomic-embed-text-v1.5" # Example default
-      if not embedding_provider: embedding_provider = "ollama" # Example default
-
-      try:
-          file_contents = []
-          for file_path in file_paths:
-              try:
-                  chunks = load_file_contents(file_path)
-                  file_name = os.path.basename(file_path)
-                  file_contents.extend([f"[{file_name}] {chunk}" for chunk in chunks])
-              except Exception as file_err:
-                  file_contents.append(f"Error processing file {file_path}: {str(file_err)}")
-          
-          result = execute_rag_command(
-              command=query,
-              vector_db_path=os.path.expanduser(vector_db_path),
-              embedding_model=embedding_model,
-              embedding_provider=embedding_provider,
-              file_contents=file_contents if file_paths else None,
-              **{k:v for k,v in context.items() if k not in ['messages', 'query', 'file_paths']} # Pass other context
-          )
-          context['output'] = result.get('response')
-          context['messages'] = result.get('messages', output_messages)
-      
-      except Exception as e:
-          traceback.print_exc()
-          context['output'] = f"Error executing RAG command: {e}"
-          context['messages'] = output_messages
+        import os
+        from npcpy.data.load import load_file_contents
+        from npcpy.memory.search import execute_rag_command
+        
+        query = context.get('query')
+        file_paths_str = context.get('file_paths')
+        vector_db_path = context.get('vector_db_path')
+        embedding_model = context.get('emodel')
+        embedding_provider = context.get('eprovider')
+        output_messages = context.get('messages', [])
+        current_npc = context.get('npc')
+        
+        file_paths = []
+        if file_paths_str and file_paths_str.strip():
+            file_paths = [os.path.abspath(os.path.expanduser(p.strip())) for p in file_paths_str.split(',')]
+        
+        if not embedding_model and current_npc and hasattr(current_npc, 'model'):
+            embedding_model = current_npc.model
+        if not embedding_provider and current_npc and hasattr(current_npc, 'provider'):
+            embedding_provider = current_npc.provider
+        
+        if not embedding_model: 
+            embedding_model = "nomic-embed-text"
+        if not embedding_provider: 
+            embedding_provider = "ollama"
+        
+        file_contents = []
+        
+        for full_file_path in file_paths:
+            chunks = load_file_contents(full_file_path)
+            basename = os.path.basename(full_file_path)
+            for chunk in chunks:
+                file_contents.append(basename + " " + chunk + "\n")
+        
+        try:
+            result = execute_rag_command(
+                command=query,
+                vector_db_path=os.path.expanduser(vector_db_path),
+                embedding_model=embedding_model,
+                embedding_provider=embedding_provider,
+                file_contents=file_contents if file_paths else None
+            )
+            
+            context['output'] = result.get('response')
+            context['messages'] = result.get('messages', output_messages)
+        
+        except Exception as e:
+            context['output'] = f"Error executing RAG command: {e}"
+            context['messages'] = output_messages

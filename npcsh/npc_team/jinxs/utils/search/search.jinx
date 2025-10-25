@@ -1,20 +1,21 @@
 jinx_name: "search"
 description: "Execute web search or memory/KG search. Usage: /search [-m/-mem | -kg] <query>"
 inputs:
-  - query: "" # Required search query.
-  - search_type: "web" # Type of search: "web", "memory", or "kg".
-  - sprovider: "" # Search provider for web search. Defaults to NPCSH_SEARCH_PROVIDER.
-  - history_db_path: "~/npcsh_history.db" # Path to the command history database for memory/KG search.
+  - query: ""
+  - search_type: "web"
+  - sprovider: ""
+  - history_db_path: "~/npcsh_history.db"
 steps:
   - name: "execute_search"
     engine: "python"
     code: |
       import os
-      import traceback
-      from npcpy.data.web import search_web
-      from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db # For KG search
-      from npcsh._state import get_relevant_memories # For memory search
-      # Assuming NPCSH_SEARCH_PROVIDER is accessible
+      import sys
+      from npcpy.memory.command_history import (
+          CommandHistory, 
+          load_kg_from_db
+      )
+      from npcsh._state import get_relevant_memories
 
       query = context.get('query')
       search_type = context.get('search_type')
@@ -37,16 +38,27 @@ steps:
       def search_memories(query_str, current_context, output_msgs):
           command_history = current_context.get('command_history')
           if not command_history:
-              db_path = os.path.expanduser(current_context.get("history_db_path", "~/npcsh_history.db"))
+              db_path = os.path.expanduser(
+                  current_context.get(
+                      "history_db_path", 
+                      "~/npcsh_history.db"
+                  )
+              )
               try:
                   command_history = CommandHistory(db_path)
                   current_context['command_history'] = command_history
               except Exception as e:
-                  return {"output": f"Error connecting to history: {e}", "messages": output_msgs}
+                  return {
+                      "output": f"Error connecting to history: {e}", 
+                      "messages": output_msgs
+                  }
           
           npc_name = current_context.get('npc_name', '__none__')
           team_name = current_context.get('team_name', '__none__')
-          current_path = current_context.get('current_path', os.getcwd())
+          current_path = current_context.get(
+              'current_path', 
+              os.getcwd()
+          )
           state = current_context.get('state')
           
           try:
@@ -75,22 +87,35 @@ steps:
               return {"output": output, "messages": output_msgs}
               
           except Exception as e:
-              traceback.print_exc()
-              return {"output": f"Error searching memories: {e}", "messages": output_msgs}
+              return {
+                  "output": f"Error searching memories: {e}", 
+                  "messages": output_msgs
+              }
 
       def search_knowledge_graph(query_str, current_context, output_msgs):
           command_history = current_context.get('command_history')
           if not command_history:
-              db_path = os.path.expanduser(current_context.get("history_db_path", "~/npcsh_history.db"))
+              db_path = os.path.expanduser(
+                  current_context.get(
+                      "history_db_path", 
+                      "~/npcsh_history.db"
+                  )
+              )
               try:
                   command_history = CommandHistory(db_path)
                   current_context['command_history'] = command_history
               except Exception as e:
-                  return {"output": f"Error connecting to history: {e}", "messages": output_msgs}
+                  return {
+                      "output": f"Error connecting to history: {e}", 
+                      "messages": output_msgs
+                  }
           
           npc_name = current_context.get('npc_name', '__none__')
           team_name = current_context.get('team_name', '__none__')
-          current_path = current_context.get('current_path', os.getcwd())
+          current_path = current_context.get(
+              'current_path', 
+              os.getcwd()
+          )
           
           try:
               engine = command_history.engine
@@ -126,7 +151,9 @@ steps:
                   if query_lower in name or query_lower in desc:
                       matching_concepts.append(concept)
               
-              output = f"Knowledge Graph Search Results for '{query_str}':\n\n"
+              output = (
+                  f"Knowledge Graph Search Results for '{query_str}':\n\n"
+              )
               
               if matching_facts:
                   output += f"## Facts ({len(matching_facts)}):\n"
@@ -147,46 +174,67 @@ steps:
               return {"output": output, "messages": output_msgs}
               
           except Exception as e:
-              traceback.print_exc()
-              return {"output": f"Error searching KG: {e}", "messages": output_msgs}
+              return {
+                  "output": f"Error searching KG: {e}", 
+                  "messages": output_msgs
+              }
 
       def search_web_default(query_str, current_context, output_msgs):
-          # Fallback for search_provider if not explicitly set in Jinx inputs
-          current_search_provider = current_context.get('sprovider')
-          # If NPCSH_SEARCH_PROVIDER is accessible, use it. Otherwise, a default.
-          # For Jinx, let's just use a hardcoded default if not provided.
-          if not current_search_provider:
-              current_search_provider = "google" # Example default
+          try:
+              from npcpy.data.web import search_web
+          except ImportError:
+              return {
+                  "output": "Web search unavailable: npcpy.data.web not found",
+                  "messages": output_msgs
+              }
 
-          # Assuming render_markdown is accessible
-          # render_markdown(f'- Searching {current_search_provider} for "{query_str}"') # Not directly supported in Jinx steps
+          current_search_provider = current_context.get('sprovider')
+          if not current_search_provider:
+              current_search_provider = "duckduckgo"
 
           try:
-              search_results = search_web(query_str, provider=current_search_provider)
+              search_results = search_web(
+                  query_str, 
+                  provider=current_search_provider
+              )
               output = (
                   "\n".join([f"- {res}" for res in search_results]) 
                   if search_results 
                   else "No results found."
               )
           except Exception as e:
-              traceback.print_exc()
               output = f"Error during web search: {e}"
           
           return {"output": output, "messages": output_msgs}
 
-
-      # Populate npc_name, team_name, current_path for search functions
-      context['npc_name'] = current_npc.name if isinstance(current_npc, type(None).__class__) else "__none__"
-      context['team_name'] = current_team.name if current_team else "__none__"
-      context['current_path'] = os.getcwd() # Or get from context if available
+      npc_obj = current_npc
+      context['npc_name'] = (
+          npc_obj.name 
+          if npc_obj and hasattr(npc_obj, 'name') 
+          else "__none__"
+      )
+      context['team_name'] = (
+          current_team.name 
+          if current_team 
+          else "__none__"
+      )
+      context['current_path'] = os.getcwd()
 
       final_result = None
       if search_type == 'memory':
           final_result = search_memories(query, context, output_messages)
       elif search_type == 'kg':
-          final_result = search_knowledge_graph(query, context, output_messages)
+          final_result = search_knowledge_graph(
+              query, 
+              context, 
+              output_messages
+          )
       else:
-          final_result = search_web_default(query, context, output_messages)
+          final_result = search_web_default(
+              query, 
+              context, 
+              output_messages
+          )
 
       context['output'] = final_result.get('output')
       context['messages'] = final_result.get('messages', output_messages)
