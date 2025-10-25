@@ -1,14 +1,14 @@
 jinx_name: "vixynt"
 description: "Generates images from text descriptions or edits existing ones."
 inputs:
-  - prompt # Required, the text description for image generation or editing.
-  - model: "" # Optional string, specific model to use for image generation. Defaults to NPC's model or 'runwayml/stable-diffusion-v1-5'.
-  - provider: "" # Optional string, specific provider for image generation. Defaults to NPC's provider or 'diffusers'.
-  - output_file_base: "" # Optional string, e.g., './my_image', used as base for output file name.
-  - attachments: "" # Optional string, comma-separated image paths for editing existing images.
-  - n_images: 1 # Optional integer, number of images to generate.
-  - height: 1024 # Optional integer, height of the generated image.
-  - width: 1024 # Optional integer, width of the generated image.
+  - prompt
+  - model: ""
+  - provider: ""
+  - output_name: ""
+  - attachments: ""
+  - n_images: 1
+  - height: 1024
+  - width: 1024
 steps:
   - name: "generate_or_edit_image"
     engine: "python"
@@ -20,15 +20,13 @@ steps:
       from PIL import Image
       from npcpy.llm_funcs import gen_image
       
-      # Extract inputs from context (Jinx execution environment passes them here)
-      print(context)
+      # Extract inputs from context
       image_prompt = context.get('prompt', '').strip()
-      output_file_base = context.get('output_file_base')
+      output_name = context.get('output_name')
       attachments_str = context.get('attachments')
-
-      n_images = int(context.get('n_images', 1)) # Ensure it's an integer
-      height = int(context.get('height', 1024)) # Ensure it's an integer
-      width = int(context.get('width', 1024)) # Ensure it's an integer
+      n_images = int(context.get('n_images', 1))
+      height = int(context.get('height', 1024))
+      width = int(context.get('width', 1024))
       model = context.get('model')
       provider = context.get('provider')
 
@@ -36,29 +34,28 @@ steps:
       if attachments_str and attachments_str.strip():
           input_images = [p.strip() for p in attachments_str.split(',')]
 
-      # Use NPC's model/provider as fallback if not explicitly provided in jinx inputs
+      # Use NPC's model/provider as fallback
       if not model and npc and npc.model:
           model = npc.model 
       if not provider and npc and npc.provider:
           provider = npc.provider
       
-      # Final fallbacks if still not set
+      # Final fallbacks
       if not model:
           model = "runwayml/stable-diffusion-v1-5"
       if not provider:
           provider = "diffusers"
-
       
       output_messages = context.get('messages', [])
       
       if not image_prompt:
-          context['output'] = "Usage: /vixynt <prompt> [--output_file path] [--attachments path] [--n_images num]"
+          context['output'] = "Error: No prompt provided for image generation."
           context['messages'] = output_messages
-          exit() # Exit the jinx execution early
+          exit()
       
       try:
-          # Generate image(s) or edit
-          images_list = gen_image(
+          # Generate image(s)
+          result = gen_image(
               prompt=image_prompt,
               model=model,
               provider=provider,
@@ -69,20 +66,22 @@ steps:
               input_images=input_images if input_images else None
           )
           
-          saved_files = []
-          compressed_images = []
+          # Ensure we have a list of images
+          if not isinstance(result, list):
+              images_list = [result] if result is not None else []
+          else:
+              images_list = result
           
-          if not isinstance(images_list, list):
-              images_list = [images_list] if images_list is not None else []
-
+          saved_files = []
+          
           for i, image in enumerate(images_list):
               if image is None:
                   continue
               
               # Determine output filename
-              if output_file_base and output_file_base.strip():
-                  base_name, ext = os.path.splitext(os.path.expanduser(output_file_base))
-                  if not ext: # No extension provided, default to .png
+              if output_name and output_name.strip():
+                  base_name, ext = os.path.splitext(os.path.expanduser(output_name))
+                  if not ext:
                       ext = ".png"
                   current_output_file = f"{base_name}_{i}{ext}" if len(images_list) > 1 else f"{base_name}{ext}"
               else:
@@ -95,16 +94,6 @@ steps:
               # Save image to file
               image.save(current_output_file)
               saved_files.append(current_output_file)
-              
-              # Create compressed base64 image for HTML rendering
-              img_buffer = BytesIO()
-              img_copy = image.copy()
-              img_copy.thumbnail((800, 600), Image.Resampling.LANCZOS)
-              img_copy.save(img_buffer, format='PNG', optimize=True, quality=85)
-              img_buffer.seek(0)
-              
-              img_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
-              compressed_images.append(f"data:image/png;base64,{img_base64}")
           
           if saved_files:
               if input_images:
@@ -112,20 +101,17 @@ steps:
               else:
                   output = f"Image(s) generated and saved to: {', '.join(saved_files)}"
               
-              html_images = ""
-              for img_b64 in compressed_images:
-                  html_images += f'<img src="{img_b64}" style="max-width: 400px; margin: 10px;" /><br/>'
-              
-              output += f"\n\nGenerated Images:\n{html_images}"
+              # DO NOT include base64 data - just reference the file paths
+              output += f"\n\nThe image files have been saved and are ready to view."
           else:
-              output = "No images generated."
+              output = "No images were generated."
               
       except Exception as e:
           import traceback
           traceback.print_exc()
           output = f"Error {'editing' if input_images else 'generating'} image: {str(e)}"
       
-      context['output'] = output # Store output in context
-      context['messages'] = output_messages # Ensure messages are returned
+      context['output'] = output
+      context['messages'] = output_messages
       context['model'] = model
       context['provider'] = provider
