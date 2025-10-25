@@ -2,9 +2,11 @@ from typing import Callable, Dict, Any, List, Optional
 import functools
 import os
 import traceback
+import sys
+import inspect
 from pathlib import Path
 
-from npcpy.npc_compiler import Jinx, load_jinxs_from_directory
+from npcpy.npc_compiler import Jinx, load_jinxs_from_directory, extract_jinx_inputs
 
 
 class CommandRouter:
@@ -55,27 +57,43 @@ class CommandRouter:
         
         try:
             import shlex
+            
             parts = shlex.split(command)
             args = parts[1:] if len(parts) > 1 else []
             
-            input_values = {}
-            if hasattr(jinx, 'inputs') and jinx.inputs:
-                for i, input_spec in enumerate(jinx.inputs):
-                    if isinstance(input_spec, str):
-                        input_name = input_spec
-                    elif isinstance(input_spec, dict):
-                        input_name = list(input_spec.keys())[0]
-                    else:
-                        continue
-                    
-                    if i < len(args):
-                        input_values[input_name] = args[i]
+            # Use extract_jinx_inputs
+            input_values = extract_jinx_inputs(args, jinx)
+            
+            # Build extra_globals for jinx execution
+            from npcpy.memory.command_history import CommandHistory, load_kg_from_db
+            from npcpy.memory.search import execute_rag_command, execute_brainblast_command
+            from npcpy.data.load import load_file_contents
+            from npcpy.data.web import search_web
+            
+            application_globals_for_jinx = {
+                "CommandHistory": CommandHistory,
+                "load_kg_from_db": load_kg_from_db,
+                "execute_rag_command": execute_rag_command,
+                "execute_brainblast_command": execute_brainblast_command,
+                "load_file_contents": load_file_contents,
+                "search_web": search_web,
+                'state': kwargs.get('state')
+            }
+            
+            # Add functions from _state module if available
+            try:
+                from npcsh import _state
+                for name, func in inspect.getmembers(_state, inspect.isfunction):
+                    application_globals_for_jinx[name] = func
+            except:
+                pass
             
             jinx_output = jinx.execute(
                 input_values=input_values,
                 jinxs_dict=kwargs.get('jinxs_dict', {}),
                 npc=npc,
-                messages=messages
+                messages=messages,
+                extra_globals=application_globals_for_jinx
             )
             
             if isinstance(jinx_output, dict):

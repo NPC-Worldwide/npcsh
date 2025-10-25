@@ -2001,22 +2001,19 @@ def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
     
     return False
 
-
-
-
 def execute_slash_command(command: str, 
                           stdin_input: Optional[str], 
                           state: ShellState, 
                           stream: bool, 
                           router) -> Tuple[ShellState, Any]:
-    """Executes slash commands using the router or checking NPC/Team jinxs."""
+    """Executes slash commands using the router."""
     try:
         all_command_parts = shlex.split(command)
     except ValueError:
         all_command_parts = command.split()
     command_name = all_command_parts[0].lstrip('/')
     
-    # --- NPC SWITCHING LOGIC (RESTORED) ---
+    # --- NPC SWITCHING LOGIC ---
     if command_name in ['n', 'npc']:
         npc_to_switch_to = all_command_parts[1] if len(all_command_parts) > 1 else None
         if npc_to_switch_to and state.team and npc_to_switch_to in state.team.npcs:
@@ -2026,86 +2023,35 @@ def execute_slash_command(command: str,
             available_npcs = list(state.team.npcs.keys()) if state.team else []
             return state, {"output": colored(f"NPC '{npc_to_switch_to}' not found. Available NPCs: {', '.join(available_npcs)}", "red"), "messages": state.messages}
     
-    # --- BUILT-IN ROUTER LOGIC (RESTORED) ---
+    # --- ROUTER LOGIC ---
     handler = router.get_route(command_name)
     if handler:
-        parsed_flags, positional_args = parse_generic_command_flags(all_command_parts[1:])
-        normalized_flags = normalize_and_expand_flags(parsed_flags)
         handler_kwargs = {
             'stream': stream, 'team': state.team, 'messages': state.messages, 'api_url': state.api_url,
-            'api_key': state.api_key, 'stdin_input': stdin_input, 'positional_args': positional_args,
+            'api_key': state.api_key, 'stdin_input': stdin_input,
             'model': state.npc.model if isinstance(state.npc, NPC) and state.npc.model else state.chat_model,
             'provider': state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else state.chat_provider,
             'npc': state.npc, 'sprovider': state.search_provider, 'emodel': state.embedding_model,
             'eprovider': state.embedding_provider, 'igmodel': state.image_gen_model, 'igprovider': state.image_gen_provider,
-            'vmodel': state.vision_model, 'vprovider': state.vision_provider, 'rmodel': state.reasoning_model, 'rprovider': state.reasoning_provider,
+            'vmodel': state.vision_model, 'vprovider': state.vision_provider, 'rmodel': state.reasoning_model, 
+            'rprovider': state.reasoning_provider, 'state': state
         }
-        handler_kwargs.update(normalized_flags)
         try:
             result = handler(command=command, **handler_kwargs)
-            if isinstance(result, dict): state.messages = result.get("messages", state.messages)
+            if isinstance(result, dict): 
+                state.messages = result.get("messages", state.messages)
             return state, result
         except Exception as e:
-            import traceback; traceback.print_exc()
+            import traceback
+            traceback.print_exc()
             return state, {"output": colored(f"Error executing slash command '{command_name}': {e}", "red"), "messages": state.messages}
-
-    # --- JINX EXECUTION LOGIC (WITH AUTOMATED GLOBALS) ---
-    active_npc = state.npc if isinstance(state.npc, NPC) else None
-    jinx_to_execute = None
-    if active_npc and hasattr(active_npc, 'jinxs_dict') and command_name in active_npc.jinxs_dict:
-        jinx_to_execute = active_npc.jinxs_dict[command_name]
-    elif state.team and hasattr(state.team, 'jinxs_dict') and command_name in state.team.jinxs_dict:
-        jinx_to_execute = state.team.jinxs_dict[command_name]
-
-    if jinx_to_execute:
-        args = all_command_parts[1:]
-        try:
-            # AUTOMATED GLOBALS INJECTION
-            application_globals_for_jinx = {
-                "CommandHistory": CommandHistory, 
-                "load_kg_from_db": load_kg_from_db,
-                "execute_rag_command": execute_rag_command, 
-                "execute_brainblast_command": execute_brainblast_command,
-                "load_file_contents": load_file_contents, 
-                "search_web": search_web, 
-                "get_relevant_memories": get_relevant_memories,  # ADD THIS
-                "search_kg_facts": search_kg_facts,              # ADD THIS TOO
-                
-                'state': state
-            }
-            current_module = sys.modules[__name__]
-            for name, func in inspect.getmembers(current_module, inspect.isfunction):
-                application_globals_for_jinx[name] = func
-
-            print(application_globals_for_jinx)
-            parsed_kwargs, positional_args = parse_generic_command_flags(args)
-            input_values = normalize_and_expand_flags(parsed_kwargs)
-            if 'query' not in input_values and positional_args:
-                input_values['query'] = ' '.join(positional_args)
-
-            jinx_output = jinx_to_execute.execute(
-                input_values=input_values,
-                jinxs_dict=getattr(state.team, 'jinxs_dict', {}),
-                npc=active_npc,
-                messages=state.messages,
-                extra_globals=application_globals_for_jinx
-            )
-
-            if isinstance(jinx_output, dict):
-                state.messages = jinx_output.get('messages', state.messages)
-            return state, jinx_output
-            
-        except Exception as e:
-            import traceback; traceback.print_exc()
-            return state, {"output": colored(f"Error executing jinx '{command_name}': {e}", "red"), "messages": state.messages}
     
     # Fallback for switching NPC by name
     if state.team and command_name in state.team.npcs:
         state.npc = state.team.npcs[command_name]
         return state, {"output": f"Switched to NPC: {state.npc.name}", "messages": state.messages}
 
-    return state, {"output": colored(f"Unknown slash command, jinx, or NPC: {command_name}", "red"), "messages": state.messages}
-
+    return state, {"output": colored(f"Unknown slash command or NPC: {command_name}", "red"), "messages": state.messages}
 
 
 def process_pipeline_command(
