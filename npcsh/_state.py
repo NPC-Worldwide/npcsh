@@ -2017,15 +2017,14 @@ def process_pipeline_command(
     review = False, 
     router = None,
     ) -> Tuple[ShellState, Any]:
-    '''
-    Processing command 
-    '''
 
     if not cmd_segment:
         return state, stdin_input
 
     available_models_all = get_locally_available_models(state.current_path)
-    available_models_all_list = [item for key, item in available_models_all.items()]
+    available_models_all_list = [
+        item for key, item in available_models_all.items()
+    ]
 
     model_override, provider_override, cmd_cleaned = get_model_and_provider(
         cmd_segment, available_models_all_list
@@ -2034,18 +2033,33 @@ def process_pipeline_command(
     if not cmd_to_process:
          return state, stdin_input
 
-    npc_model = state.npc.model if isinstance(state.npc, NPC) and state.npc.model else None
-    npc_provider = state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else None
+    npc_model = (
+        state.npc.model 
+        if isinstance(state.npc, NPC) and state.npc.model 
+        else None
+    )
+    npc_provider = (
+        state.npc.provider 
+        if isinstance(state.npc, NPC) and state.npc.provider 
+        else None
+    )
 
     exec_model = model_override or npc_model or state.chat_model
     exec_provider = provider_override or npc_provider or state.chat_provider
 
     if cmd_to_process.startswith("/"):
-        return execute_slash_command(cmd_to_process, 
-                                     stdin_input, 
-                                     state, 
-                                     stream_final, 
-                                     router)
+        with SpinnerContext(
+            f"Routing to {cmd_to_process.split()[0]}", 
+            style="arrow"
+        ):
+            result = execute_slash_command(
+                cmd_to_process, 
+                stdin_input, 
+                state, 
+                stream_final, 
+                router
+            )
+        return result
     
     cmd_parts = parse_command_safely(cmd_to_process)
     if not cmd_parts:
@@ -2058,6 +2072,7 @@ def process_pipeline_command(
     
     if command_name in interactive_commands:
         return handle_interactive_command(cmd_parts, state)
+        
     if command_name in TERMINAL_EDITORS:
         print(f"Starting interactive editor: {command_name}...")
         full_command_str = " ".join(cmd_parts)
@@ -2065,45 +2080,90 @@ def process_pipeline_command(
         return state, output
 
     if validate_bash_command(cmd_parts):
-        success, result = handle_bash_command(cmd_parts, cmd_to_process, stdin_input, state)
+        with SpinnerContext(f"Executing {command_name}", style="line"):
+            success, result = handle_bash_command(
+                cmd_parts, 
+                cmd_to_process, 
+                stdin_input, 
+                state
+            )
+        
         if success:
             return state, result
         else:
-            print(colored(f"Bash command failed: {result}. Asking LLM for a fix...", "yellow"), file=sys.stderr)
-            fixer_prompt = f"The command '{cmd_to_process}' failed with the error: '{result}'. Provide the correct command."
-            response = execute_llm_command(
-                fixer_prompt, 
-                model=exec_model,
-                provider=exec_provider,
-                npc=state.npc, 
-                stream=stream_final, 
-                messages=state.messages
+            print(
+                colored(
+                    f"Command failed. Consulting {exec_model}...", 
+                    "yellow"
+                ), 
+                file=sys.stderr
             )
+            fixer_prompt = (
+                f"The command '{cmd_to_process}' failed with error: "
+                f"'{result}'. Provide the correct command."
+            )
+            
+            with SpinnerContext(
+                f"{exec_model} analyzing error", 
+                style="brain"
+            ):
+                response = execute_llm_command(
+                    fixer_prompt, 
+                    model=exec_model,
+                    provider=exec_provider,
+                    npc=state.npc, 
+                    stream=stream_final, 
+                    messages=state.messages
+                )
+            
             state.messages = response['messages']     
             return state, response['response']
     else:
-        full_llm_cmd = f"{cmd_to_process} {stdin_input}" if stdin_input else cmd_to_process
+        full_llm_cmd = (
+            f"{cmd_to_process} {stdin_input}" 
+            if stdin_input 
+            else cmd_to_process
+        )
         path_cmd = 'The current working directory is: ' + state.current_path
-        ls_files = 'Files in the current directory (full paths):\n' + "\n".join([os.path.join(state.current_path, f) for f in os.listdir(state.current_path)]) if os.path.exists(state.current_path) else 'No files found in the current directory.'
-        platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
+        ls_files = (
+            'Files in the current directory (full paths):\n' + 
+            "\n".join([
+                os.path.join(state.current_path, f) 
+                for f in os.listdir(state.current_path)
+            ]) 
+            if os.path.exists(state.current_path) 
+            else 'No files found in the current directory.'
+        )
+        platform_info = (
+            f"Platform: {platform.system()} {platform.release()} "
+            f"({platform.machine()})"
+        )
         info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n' 
         state.messages.append({'role':'user', 'content':full_llm_cmd})
         
-        
-        llm_result = check_llm_command(
-            full_llm_cmd,
-            model=exec_model,      
-            provider=exec_provider, 
-            api_url=state.api_url,
-            api_key=state.api_key,
-            npc=state.npc,
-            team=state.team,
-            messages=state.messages,
-            images=state.attachments,
-            stream=stream_final,
-            context=info,
+        npc_name = (
+            state.npc.name 
+            if isinstance(state.npc, NPC) 
+            else "Assistant"
         )
-      
+        
+        with SpinnerContext(
+            f"{npc_name} processing with {exec_model}", 
+            style="dots_pulse"
+        ):
+            llm_result = check_llm_command(
+                full_llm_cmd,
+                model=exec_model,      
+                provider=exec_provider, 
+                api_url=state.api_url,
+                api_key=state.api_key,
+                npc=state.npc,
+                team=state.team,
+                messages=state.messages,
+                images=state.attachments,
+                stream=stream_final,
+                context=info,
+            )
         
         if not review:
             if isinstance(llm_result, dict):
@@ -2112,7 +2172,6 @@ def process_pipeline_command(
                 return state, output
             else:
                 return state, llm_result        
-            
         else:
             return review_and_iterate_command(
                 original_command=full_llm_cmd,
@@ -2123,6 +2182,8 @@ def process_pipeline_command(
                 stream_final=stream_final,
                 info=info
             )
+
+
 def review_and_iterate_command(
     original_command: str,
     initial_result: Any,
@@ -2181,6 +2242,71 @@ def check_mode_switch(command:str , state: ShellState):
         return True, state     
     return False, state
 
+import sys
+import time
+import threading
+from itertools import cycle
+
+class SpinnerContext:
+    def __init__(self, message="Processing", style="dots"):
+        self.message = message
+        self.spinning = False
+        self.thread = None
+        
+        styles = {
+            "dots": ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+            "line": ["-", "\\", "|", "/"],
+            "arrow": ["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"],
+            "box": ["◰", "◳", "◲", "◱"],
+            "dots_pulse": ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"],
+            "brain": ["🧠", "💭", "🤔", "💡"],
+        }
+        self.frames = cycle(styles.get(style, styles["dots"]))
+    
+    def _spin(self):
+        while self.spinning:
+            sys.stdout.write(
+                f"\r{colored(next(self.frames), 'cyan')} "
+                f"{colored(self.message, 'yellow')}..."
+            )
+            sys.stdout.flush()
+            time.sleep(0.1)
+    
+    def __enter__(self):
+        self.spinning = True
+        self.thread = threading.Thread(target=self._spin)
+        self.thread.start()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.spinning = False
+        if self.thread:
+            self.thread.join()
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
+
+def show_thinking_animation(message="Thinking", duration=None):
+    frames = ["🤔", "💭", "🧠", "💡", "✨"]
+    colors = ["cyan", "blue", "magenta", "yellow", "green"]
+    
+    start = time.time()
+    i = 0
+    while duration is None or (time.time() - start) < duration:
+        frame = frames[i % len(frames)]
+        color = colors[i % len(colors)]
+        sys.stdout.write(
+            f"\r{colored(frame, color)} "
+            f"{colored(message, 'yellow')}..."
+        )
+        sys.stdout.flush()
+        time.sleep(0.3)
+        i += 1
+        if duration and (time.time() - start) >= duration:
+            break
+    
+    sys.stdout.write("\r" + " " * 80 + "\r")
+    sys.stdout.flush()
+
 def execute_command(
     command: str,
     state: ShellState,
@@ -2194,29 +2320,51 @@ def execute_command(
     
     mode_change, state = check_mode_switch(command, state)
     if mode_change:
+        print(colored(f"⚡ Switched to {state.current_mode} mode", "green"))
         return state, 'Mode changed.'
 
-    npc_name = state.npc.name if isinstance(state.npc, NPC) else "__none__"
+    npc_name = (
+        state.npc.name 
+        if isinstance(state.npc, NPC) 
+        else "__none__"
+    )
     team_name = state.team.name if state.team else "__none__"
     
-
     original_command_for_embedding = command
     commands = split_by_pipes(command)
 
     stdin_for_next = None
     final_output = None
     current_state = state 
-    npc_model = state.npc.model if isinstance(state.npc, NPC) and state.npc.model else None
-    npc_provider = state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else None
+    npc_model = (
+        state.npc.model 
+        if isinstance(state.npc, NPC) and state.npc.model 
+        else None
+    )
+    npc_provider = (
+        state.npc.provider 
+        if isinstance(state.npc, NPC) and state.npc.provider 
+        else None
+    )
     active_model = npc_model or state.chat_model
     active_provider = npc_provider or state.chat_provider
+    
     if state.current_mode == 'agent':
-      
-      
+        total_stages = len(commands)
+        
         for i, cmd_segment in enumerate(commands):
-            render_markdown(f'- Executing command {i+1}/{len(commands)}')
+            stage_num = i + 1
+            stage_emoji = ["🎯", "⚙️", "🔧", "✨", "🚀"][i % 5]
+            
+            print(colored(
+                f"\n{stage_emoji} Pipeline Stage {stage_num}/{total_stages}", 
+                "cyan", 
+                attrs=["bold"]
+            ))
+            
             is_last_command = (i == len(commands) - 1)
             stream_this_segment = state.stream_output and not is_last_command 
+            
             try:
                 current_state, output = process_pipeline_command(
                     cmd_segment.strip(),
@@ -2224,19 +2372,26 @@ def execute_command(
                     current_state, 
                     stream_final=stream_this_segment, 
                     review=review,
-                    router= router
+                    router=router
                 )
+                
                 if is_last_command:
+                    print(colored("✅ Pipeline complete", "green"))
                     return current_state, output
+                    
                 if isinstance(output, str):
                     stdin_for_next = output
                 elif not isinstance(output, str):
                     try:
                         if stream_this_segment:
-                            full_stream_output = print_and_process_stream_with_markdown(output, 
-                                                                                        state.npc.model, 
-                                                                                        state.npc.provider, 
-                                                                                        show=True)
+                            full_stream_output = (
+                                print_and_process_stream_with_markdown(
+                                    output, 
+                                    state.npc.model, 
+                                    state.npc.provider, 
+                                    show=True
+                                )
+                            )
                             stdin_for_next = full_stream_output
                             if is_last_command: 
                                 final_output = full_stream_output
@@ -2245,24 +2400,40 @@ def execute_command(
                             try: 
                                 stdin_for_next = str(output)
                             except Exception:
-                                print(f"Warning: Cannot convert output to string for piping: {type(output)}", file=sys.stderr)
+                                print(
+                                    f"Warning: Cannot convert output to "
+                                    f"string for piping: {type(output)}", 
+                                    file=sys.stderr
+                                )
                                 stdin_for_next = None
                         else: 
                             stdin_for_next = None
+                            
+                print(colored(
+                    f"  → Passing to stage {stage_num + 1}", 
+                    "blue"
+                ))
+                
             except Exception as pipeline_error:
                 import traceback
                 traceback.print_exc()
-                error_msg = colored(f"Error in pipeline stage {i+1} ('{cmd_segment[:50]}...'): {pipeline_error}", "red")
+                error_msg = colored(
+                    f"❌ Error in stage {stage_num} "
+                    f"('{cmd_segment[:50]}...'): {pipeline_error}", 
+                    "red"
+                )
                 return current_state, error_msg
 
         if final_output is not None and isinstance(final_output,str):
-            store_command_embeddings(original_command_for_embedding, final_output, current_state)
+            store_command_embeddings(
+                original_command_for_embedding, 
+                final_output, 
+                current_state
+            )
 
         return current_state, final_output
 
-
     elif state.current_mode == 'chat':
-      
         cmd_parts = parse_command_safely(command)
         is_probably_bash = (
             cmd_parts
@@ -2273,6 +2444,7 @@ def execute_command(
                 or command.strip().startswith("/")
             )
         )
+        
         if is_probably_bash:
             try:
                 command_name = cmd_parts[0]
@@ -2282,35 +2454,54 @@ def execute_command(
                     return handle_cd_command(cmd_parts, state)
                 else:
                     try:
-                        bash_state, bash_output = handle_bash_command(cmd_parts, command, None, state)
+                        bash_state, bash_output = handle_bash_command(
+                            cmd_parts, 
+                            command, 
+                            None, 
+                            state
+                        )
                         return state, bash_output
                     except Exception as bash_err:
-                        return state, colored(f"Bash execution failed: {bash_err}", "red")
+                        return state, colored(
+                            f"Bash execution failed: {bash_err}", 
+                            "red"
+                        )
             except Exception:
                 pass
 
-      
-        response = get_llm_response(
-            command, 
-            model=active_model,          
-            provider=active_provider,    
-            npc=state.npc,
-            stream=state.stream_output,
-            messages=state.messages
-        )
+        with SpinnerContext(
+            f"Chatting with {active_model}", 
+            style="brain"
+        ):
+            response = get_llm_response(
+                command, 
+                model=active_model,          
+                provider=active_provider,    
+                npc=state.npc,
+                stream=state.stream_output,
+                messages=state.messages
+            )
+        
         state.messages = response['messages']
         return state, response['response']
 
     elif state.current_mode == 'cmd':
-
-        response = execute_llm_command(command, 
-                                        model=active_model,          
-                                        provider=active_provider,  
-                                                 npc = state.npc, 
-                                                 stream = state.stream_output, 
-                                                 messages = state.messages) 
+        with SpinnerContext(
+            f"Executing with {active_model}", 
+            style="dots_pulse"
+        ):
+            response = execute_llm_command(
+                command, 
+                model=active_model,          
+                provider=active_provider,  
+                npc=state.npc, 
+                stream=state.stream_output, 
+                messages=state.messages
+            ) 
+        
         state.messages = response['messages']     
         return state, response['response']
+
 
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     setup_npcsh_config()
