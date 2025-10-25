@@ -88,12 +88,18 @@ from npcpy.llm_funcs import (
     breathe, 
     
 )
+
 from npcpy.memory.knowledge_graph import (
     kg_evolve_incremental, 
     
 )
 from npcpy.gen.embeddings import get_embeddings
 
+import inspect
+import sys
+from npcpy.memory.search import execute_rag_command, execute_brainblast_command
+from npcpy.data.load import load_file_contents
+from npcpy.data.web import search_web
 try:
     import readline
 except:
@@ -443,6 +449,138 @@ def get_team_ctx_path(team_path: str) -> Optional[str]:
     return str(ctx_files[0]) if ctx_files else None
 
 
+from npcpy.memory.memory_processor import  memory_approval_ui
+from npcpy.ft.memory_trainer import MemoryTrainer
+from npcpy.llm_funcs import get_facts
+
+def get_relevant_memories(
+    command_history: CommandHistory,
+    npc_name: str,
+    team_name: str,
+    path: str,
+    query: Optional[str] = None,
+    max_memories: int = 10,
+    state: Optional[ShellState] = None
+) -> List[Dict]:
+    
+    engine = command_history.engine
+    
+    all_memories = command_history.get_memories_for_scope(
+        npc=npc_name,
+        team=team_name,
+        directory_path=path,
+    )
+    
+    if not all_memories:
+        return []
+    
+    if len(all_memories) <= max_memories and not query:
+        return all_memories
+    
+    if query:
+        query_lower = query.lower()
+        keyword_matches = [
+            m for m in all_memories 
+            if query_lower in (m.get('final_memory') or m.get('initial_memory') or '').lower()
+        ]
+        
+        if keyword_matches:
+            return keyword_matches[:max_memories]
+
+    if state and state.embedding_model and state.embedding_provider:
+        try:
+            from npcpy.gen.embeddings import get_embeddings
+            
+            search_text = query if query else "recent context"
+            query_embedding = get_embeddings(
+                [search_text],
+                state.embedding_model,
+                state.embedding_provider
+            )[0]
+            
+            memory_texts = [
+                m.get('final_memory', '') for m in all_memories
+            ]
+            memory_embeddings = get_embeddings(
+                memory_texts,
+                state.embedding_model,
+                state.embedding_provider
+            )
+            
+            import numpy as np
+            similarities = []
+            for mem_emb in memory_embeddings:
+                similarity = np.dot(query_embedding, mem_emb) / (
+                    np.linalg.norm(query_embedding) * 
+                    np.linalg.norm(mem_emb)
+                )
+                similarities.append(similarity)
+            
+            sorted_indices = np.argsort(similarities)[::-1]
+            return [all_memories[i] for i in sorted_indices[:max_memories]]
+            
+        except Exception as e:
+            print(colored(
+                f"RAG search failed, using recent: {e}", 
+                "yellow"
+            ))
+    
+    return all_memories[-max_memories:]
+
+
+def search_kg_facts(
+    self,
+    npc: str,
+    team: str,
+    directory_path: str,
+    query: str
+) -> List[Dict]:
+    
+    kg = load_kg_from_db(
+        self.engine, 
+        team, 
+        npc, 
+        directory_path
+    )
+    
+    if not kg or 'facts' not in kg:
+        return []
+    
+    query_lower = query.lower()
+    matching_facts = []
+    
+    for fact in kg['facts']:
+        statement = fact.get('statement', '').lower()
+        if query_lower in statement:
+            matching_facts.append(fact)
+    
+    return matching_facts
+
+def format_memory_context(memory_examples):
+    if not memory_examples:
+        return ""
+    
+    context_parts = []
+    
+    approved_examples = memory_examples.get("approved", [])
+    rejected_examples = memory_examples.get("rejected", [])
+    
+    if approved_examples:
+        context_parts.append("EXAMPLES OF GOOD MEMORIES:")
+        for ex in approved_examples[:5]:
+            final = ex.get("final_memory") or ex.get("initial_memory")
+            context_parts.append(f"- {final}")
+    
+    if rejected_examples:
+        context_parts.append("\nEXAMPLES OF POOR MEMORIES TO AVOID:")
+        for ex in rejected_examples[:3]:
+            context_parts.append(f"- {ex.get('initial_memory')}")
+    
+    if context_parts:
+        context_parts.append("\nLearn from these examples to generate similar high-quality memories.")
+        return "\n".join(context_parts)
+    
+    return ""
 def add_npcshrc_to_shell_config() -> None:
     """
     Function Description:
@@ -1872,9 +2010,13 @@ def execute_slash_command(command: str,
                           stream: bool, 
                           router) -> Tuple[ShellState, Any]:
     """Executes slash commands using the router or checking NPC/Team jinxs."""
-    all_command_parts = shlex.split(command)
+    try:
+        all_command_parts = shlex.split(command)
+    except ValueError:
+        all_command_parts = command.split()
     command_name = all_command_parts[0].lstrip('/')
     
+    # --- NPC SWITCHING LOGIC (RESTORED) ---
     if command_name in ['n', 'npc']:
         npc_to_switch_to = all_command_parts[1] if len(all_command_parts) > 1 else None
         if npc_to_switch_to and state.team and npc_to_switch_to in state.team.npcs:
@@ -1884,129 +2026,86 @@ def execute_slash_command(command: str,
             available_npcs = list(state.team.npcs.keys()) if state.team else []
             return state, {"output": colored(f"NPC '{npc_to_switch_to}' not found. Available NPCs: {', '.join(available_npcs)}", "red"), "messages": state.messages}
     
+    # --- BUILT-IN ROUTER LOGIC (RESTORED) ---
     handler = router.get_route(command_name)
     if handler:
         parsed_flags, positional_args = parse_generic_command_flags(all_command_parts[1:])
         normalized_flags = normalize_and_expand_flags(parsed_flags)
-
         handler_kwargs = {
-            'stream': stream,
-            'team': state.team,
-            'messages': state.messages,
-            'api_url': state.api_url,
-            'api_key': state.api_key,
-            'stdin_input': stdin_input,
-            'positional_args': positional_args,
-            'plonk_context': state.team.shared_context.get('PLONK_CONTEXT') if state.team and hasattr(state.team, 'shared_context') else None,
-            
+            'stream': stream, 'team': state.team, 'messages': state.messages, 'api_url': state.api_url,
+            'api_key': state.api_key, 'stdin_input': stdin_input, 'positional_args': positional_args,
             'model': state.npc.model if isinstance(state.npc, NPC) and state.npc.model else state.chat_model,
             'provider': state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else state.chat_provider,
-            'npc': state.npc,
-            
-            'sprovider': state.search_provider,
-            'emodel': state.embedding_model,
-            'eprovider': state.embedding_provider,
-            'igmodel': state.image_gen_model,
-            'igprovider': state.image_gen_provider,
-            'vgmodel': state.video_gen_model, 
-            'vgprovider': state.video_gen_provider,
-            'vmodel': state.vision_model,
-            'vprovider': state.vision_provider,
-            'rmodel': state.reasoning_model,
-            'rprovider': state.reasoning_provider,
+            'npc': state.npc, 'sprovider': state.search_provider, 'emodel': state.embedding_model,
+            'eprovider': state.embedding_provider, 'igmodel': state.image_gen_model, 'igprovider': state.image_gen_provider,
+            'vmodel': state.vision_model, 'vprovider': state.vision_provider, 'rmodel': state.reasoning_model, 'rprovider': state.reasoning_provider,
         }
-        
-        if len(normalized_flags) > 0:
-            kwarg_part = 'with kwargs: \n    -' + '\n    -'.join(f'{key}={item}' for key, item in normalized_flags.items())
-        else:
-            kwarg_part = ''
-
-        render_markdown(f'- Calling {command_name} handler {kwarg_part} ')
-        
-        if 'model' in normalized_flags and 'provider' not in normalized_flags:
-            inferred_provider = lookup_provider(normalized_flags['model'])
-            if inferred_provider:
-                handler_kwargs['provider'] = inferred_provider
-                print(colored(f"Info: Inferred provider '{inferred_provider}' for model '{normalized_flags['model']}'.", "cyan"))
-        
-        if 'provider' in normalized_flags and 'model' not in normalized_flags:
-            current_provider = lookup_provider(handler_kwargs['model'])
-            if current_provider != normalized_flags['provider']:
-                prov = normalized_flags['provider']
-                print(f'Please specify a model for the provider: {prov}')
-        
         handler_kwargs.update(normalized_flags)
-        
         try:
             result = handler(command=command, **handler_kwargs)
-            
-            if isinstance(result, dict):
-                state.messages = result.get("messages", state.messages)
-                return state, result
-            elif isinstance(result, str):
-                return state, {"output": result, "messages": state.messages}
-            else:
-                return state, {"output": str(result), "messages": state.messages}
-                
+            if isinstance(result, dict): state.messages = result.get("messages", state.messages)
+            return state, result
         except Exception as e:
-            import traceback
-            print(f"Error executing slash command '{command_name}':", file=sys.stderr)
-            traceback.print_exc()
+            import traceback; traceback.print_exc()
             return state, {"output": colored(f"Error executing slash command '{command_name}': {e}", "red"), "messages": state.messages}
 
+    # --- JINX EXECUTION LOGIC (WITH AUTOMATED GLOBALS) ---
     active_npc = state.npc if isinstance(state.npc, NPC) else None
     jinx_to_execute = None
-    executor = None
-    
     if active_npc and hasattr(active_npc, 'jinxs_dict') and command_name in active_npc.jinxs_dict:
         jinx_to_execute = active_npc.jinxs_dict[command_name]
-        executor = active_npc
     elif state.team and hasattr(state.team, 'jinxs_dict') and command_name in state.team.jinxs_dict:
         jinx_to_execute = state.team.jinxs_dict[command_name]
-        executor = state.team
+
     if jinx_to_execute:
         args = all_command_parts[1:]
         try:
-            input_values = {}
-            if hasattr(jinx_to_execute, 'inputs') and jinx_to_execute.inputs:
-                for i, input_name in enumerate(jinx_to_execute.inputs):
-                    if i < len(args):
-                        input_values[input_name] = args[i]
-            
-            if isinstance(executor, NPC):
-                jinx_output = jinx_to_execute.execute(
-                    input_values=input_values,
-                    jinxs_dict=executor.jinxs_dict if hasattr(executor, 'jinxs_dict') else {},
-                    npc=executor,
-                    messages=state.messages
-                )
-            else:
-                jinx_output = jinx_to_execute.execute(
-                    input_values=input_values,
-                    jinxs_dict=executor.jinxs_dict if hasattr(executor, 'jinxs_dict') else {},
-                    npc=active_npc or state.npc,
-                    messages=state.messages
-                )
-            if isinstance(jinx_output, dict) and 'messages' in jinx_output:
-                state.messages = jinx_output['messages']
-                return state, jinx_output
-            elif isinstance(jinx_output, dict):
-                return state, jinx_output
-            else:
-                return state, {"output": str(jinx_output), "messages": state.messages}
+            # AUTOMATED GLOBALS INJECTION
+            application_globals_for_jinx = {
+                "CommandHistory": CommandHistory, 
+                "load_kg_from_db": load_kg_from_db,
+                "execute_rag_command": execute_rag_command, 
+                "execute_brainblast_command": execute_brainblast_command,
+                "load_file_contents": load_file_contents, 
+                "search_web": search_web, 
+                "get_relevant_memories": get_relevant_memories,  # ADD THIS
+                "search_kg_facts": search_kg_facts,              # ADD THIS TOO
+                
+                'state': state
+            }
+            current_module = sys.modules[__name__]
+            for name, func in inspect.getmembers(current_module, inspect.isfunction):
+                application_globals_for_jinx[name] = func
+
+            print(application_globals_for_jinx)
+            parsed_kwargs, positional_args = parse_generic_command_flags(args)
+            input_values = normalize_and_expand_flags(parsed_kwargs)
+            if 'query' not in input_values and positional_args:
+                input_values['query'] = ' '.join(positional_args)
+
+            jinx_output = jinx_to_execute.execute(
+                input_values=input_values,
+                jinxs_dict=getattr(state.team, 'jinxs_dict', {}),
+                npc=active_npc,
+                messages=state.messages,
+                extra_globals=application_globals_for_jinx
+            )
+
+            if isinstance(jinx_output, dict):
+                state.messages = jinx_output.get('messages', state.messages)
+            return state, jinx_output
             
         except Exception as e:
-            import traceback
-            print(f"Error executing jinx '{command_name}':", file=sys.stderr)
-            traceback.print_exc()
+            import traceback; traceback.print_exc()
             return state, {"output": colored(f"Error executing jinx '{command_name}': {e}", "red"), "messages": state.messages}
     
+    # Fallback for switching NPC by name
     if state.team and command_name in state.team.npcs:
-        new_npc = state.team.npcs[command_name]
-        state.npc = new_npc
-        return state, {"output": f"Switched to NPC: {new_npc.name}", "messages": state.messages}
+        state.npc = state.team.npcs[command_name]
+        return state, {"output": f"Switched to NPC: {state.npc.name}", "messages": state.messages}
 
     return state, {"output": colored(f"Unknown slash command, jinx, or NPC: {command_name}", "red"), "messages": state.messages}
+
 
 
 def process_pipeline_command(
@@ -2151,6 +2250,22 @@ def process_pipeline_command(
             f"{npc_name} processing with {exec_model}", 
             style="dots_pulse"
         ):
+            # Build extra_globals for jinx execution
+            application_globals_for_jinx = {
+                "CommandHistory": CommandHistory, 
+                "load_kg_from_db": load_kg_from_db,
+                "execute_rag_command": execute_rag_command, 
+                "execute_brainblast_command": execute_brainblast_command,
+                "load_file_contents": load_file_contents, 
+                "search_web": search_web,
+                "get_relevant_memories": get_relevant_memories,
+                "search_kg_facts": search_kg_facts,
+                'state': state
+            }
+            current_module = sys.modules[__name__]
+            for name, func in inspect.getmembers(current_module, inspect.isfunction):
+                application_globals_for_jinx[name] = func
+
             llm_result = check_llm_command(
                 full_llm_cmd,
                 model=exec_model,      
@@ -2163,8 +2278,8 @@ def process_pipeline_command(
                 images=state.attachments,
                 stream=stream_final,
                 context=info,
+                extra_globals=application_globals_for_jinx  # NOW PASS IT
             )
-        
         if not review:
             if isinstance(llm_result, dict):
                 state.messages = llm_result.get("messages", state.messages)
@@ -2636,139 +2751,6 @@ def initialize_router_with_jinxs(team, router):
     
     return router
                 
-from npcpy.memory.memory_processor import  memory_approval_ui
-from npcpy.ft.memory_trainer import MemoryTrainer
-from npcpy.llm_funcs import get_facts
-
-def get_relevant_memories(
-    command_history: CommandHistory,
-    npc_name: str,
-    team_name: str,
-    path: str,
-    query: Optional[str] = None,
-    max_memories: int = 10,
-    state: Optional[ShellState] = None
-) -> List[Dict]:
-    
-    engine = command_history.engine
-    
-    all_memories = command_history.get_memories_for_scope(
-        npc=npc_name,
-        team=team_name,
-        directory_path=path,
-        status='human-approved'
-    )
-    
-    if not all_memories:
-        return []
-    
-    if len(all_memories) <= max_memories and not query:
-        return all_memories
-    
-    if query:
-        query_lower = query.lower()
-        keyword_matches = [
-            m for m in all_memories 
-            if query_lower in (m.get('final_memory') or m.get('initial_memory') or '').lower()
-        ]
-        
-        if keyword_matches:
-            return keyword_matches[:max_memories]
-
-    if state and state.embedding_model and state.embedding_provider:
-        try:
-            from npcpy.gen.embeddings import get_embeddings
-            
-            search_text = query if query else "recent context"
-            query_embedding = get_embeddings(
-                [search_text],
-                state.embedding_model,
-                state.embedding_provider
-            )[0]
-            
-            memory_texts = [
-                m.get('final_memory', '') for m in all_memories
-            ]
-            memory_embeddings = get_embeddings(
-                memory_texts,
-                state.embedding_model,
-                state.embedding_provider
-            )
-            
-            import numpy as np
-            similarities = []
-            for mem_emb in memory_embeddings:
-                similarity = np.dot(query_embedding, mem_emb) / (
-                    np.linalg.norm(query_embedding) * 
-                    np.linalg.norm(mem_emb)
-                )
-                similarities.append(similarity)
-            
-            sorted_indices = np.argsort(similarities)[::-1]
-            return [all_memories[i] for i in sorted_indices[:max_memories]]
-            
-        except Exception as e:
-            print(colored(
-                f"RAG search failed, using recent: {e}", 
-                "yellow"
-            ))
-    
-    return all_memories[-max_memories:]
-
-
-def search_kg_facts(
-    self,
-    npc: str,
-    team: str,
-    directory_path: str,
-    query: str
-) -> List[Dict]:
-    
-    kg = load_kg_from_db(
-        self.engine, 
-        team, 
-        npc, 
-        directory_path
-    )
-    
-    if not kg or 'facts' not in kg:
-        return []
-    
-    query_lower = query.lower()
-    matching_facts = []
-    
-    for fact in kg['facts']:
-        statement = fact.get('statement', '').lower()
-        if query_lower in statement:
-            matching_facts.append(fact)
-    
-    return matching_facts
-
-def format_memory_context(memory_examples):
-    if not memory_examples:
-        return ""
-    
-    context_parts = []
-    
-    approved_examples = memory_examples.get("approved", [])
-    rejected_examples = memory_examples.get("rejected", [])
-    
-    if approved_examples:
-        context_parts.append("EXAMPLES OF GOOD MEMORIES:")
-        for ex in approved_examples[:5]:
-            final = ex.get("final_memory") or ex.get("initial_memory")
-            context_parts.append(f"- {final}")
-    
-    if rejected_examples:
-        context_parts.append("\nEXAMPLES OF POOR MEMORIES TO AVOID:")
-        for ex in rejected_examples[:3]:
-            context_parts.append(f"- {ex.get('initial_memory')}")
-    
-    if context_parts:
-        context_parts.append("\nLearn from these examples to generate similar high-quality memories.")
-        return "\n".join(context_parts)
-    
-    return ""
 
 def process_memory_approvals(command_history, memory_queue):
     pending_memories = memory_queue.get_approval_batch(max_items=5)
