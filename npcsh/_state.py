@@ -311,7 +311,6 @@ def get_npc_path(npc_name: str, db_path: str) -> str:
 
     raise ValueError(f"NPC file not found: {npc_name}")
 
-
 def initialize_base_npcs_if_needed(db_path: str) -> None:
     """
     Function Description:
@@ -331,7 +330,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-  
+    # Create table
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS compiled_npcs (
@@ -342,7 +341,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
         """
     )
 
-  
+    # Package directories
     package_dir = os.path.dirname(__file__)
     package_npc_team_dir = os.path.join(package_dir, "npc_team")
 
@@ -354,6 +353,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     os.makedirs(user_jinxs_dir, exist_ok=True)
     os.makedirs(user_templates_dir, exist_ok=True)
 
+    # Copy .npc and .ctx files
     for filename in os.listdir(package_npc_team_dir):
         if filename.endswith(".npc"):
             source_path = os.path.join(package_npc_team_dir, filename)
@@ -372,19 +372,33 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                 shutil.copy2(source_path, destination_path)
                 print(f"Copied ctx {filename} to {destination_path}")
 
-  
+    # Copy jinxs directory RECURSIVELY
     package_jinxs_dir = os.path.join(package_npc_team_dir, "jinxs")
     if os.path.exists(package_jinxs_dir):
-        for filename in os.listdir(package_jinxs_dir):
-            if filename.endswith(".jinx"):
-                source_jinx_path = os.path.join(package_jinxs_dir, filename)
-                destination_jinx_path = os.path.join(user_jinxs_dir, filename)
-                if (not os.path.exists(destination_jinx_path)) or file_has_changed(
-                    source_jinx_path, destination_jinx_path
-                ):
-                    shutil.copy2(source_jinx_path, destination_jinx_path)
-                    print(f"Copied jinx {filename} to {destination_jinx_path}")
+        for root, dirs, files in os.walk(package_jinxs_dir):
+            # Calculate relative path from package_jinxs_dir
+            rel_path = os.path.relpath(root, package_jinxs_dir)
+            
+            # Create corresponding directory in user jinxs
+            if rel_path == '.':
+                dest_dir = user_jinxs_dir
+            else:
+                dest_dir = os.path.join(user_jinxs_dir, rel_path)
+            os.makedirs(dest_dir, exist_ok=True)
+            
+            # Copy all .jinx files in this directory
+            for filename in files:
+                if filename.endswith(".jinx"):
+                    source_jinx_path = os.path.join(root, filename)
+                    destination_jinx_path = os.path.join(dest_dir, filename)
+                    
+                    if not os.path.exists(destination_jinx_path) or file_has_changed(
+                        source_jinx_path, destination_jinx_path
+                    ):
+                        shutil.copy2(source_jinx_path, destination_jinx_path)
+                        print(f"Copied jinx {os.path.join(rel_path, filename)} to {destination_jinx_path}")
 
+    # Copy templates directory
     templates = os.path.join(package_npc_team_dir, "templates")
     if os.path.exists(templates):
         for folder in os.listdir(templates):
@@ -407,6 +421,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     conn.close()
     set_npcsh_initialized()
     add_npcshrc_to_shell_config()
+
 
 def get_shell_config_file() -> str:
     """
@@ -2502,7 +2517,6 @@ def execute_command(
         state.messages = response['messages']     
         return state, response['response']
 
-
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     setup_npcsh_config()
 
@@ -2525,9 +2539,13 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
 
     project_team_path = os.path.abspath(PROJECT_NPC_TEAM_PATH)
     global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
+
     team_dir = None
     default_forenpc_name = None
-
+    global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
+    if not os.path.exists(global_team_path):
+        print(f"Global NPC team directory doesn't exist. Initializing...")
+        initialize_base_npcs_if_needed(db_path)
     if os.path.exists(project_team_path):
         team_dir = project_team_path
         default_forenpc_name = "forenpc"
@@ -2574,9 +2592,17 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                     pass
                 team_dir = global_team_path
                 default_forenpc_name = "sibiji"  
-        elif os.path.exists(global_team_path):
+        else:
             team_dir = global_team_path
-            default_forenpc_name = "sibiji"            
+            default_forenpc_name = "sibiji"
+    
+    if team_dir is None:
+        team_dir = global_team_path
+        default_forenpc_name = "sibiji"
+    
+    if not os.path.exists(team_dir):
+        print(f"Creating team directory: {team_dir}")
+        os.makedirs(team_dir, exist_ok=True)
         
     team_ctx = {}
     team_ctx_path = get_team_ctx_path(team_dir)
@@ -2586,7 +2612,10 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                 team_ctx = yaml.safe_load(f) or {}
         except Exception as e:
             print(f"Warning: Could not load context file {os.path.basename(team_ctx_path)}: {e}")
+    
     forenpc_name = team_ctx.get("forenpc", default_forenpc_name)
+    if forenpc_name is None:
+        forenpc_name = "sibiji"
   
     print('forenpc_name:', forenpc_name)
 
@@ -2623,7 +2652,6 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         team.name = "npcsh"
 
     return command_history, team, forenpc_obj
-
 def initialize_router_with_jinxs(team, router):
     """Load global and team Jinxs into router"""
     global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
