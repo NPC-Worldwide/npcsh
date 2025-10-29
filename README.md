@@ -45,10 +45,11 @@ and you will enter the NPC shell. Additionally, the pip installation includes th
 
   - **Search the Web**
     ```bash
-    /search "cal golden bears football schedule" -sp perplexity
+    /search "cal golden bears football schedule" perplexity
+
     ```
     <p align="center">
-        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/search_example.png" alt="example of search results", width=600>
+        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/search.gif" alt="example of search results", width=600>
      </p>
 
   - **Computer Use**

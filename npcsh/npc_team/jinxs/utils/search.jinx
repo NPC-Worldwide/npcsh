@@ -9,6 +9,7 @@ description: >
     /search --brainblast <query>            (Advanced history search)
 inputs:
   - query: ""
+  - sprovider: ""
   - memory: false
   - kg: false
   - rag: false
@@ -16,7 +17,6 @@ inputs:
   - file_paths: ""
   - history_db_path: "~/npcsh_history.db"
   - vector_db_path: "~/npcsh_chroma.db"
-  - sprovider: ""
   - emodel: ""
   - eprovider: ""
 steps:
