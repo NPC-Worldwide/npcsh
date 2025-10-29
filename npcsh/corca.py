@@ -1235,68 +1235,98 @@ def create_corca_state_and_mcp_client(conversation_id,
 
     return state
 
-
-def enter_corca_mode(command: str, **kwargs):
-    state: ShellState = kwargs.get('shell_state')
-    command_history: CommandHistory = kwargs.get('command_history')
-
-    if not state or not command_history:
-        return {"output": "Error: Corca mode requires shell state and history.", "messages": kwargs.get('messages', [])}
-
-    all_command_parts = shlex.split(command)
-    parser = argparse.ArgumentParser(prog="/corca", description="Enter Corca MCP-powered mode.")
-    parser.add_argument("--mcp-server-path", type=str, help="Path to an MCP server script.")
-    parser.add_argument("-g", "--global", dest="force_global", action="store_true", help="Force use of global MCP server.")
+def corca_session(
+    command_history: CommandHistory,
+    state: Optional[ShellState] = None,
+    mcp_server_path: Optional[str] = None,
+    force_global: bool = False,
+    initial_command: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Clean programmatic entry to Corca mode.
     
-    try:
-        known_args, remaining_args = parser.parse_known_args(all_command_parts[1:])
-    except SystemExit:
-         return {"output": "Invalid arguments for /corca. See /help corca.", "messages": state.messages}
+    Args:
+        command_history: CommandHistory instance
+        state: Optional existing ShellState, will create if None
+        mcp_server_path: Optional explicit path to MCP server
+        force_global: Force use of global MCP server
+        initial_command: Optional command to execute before entering loop
+        
+    Returns:
+        Dict with 'output' and 'messages' keys
+    """
+    # Setup state if not provided
+    if state is None:
+        _, team, default_npc = setup_shell()
+        
+        # Load corca.npc if available
+        project_corca_path = os.path.join('./npc_team/', "corca.npc")
+        global_corca_path = os.path.expanduser('~/.npcsh/npc_team/corca.npc')
+        
+        if os.path.exists(project_corca_path):
+            default_npc = NPC(file=project_corca_path, db_conn=command_history.engine)
+        elif os.path.exists(global_corca_path):
+            default_npc = NPC(file=global_corca_path, db_conn=command_history.engine)
+
+        # Set defaults
+        if default_npc.model is None:
+            default_npc.model = team.model or NPCSH_CHAT_MODEL
+        if default_npc.provider is None:
+            default_npc.provider = team.provider or NPCSH_CHAT_PROVIDER
+
+        from npcsh._state import initial_state
+        state = initial_state
+        state.team = team
+        state.npc = default_npc
+        state.command_history = command_history
 
     print_corca_welcome_message()
     
+    # Resolve MCP server path
     auto_copy_bypass = os.getenv("NPCSH_CORCA_AUTO_COPY_MCP_SERVER", "false").lower() == "true"
-
+    
     resolved_server_path = _resolve_and_copy_mcp_server_path(
-        explicit_path=known_args.mcp_server_path,
+        explicit_path=mcp_server_path,
         current_path=state.current_path,
         team_ctx_mcp_servers=state.team.team_ctx.get('mcp_servers', []) if state.team and hasattr(state.team, 'team_ctx') else None,
         interactive=True,
         auto_copy_bypass=auto_copy_bypass,
-        force_global=known_args.force_global
+        force_global=force_global
     )
 
-    mcp_client = None
+    # Connect to MCP server
     if resolved_server_path:
         try:
             mcp_client = MCPClientNPC()
             if mcp_client.connect_sync(resolved_server_path):
                 state.mcp_client = mcp_client
             else:
-                cprint(f"Failed to connect to MCP server at {resolved_server_path}. Corca mode will have limited agent functionality.", "yellow")
+                cprint(f"Failed to connect to MCP server. Limited functionality.", "yellow")
                 state.mcp_client = None
         except Exception as e:
-            cprint(f"Error connecting to MCP server: {e}. Corca mode will have limited agent functionality.", "red")
+            cprint(f"Error connecting to MCP server: {e}", "red")
             traceback.print_exc()
             state.mcp_client = None
     else:
-        cprint("No MCP server path provided or found. Corca mode will have limited agent functionality.", "yellow")
+        cprint("No MCP server path found. Limited functionality.", "yellow")
         state.mcp_client = None
 
+    # Execute initial command if provided
+    if initial_command:
+        try:
+            state, output = execute_command_corca(initial_command, state, command_history)
+            if not (isinstance(output, dict) and output.get('interrupted')):
+                process_corca_result(initial_command, state, output, command_history)
+        except Exception as e:
+            print(colored(f'Error executing initial command: {e}', "red"))
+
+    # Main loop
     while True:
         try:
-            prompt_npc_name = "npc"
-            if state.npc:
-                prompt_npc_name = state.npc.name
-            
+            prompt_npc_name = state.npc.name if state.npc else "npc"
             prompt_str = f"{colored(os.path.basename(state.current_path), 'blue')}:{prompt_npc_name}🦌> "
             prompt = readline_safe_prompt(prompt_str)
-            
-            if remaining_args:
-                user_input = " ".join(remaining_args)
-                remaining_args = []
-            else:
-                user_input = get_multiline_input(prompt).strip()
+            user_input = get_multiline_input(prompt).strip()
             
             if user_input.lower() in ["exit", "quit", "done"]:
                 break
@@ -1311,11 +1341,7 @@ def enter_corca_mode(command: str, **kwargs):
                     print(colored("\n⚠️  Command interrupted. MCP session maintained.", "yellow"))
                     continue
             
-                process_corca_result(user_input, 
-                            state, 
-                            output, 
-                            command_history, 
-                                )
+                process_corca_result(user_input, state, output, command_history)
             except KeyboardInterrupt:
                 print(colored("\n⚠️  Interrupted. Type 'exit' to quit Corca mode.", "yellow"))
                 continue
@@ -1330,12 +1356,45 @@ def enter_corca_mode(command: str, **kwargs):
             print("\nExiting Corca Mode.")
             break
             
+    # Cleanup
     if state.mcp_client:
         state.mcp_client.disconnect_sync()
         state.mcp_client = None
     
     render_markdown("\n# Exiting Corca Mode")
     return {"output": "", "messages": state.messages}
+def enter_corca_mode(command: str, **kwargs):
+    """Legacy wrapper for command-line entry"""
+    state: ShellState = kwargs.get('shell_state')
+    command_history: CommandHistory = kwargs.get('command_history')
+
+    if not state or not command_history:
+        return {"output": "Error: Corca mode requires shell state and history.", "messages": kwargs.get('messages', [])}
+
+    # Parse command arguments
+    all_command_parts = shlex.split(command)
+    parser = argparse.ArgumentParser(prog="/corca", description="Enter Corca MCP-powered mode.")
+    parser.add_argument("--mcp-server-path", type=str, help="Path to an MCP server script.")
+    parser.add_argument("-g", "--global", dest="force_global", action="store_true", help="Force use of global MCP server.")
+    
+    try:
+        known_args, remaining_args = parser.parse_known_args(all_command_parts[1:])
+    except SystemExit:
+         return {"output": "Invalid arguments for /corca. See /help corca.", "messages": state.messages}
+
+    # Get initial command from remaining args
+    initial_command = " ".join(remaining_args) if remaining_args else None
+
+    # Call the clean entry point
+    return corca_session(
+        command_history=command_history,
+        state=state,
+        mcp_server_path=known_args.mcp_server_path,
+        force_global=known_args.force_global,
+        initial_command=initial_command
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Corca - An MCP-powered npcsh shell.")
     parser.add_argument("--mcp-server-path", type=str, help="Path to an MCP server script to connect to.")
