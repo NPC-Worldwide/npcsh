@@ -68,9 +68,7 @@ and you will enter the NPC shell. Additionally, the pip installation includes th
     /roll 'generate a video of a hat riding a dog' veo-3.1-fast-generate-preview  gemini
     ```
 
-      <p align="center">
-        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/hatridingdog.mp4" alt="video of a hat riding a dog", width=250>
-      </p> 
+    [![Hat Riding Dog](hatridingdog.gif)](https://github.com/NPC-Worldwide/npcsh/raw/main/test_data/hatridingdog.mp4)
 
   - **Serve an NPC Team**
     ```bash
