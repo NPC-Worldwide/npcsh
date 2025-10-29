@@ -43,16 +43,47 @@ and you will enter the NPC shell. Additionally, the pip installation includes th
       ```
 
 
-  - **Search the Web**
+  - **Search**
+    - search the web
     ```bash
-    /search "cal golden bears football schedule" perplexity
+    /search "cerulean city" perplexity
 
     ```
     <p align="center">
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/search.gif" alt="example of search results", width=600>
-     </p>
+    </p>
+    
+    - search approved memories
+    ```bash
+    /search query="how to deploy python apps" memory=true
+    ```
+        
+    - search the knowledge graph
+
+    ```bash
+    /search query="user preferences for database" kg=true
+    ```
+        
+    - execute a RAG search across files
+
+    ```bash
+    /search --rag -f ~/docs/api.md,~/docs/config.yaml "authentication setup"
+    ```
+        
+    - brainblast search (searches many keyword combinations)
+
+    ```bash
+    /search query="git commands" brainblast=true
+    ```
+        
+    - web search with specific provider
+
+    ```bash
+    /search query="family vacations" sprovider="perplexity"
+    ```     
 
   - **Computer Use**
+
     ```bash
     /plonk 'find out the latest news on cnn' gemma3:12b ollama
     ```
