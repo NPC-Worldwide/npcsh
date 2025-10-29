@@ -38,10 +38,10 @@ steps:
               print(f"📸 Screenshot captured: {screenshot_info.get('filename', os.path.basename(screenshot_info['file_path']))}")
 
       if not vision_model:
-          vision_model = getattr(current_npc, 'model', 'gpt-4o-mini')
+          vision_model = getattr(current_npc, 'model', 'gemma3:4b')
       
       if not vision_provider:
-          vision_provider = getattr(current_npc, 'provider', 'openai')
+          vision_provider = getattr(current_npc, 'provider', 'ollama')
 
       response_data = get_llm_response(
           prompt=user_prompt,
