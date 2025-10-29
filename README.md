@@ -144,16 +144,13 @@ This architecture enables users to build complex AI workflows while maintaining 
 
 Importantly, users can switch easily between the NPCs they are chatting with by typing `/n npc_name` within the NPC shell. Likewise, they can create Jinxs and then use them from within the NPC shell by invoking the jinx name and the arguments required for the Jinx;  `/<jinx_name> arg1 arg2`
 
-# Macros
--  activated by invoking `/<command> ...` in `npcsh`, macros can be called in bash or through the `npc` CLI. In our examples, we provide both `npcsh` calls as well as bash calls with the `npc` cli where relevant. For converting any `/<command>` in `npcsh` to a bash version, replace the `/` with `npc ` and the macro command will be invoked as a positional argument. Some, like breathe, flush,
-    
+# Jinx as macros
+-  activated by invoking `/<jinx_name> ...` in `npcsh`, jinxs can be called in bash or through the `npc` CLI. In our examples, we provide both `npcsh` calls as well as bash calls with the `npc` cli where relevant. For converting any `/<command>` in `npcsh` to a bash version, replace the `/` with `npc ` and the macro command will be invoked as a positional argument. 
     - `/alicanto` - Conduct deep research with multiple perspectives, identifying gold insights and cliff warnings. Usage: `/alicanto 'query to be researched' --num-npcs <int> --depth <int>`
     - `/build` - Builds the current npc team to an executable format . Usage: `/build <output[flask,docker,cli,static]> --options`
-    - `/brainblast` - Execute an advanced chunked search on command history. Usage:     `/brainblast 'query'  --top_k 10`
     - `/breathe` - Condense context on a regular cadence. Usage: `/breathe -p <provider: NPCSH_CHAT_PROVIDER> -m <model: NPCSH_CHAT_MODEL>`
     - `/compile` - Compile NPC profiles. Usage: `/compile <path_to_npc> `
     - `/corca` - Enter the Corca MCP-powered agentic shell. Usage: `/corca [--mcp-server-path path]`                  
-    - `/flush` - Flush the last N messages. Usage: `/flush N=10`
     - `/guac` - Enter guac mode. Usage: `/guac`
     - `/help` - Show help for commands, NPCs, or Jinxs. Usage: `/help`
     - `/init` - Initialize NPC project. Usage: `/init`
@@ -161,13 +158,11 @@ Importantly, users can switch easily between the NPCs they are chatting with by 
     - `/<jinx_name>` - Run a jinx with specified command line arguments. `/<jinx_name> jinx_arg1 jinx_arg2`
     - `/npc-studio` - Start npc studio. Pulls NPC Studio github to `~/.npcsh/npc-studio` and launches it in development mode after installing necessary NPM dependencies.Usage: `/npc-studio`
     - `/ots` - Take screenshot and analyze with vision model. Usage: `/ots filename=<output_file_name_for_screenshot>` then select an area, and you will be prompted for your request.
-    - `/plan` - Execute a plan command. Usage: `/plan 'idea for a cron job to be set up to accomplish'`
     - `/plonk` - Use vision model to interact with GUI. Usage: `/plonk '<task description>' `
     - `/pti` - Use pardon-the-interruption mode to interact with reasoning model LLM. Usage: `/pti`
-    - `/rag` - Execute a RAG command using ChromaDB embeddings with optional file input (-f/--file). Usage: `/rag '<query_to_rag>' --emodel <NPCSH_EMBEDDING_MODEL> --eprovider <NPCSH_EMBEDDING_PROVIDER>`
     - `/roll` - generate a video with video generation model. Usage: `/roll '<description_for_a_movie>' --vgmodel <NPCSH_VIDEO_GEN_MODEL> --vgprovider <NPCSH_VIDEO_GEN_PROVIDER>`
     - `/sample` - Send a context-free prompt to an LLM, letting you get fresh answers without needing to start a separate conversation/shell. Usage: `/sample -m <NPCSH_CHAT_MODEL> 'question to sample --temp <float> --top_k int`
-    - `/search` - Execute a web search command. Usage: `/search 'search query' --sprovider <provider>` where provider is currently limited to DuckDuckGo and Perplexity. Wikipedia integration ongoing.
+    - `/search` - Execute a search command on the web, in your memories, in the knowledge graph, or in documents with rag. Usage: `/search 'search query' --sprovider <provider>` where provider is currently limited to DuckDuckGo, Perplexity, and Exa with more coming soon through litellm. Wikipedia integration ongoing. See above for more search specific examples.
     - `/serve` - Serve an NPC Team server. 
     - `/set` - Set configuration values. 
       - Usage: 
@@ -181,7 +176,6 @@ Importantly, users can switch easily between the NPCs they are chatting with by 
       - Usage: 
         - Gen Image: `/vixynt -igp <NPCSH_IMAGE_GEN_PROVIDER> --igmodel <NPCSH_IMAGE_GEN_MODEL> --output_file <path_to_file> width=<int:1024> height =<int:1024> 'description of image`
         - Edit Image: `/vixynt 'edit this....' --attachments '/path/to/image.png,/path/to/image.jpeg'`
-
     - `/wander` - A method for LLMs to think on a problem by switching between states of high temperature and low temperature.  Usage: `/wander 'query to wander about' --provider "ollama" --model "deepseek-r1:32b" environment="a vast dark ocean" interruption-likelihood=.1`
     - `/yap` - Enter voice chat (yap) mode. Usage: `/yap -n <npc_to_chat_with>`
     
@@ -203,24 +197,26 @@ Importantly, users can switch easily between the NPCs they are chatting with by 
     '
 
 ## Read the Docs
-To see more about how to use the macros and modes in the NPC Shell, read the docs at [npc-shell.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/)
+To see more about how to use the jinxs and modes in the NPC Shell, read the docs at [npc-shell.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/)
 
 
 ## Inference Capabilities
 - `npcsh` works with local and enterprise LLM providers through its LiteLLM integration, allowing users to run inference from Ollama, LMStudio, vLLM, MLX, OpenAI, Anthropic, Gemini, and Deepseek, making it a versatile tool for both simple commands and sophisticated AI-driven tasks. 
 
 ## NPC Studio
-There is a graphical user interface that makes use of the NPC Toolkit through the NPC Studio. See the source code for NPC Studio [here](https://github.com/npc-worldwide/npc-studio). Download the executables at [our website](https://enpisi.com/npc-studio). For the most up to date version, you can use NPC Studio by invoking it in npcsh 
+There is a graphical user interface that makes use of the NPC Toolkit through the NPC Studio. See the source code for NPC Studio [here](https://github.com/npc-worldwide/npc-studio). Download the executables at [our website](https://enpisi.com/downloads). For the most up to date development version, you can use NPC Studio by invoking it in npcsh 
+
 ```
 /npc-studio
 ```
-which will download and set up and serve the NPC Studio application within your `~/.npcsh` folder. It requires `npm` and `node` to work.
+which will download and set up and serve the NPC Studio application within your `~/.npcsh` folder. It requires `npm` and `node` to work, and of course npcpy !
 
-## Mailing List
+## Mailing List and Community
 Interested to stay in the loop and to hear the latest and greatest about `npcpy`, `npcsh`, and NPC Studio? Be sure to sign up for the [newsletter](https://forms.gle/n1NzQmwjsV4xv1B2A)!
 
+[Join the discord to discuss ideas for npc tools](https://discord.gg/VvYVT5YC)
 ## Support
-If you appreciate the work here, [consider supporting NPC Worldwide with a monthly donation](https://buymeacoffee.com/npcworldwide), [buying NPC-WW themed merch](https://enpisi.com/shop), or hiring us to help you explore how to use the NPC Toolkit and AI tools to help your business or research team, please reach out to info@npcworldwi.de .
+If you appreciate the work here, [consider supporting NPC Worldwide with a monthly donation](https://buymeacoffee.com/npcworldwide), [buying NPC-WW themed merch](https://enpisi.com/shop), [using and subscribing to Lavanzaro](lavanzaro.com),s or hiring us to help you explore how to use the NPC Toolkit and AI tools to help your business or research team, please reach out to info@npcworldwi.de .
 
 
 ## Installation
