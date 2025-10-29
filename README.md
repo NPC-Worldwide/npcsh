@@ -53,7 +53,7 @@ and you will enter the NPC shell. Additionally, the pip installation includes th
 
   - **Computer Use**
     ```bash
-    /plonk 'find out the latest news on cnn'
+    /plonk 'find out the latest news on cnn' gemma3:12b ollama
     ```
 
   - **Generate Image**
@@ -65,12 +65,12 @@ and you will enter the NPC shell. Additionally, the pip installation includes th
       </p>
   - **Generate Video**
     ```bash
-    /roll 'generate a video of a hat riding a dog'
+    /roll 'generate a video of a hat riding a dog' veo-3.1-fast-generate-preview  gemini
     ```
-    <!--
+
       <p align="center">
-        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/hat_video.mp4" alt="video of a hat riding a dog", width=250>
-      </p> -->
+        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/hatridingdog.mp4" alt="video of a hat riding a dog", width=250>
+      </p> 
 
   - **Serve an NPC Team**
     ```bash

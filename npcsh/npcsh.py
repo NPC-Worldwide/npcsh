@@ -140,23 +140,24 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router)
 
     while True:
         try:
-            if len(state.messages) > 20:
-                planning_state = {
-                    "goal": "ongoing npcsh session", 
-                    "facts": [f"Working in {state.current_path}", f"Current mode: {state.current_mode}"], 
-                    "successes": [], 
-                    "mistakes": [],
-                    "todos": [],
-                    "constraints": ["Follow user requests", "Use appropriate mode for tasks"]
-                }
-                compressed_state = state.npc.compress_planning_state(planning_state)
-                state.messages = [{"role": "system", "content": f"Session context: {compressed_state}"}]
+            if state.messages is not None:
+                if len(state.messages) > 20:
+                    planning_state = {
+                        "goal": "ongoing npcsh session", 
+                        "facts": [f"Working in {state.current_path}", f"Current mode: {state.current_mode}"], 
+                        "successes": [], 
+                        "mistakes": [],
+                        "todos": [],
+                        "constraints": ["Follow user requests", "Use appropriate mode for tasks"]
+                    }
+                    compressed_state = state.npc.compress_planning_state(planning_state)
+                    state.messages = [{"role": "system", "content": f"Session context: {compressed_state}"}]
 
-            try:
-                completer = make_completer(state, router)
-                readline.set_completer(completer)
-            except:
-                pass
+                try:
+                    completer = make_completer(state, router)
+                    readline.set_completer(completer)
+                except:
+                    pass
 
             display_model = state.chat_model
             if isinstance(state.npc, NPC) and state.npc.model:
