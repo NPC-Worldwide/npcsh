@@ -30,10 +30,6 @@ steps:
       if not vision_provider and current_npc and current_npc.provider:
           vision_provider = current_npc.provider
       
-      # Final fallbacks (these would ideally come from npcsh._state config)
-      if not vision_model: vision_model = "gemini-1.5-pro-vision" # Example default
-      if not vision_provider: vision_provider = "gemini" # Example default
-
       try:
           summary_data = execute_plonk_command(
               request=task_description,
