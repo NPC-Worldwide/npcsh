@@ -17,9 +17,6 @@ steps:
       if cors_str and cors_str.strip():
           cors_origins = [origin.strip() for origin in cors_str.split(",")]
 
-      # start_flask_server blocks, so this will hold the Jinx until the server is stopped.
-      # In a real-world scenario, you might want to run this in a separate process
-      # or have a non-blocking server start.
       start_flask_server(
           port=int(port), # Ensure port is an integer
           cors_origins=cors_origins,
