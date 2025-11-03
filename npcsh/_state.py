@@ -111,6 +111,7 @@ except importlib.metadata.PackageNotFoundError:
     VERSION = "unknown"
 
 
+from litellm import RateLimitError
 
 
 NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b")
@@ -2513,7 +2514,23 @@ def execute_command(
                     f"  → Passing to stage {stage_num + 1}", 
                     "blue"
                 ))
-                
+            except RateLimitError:
+                print(colored('Rate Limit Exceeded'))
+                # wait 30 seconds then truncate messages/condense context with breathing mechanism
+                # for now just limit to first plus last 10
+                messages = current_state.messages[0:1] + current_state.messages[-2:]
+                current_state.messages = messages
+                #retry 
+                import time 
+                print('sleeping...')
+                print(current_state)
+                print(current_state.messages)
+                time.sleep(30)
+
+
+                return execute_command(command, current_state, review=review, router=router,)
+
+
             except Exception as pipeline_error:
                 import traceback
                 traceback.print_exc()
@@ -2665,10 +2682,12 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                 if use_jinxs == "c":
                     global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
                     if os.path.exists(global_jinxs_dir):
-                        shutil.copytree(global_jinxs_dir, team_dir, dirs_exist_ok=True)
+                        # Create the 'jinxs' subfolder within the new team's directory
+                        destination_jinxs_dir = os.path.join(team_dir, "jinxs")
+                        os.makedirs(destination_jinxs_dir, exist_ok=True)
+                        shutil.copytree(global_jinxs_dir, destination_jinxs_dir, dirs_exist_ok=True)
                 else:
                     team_ctx_data["use_global_jinxs"] = True
-
                 with open(ctx_path, "w") as f:
                     yaml.dump(team_ctx_data, f)
             else:
