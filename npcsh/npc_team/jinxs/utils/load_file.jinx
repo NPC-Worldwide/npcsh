@@ -1,0 +1,35 @@
+jinx_name: load_file
+description: Loads and returns the contents of a file using npcpy's file loaders
+inputs:
+- file_path
+steps:
+  - name: "load_file"
+    engine: "python"
+    code: |
+      import os
+      from npcpy.data.load import load_file_contents
+      
+      # Expand user path and get absolute path
+      file_path = os.path.expanduser("{{ file_path }}")
+      
+      # Check if file exists
+      if not os.path.exists(file_path):
+          output = f"Error: File not found at {file_path}"
+      else:
+          try:
+              # Load file contents using npcpy's loader
+              # Returns chunks by default with chunk_size=250
+              chunks = load_file_contents(file_path)
+              
+              # Join chunks back together for full content
+              if isinstance(chunks, list):
+                  if chunks and chunks[0].startswith("Error"):
+                      output = chunks[0]
+                  else:
+                      file_content = "\n".join(chunks)
+                      output = f"File: {file_path}\n\n{file_content}"
+              else:
+                  output = f"File: {file_path}\n\n{chunks}"
+                  
+          except Exception as e:
+              output = f"Error reading file {file_path}: {str(e)}"
