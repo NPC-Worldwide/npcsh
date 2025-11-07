@@ -1,0 +1,20 @@
+jinx_name: chat
+description: Provides a direct LLM response.
+inputs:
+  - name: query
+    type: string
+    description: The user query for the LLM.
+  - name: messages
+    type: list
+    description: A list of messages for context.
+    default: []
+steps:
+  - name: get_chat_response
+    code: |
+      response = npc.get_llm_response(
+          request=query,
+          messages=messages,
+          auto_process_tool_calls=False,
+          use_core_tools=False
+      )
+      output = response.get('response', '')
