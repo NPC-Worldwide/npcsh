@@ -90,7 +90,6 @@ class CommandRouter:
             
             jinx_output = jinx.execute(
                 input_values=input_values,
-                jinxs_dict=kwargs.get('jinxs_dict', {}),
                 npc=npc,
                 messages=messages,
                 extra_globals=application_globals_for_jinx
