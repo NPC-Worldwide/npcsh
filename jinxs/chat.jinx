@@ -2,13 +2,15 @@ jinx_name: chat
 description: Provides a direct LLM response without tool use.
 inputs:
   - query
+  - auto_process_tool_calls: False
+  - use_core_tools: False
 steps:
   - name: get_chat_response
     code: |
       response = npc.get_llm_response(
           request=query,
           messages=context.get('messages', []),
-          auto_process_tool_calls=False,
-          use_core_tools=False
+          auto_process_tool_calls={{ auto_process_tool_calls | default(False) }},
+          use_core_tools={{ use_core_tools | default(False) }}
       )
       output = response.get('response', '')
