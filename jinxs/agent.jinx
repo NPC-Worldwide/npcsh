@@ -6,7 +6,7 @@ inputs:
   - use_core_tools: True
 steps:
   - name: get_agent_response
-    engine: llm
+    engine: python
     code: |
       response = npc.get_llm_response(
           request=query,
