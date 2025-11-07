@@ -2264,7 +2264,7 @@ def process_pipeline_command(
                 images=state.attachments,
                 stream=stream_final,
                 context=info,
-                extra_globals=application_globals_for_jinx  # NOW PASS IT
+                extra_globals=application_globals_for_jinx  
             )
         if not review:
             if isinstance(llm_result, dict):
