@@ -1,19 +1,13 @@
 jinx_name: agent
 description: Provides an LLM response with tool use enabled.
 inputs:
-  - name: query
-    type: string
-    description: The user query for the LLM.
-  - name: messages
-    type: list
-    description: A list of messages for context.
-    default: []
+  - query
 steps:
   - name: get_agent_response
     code: |
       response = npc.get_llm_response(
           request=query,
-          messages=messages,
+          messages=context.get('messages', []),
           auto_process_tool_calls=True,
           use_core_tools=True
       )
