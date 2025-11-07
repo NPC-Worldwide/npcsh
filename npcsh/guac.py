@@ -1376,10 +1376,12 @@ def get_guac_prompt_char(command_count: int, guac_refresh_period = 100) -> str:
 def execute_guac_command(command: str, state: ShellState, locals_dict: Dict[str, Any], project_name: str, src_dir: Path, router) -> Tuple[ShellState, Any]:
     stripped_command = command.strip()
     output = None 
-    cmd_parts = shlex.split(stripped_command)
-    if cmd_parts and cmd_parts[0] in ["cd", "ls", "pwd"]:
-        return execute_command(stripped_command, state, review=False, router=router)
-
+    try:
+        cmd_parts = shlex.split(stripped_command)
+        if cmd_parts and cmd_parts[0] in ["cd", "ls", "pwd"]:
+            return execute_command(stripped_command, state, review=False, router=router)
+    except Exception as e:
+        pass
     npc_team_dir = Path(state.team.team_path) if state.team and hasattr(state.team, 'team_path') else Path.cwd() / "npc_team"
 
     if not stripped_command:
