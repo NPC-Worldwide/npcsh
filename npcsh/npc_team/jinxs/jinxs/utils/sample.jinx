@@ -1,0 +1,56 @@
+jinx_name: "sample"
+description: "Send a prompt directly to the LLM."
+inputs:
+  - prompt: "" # Required text prompt to send to the LLM.
+  - model: "" # LLM model to use. Defaults to NPC's model.
+  - provider: "" # LLM provider to use. Defaults to NPC's provider.
+steps:
+  - name: "send_prompt_to_llm"
+    engine: "python"
+    code: |
+      import traceback
+      from npcpy.llm_funcs import get_llm_response
+      
+      prompt = context.get('prompt')
+      llm_model = context.get('model')
+      llm_provider = context.get('provider')
+      output_messages = context.get('messages', [])
+      current_npc = context.get('npc')
+
+      if not prompt or not prompt.strip():
+          context['output'] = "Usage: /sample <your prompt> [-m --model] model  [-p --provider] provider"
+          context['messages'] = output_messages
+          exit()
+      
+      # Fallback for model/provider if not explicitly set in Jinx inputs
+      if not llm_model and current_npc and current_npc.model:
+          llm_model = current_npc.model
+      if not llm_provider and current_npc and current_npc.provider:
+          llm_provider = current_npc.provider
+      
+      # Final fallbacks (these would ideally come from npcsh._state config)
+      if not llm_model: llm_model = "gemini-1.5-pro" # Example default
+      if not llm_provider: llm_provider = "gemini" # Example default
+
+      try:
+          result = get_llm_response(
+              prompt=prompt,
+              model=llm_model,
+              provider=llm_provider,
+              npc=current_npc,
+              **{k:v for k,v in context.items() if k not in ['messages', 'prompt', 'model', 'provider']} # Pass other context
+          )
+          
+          if isinstance(result, dict):
+              context['output'] = result.get('response')
+              context['messages'] = result.get('messages', output_messages)
+              context['model'] = llm_model
+              context['provider'] = llm_provider
+          else:
+              context['output'] = str(result)
+              context['messages'] = output_messages
+      
+      except Exception as e:
+          traceback.print_exc()
+          context['output'] = f"Error sampling LLM: {e}"
+          context['messages'] = output_messages

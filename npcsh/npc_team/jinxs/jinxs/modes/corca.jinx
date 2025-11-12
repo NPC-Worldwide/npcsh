@@ -1,0 +1,28 @@
+jinx_name: "corca"
+description: "Enter the Corca MCP-powered agentic shell"
+inputs:
+  - mcp_server_path: '~/.npcsh/npc_team/mcp_server.py'
+  - force_global: false
+  - initial_command: null
+steps:
+  - name: "enter_corca"
+    engine: "python"
+    code: |
+      from npcsh._state import setup_shell 
+      from npcsh.corca import corca_session
+      
+      mcp_server_path = context.get('mcp_server_path')
+      force_global = context.get('force_global', False)
+      initial_command = context.get('initial_command')
+      
+      command_history, _, _ = setup_shell()
+      
+      result = corca_session(
+          command_history=command_history,
+          mcp_server_path=mcp_server_path,
+          force_global=force_global,
+          initial_command=initial_command
+      )
+      
+      context['output'] = result.get('output', 'Exited Corca mode.')
+      context['messages'] = result.get('messages', [])

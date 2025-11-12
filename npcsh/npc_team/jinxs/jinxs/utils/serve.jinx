@@ -1,0 +1,26 @@
+jinx_name: "serve"
+description: "Serve an NPC Team"
+inputs:
+  - port: 5337 # The port to run the Flask server on.
+  - cors: "" # Comma-separated CORS origins.
+steps:
+  - name: "start_flask_server"
+    engine: "python"
+    code: |
+      from npcpy.serve import start_flask_server
+      
+      port = context.get('port')
+      cors_str = context.get('cors')
+      output_messages = context.get('messages', [])
+
+      cors_origins = None
+      if cors_str and cors_str.strip():
+          cors_origins = [origin.strip() for origin in cors_str.split(",")]
+
+      start_flask_server(
+          port=int(port), # Ensure port is an integer
+          cors_origins=cors_origins,
+      )
+
+      context['output'] = "NPC Team server started. Execution of this jinx will pause until the server is stopped."
+      context['messages'] = output_messages
