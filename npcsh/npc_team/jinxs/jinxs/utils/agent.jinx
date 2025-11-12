@@ -1,0 +1,17 @@
+jinx_name: agent
+description: Provides an LLM response with tool use enabled.
+inputs:
+  - query
+  - auto_process_tool_calls: True
+  - use_core_tools: True
+steps:
+  - name: get_agent_response
+    engine: python
+    code: |
+      response = npc.get_llm_response(
+          request=query,
+          messages=context.get('messages', []),
+          auto_process_tool_calls={{ auto_process_tool_calls | default(True) }},
+          use_core_tools={{ use_core_tools | default(True) }}
+      )
+      output = response.get('response', '')

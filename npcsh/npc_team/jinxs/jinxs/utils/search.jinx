@@ -1,0 +1,130 @@
+jinx_name: "search"
+description: >
+  Executes a search across various sources.
+  Usage:
+    /search <query>                         (Default: Web Search)
+    /search --memory <query>                (Search approved memories)
+    /search --kg <query>                    (Search the knowledge graph)
+    /search --rag [-f <paths>] <query>      (Execute a RAG search)
+    /search --brainblast <query>            (Advanced history search)
+inputs:
+  - query: ""
+  - sprovider: ""
+  - memory: false
+  - kg: false
+  - rag: false
+  - brainblast: false
+  - file_paths: ""
+  - history_db_path: "~/npcsh_history.db"
+  - vector_db_path: "~/npcsh_chroma.db"
+  - emodel: ""
+  - eprovider: ""
+steps:
+  - name: "execute_unified_search"
+    engine: "python"
+    code: |
+      import os
+      import traceback
+      
+      # Access query from context
+      query = context.get('query')
+      if not query or not query.strip():
+          context['output'] = "Usage: /search [--memory|--kg|--rag|--brainblast] <query>"
+      else:
+          # state is available as a GLOBAL variable (from extra_globals)
+          # Access it directly, not from context
+          try:
+              current_state = state  # This should work now
+          except NameError:
+              context['output'] = "Error: Shell state not available in jinx context"
+              raise
+          
+          current_npc = current_state.npc
+          current_team = current_state.team
+          
+          npc_name = getattr(current_npc, 'name', '__none__') if current_npc else '__none__'
+          team_name = getattr(current_team, 'name', '__none__') if current_team else '__none__'
+          current_path = os.getcwd()
+          db_path = os.path.expanduser(context.get("history_db_path"))
+          
+          try:
+              cmd_history = CommandHistory(db_path)
+              
+              if context.get('memory'):
+                  memories = get_relevant_memories(
+                      command_history=cmd_history, 
+                      npc_name=npc_name, 
+                      team_name=team_name,
+                      path=current_path, 
+                      query=query, 
+                      max_memories=10, 
+                      state=current_state  # Pass the state object
+                  )
+                  print(memories)
+                  
+                  if not memories:
+                      output = f"No memories found for query: '{query}'"
+                  else:
+                      output = f"Found {len(memories)} memories:\n\n" + "\n".join(
+                          f"{i}. [{mem.get('timestamp', 'unknown')}] {mem.get('final_memory') or mem.get('initial_memory')}" 
+                          for i, mem in enumerate(memories, 1)
+                      )
+              
+              elif context.get('kg'):
+                  facts = search_kg_facts(
+                      cmd_history, 
+                      npc_name, 
+                      team_name, 
+                      current_path, 
+                      query
+                  )
+                  print(facts)
+                  
+                  if not facts:
+                      output = f"No KG facts found for query: '{query}'"
+                  else:
+                      output = f"Found {len(facts)} KG facts:\n\n" + "\n".join(
+                          f"{i}. {fact.get('statement')}" for i, fact in enumerate(facts, 1)
+                      )
+
+              elif context.get('rag'):
+                  file_paths_str = context.get('file_paths', '')
+                  file_paths = [os.path.abspath(os.path.expanduser(p.strip())) for p in file_paths_str.split(',') if p.strip()]
+                  emodel = context.get('emodel') or current_state.embedding_model
+                  eprovider = context.get('eprovider') or current_state.embedding_provider
+                  
+                  file_contents = []
+                  for path in file_paths:
+                      chunks = load_file_contents(path)
+                      basename = os.path.basename(path)
+                      file_contents.extend([f"{basename}: {chunk}" for chunk in chunks])
+
+                  result = execute_rag_command(
+                      command=query,
+                      vector_db_path=os.path.expanduser(context.get('vector_db_path')),
+                      embedding_model=emodel,
+                      embedding_provider=eprovider,
+                      file_contents=file_contents or None
+                  )
+                  print(result)
+                  output = result.get('response', 'No response from RAG.')
+
+              elif context.get('brainblast'):
+                  result = execute_brainblast_command(
+                      command=query, 
+                      command_history=cmd_history, 
+                      **context
+                  )
+                  print(result)
+                  output = result.get('output', 'Brainblast search executed.')
+
+              else:
+                  # Default to web search
+                  provider = context.get('sprovider') or current_state.search_provider
+                  results = search_web(query, provider=provider)
+                  output = "\n".join([f"- {res}" for res in results]) if results else "No web results found."
+
+          except Exception as e:
+              output = f"An error occurred in the search jinx: {e}\n{traceback.format_exc()}"
+
+          context['output'] = output

@@ -1,0 +1,61 @@
+jinx_name: "trigger"
+description: "Creates a persistent listener (--listen) or a scheduled task (--cron)."
+inputs:
+  - listen: "" # The description for a persistent, event-driven listener.
+  - cron: ""   # The description for a scheduled, time-based task.
+steps:
+  - name: "execute_command"
+    engine: "python"
+    code: |
+      import traceback
+      from npcpy.work.trigger import execute_trigger_command # For --listen
+      from npcpy.work.plan import execute_plan_command      # For --cron
+      
+      listen_description = context.get('listen')
+      cron_description = context.get('cron')
+      output_messages = context.get('messages', [])
+      
+      USAGE = 'Usage: /trigger --listen "<description>" OR /trigger --cron "<description>"'
+      
+      # Determine which command was used and set the appropriate variables
+      subcommand = None
+      description = None
+      executor_func = None
+      
+      # --- Argument Validation ---
+      # Ensure mutual exclusivity
+      if listen_description and cron_description:
+          context['output'] = f"Error: --listen and --cron are mutually exclusive. {USAGE}"
+          context['messages'] = output_messages
+          exit()
+          
+      # --- Command Dispatch ---
+      if listen_description:
+          subcommand = 'listen'
+          description = listen_description
+          executor_func = execute_trigger_command
+      elif cron_description:
+          subcommand = 'cron'
+          description = cron_description
+          executor_func = execute_plan_command
+      else:
+          # Handle case where no arguments were provided
+          context['output'] = f"Error: You must provide either --listen or --cron. {USAGE}"
+          context['messages'] = output_messages
+          exit()
+      
+      # --- Execution ---
+      try:
+          result = executor_func(command=description, **context)
+          
+          if isinstance(result, dict):
+              output_key = 'Listener' if subcommand == 'listen' else 'Cron job'
+              context['output'] = result.get('output', f'{output_key} created successfully.')
+              context['messages'] = result.get('messages', output_messages)
+          else:
+              context['output'] = str(result)
+              context['messages'] = output_messages
+      except Exception as e:
+          traceback.print_exc()
+          context['output'] = f"Error creating {subcommand}: {e}"
+          context['messages'] = output_messages

@@ -1,0 +1,140 @@
+jinx_name: "compress"
+description: "Manages conversation and knowledge context. Defaults to compacting context. Use flags for other operations."
+inputs:
+  - flush: ""       # The number of recent messages to flush.
+  - sleep: False    # If true, evolves the knowledge graph.
+  - dream: False    # Used with --sleep. Runs creative synthesis.
+  - ops: ""         # Used with --sleep. Comma-separated list of KG operations.
+  - model: ""       # Used with --sleep. LLM model for KG evolution.
+  - provider: ""    # Used with --sleep. LLM provider for KG evolution.
+steps:
+  - name: "manage_context_and_memory"
+    engine: "python"
+    code: |
+      import os
+      import traceback
+      from npcpy.llm_funcs import breathe
+      from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db
+      from npcpy.memory.knowledge_graph import kg_sleep_process, kg_dream_process
+
+      # --- Get all inputs from context ---
+      flush_n_str = context.get('flush')
+      is_sleeping = context.get('sleep')
+      is_dreaming = context.get('dream')
+      operations_str = context.get('ops')
+      llm_model = context.get('model')
+      llm_provider = context.get('provider')
+      output_messages = context.get('messages', [])
+      
+      USAGE = """Usage:
+        /compress                       (Compacts conversation context)
+        /compress --flush <number>        (Removes the last N messages)
+        /compress --sleep [...]         (Evolves the knowledge graph)
+          --dream                       (With --sleep: enables creative synthesis)
+          --ops "op1,op2"               (With --sleep: specifies KG operations)
+          --model <name>                (With --sleep: specifies LLM model)
+          --provider <name>             (With --sleep: specifies LLM provider)"""
+
+      # --- Argument Validation: Ensure mutual exclusivity ---
+      is_flushing = flush_n_str is not None and flush_n_str.strip() != ''
+      if is_sleeping and is_flushing:
+          context['output'] = f"Error: --sleep and --flush are mutually exclusive.\n{USAGE}"
+          context['messages'] = output_messages
+          exit()
+
+      # --- Dispatcher: Route to the correct functionality ---
+
+      # 1. SLEEP: Evolve the Knowledge Graph
+      if is_sleeping:
+          current_npc = context.get('npc')
+          current_team = context.get('team')
+          
+          # Parameter setup for KG process
+          operations_config = [op.strip() for op in operations_str.split(',')] if operations_str else None
+          if not llm_model and current_npc: llm_model = current_npc.model
+          if not llm_provider and current_npc: llm_provider = current_npc.provider
+          if not llm_model: llm_model = "gemini-1.5-pro"
+          if not llm_provider: llm_provider = "gemini"
+
+          team_name = current_team.name if current_team else "__none__"
+          npc_name = current_npc.name if current_npc else "__none__"
+          current_path = os.getcwd()
+          scope_str = f"Team: '{team_name}', NPC: '{npc_name}', Path: '{current_path}'"
+          
+          command_history = None
+          try:
+              db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
+              command_history = CommandHistory(db_path)
+              engine = command_history.engine
+              current_kg = load_kg_from_db(engine, team_name, npc_name, current_path)
+
+              if not current_kg or not current_kg.get('facts'):
+                  context['output'] = f"Knowledge graph for the current scope is empty. Nothing to process.\n- Scope: {scope_str}"
+                  exit()
+
+              original_facts = len(current_kg.get('facts', []))
+              original_concepts = len(current_kg.get('concepts', []))
+              
+              evolved_kg, _ = kg_sleep_process(existing_kg=current_kg, model=llm_model, provider=llm_provider, npc=current_npc, operations_config=operations_config)
+              process_type = "Sleep"
+
+              if is_dreaming:
+                  evolved_kg, _ = kg_dream_process(existing_kg=evolved_kg, model=llm_model, provider=llm_provider, npc=current_npc)
+                  process_type += " & Dream"
+
+              save_kg_to_db(engine, evolved_kg, team_name, npc_name, current_path)
+              
+              new_facts = len(evolved_kg.get('facts', []))
+              new_concepts = len(evolved_kg.get('concepts', []))
+              
+              context['output'] = (f"{process_type} process complete.\n"
+                                   f"- Facts: {original_facts} -> {new_facts} ({new_facts - original_facts:+})\n"
+                                   f"- Concepts: {original_concepts} -> {new_concepts} ({new_concepts - original_concepts:+})")
+          except Exception as e:
+              traceback.print_exc()
+              context['output'] = f"Error during KG evolution: {e}"
+          finally:
+              if command_history: command_history.close()
+              context['messages'] = output_messages
+
+      # 2. FLUSH: Remove messages from context
+      elif is_flushing:
+          try:
+              n = int(flush_n_str)
+              if n <= 0:
+                  context['output'] = "Error: Number of messages to flush must be positive."
+                  exit()
+          except ValueError:
+              context['output'] = f"Error: Invalid number '{flush_n_str}'. {USAGE}"
+              exit()
+
+          messages_list = list(output_messages)
+          original_len = len(messages_list)
+          final_messages = []
+          
+          if messages_list and messages_list[0].get("role") == "system":
+              system_message = messages_list.pop(0)
+              num_to_remove = min(n, len(messages_list))
+              final_messages = [system_message] + messages_list[:-num_to_remove]
+          else:
+              num_to_remove = min(n, original_len)
+              final_messages = messages_list[:-num_to_remove]
+          
+          removed_count = original_len - len(final_messages)
+          context['output'] = f"Flushed {removed_count} message(s). Context is now {len(final_messages)} messages."
+          context['messages'] = final_messages
+
+      # 3. DEFAULT: Compact conversation context
+      else:
+          try:
+              result = breathe(**context)
+              if isinstance(result, dict):
+                  context['output'] = result.get('output', 'Context compressed.')
+                  context['messages'] = result.get('messages', output_messages)
+              else:
+                  context['output'] = "Context compression process initiated."
+                  context['messages'] = output_messages
+          except Exception as e:
+              traceback.print_exc()
+              context['output'] = f"Error during context compression: {e}"
+              context['messages'] = output_messages

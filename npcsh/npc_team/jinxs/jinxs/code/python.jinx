@@ -1,0 +1,11 @@
+jinx_name: python
+description: Execute scripts with python. You must set the ultimate result as the "output"
+  variable. It MUST be a string. 
+  Do not add unnecessary print statements. 
+  This jinx is intended for executing code snippets that are not 
+  accomplished by other jinxes. Use it only when the others are insufficient.
+inputs:
+- code
+steps:
+- code: '{{code}}'
+  engine: python

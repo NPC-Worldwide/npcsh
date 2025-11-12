@@ -1,0 +1,53 @@
+jinx_name: "plonk"
+description: "Use vision model to interact with GUI. Usage: /plonk <task description>"
+inputs:
+  - task_description: "" # Required task description for GUI interaction.
+  - vmodel: "" # Vision model to use. Defaults to NPCSH_VISION_MODEL or NPC's model.
+  - vprovider: "" # Vision model provider. Defaults to NPCSH_VISION_PROVIDER or NPC's provider.
+steps:
+  - name: "execute_plonk"
+    engine: "python"
+    code: |
+      import traceback
+      from npcsh.plonk import execute_plonk_command, format_plonk_summary
+      # Assuming NPCSH_VISION_MODEL and NPCSH_VISION_PROVIDER are accessible
+      
+      task_description = context.get('task_description')
+      vision_model = context.get('vmodel')
+      vision_provider = context.get('vprovider')
+      plonk_context = context.get('plonk_context') # Passed from original context
+      current_npc = context.get('npc')
+      output_messages = context.get('messages', [])
+      
+      if not task_description or not task_description.strip():
+          context['output'] = "Usage: /plonk <task_description> [--vmodel model_name] [--vprovider provider_name]"
+          context['messages'] = output_messages
+          exit()
+
+      # Fallback for model/provider if not explicitly set in Jinx inputs
+      if not vision_model and current_npc and current_npc.model:
+          vision_model = current_npc.model
+      if not vision_provider and current_npc and current_npc.provider:
+          vision_provider = current_npc.provider
+      
+      try:
+          summary_data = execute_plonk_command(
+              request=task_description,
+              model=vision_model,
+              provider=vision_provider,
+              npc=current_npc,
+              plonk_context=plonk_context,
+              debug=True # Assuming debug is often desired for plonk
+          )        
+          
+          if summary_data and isinstance(summary_data, list):
+              output_report = format_plonk_summary(summary_data)
+              context['output'] = output_report
+          else:
+              context['output'] = "Plonk command did not complete within the maximum number of iterations."
+
+      except Exception as e:
+          traceback.print_exc()
+          context['output'] = f"Error executing plonk command: {e}"
+      
+      context['messages'] = output_messages
