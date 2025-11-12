@@ -1,19 +1,38 @@
 jinx_name: sh
 description: Execute bash queries. Should be used to grep for file contents, list directories, explore information to answer user questions more practically.
 inputs:
-- bash_command
+  - bash_command
 steps:
-  - engine: python
+  - name: execute_bash
+    engine: python
     code: |
       import subprocess
-      import os
-      cmd = '{{bash_command}}'
-      def run_command(cmd):
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate()
-        if stderr:
-          print(f"Error: {stderr.decode('utf-8')}")
-          return stderr
-        return stdout
-      result = run_command(cmd)
-      output = result.decode('utf-8')
+      import sys # Import sys to explicitly write to stderr for visibility
+
+      # Force a simple print to see if anything comes out
+      print("--- Jinx 'sh' code started ---", file=sys.stderr) 
+
+      cmd = '{{ bash_command }}'
+      
+      # Initialize output to an empty string to ensure it always exists
+      output = "" 
+
+
+      process = subprocess.Popen(
+          cmd, 
+          shell=True, 
+          stdout=subprocess.PIPE, 
+          stderr=subprocess.PIPE
+      )
+      stdout, stderr = process.communicate()
+      
+      # Print raw stdout/stderr to sys.stderr for better visibility in some environments
+      print(f"Jinx 'sh' raw stdout: {stdout.decode('utf-8', errors='ignore')}", file=sys.stderr)
+      print(f"Jinx 'sh' raw stderr: {stderr.decode('utf-8', errors='ignore')}", file=sys.stderr)
+
+      if stderr:
+          output = f"Error: {stderr.decode('utf-8')}"
+      else:
+          output = stdout.decode('utf-8')
+
+
