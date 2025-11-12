@@ -1,0 +1,68 @@
+jinx_name: "roll"
+description: "Generate a video from a text prompt."
+inputs:
+  - prompt: "" # Required text prompt for video generation.
+  - vgmodel: "" # Video generation model to use. Defaults to NPCSH_VIDEO_GEN_MODEL or NPC's model.
+  - vgprovider: "" # Video generation provider to use. Defaults to NPCSH_VIDEO_GEN_PROVIDER or NPC's provider.
+  - num_frames: 125 # Number of frames for the video.
+  - width: 256 # Width of the video.
+  - height: 256 # Height of the video.
+  - output_path: "output.mp4" # Output file path for the video.
+steps:
+  - name: "generate_video"
+    engine: "python"
+    code: |
+      import traceback
+      from npcpy.llm_funcs import gen_video
+      # Assuming NPCSH_VIDEO_GEN_MODEL and NPCSH_VIDEO_GEN_PROVIDER are accessible
+      
+      prompt = context.get('prompt')
+      num_frames = int(context.get('num_frames', 125)) # Ensure int type
+      width = int(context.get('width', 256)) # Ensure int type
+      height = int(context.get('height', 256)) # Ensure int type
+      output_path = context.get('output_path')
+      video_gen_model = context.get('vgmodel')
+      video_gen_provider = context.get('vgprovider')
+      output_messages = context.get('messages', [])
+      current_npc = context.get('npc')
+      
+      if not prompt or not prompt.strip():
+          context['output'] = "Usage: /roll <your prompt>"
+          context['messages'] = output_messages
+          exit()
+
+      # Fallback for model/provider if not explicitly set in Jinx inputs
+      if not video_gen_model and current_npc and current_npc.model:
+          video_gen_model = current_npc.model
+      if not video_gen_provider and current_npc and current_npc.provider:
+          video_gen_provider = current_npc.provider
+      
+      # Final fallbacks (these would ideally come from npcsh._state config)
+      if not video_gen_model: 
+            video_gen_model = "stable-video-diffusion" # Example default
+      if not video_gen_provider: 
+            video_gen_provider = "diffusers" # Example default
+
+      try:
+          result = gen_video(
+              prompt=prompt,
+              model=video_gen_model,
+              provider=video_gen_provider,
+              npc=current_npc,
+              num_frames=num_frames,
+              width=width,
+              height=height,
+              output_path=output_path,
+              **context.get('api_kwargs', {}) # Assuming api_kwargs might be passed
+          )
+          
+          if isinstance(result, dict):
+              context['output'] = result.get('output', 'Video generated.')
+              context['messages'] = result.get('messages', output_messages)
+          else:
+              context['output'] = str(result)
+              context['messages'] = output_messages
+      except Exception as e:
+          traceback.print_exc()
+          context['output'] = f"Error generating video: {e}"
+          context['messages'] = output_messages

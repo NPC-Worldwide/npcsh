@@ -1,0 +1,144 @@
+jinx_name: "vixynt"
+description: "Generates images from text descriptions or edits existing ones."
+inputs:
+  - prompt
+  - model: null
+  - provider: null
+  - output_name: null
+  - attachments: null
+  - n_images: null
+  - height: null
+  - width: null
+steps:
+  - name: "generate_or_edit_image"
+    engine: "python"
+    code: |
+      import os
+      import base64
+      from io import BytesIO
+      from datetime import datetime
+      from PIL import Image
+      from npcpy.llm_funcs import gen_image
+      
+      # Extract inputs from context with proper type conversion
+      image_prompt = str(context.get('prompt', '')).strip()
+      output_name = context.get('output_name')
+      attachments_str = context.get('attachments')
+      
+      # Handle integer inputs - they may come as strings or ints
+      try:
+          n_images = int(context.get('n_images', 1))
+      except (ValueError, TypeError):
+          n_images = 1
+      
+      try:
+          height = int(context.get('height', 1024))
+      except (ValueError, TypeError):
+          height = 1024
+      
+      try:
+          width = int(context.get('width', 1024))
+      except (ValueError, TypeError):
+          width = 1024
+      
+      # Get model and provider, prioritizing context, then NPC, then environment variables
+      model = context.get('model')
+      provider = context.get('provider')
+      
+      # Use NPC's model/provider as fallback
+      if not model and npc and hasattr(npc, 'model') and npc.model:
+          model = npc.model 
+      if not provider and npc and hasattr(npc, 'provider') and npc.provider:
+          provider = npc.provider
+      
+      # Fallback to environment variables
+      if not model:
+          model = os.getenv('NPCSH_IMAGE_GEN_MODEL')
+      if not provider:
+          provider = os.getenv('NPCSH_IMAGE_GEN_PROVIDER')
+
+      # Final hardcoded fallbacks if nothing else is set
+      if not model:
+          model = "runwayml/stable-diffusion-v1-5"
+      if not provider:
+          provider = "diffusers"
+      
+      # Parse attachments
+      input_images = []
+      if attachments_str and str(attachments_str).strip():
+          input_images = [p.strip() for p in str(attachments_str).split(',')]
+      
+      output_messages = context.get('messages', [])
+      
+      if not image_prompt:
+          output = "Error: No prompt provided for image generation."
+      else:
+          try:
+              # Generate image(s)
+              result = gen_image(
+                  prompt=image_prompt,
+                  model=model,
+                  provider=provider,
+                  npc=npc,
+                  height=height,
+                  width=width,
+                  n_images=n_images, 
+                  input_images=input_images if input_images else None
+              )
+              
+              # Ensure we have a list of images
+              if not isinstance(result, list):
+                  images_list = [result] if result is not None else []
+              else:
+                  images_list = result
+              
+              saved_files = []
+              html_image_tags = [] # This list will store the raw HTML <img> tags
+              
+              for i, image in enumerate(images_list):
+                  if image is None:
+                      continue
+                  
+                  # Determine output filename
+                  if output_name and str(output_name).strip():
+                      base_name, ext = os.path.splitext(os.path.expanduser(str(output_name)))
+                      if not ext:
+                          ext = ".png"
+                      current_output_file = f"{base_name}_{i}{ext}" if len(images_list) > 1 else f"{base_name}{ext}"
+                  else:
+                      os.makedirs(os.path.expanduser("~/.npcsh/images/"), exist_ok=True)
+                      current_output_file = (
+                          os.path.expanduser("~/.npcsh/images/")
+                          + f"image_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{i}.png"
+                      )
+                  
+                  # Save image to file
+                  image.save(current_output_file)
+                  saved_files.append(current_output_file)
+
+                  # Convert image to base64 and create an HTML <img> tag
+                  with open(current_output_file, 'rb') as f:
+                      img_data = base64.b64encode(f.read()).decode()
+                      # Using raw HTML <img> tag with data URI
+                      html_image_tags.append(f'<img src="data:image/png;base64,{img_data}" alt="Generated Image {i+1}" style="max-width: 100%; display: block; margin-top: 10px;">')
+              
+              if saved_files:
+                  output_text_message = f"Image(s) generated and saved to: {', '.join(saved_files)}"
+                  if input_images:
+                      output_text_message = f"Image(s) edited and saved to: {', '.join(saved_files)}"
+                  
+                  output = output_text_message # Keep the text message clean
+                  output += f"\n\nThe image files have been saved and are ready to view."
+                  output += "\n\n" + "\n".join(html_image_tags) # Append all HTML <img> tags to the output
+              else:
+                  output = "No images were generated."
+                  
+          except Exception as e:
+              import traceback
+              traceback.print_exc()
+              output = f"Error {'editing' if input_images else 'generating'} image: {str(e)}"
+      
+      context['output'] = output
+      context['messages'] = output_messages
+      context['model'] = model
+      context['provider'] = provider

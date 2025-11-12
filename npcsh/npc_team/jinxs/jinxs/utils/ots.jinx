@@ -1,0 +1,61 @@
+jinx_name: "ots"
+description: "Take screenshot and analyze with vision model. Usage: /ots <prompt>"
+inputs:
+  - prompt
+  - image_paths_args: ""
+  - vmodel: ""
+  - vprovider: ""
+steps:
+  - name: "analyze_screenshot_or_image"
+    engine: "python"
+    code: |
+      import os
+      import traceback
+      from npcpy.llm_funcs import get_llm_response
+      from npcpy.data.image import capture_screenshot
+      
+      user_prompt = context.get('prompt') or ""
+      image_paths_args_str = context.get('image_paths_args') or ""
+      vision_model = context.get('vmodel') or ""
+      vision_provider = context.get('vprovider') or ""
+      stream_output = context.get('stream') or False
+      api_url = context.get('api_url') or ""
+      api_key = context.get('api_key') or ""
+      output_messages = context.get('messages', [])
+      current_npc = context.get('npc')
+
+      image_paths = []
+      if image_paths_args_str.strip():
+          for img_path_arg in image_paths_args_str.split(','):
+              full_path = os.path.abspath(os.path.expanduser(img_path_arg.strip()))
+              if os.path.exists(full_path):
+                  image_paths.append(full_path)
+      
+      if not image_paths:
+          screenshot_info = capture_screenshot(full=False)
+          if screenshot_info and "file_path" in screenshot_info:
+              image_paths.append(screenshot_info["file_path"])
+              print(f"📸 Screenshot captured: {screenshot_info.get('filename', os.path.basename(screenshot_info['file_path']))}")
+
+      if not vision_model:
+          vision_model = getattr(current_npc, 'model', 'gemma3:4b')
+      
+      if not vision_provider:
+          vision_provider = getattr(current_npc, 'provider', 'ollama')
+
+      response_data = get_llm_response(
+          prompt=user_prompt,
+          model=vision_model,
+          provider=vision_provider,
+          messages=output_messages,
+          images=image_paths,
+          stream=stream_output,
+          npc=current_npc,
+          api_url=api_url or None,
+          api_key=api_key or None
+      )
+      
+      context['output'] = response_data.get('response', 'No response received')
+      context['messages'] = response_data.get('messages', output_messages)
+      context['model'] = vision_model
+      context['provider'] = vision_provider

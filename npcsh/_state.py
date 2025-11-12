@@ -2475,7 +2475,9 @@ def execute_command(
                     review=review,
                     router=router
                 )
-                
+                if isinstance(output, dict) and 'output' in output:
+                    output = output['output']
+
                 if is_last_command:
                     print(colored("✅ Pipeline complete", "green"))
                     return current_state, output
@@ -2821,7 +2823,6 @@ def process_memory_approvals(command_history, memory_queue):
                 approval['decision'], 
                 approval.get('final_memory')
             )
-
 def process_result(
     user_input: str,
     result_state: ShellState,
@@ -2854,10 +2855,17 @@ def process_result(
 
     final_output_str = None
     
+    # FIX: Handle dict output properly
     if isinstance(output, dict):
         output_content = output.get('output')
         model_for_stream = output.get('model', active_npc.model)
         provider_for_stream = output.get('provider', active_npc.provider)
+        
+        # If output_content is still a dict or None, convert to string
+        if isinstance(output_content, dict):
+            output_content = str(output_content)
+        elif output_content is None:
+            output_content = "Command completed with no output"
     else:
         output_content = output
         model_for_stream = active_npc.model
@@ -2870,15 +2878,21 @@ def process_result(
         else:
             render_markdown(str(output_content))
     elif result_state.stream_output:
-        final_output_str = print_and_process_stream_with_markdown(
-            output_content, 
-            model_for_stream, 
-            provider_for_stream, 
-            show=True
-        )
+        # FIX: Only stream if output_content is a generator, not a string
+        if isinstance(output_content, str):
+            final_output_str = output_content
+            render_markdown(final_output_str)
+        else:
+            final_output_str = print_and_process_stream_with_markdown(
+                output_content, 
+                model_for_stream, 
+                provider_for_stream, 
+                show=True
+            )
     elif output_content is not None:
         final_output_str = str(output_content)
         render_markdown(final_output_str)
+        
 
     if final_output_str:
         if result_state.messages:

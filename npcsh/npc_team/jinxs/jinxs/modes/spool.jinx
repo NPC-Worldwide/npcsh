@@ -1,0 +1,40 @@
+jinx_name: "spool"
+description: "Enter interactive chat (spool) mode"
+inputs: [] # Spool mode typically takes its parameters directly from the environment/kwargs
+steps:
+  - name: "enter_spool"
+    engine: "python"
+    code: |
+      import traceback
+      from npcpy.npc_compiler import NPC, Team
+      from npcsh.spool import enter_spool_mode
+      
+      output_messages = context.get('messages', [])
+      current_npc = context.get('npc')
+      current_team = context.get('team')
+
+      try:
+          # Handle potential string NPC name if passed from CLI
+          if isinstance(current_npc, str) and current_team:
+              npc_name = current_npc
+              if npc_name in current_team.npcs:
+                  current_npc = current_team.npcs[npc_name]
+              else:
+                  context['output'] = f"Error: NPC '{npc_name}' not found in team. Available NPCs: {', '.join(current_team.npcs.keys())}"
+                  context['messages'] = output_messages
+                  exit()
+          context['npc'] = current_npc # Ensure the NPC object is updated in context
+          
+          result = enter_spool_mode(**context) # Pass all context as kwargs
+          
+          if isinstance(result, dict):
+              context['output'] = result.get('output', 'Exited Spool Mode.')
+              context['messages'] = result.get('messages', output_messages)
+          else:
+              context['output'] = str(result)
+              context['messages'] = output_messages
+
+      except Exception as e:
+          traceback.print_exc()
+          context['output'] = f"Error entering spool mode: {e}"
+          context['messages'] = output_messages
