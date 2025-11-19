@@ -18,6 +18,7 @@ except ImportError:
 
 from termcolor import colored, cprint
 import json
+import readline
 from npcpy.llm_funcs import get_llm_response, breathe
 from npcpy.npc_compiler import NPC
 from npcpy.npc_sysenv import render_markdown, print_and_process_stream_with_markdown
@@ -34,8 +35,11 @@ from npcsh._state import (
     should_skip_kg_processing, 
     NPCSH_CHAT_PROVIDER, 
     NPCSH_CHAT_MODEL,
-    get_team_ctx_path
+    get_team_ctx_path,
+    make_completer,
+    execute_slash_command,
 )
+from npcsh.routes import router
 import yaml 
 from pathlib import Path
 
@@ -1281,6 +1285,14 @@ def corca_session(
         state.command_history = command_history
 
     print_corca_welcome_message()
+    try:
+        readline.set_completer(make_completer(state, router))
+    except Exception:
+        pass
+
+    display_model = state.npc.model if state.npc and state.npc.model else state.chat_model
+    display_provider = state.npc.provider if state.npc and state.npc.provider else state.chat_provider
+    print(f"Current LLM model: {display_model} ({display_provider})")
     
     # Resolve MCP server path
     auto_copy_bypass = os.getenv("NPCSH_CORCA_AUTO_COPY_MCP_SERVER", "false").lower() == "true"
@@ -1324,9 +1336,23 @@ def corca_session(
     while True:
         try:
             prompt_npc_name = state.npc.name if state.npc else "npc"
-            prompt_str = f"{colored(os.path.basename(state.current_path), 'blue')}:{prompt_npc_name}🦌> "
+            current_model = state.npc.model if state.npc and state.npc.model else state.chat_model
+            current_provider = state.npc.provider if state.npc and state.npc.provider else state.chat_provider
+            model_segment = f"{current_model}@{current_provider}"
+            prompt_str = f"{colored(os.path.basename(state.current_path), 'blue')}:{prompt_npc_name}:{model_segment}🦌> "
             prompt = readline_safe_prompt(prompt_str)
             user_input = get_multiline_input(prompt).strip()
+            
+            if user_input.startswith('/'):
+                state, slash_result = execute_slash_command(
+                    user_input, 
+                    None,
+                    state,
+                    state.stream_output,
+                    router
+                )
+                process_result(user_input, state, slash_result, command_history)
+                continue
             
             if user_input.lower() in ["exit", "quit", "done"]:
                 break

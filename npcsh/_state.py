@@ -26,7 +26,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from typing import Dict, List,  Any, Tuple, Union, Optional
+from typing import Dict, List,  Any, Tuple, Union, Optional, Callable
 import logging
 import textwrap
 from termcolor import colored
@@ -80,14 +80,15 @@ from npcpy.memory.command_history import (
     load_kg_from_db, 
     save_kg_to_db, 
 )
-from npcpy.npc_compiler import NPC, Team, load_jinxs_from_directory
+from npcpy.npc_compiler import NPC, Team, load_jinxs_from_directory, build_jinx_tool_catalog
 from npcpy.llm_funcs import (
     check_llm_command,
     get_llm_response,
     execute_llm_command,
     breathe, 
-    
+
 )
+from npcpy.tools import auto_tools
 
 from npcpy.memory.knowledge_graph import (
     kg_evolve_incremental, 
@@ -544,59 +545,7 @@ def get_relevant_memories(
     return all_memories[-max_memories:]
 
 
-def search_kg_facts(
-    self,
-    npc: str,
-    team: str,
-    directory_path: str,
-    query: str
-) -> List[Dict]:
-    
-    kg = load_kg_from_db(
-        self.engine, 
-        team, 
-        npc, 
-        directory_path
-    )
-    
-    if not kg or 'facts' not in kg:
-        return []
-    
-    query_lower = query.lower()
-    matching_facts = []
-    
-    for fact in kg['facts']:
-        statement = fact.get('statement', '').lower()
-        if query_lower in statement:
-            matching_facts.append(fact)
-    
-    return matching_facts
 
-def format_memory_context(memory_examples):
-    if not memory_examples:
-        return ""
-    
-    context_parts = []
-    
-    approved_examples = memory_examples.get("approved", [])
-    rejected_examples = memory_examples.get("rejected", [])
-    
-    if approved_examples:
-        context_parts.append("EXAMPLES OF GOOD MEMORIES:")
-        for ex in approved_examples[:5]:
-            final = ex.get("final_memory") or ex.get("initial_memory")
-            context_parts.append(f"- {final}")
-    
-    if rejected_examples:
-        context_parts.append("\nEXAMPLES OF POOR MEMORIES TO AVOID:")
-        for ex in rejected_examples[:3]:
-            context_parts.append(f"- {ex.get('initial_memory')}")
-    
-    if context_parts:
-        context_parts.append("\nLearn from these examples to generate similar high-quality memories.")
-        return "\n".join(context_parts)
-    
-    return ""
 def add_npcshrc_to_shell_config() -> None:
     """
     Function Description:
@@ -1508,6 +1457,8 @@ if not completion_logger.handlers:
     completion_logger.addHandler(handler)
 
 def make_completer(shell_state: ShellState, router: Any):
+    slash_hint_cache = {"last_key": None}
+
     def complete(text: str, state_index: int) -> Optional[str]:
         """Main completion function"""
         try:
@@ -1533,6 +1484,15 @@ def make_completer(shell_state: ShellState, router: Any):
                     matches = [cmd[1:] for cmd in matching_commands]
                 
                 completion_logger.debug(f"Slash command matches: {matches}")
+                if matches and state_index == 0:
+                    key = (buffer[:begidx], text)
+                    if slash_hint_cache["last_key"] != key:
+                        print("\nAvailable slash commands: " + ", ".join(slash_commands))
+                        try:
+                            readline.redisplay()
+                        except Exception:
+                            pass
+                        slash_hint_cache["last_key"] = key
                 
             elif is_command_position(buffer, begidx):
                 completion_logger.debug("Command position detected")
@@ -1996,6 +1956,181 @@ def parse_generic_command_flags(parts: List[str]) -> Tuple[Dict[str, Any], List[
         
     return parsed_kwargs, positional_args
 
+def _ollama_supports_tools(model: str) -> Optional[bool]:
+    """
+    Best-effort check for tool-call support on an Ollama model by inspecting its template/metadata.
+    Mirrors the lightweight check used in the Flask serve path.
+    """
+    try:
+        import ollama  # Local import to avoid hard dependency when Ollama isn't installed
+    except Exception:
+        return None
+
+    try:
+        details = ollama.show(model)
+        template = details.get("template") or ""
+        metadata = details.get("metadata") or {}
+        if any(token in template for token in ["{{- if .Tools", "{{- range .Tools", "{{- if .ToolCalls"]):
+            return True
+        if metadata.get("tools") or metadata.get("tool_calls"):
+            return True
+        return False
+    except Exception:
+        return None
+
+
+def model_supports_tool_calls(model: Optional[str], provider: Optional[str]) -> bool:
+    """
+    Decide whether to attempt tool-calling for the given model/provider.
+    Uses Ollama template inspection when possible and falls back to name heuristics.
+    """
+    if not model:
+        return False
+
+    provider = (provider or "").lower()
+    model_lower = model.lower()
+
+    if provider == "ollama":
+        ollama_support = _ollama_supports_tools(model)
+        if ollama_support is not None:
+            return ollama_support
+
+    toolish_markers = [
+        "gpt",
+        "claude",
+        "qwen",
+        "mistral",
+        "llama-3.1",
+        "llama3.1",
+        "llama-3.2",
+        "llama3.2",
+        "tool",
+    ]
+    return any(marker in model_lower for marker in toolish_markers)
+
+
+def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str, Callable]]:
+    """
+    Assemble tool definitions + executable map from NPC tools, Jinxs, and MCP servers.
+    This mirrors the auto-translation used in the Flask server path.
+    """
+    tools: List[Dict[str, Any]] = []
+    tool_map: Dict[str, Callable] = {}
+
+    # NPC-defined Python tools
+    npc_obj = state.npc if isinstance(state.npc, NPC) else None
+    if npc_obj and getattr(npc_obj, "tools", None):
+        if isinstance(npc_obj.tools, list) and npc_obj.tools and callable(npc_obj.tools[0]):
+            tools_schema, auto_map = auto_tools(npc_obj.tools)
+            tools.extend(tools_schema or [])
+            tool_map.update(auto_map or {})
+        else:
+            tools.extend(npc_obj.tools or [])
+            if getattr(npc_obj, "tool_map", None):
+                tool_map.update(npc_obj.tool_map)
+    elif npc_obj and getattr(npc_obj, "tool_map", None):
+        tool_map.update(npc_obj.tool_map)
+
+    # Jinx tools from NPC and Team
+    aggregated_jinxs: Dict[str, Any] = {}
+    if npc_obj and getattr(npc_obj, "jinxs_dict", None):
+        aggregated_jinxs.update(npc_obj.jinxs_dict)
+    if state.team and isinstance(state.team, Team) and getattr(state.team, "jinxs_dict", None):
+        aggregated_jinxs.update({k: v for k, v in state.team.jinxs_dict.items() if k not in aggregated_jinxs})
+
+    if aggregated_jinxs:
+        jinx_catalog: Dict[str, Dict[str, Any]] = {}
+        if npc_obj and getattr(npc_obj, "jinx_tool_catalog", None):
+            jinx_catalog.update(npc_obj.jinx_tool_catalog or {})
+        if state.team and isinstance(state.team, Team) and getattr(state.team, "jinx_tool_catalog", None):
+            jinx_catalog.update(state.team.jinx_tool_catalog or {})
+        if not jinx_catalog:
+            jinx_catalog = build_jinx_tool_catalog(aggregated_jinxs)
+
+        tools.extend(list(jinx_catalog.values()))
+
+        jinja_env_for_jinx = getattr(npc_obj, "jinja_env", None)
+        if not jinja_env_for_jinx and state.team and isinstance(state.team, Team):
+            jinja_env_for_jinx = getattr(state.team, "jinja_env", None)
+
+        for name, jinx_obj in aggregated_jinxs.items():
+            def _make_runner(jinx=jinx_obj, jinja_env=jinja_env_for_jinx, tool_name=name):
+                def runner(**kwargs):
+                    input_values = kwargs if isinstance(kwargs, dict) else {}
+                    try:
+                        ctx = jinx.execute(
+                            input_values=input_values,
+                            npc=npc_obj,
+                            messages=state.messages,
+                            extra_globals={"state": state},
+                            jinja_env=jinja_env
+                        )
+                        return ctx.get("output", ctx)
+                    except Exception as exc:
+                        return f"Jinx '{tool_name}' failed: {exc}"
+                return runner
+            tool_map[name] = _make_runner()
+
+    # MCP tools via npcsh.corca client
+    try:
+        from npcsh.corca import MCPClientNPC, _resolve_and_copy_mcp_server_path  # type: ignore
+
+        team_ctx_mcp_servers = None
+        if state.team and isinstance(state.team, Team) and hasattr(state.team, "team_ctx"):
+            team_ctx_mcp_servers = state.team.team_ctx.get("mcp_servers", [])
+
+        mcp_server_path = _resolve_and_copy_mcp_server_path(
+            explicit_path=None,
+            current_path=state.current_path,
+            team_ctx_mcp_servers=team_ctx_mcp_servers,
+            interactive=False,
+            auto_copy_bypass=True
+        )
+
+        if mcp_server_path:
+            reuse_client = (
+                state.mcp_client
+                if state.mcp_client and getattr(state.mcp_client, "server_script_path", None) == mcp_server_path
+                else None
+            )
+            mcp_client = reuse_client or MCPClientNPC()
+            if reuse_client is None:
+                try:
+                    connected = mcp_client.connect_sync(mcp_server_path)
+                except Exception:
+                    connected = False
+                if connected:
+                    state.mcp_client = mcp_client
+            if mcp_client and getattr(mcp_client, "available_tools_llm", None):
+                for tool_def in mcp_client.available_tools_llm:
+                    name = tool_def.get("function", {}).get("name")
+                    if name and name not in tool_map:
+                        tools.append(tool_def)
+                tool_map.update(getattr(mcp_client, "tool_map", {}) or {})
+    except Exception:
+        pass  # MCP is optional; ignore failures
+
+    # Deduplicate tools by name to avoid confusing the LLM
+    deduped = {}
+    for tool_def in tools:
+        name = tool_def.get("function", {}).get("name")
+        if name:
+            deduped[name] = tool_def
+    return list(deduped.values()), tool_map
+
+
+def normalize_llm_result(llm_result: Any, fallback_messages: List[Dict[str, Any]]) -> Tuple[Any, List[Dict[str, Any]]]:
+    """
+    Normalize varying LLM return shapes into (output, messages).
+    """
+    if isinstance(llm_result, dict):
+        messages = llm_result.get("messages", fallback_messages)
+        output = llm_result.get("output")
+        if output is None:
+            output = llm_result.get("response")
+        return output, messages
+    return llm_result, fallback_messages
+
 
 def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
     """Determine if this interaction is too trivial for KG processing"""
@@ -2225,7 +2360,15 @@ def process_pipeline_command(
         )
         info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n' 
         state.messages.append({'role':'user', 'content':full_llm_cmd})
-        
+
+        tools_for_llm: List[Dict[str, Any]] = []
+        tool_exec_map: Dict[str, Callable] = {}
+        tool_capable = model_supports_tool_calls(exec_model, exec_provider)
+        if tool_capable:
+            tools_for_llm, tool_exec_map = collect_llm_tools(state)
+            if not tools_for_llm:
+                tool_capable = False
+
         npc_name = (
             state.npc.name 
             if isinstance(state.npc, NPC) 
@@ -2245,27 +2388,50 @@ def process_pipeline_command(
                 "load_file_contents": load_file_contents, 
                 "search_web": search_web,
                 "get_relevant_memories": get_relevant_memories,
-                "search_kg_facts": search_kg_facts,
+
                 'state': state
             }
             current_module = sys.modules[__name__]
             for name, func in inspect.getmembers(current_module, inspect.isfunction):
                 application_globals_for_jinx[name] = func
 
-            llm_result = check_llm_command(
-                full_llm_cmd,
-                model=exec_model,      
-                provider=exec_provider, 
-                api_url=state.api_url,
-                api_key=state.api_key,
-                npc=state.npc,
-                team=state.team,
-                messages=state.messages,
-                images=state.attachments,
-                stream=stream_final,
-                context=info,
-                extra_globals=application_globals_for_jinx  
-            )
+            if tool_capable:
+                llm_result = get_llm_response(
+                    full_llm_cmd,
+                    model=exec_model,
+                    provider=exec_provider,
+                    npc=state.npc,
+                    team=state.team,
+                    messages=state.messages,
+                    stream=stream_final,
+                    attachments=state.attachments,
+                    context=info,
+                    auto_process_tool_calls=True,
+                    tools=tools_for_llm,
+                    tool_map=tool_exec_map,
+                    tool_choice={"type": "auto"},
+                )
+            else:
+                llm_result = check_llm_command(
+                    full_llm_cmd,
+                    model=exec_model,      
+                    provider=exec_provider, 
+                    api_url=state.api_url,
+                    api_key=state.api_key,
+                    npc=state.npc,
+                    team=state.team,
+                    messages=state.messages,
+                    images=state.attachments,
+                    stream=stream_final,
+                    context=info,
+                    extra_globals=application_globals_for_jinx  
+                )
+
+        if tool_capable:
+            output, updated_messages = normalize_llm_result(llm_result, state.messages)
+            state.messages = updated_messages
+            return state, output
+
         if not review:
             if isinstance(llm_result, dict):
                 state.messages = llm_result.get("messages", state.messages)
