@@ -1781,12 +1781,15 @@ def run_guac_repl(state: ShellState, project_name: str, package_root: Path, pack
             display_model = state.chat_model
             if isinstance(state.npc, NPC) and state.npc.model:
                 display_model = state.npc.model
+            display_provider = state.chat_provider
+            if isinstance(state.npc, NPC) and state.npc.provider:
+                display_provider = state.npc.provider
             
             cwd_colored = colored(os.path.basename(state.current_path), "blue")
             npc_name = state.npc.name if state.npc and state.npc.name else "guac"
             prompt_char = get_guac_prompt_char(command_count)
             
-            prompt_str = f"{cwd_colored}:{npc_name}:{display_model}{prompt_char}>  "
+            prompt_str = f"{cwd_colored}:{npc_name}:{display_model}@{display_provider}{prompt_char}>  "
             prompt = readline_safe_prompt(prompt_str)
             
             user_input = get_multiline_input(prompt).strip()
