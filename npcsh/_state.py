@@ -938,6 +938,7 @@ def validate_bash_command(command_parts: list) -> bool:
     """
     Function Description:
         Validate if the command sequence is a valid bash command with proper arguments/flags.
+        Simplified to be less strict and allow bash to handle argument specifics for common commands.
     Args:
         command_parts : list : Command parts
     Keyword Args:
@@ -948,216 +949,20 @@ def validate_bash_command(command_parts: list) -> bool:
     if not command_parts:
         return False
 
-    COMMAND_PATTERNS = {
-        "cat": {
-            "flags": ["-n", "-b", "-E", "-T", "-s", "--number", "-A", "--show-all"],
-            "requires_arg": True,
-        },
-        "find": {
-            "flags": [
-                "-name",
-                "-type",
-                "-size",
-                "-mtime",
-                "-exec",
-                "-print",
-                "-delete",
-                "-maxdepth",
-                "-mindepth",
-                "-perm",
-                "-user",
-                "-group",
-            ],
-            "requires_arg": True,
-        },
-        "who": {
-            "flags": [
-                "-a",
-                "-b",
-                "-d",
-                "-H",
-                "-l",
-                "-p",
-                "-q",
-                "-r",
-                "-s",
-                "-t",
-                "-u",
-                "--all",
-                "--count",
-                "--heading",
-            ],
-            "requires_arg": False,
-        },
-        "open": {
-            "flags": ["-a", "-e", "-t", "-f", "-F", "-W", "-n", "-g", "-h"],
-            "requires_arg": True,
-        },
-        "ls": {
-            "flags": [
-                "-a",
-                "-l",
-                "-h",
-                "-R",
-                "-t",
-                "-S",
-                "-r",
-                "-d",
-                "-F",
-                "-i",
-                "--color",
-            ],
-            "requires_arg": False,
-        },
-        "cp": {
-            "flags": [
-                "-r",
-                "-f",
-                "-i",
-                "-u",
-                "-v",
-                "--preserve",
-                "--no-preserve=mode,ownership,timestamps",
-            ],
-            "requires_arg": True,
-        },
-        "mv": {
-            "flags": ["-f", "-i", "-u", "-v", "--backup", "--no-clobber"],
-            "requires_arg": True,
-        },
-        "rm": {
-            "flags": ["-f", "-i", "-r", "-v", "--preserve-root", "--no-preserve-root"],
-            "requires_arg": True,
-        },
-        "mkdir": {
-            "flags": ["-p", "-v", "-m", "--mode", "--parents"],
-            "requires_arg": True,
-        },
-        "rmdir": {
-            "flags": ["-p", "-v", "--ignore-fail-on-non-empty"],
-            "requires_arg": True,
-        },
-        "touch": {
-            "flags": ["-a", "-c", "-m", "-r", "-d", "--date"],
-            "requires_arg": True,
-        },
-        "grep": {
-            "flags": [
-                "-i",
-                "-v",
-                "-r",
-                "-l",
-                "-n",
-                "-c",
-                "-w",
-                "-x",
-                "--color",
-                "--exclude",
-                "--include",
-            ],
-            "requires_arg": True,
-        },
-        "sed": {
-            "flags": [
-                "-e",
-                "-f",
-                "-i",
-                "-n",
-                "--expression",
-                "--file",
-                "--in-place",
-                "--quiet",
-                "--silent",
-            ],
-            "requires_arg": True,
-        },
-        "awk": {
-            "flags": [
-                "-f",
-                "-v",
-                "--file",
-                "--source",
-                "--assign",
-                "--posix",
-                "--traditional",
-            ],
-            "requires_arg": True,
-        },
-        "sort": {
-            "flags": [
-                "-b",
-                "-d",
-                "-f",
-                "-g",
-                "-i",
-                "-n",
-                "-r",
-                "-u",
-                "--check",
-                "--ignore-case",
-                "--numeric-sort",
-            ],
-            "requires_arg": False,
-        },
-        "uniq": {
-            "flags": ["-c", "-d", "-u", "-i", "--check-chars", "--skip-chars"],
-            "requires_arg": False,
-        },
-        "wc": {
-            "flags": ["-c", "-l", "-w", "-m", "-L", "--bytes", "--lines", "--words"],
-            "requires_arg": False,
-        },
-        "pwd": {
-            "flags": ["-L", "-P"],
-            "requires_arg": False,
-        },
-        "chmod": {
-            "flags": ["-R", "-v", "-c", "--reference"],
-            "requires_arg": True,
-        },
-
-    }
-
     base_command = command_parts[0]
 
+    # Commands that are always considered valid for direct execution
+    ALWAYS_VALID_COMMANDS = BASH_COMMANDS + list(interactive_commands.keys()) + TERMINAL_EDITORS
+
+    if base_command in ALWAYS_VALID_COMMANDS:
+        return True
+    
+    # Specific checks for commands that might be misinterpreted or need special handling
     if base_command == 'which':
-        return False 
+        return True # 'which' is a valid bash command
 
-
-  
-    INTERACTIVE_COMMANDS = ["ipython", "python", "sqlite3", "r"]
-    TERMINAL_EDITORS = ["vim", "nano", "emacs"]
-    if base_command in TERMINAL_EDITORS or base_command in INTERACTIVE_COMMANDS:
-        return True
-
-    if base_command not in COMMAND_PATTERNS and base_command not in BASH_COMMANDS:
-        return False 
-
-    pattern = COMMAND_PATTERNS.get(base_command)
-    if not pattern:
-        return True
-
-    args = []
-    flags = []
-
-    for i in range(1, len(command_parts)):
-        part = command_parts[i]
-        if part.startswith("-"):
-            flags.append(part)
-            if part not in pattern["flags"]:
-                return False
-        else:
-            args.append(part)
-
-  
-    if base_command == "who" and args:
-        return False
-  
-    if pattern.get("requires_arg", False) and not args:
-        return False
-
-    return True
-
+    # If it's not in our explicit list, it's not a bash command we want to validate strictly
+    return False # If it reaches here, it's not a recognized bash command for strict validation.
 
 def is_npcsh_initialized() -> bool:
     """
@@ -1455,7 +1260,6 @@ if not completion_logger.handlers:
     formatter = logging.Formatter('[%(name)s] %(message)s')
     handler.setFormatter(formatter)
     completion_logger.addHandler(handler)
-
 def make_completer(shell_state: ShellState, router: Any):
     slash_hint_cache = {"last_key": None}
 
@@ -1466,26 +1270,37 @@ def make_completer(shell_state: ShellState, router: Any):
             begidx = readline.get_begidx()
             endidx = readline.get_endidx()
             
-            completion_logger.debug(f"text='{text}', buffer='{buffer}', begidx={begidx}, endidx={endidx}, state_index={state_index}")
-            
+            # The word currently being completed (e.g., "lor" in "ls lor")
+            word_under_cursor = buffer[begidx:endidx] 
+
+            # The very first word/token in the entire buffer (e.g., "ls" in "ls lor")
+            first_token_of_buffer = ""
+            if buffer.strip():
+                match = re.match(r'^(\S+)', buffer.strip())
+                if match:
+                    first_token_of_buffer = match.group(1)
+
             matches = []
-            
-          
-            if begidx > 0 and buffer[begidx-1] == '/':
-                completion_logger.debug(f"Slash command completion - text='{text}'")
+
+            # Determine if we are in a "slash command context"
+            # This is true if the *entire buffer starts with a slash* AND
+            # the current completion is for that initial slash command (begidx == 0).
+
+            is_slash_command_context = (begidx <=1 and first_token_of_buffer.startswith('/'))
+
+            if is_slash_command_context:
                 slash_commands = get_slash_commands(shell_state, router)
-                completion_logger.debug(f"Available slash commands: {slash_commands}")
                 
-                if text == '':
+                if first_token_of_buffer == '/': # If just '/' is typed
                     matches = [cmd[1:] for cmd in slash_commands]
-                else:
-                    full_text = '/' + text
-                    matching_commands = [cmd for cmd in slash_commands if cmd.startswith(full_text)]
+                else: # If '/ag' is typed
+                    matching_commands = [cmd for cmd in slash_commands if cmd.startswith(first_token_of_buffer)]
                     matches = [cmd[1:] for cmd in matching_commands]
                 
-                completion_logger.debug(f"Slash command matches: {matches}")
+                # Only print hints if this is the first completion attempt (state_index == 0)
+                # and the hints haven't been printed for this specific input yet.
                 if matches and state_index == 0:
-                    key = (buffer[:begidx], text)
+                    key = (buffer, first_token_of_buffer) # Use full buffer for cache key
                     if slash_hint_cache["last_key"] != key:
                         print("\nAvailable slash commands: " + ", ".join(slash_commands))
                         try:
@@ -1493,38 +1308,34 @@ def make_completer(shell_state: ShellState, router: Any):
                         except Exception:
                             pass
                         slash_hint_cache["last_key"] = key
-                
-            elif is_command_position(buffer, begidx):
-                completion_logger.debug("Command position detected")
-                bash_matches = [cmd for cmd in BASH_COMMANDS if cmd.startswith(text)]
+            
+            # If not a slash command context, then it's either a regular command or an argument.
+            elif begidx == 0: # Completing a regular command (e.g., "ls", "pyt")
+                bash_matches = [cmd for cmd in BASH_COMMANDS if cmd.startswith(word_under_cursor)]
                 matches.extend(bash_matches)
                 
-                interactive_matches = [cmd for cmd in interactive_commands.keys() if cmd.startswith(text)]
+                interactive_matches = [cmd for cmd in interactive_commands.keys() if cmd.startswith(word_under_cursor)]
                 matches.extend(interactive_matches)
                 
-                if len(text) >= 1:
+                if len(word_under_cursor) >= 1:
                     path_executables = get_path_executables()
-                    exec_matches = [cmd for cmd in path_executables if cmd.startswith(text)]
+                    exec_matches = [cmd for cmd in path_executables if cmd.startswith(word_under_cursor)]
                     matches.extend(exec_matches[:20])
-            else:
-                completion_logger.debug("File completion")
-                matches = get_file_completions(text)
+            
+            else: # Completing a file or directory path (e.g., "ls doc/my_f")
+                matches = get_file_completions(word_under_cursor)
             
             matches = sorted(list(set(matches)))
-            completion_logger.debug(f"Final matches: {matches}")
             
             if state_index < len(matches):
-                result = matches[state_index]
-                completion_logger.debug(f"Returning: '{result}'")
-                return result
+                return matches[state_index]
             else:
-                completion_logger.debug(f"No match for state_index {state_index}")
+                return None # readline expects None when no more completions
             
         except Exception as e:
-            completion_logger.error(f"Exception in completion: {e}")
-            completion_logger.debug("Exception details:", exc_info=True)
-        
-        return None
+            # Using completion_logger for internal debugging, not printing to stdout for user.
+            # completion_logger.error(f"Exception in completion: {e}", exc_info=True) 
+            return None
     
     return complete
 
@@ -1558,39 +1369,71 @@ def get_slash_commands(state: ShellState, router: Any) -> List[str]:
     completion_logger.debug(f"Final slash commands: {result}")
     return result
 def get_file_completions(text: str) -> List[str]:
-    """Get file/directory completions"""
+    """Get file/directory completions, including for subfolders."""
     try:
-        if text.startswith('/'):
-            basedir = os.path.dirname(text) or '/'
-            prefix = os.path.basename(text)
-        elif text.startswith('./') or text.startswith('../'):
-            basedir = os.path.dirname(text) or '.'
+        # Determine the base directory and the prefix to match
+        if '/' in text:
+            basedir = os.path.dirname(text)
             prefix = os.path.basename(text)
         else:
             basedir = '.'
             prefix = text
         
-        if not os.path.exists(basedir):
-            return []
-        
+        # If basedir is empty (e.g., text is "folder/"), it should be current dir
+        if not basedir:
+            basedir = '.'
+
+        # Handle absolute paths
+        if text.startswith('/'):
+            # Ensure absolute path starts with / and handle cases like "/something"
+            if basedir.startswith('/'):
+                pass # already absolute
+            else:
+                basedir = '/' + basedir.lstrip('/') 
+            if basedir == '/': # If text was just "/something", basedir is "/"
+                prefix = os.path.basename(text)
+
+        # Resolve the actual path to list
+        if basedir == '.':
+            current_path_to_list = os.getcwd()
+        else:
+            # If basedir is relative, join it with current working directory
+            if not os.path.isabs(basedir):
+                current_path_to_list = os.path.join(os.getcwd(), basedir)
+            else:
+                current_path_to_list = basedir
+
+            if not os.path.isdir(current_path_to_list): # If the base path doesn't exist yet, no completions
+                return []
+
         matches = []
         try:
-            for item in os.listdir(basedir):
+            for item in os.listdir(current_path_to_list):
                 if item.startswith(prefix):
-                    full_path = os.path.join(basedir, item)
+                    full_item_path = os.path.join(current_path_to_list, item)
+                    
+                    # Construct the completion string relative to the input 'text'
+                    # This ensures that if the input was 'folder/s', the completion is 'folder/subfolder/'
                     if basedir == '.':
                         completion = item
                     else:
-                        completion = os.path.join(basedir, item)
-                    
-                  
-                    matches.append(completion)
+                        # Reconstruct the path fragment before the prefix
+                        path_fragment_before_prefix = text[:len(text) - len(prefix)]
+                        completion = os.path.join(path_fragment_before_prefix, item)
+
+                    if os.path.isdir(full_item_path):
+                        matches.append(completion + '/')
+                    else:
+                        matches.append(completion)
         except (PermissionError, OSError):
             pass
         
         return sorted(matches)
-    except Exception:
+    except Exception as e:
+        completion_logger.error(f"Error in get_file_completions for text '{text}': {e}", exc_info=True)
         return []
+
+
 def is_command_position(buffer: str, begidx: int) -> bool:
     """Determine if cursor is at a command position"""
   
@@ -2301,12 +2144,16 @@ def process_pipeline_command(
 
     if validate_bash_command(cmd_parts):
         with SpinnerContext(f"Executing {command_name}", style="line"):
-            success, result = handle_bash_command(
-                cmd_parts, 
-                cmd_to_process, 
-                stdin_input, 
-                state
-            )
+            try: # Added try-except for KeyboardInterrupt here
+                success, result = handle_bash_command(
+                    cmd_parts, 
+                    cmd_to_process, 
+                    stdin_input, 
+                    state
+                )
+            except KeyboardInterrupt:
+                print(colored("\nBash command interrupted by user.", "yellow"))
+                return state, colored("Command interrupted.", "red")
         
         if success:
             return state, result
@@ -2327,14 +2174,18 @@ def process_pipeline_command(
                 f"{exec_model} analyzing error", 
                 style="brain"
             ):
-                response = execute_llm_command(
-                    fixer_prompt, 
-                    model=exec_model,
-                    provider=exec_provider,
-                    npc=state.npc, 
-                    stream=stream_final, 
-                    messages=state.messages
-                )
+                try: # Added try-except for KeyboardInterrupt here
+                    response = execute_llm_command(
+                        fixer_prompt, 
+                        model=exec_model,
+                        provider=exec_provider,
+                        npc=state.npc, 
+                        stream=stream_final, 
+                        messages=state.messages
+                    )
+                except KeyboardInterrupt:
+                    print(colored("\nLLM analysis interrupted by user.", "yellow"))
+                    return state, colored("LLM analysis interrupted.", "red")
             
             state.messages = response['messages']     
             return state, response['response']
@@ -2395,37 +2246,41 @@ def process_pipeline_command(
             for name, func in inspect.getmembers(current_module, inspect.isfunction):
                 application_globals_for_jinx[name] = func
 
-            if tool_capable:
-                llm_result = get_llm_response(
-                    full_llm_cmd,
-                    model=exec_model,
-                    provider=exec_provider,
-                    npc=state.npc,
-                    team=state.team,
-                    messages=state.messages,
-                    stream=stream_final,
-                    attachments=state.attachments,
-                    context=info,
-                    auto_process_tool_calls=True,
-                    tools=tools_for_llm,
-                    tool_map=tool_exec_map,
-                    tool_choice={"type": "auto"},
-                )
-            else:
-                llm_result = check_llm_command(
-                    full_llm_cmd,
-                    model=exec_model,      
-                    provider=exec_provider, 
-                    api_url=state.api_url,
-                    api_key=state.api_key,
-                    npc=state.npc,
-                    team=state.team,
-                    messages=state.messages,
-                    images=state.attachments,
-                    stream=stream_final,
-                    context=info,
-                    extra_globals=application_globals_for_jinx  
-                )
+            try: # Added try-except for KeyboardInterrupt here
+                if tool_capable:
+                    llm_result = get_llm_response(
+                        full_llm_cmd,
+                        model=exec_model,
+                        provider=exec_provider,
+                        npc=state.npc,
+                        team=state.team,
+                        messages=state.messages,
+                        stream=stream_final,
+                        attachments=state.attachments,
+                        context=info,
+                        auto_process_tool_calls=True,
+                        tools=tools_for_llm,
+                        tool_map=tool_exec_map,
+                        tool_choice={"type": "auto"},
+                    )
+                else:
+                    llm_result = check_llm_command(
+                        full_llm_cmd,
+                        model=exec_model,      
+                        provider=exec_provider, 
+                        api_url=state.api_url,
+                        api_key=state.api_key,
+                        npc=state.npc,
+                        team=state.team,
+                        messages=state.messages,
+                        images=state.attachments,
+                        stream=stream_final,
+                        context=info,
+                        extra_globals=application_globals_for_jinx  
+                    )
+            except KeyboardInterrupt:
+                print(colored("\nLLM processing interrupted by user.", "yellow"))
+                return state, colored("LLM processing interrupted.", "red")
 
         if tool_capable:
             output, updated_messages = normalize_llm_result(llm_result, state.messages)
@@ -2682,6 +2537,9 @@ def execute_command(
                     f"  → Passing to stage {stage_num + 1}", 
                     "blue"
                 ))
+            except KeyboardInterrupt:
+                print(colored("\nOperation interrupted by user.", "yellow"))
+                return current_state, colored("Command interrupted.", "red")
             except RateLimitError:
                 print(colored('Rate Limit Exceeded'))
                 # wait 30 seconds then truncate messages/condense context with breathing mechanism
@@ -2758,14 +2616,18 @@ def execute_command(
             f"Chatting with {active_model}", 
             style="brain"
         ):
-            response = get_llm_response(
-                command, 
-                model=active_model,          
-                provider=active_provider,    
-                npc=state.npc,
-                stream=state.stream_output,
-                messages=state.messages
-            )
+            try: # Added try-except for KeyboardInterrupt here
+                response = get_llm_response(
+                    command, 
+                    model=active_model,          
+                    provider=active_provider,    
+                    npc=state.npc,
+                    stream=state.stream_output,
+                    messages=state.messages
+                )
+            except KeyboardInterrupt:
+                print(colored("\nChat interrupted by user.", "yellow"))
+                return state, colored("Chat interrupted.", "red")
         
         state.messages = response['messages']
         return state, response['response']
@@ -2775,17 +2637,22 @@ def execute_command(
             f"Executing with {active_model}", 
             style="dots_pulse"
         ):
-            response = execute_llm_command(
-                command, 
-                model=active_model,          
-                provider=active_provider,  
-                npc=state.npc, 
-                stream=state.stream_output, 
-                messages=state.messages
-            ) 
+            try: # Added try-except for KeyboardInterrupt here
+                response = execute_llm_command(
+                    command, 
+                    model=active_model,          
+                    provider=active_provider,  
+                    npc=state.npc, 
+                    stream=state.stream_output, 
+                    messages=state.messages
+                ) 
+            except KeyboardInterrupt:
+                print(colored("\nCommand execution interrupted by user.", "yellow"))
+                return state, colored("Command interrupted.", "red")
         
         state.messages = response['messages']     
         return state, response['response']
+
 
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     setup_npcsh_config()
