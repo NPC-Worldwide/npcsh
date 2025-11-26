@@ -1,22 +1,14 @@
-
-from colorama import Fore, Back, Style
+# Standard library imports
+import atexit
 from dataclasses import dataclass, field
+from datetime import datetime
 import filecmp
+import importlib.metadata
+import inspect
+import logging
 import os
 from pathlib import Path
 import platform
-try:
-    import pty
-    import tty
-    
-    import termios
-
-    import readline
-except:
-    readline = None
-    pty = None
-    tty = None
-
 import re
 import select
 import shlex
@@ -26,93 +18,67 @@ import sqlite3
 import subprocess
 import sys
 import time
-from typing import Dict, List,  Any, Tuple, Union, Optional, Callable
-import logging
 import textwrap
-from termcolor import colored
-from npcpy.memory.command_history import (
-    start_new_conversation,
-)
-from npcpy.npc_compiler import NPC, Team
+from typing import Dict, List, Any, Tuple, Union, Optional, Callable
+import yaml
 
-
-from npcpy.memory.command_history import CommandHistory
-
-
-
-import os
-import sys
-import atexit
-import subprocess
-import shlex
-import re
-from datetime import datetime
-import importlib.metadata
-import textwrap
-from typing import Optional, List, Dict, Any, Tuple, Union
-from dataclasses import dataclass, field
-import platform
+# Platform-specific imports
 try:
-    from termcolor import colored
-except: 
-    pass
+    import pty
+    import tty
+    import termios
+    import readline
+except ImportError:
+    readline = None
+    pty = None
+    tty = None
+    termios = None
 
+# Optional dependencies
 try:
     import chromadb
 except ImportError:
     chromadb = None
-import shutil
-import sqlite3
-import yaml
 
+# Third-party imports
+from colorama import Fore, Back, Style
+from litellm import RateLimitError
+from termcolor import colored
 
-from npcpy.npc_sysenv import (
-    print_and_process_stream_with_markdown,
-    render_markdown,
-    get_model_and_provider, 
-    get_locally_available_models,
-    lookup_provider
-)
-
-from npcpy.memory.command_history import (
-    CommandHistory,
-    save_conversation_message,
-    load_kg_from_db, 
-    save_kg_to_db, 
-)
-from npcpy.npc_compiler import NPC, Team, load_jinxs_from_directory, build_jinx_tool_catalog
+# npcpy imports
+from npcpy.data.load import load_file_contents
+from npcpy.data.web import search_web
+from npcpy.gen.embeddings import get_embeddings
 from npcpy.llm_funcs import (
     check_llm_command,
     get_llm_response,
     execute_llm_command,
-    breathe, 
-
+    breathe,
+)
+from npcpy.memory.command_history import (
+    CommandHistory,
+    start_new_conversation,
+    save_conversation_message,
+    load_kg_from_db,
+    save_kg_to_db,
+)
+from npcpy.memory.knowledge_graph import kg_evolve_incremental
+from npcpy.memory.search import execute_rag_command, execute_brainblast_command
+from npcpy.npc_compiler import NPC, Team, load_jinxs_from_directory, build_jinx_tool_catalog
+from npcpy.npc_sysenv import (
+    print_and_process_stream_with_markdown,
+    render_markdown,
+    get_model_and_provider,
+    get_locally_available_models,
+    lookup_provider
 )
 from npcpy.tools import auto_tools
 
-from npcpy.memory.knowledge_graph import (
-    kg_evolve_incremental, 
-    
-)
-from npcpy.gen.embeddings import get_embeddings
-
-import inspect
-import sys
-from npcpy.memory.search import execute_rag_command, execute_brainblast_command
-from npcpy.data.load import load_file_contents
-from npcpy.data.web import search_web
-try:
-    import readline
-except:
-    print('no readline support, some features may not work as desired. ')
-
+# Version
 try:
     VERSION = importlib.metadata.version("npcsh")
 except importlib.metadata.PackageNotFoundError:
     VERSION = "unknown"
-
-
-from litellm import RateLimitError
 
 
 NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b")
@@ -178,7 +144,12 @@ class ShellState:
     current_path: str = field(default_factory=os.getcwd)
     stream_output: bool = NPCSH_STREAM_OUTPUT
     attachments: Optional[List[Any]] = None
-    turn_count: int =0
+    turn_count: int = 0
+    # Token usage tracking
+    session_input_tokens: int = 0
+    session_output_tokens: int = 0
+    session_cost_usd: float = 0.0
+
     def get_model_for_command(self, model_type: str = "chat"):
         if model_type == "chat":
             return self.chat_model, self.chat_provider
@@ -1962,19 +1933,6 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
     return list(deduped.values()), tool_map
 
 
-def normalize_llm_result(llm_result: Any, fallback_messages: List[Dict[str, Any]]) -> Tuple[Any, List[Dict[str, Any]]]:
-    """
-    Normalize varying LLM return shapes into (output, messages).
-    """
-    if isinstance(llm_result, dict):
-        messages = llm_result.get("messages", fallback_messages)
-        output = llm_result.get("output")
-        if output is None:
-            output = llm_result.get("response")
-        return output, messages
-    return llm_result, fallback_messages
-
-
 def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
     """Determine if this interaction is too trivial for KG processing"""
     
@@ -2282,18 +2240,16 @@ def process_pipeline_command(
                 print(colored("\nLLM processing interrupted by user.", "yellow"))
                 return state, colored("LLM processing interrupted.", "red")
 
-        if tool_capable:
-            output, updated_messages = normalize_llm_result(llm_result, state.messages)
-            state.messages = updated_messages
-            return state, output
+        # Extract output and messages from llm_result
+        # get_llm_response uses 'response', check_llm_command uses 'output'
+        if isinstance(llm_result, dict):
+            state.messages = llm_result.get("messages", state.messages)
+            output = llm_result.get("output") or llm_result.get("response")
+        else:
+            output = llm_result
 
-        if not review:
-            if isinstance(llm_result, dict):
-                state.messages = llm_result.get("messages", state.messages)
-                output = llm_result.get("output")
-                return state, output
-            else:
-                return state, llm_result        
+        if tool_capable or not review:
+            return state, output
         else:
             return review_and_iterate_command(
                 original_command=full_llm_cmd,
@@ -2432,67 +2388,59 @@ def show_thinking_animation(message="Thinking", duration=None):
 def execute_command(
     command: str,
     state: ShellState,
-    review = False, 
+    review = False,
     router = None,
     command_history = None,
     ) -> Tuple[ShellState, Any]:
+    """
+    Execute a command in npcsh.
 
+    Routes commands based on:
+    1. Mode switch commands (/agent, /chat, /cmd, etc.)
+    2. Slash commands (/jinx_name) -> execute via router
+    3. Default mode behavior -> pipeline processing in agent mode, or jinx execution for other modes
+    """
     if not command.strip():
         return state, ""
-    
+
+    # Check for mode switch commands
     mode_change, state = check_mode_switch(command, state)
     if mode_change:
         print(colored(f"⚡ Switched to {state.current_mode} mode", "green"))
         return state, 'Mode changed.'
 
-    npc_name = (
-        state.npc.name 
-        if isinstance(state.npc, NPC) 
-        else "__none__"
-    )
-    team_name = state.team.name if state.team else "__none__"
-    
     original_command_for_embedding = command
     commands = split_by_pipes(command)
 
     stdin_for_next = None
     final_output = None
-    current_state = state 
-    npc_model = (
-        state.npc.model 
-        if isinstance(state.npc, NPC) and state.npc.model 
-        else None
-    )
-    npc_provider = (
-        state.npc.provider 
-        if isinstance(state.npc, NPC) and state.npc.provider 
-        else None
-    )
-    active_model = npc_model or state.chat_model
-    active_provider = npc_provider or state.chat_provider
-    
+    current_state = state
+
+    # Agent mode uses pipeline processing (the original behavior)
+    # Other modes route to their respective jinxs
     if state.current_mode == 'agent':
         total_stages = len(commands)
-        
+
         for i, cmd_segment in enumerate(commands):
             stage_num = i + 1
             stage_emoji = ["🎯", "⚙️", "🔧", "✨", "🚀"][i % 5]
-            
-            print(colored(
-                f"\n{stage_emoji} Pipeline Stage {stage_num}/{total_stages}", 
-                "cyan", 
-                attrs=["bold"]
-            ))
-            
+
+            if total_stages > 1:
+                print(colored(
+                    f"\n{stage_emoji} Pipeline Stage {stage_num}/{total_stages}",
+                    "cyan",
+                    attrs=["bold"]
+                ))
+
             is_last_command = (i == len(commands) - 1)
-            stream_this_segment = state.stream_output and not is_last_command 
-            
+            stream_this_segment = state.stream_output and not is_last_command
+
             try:
                 current_state, output = process_pipeline_command(
                     cmd_segment.strip(),
                     stdin_for_next,
-                    current_state, 
-                    stream_final=stream_this_segment, 
+                    current_state,
+                    stream_final=stream_this_segment,
                     review=review,
                     router=router
                 )
@@ -2500,158 +2448,121 @@ def execute_command(
                     output = output['output']
 
                 if is_last_command:
-                    print(colored("✅ Pipeline complete", "green"))
+                    if total_stages > 1:
+                        print(colored("✅ Pipeline complete", "green"))
                     return current_state, output
-                    
+
                 if isinstance(output, str):
                     stdin_for_next = output
-                elif not isinstance(output, str):
+                else:
                     try:
                         if stream_this_segment:
                             full_stream_output = (
                                 print_and_process_stream_with_markdown(
-                                    output, 
-                                    state.npc.model, 
-                                    state.npc.provider, 
+                                    output,
+                                    state.npc.model if isinstance(state.npc, NPC) else state.chat_model,
+                                    state.npc.provider if isinstance(state.npc, NPC) else state.chat_provider,
                                     show=True
                                 )
                             )
                             stdin_for_next = full_stream_output
-                            if is_last_command: 
-                                final_output = full_stream_output
                     except:
-                        if output is not None:  
-                            try: 
+                        if output is not None:
+                            try:
                                 stdin_for_next = str(output)
                             except Exception:
-                                print(
-                                    f"Warning: Cannot convert output to "
-                                    f"string for piping: {type(output)}", 
-                                    file=sys.stderr
-                                )
                                 stdin_for_next = None
-                        else: 
+                        else:
                             stdin_for_next = None
-                            
-                print(colored(
-                    f"  → Passing to stage {stage_num + 1}", 
-                    "blue"
-                ))
+
+                if total_stages > 1:
+                    print(colored(f"  → Passing to stage {stage_num + 1}", "blue"))
+
             except KeyboardInterrupt:
                 print(colored("\nOperation interrupted by user.", "yellow"))
                 return current_state, colored("Command interrupted.", "red")
             except RateLimitError:
-                print(colored('Rate Limit Exceeded'))
-                # wait 30 seconds then truncate messages/condense context with breathing mechanism
-                # for now just limit to first plus last 10
+                print(colored('Rate Limit Exceeded', 'yellow'))
                 messages = current_state.messages[0:1] + current_state.messages[-2:]
                 current_state.messages = messages
-                #retry 
-                import time 
-                print('sleeping...')
-                print(current_state)
-                print(current_state.messages)
+                import time
+                print('Waiting 30s before retry...')
                 time.sleep(30)
-
-
-                return execute_command(command, current_state, review=review, router=router,)
-
-
+                return execute_command(command, current_state, review=review, router=router)
             except Exception as pipeline_error:
                 import traceback
                 traceback.print_exc()
                 error_msg = colored(
-                    f"❌ Error in stage {stage_num} "
-                    f"('{cmd_segment[:50]}...'): {pipeline_error}", 
+                    f"❌ Error in stage {stage_num} ('{cmd_segment[:50]}...'): {pipeline_error}",
                     "red"
                 )
                 return current_state, error_msg
 
-        if final_output is not None and isinstance(final_output,str):
-            store_command_embeddings(
-                original_command_for_embedding, 
-                final_output, 
-                current_state
-            )
+        if final_output is not None and isinstance(final_output, str):
+            store_command_embeddings(original_command_for_embedding, final_output, current_state)
 
         return current_state, final_output
 
-    elif state.current_mode == 'chat':
-        cmd_parts = parse_command_safely(command)
-        is_probably_bash = (
-            cmd_parts
-            and (
-                cmd_parts[0] in interactive_commands
-                or cmd_parts[0] in BASH_COMMANDS
-                or command.strip().startswith("./")
-                or command.strip().startswith("/")
-            )
-        )
-        
-        if is_probably_bash:
-            try:
-                command_name = cmd_parts[0]
-                if command_name in interactive_commands:
-                    return handle_interactive_command(cmd_parts, state)
-                elif command_name == "cd":
-                    return handle_cd_command(cmd_parts, state)
-                else:
-                    try:
-                        bash_state, bash_output = handle_bash_command(
-                            cmd_parts, 
-                            command, 
-                            None, 
-                            state
-                        )
-                        return state, bash_output
-                    except Exception as bash_err:
-                        return state, colored(
-                            f"Bash execution failed: {bash_err}", 
-                            "red"
-                        )
-            except Exception:
-                pass
+    else:
+        # For non-agent modes (chat, cmd, or any custom mode), route through the jinx
+        mode_jinx_name = state.current_mode
 
-        with SpinnerContext(
-            f"Chatting with {active_model}", 
-            style="brain"
-        ):
-            try: # Added try-except for KeyboardInterrupt here
+        # Check if mode jinx exists in team or router
+        mode_jinx = None
+        if state.team and hasattr(state.team, 'jinxs_dict') and mode_jinx_name in state.team.jinxs_dict:
+            mode_jinx = state.team.jinxs_dict[mode_jinx_name]
+        elif router and mode_jinx_name in router.jinx_routes:
+            # Execute via router
+            try:
+                result = router.execute(f"/{mode_jinx_name} {command}",
+                                        state=state, npc=state.npc, messages=state.messages)
+                if isinstance(result, dict):
+                    state.messages = result.get('messages', state.messages)
+                    return state, result.get('output', '')
+                return state, str(result) if result else ''
+            except KeyboardInterrupt:
+                print(colored(f"\n{mode_jinx_name} interrupted.", "yellow"))
+                return state, colored("Interrupted.", "red")
+
+        if mode_jinx:
+            # Execute the mode jinx directly
+            try:
+                result = mode_jinx.execute(
+                    input_values={'query': command, 'stream': state.stream_output},
+                    npc=state.npc,
+                    messages=state.messages,
+                    extra_globals={'state': state}
+                )
+                if isinstance(result, dict):
+                    state.messages = result.get('messages', state.messages)
+                    return state, result.get('output', '')
+                return state, str(result) if result else ''
+            except KeyboardInterrupt:
+                print(colored(f"\n{mode_jinx_name} interrupted.", "yellow"))
+                return state, colored("Interrupted.", "red")
+
+        # Fallback: if mode jinx not found, use basic LLM response
+        npc_model = state.npc.model if isinstance(state.npc, NPC) and state.npc.model else None
+        npc_provider = state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else None
+        active_model = npc_model or state.chat_model
+        active_provider = npc_provider or state.chat_provider
+
+        with SpinnerContext(f"Processing with {active_model}", style="brain"):
+            try:
                 response = get_llm_response(
-                    command, 
-                    model=active_model,          
-                    provider=active_provider,    
+                    command,
+                    model=active_model,
+                    provider=active_provider,
                     npc=state.npc,
                     stream=state.stream_output,
                     messages=state.messages
                 )
             except KeyboardInterrupt:
-                print(colored("\nChat interrupted by user.", "yellow"))
-                return state, colored("Chat interrupted.", "red")
-        
-        state.messages = response['messages']
-        return state, response['response']
+                print(colored("\nInterrupted.", "yellow"))
+                return state, colored("Interrupted.", "red")
 
-    elif state.current_mode == 'cmd':
-        with SpinnerContext(
-            f"Executing with {active_model}", 
-            style="dots_pulse"
-        ):
-            try: # Added try-except for KeyboardInterrupt here
-                response = execute_llm_command(
-                    command, 
-                    model=active_model,          
-                    provider=active_provider,  
-                    npc=state.npc, 
-                    stream=state.stream_output, 
-                    messages=state.messages
-                ) 
-            except KeyboardInterrupt:
-                print(colored("\nCommand execution interrupted by user.", "yellow"))
-                return state, colored("Command interrupted.", "red")
-        
-        state.messages = response['messages']     
-        return state, response['response']
+        state.messages = response.get('messages', state.messages)
+        return state, response.get('response', '')
 
 
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
@@ -2887,13 +2798,26 @@ def process_result(
     result_state.attachments = None
 
     final_output_str = None
-    
+
     # FIX: Handle dict output properly
     if isinstance(output, dict):
         output_content = output.get('output')
         model_for_stream = output.get('model', active_npc.model)
         provider_for_stream = output.get('provider', active_npc.provider)
-        
+
+        # Accumulate token usage if available
+        if 'usage' in output:
+            usage = output['usage']
+            result_state.session_input_tokens += usage.get('input_tokens', 0)
+            result_state.session_output_tokens += usage.get('output_tokens', 0)
+            # Calculate cost
+            from npcpy.gen.response import calculate_cost
+            result_state.session_cost_usd += calculate_cost(
+                model_for_stream,
+                usage.get('input_tokens', 0),
+                usage.get('output_tokens', 0)
+            )
+
         # If output_content is still a dict or None, convert to string
         if isinstance(output_content, dict):
             output_content = str(output_content)
