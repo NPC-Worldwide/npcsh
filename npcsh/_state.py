@@ -3,7 +3,6 @@ import atexit
 from dataclasses import dataclass, field
 from datetime import datetime
 import filecmp
-import importlib.metadata
 import inspect
 import logging
 import os
@@ -74,46 +73,50 @@ from npcpy.npc_sysenv import (
 )
 from npcpy.tools import auto_tools
 
-# Version
-try:
-    VERSION = importlib.metadata.version("npcsh")
-except importlib.metadata.PackageNotFoundError:
-    VERSION = "unknown"
-
-
-NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b")
-
-NPCSH_CHAT_PROVIDER = os.environ.get("NPCSH_CHAT_PROVIDER", "ollama")
-
-NPCSH_DB_PATH = os.path.expanduser(
-    os.environ.get("NPCSH_DB_PATH", "~/npcsh_history.db")
+# Local module imports
+from .config import (
+    VERSION,
+    DEFAULT_NPC_TEAM_PATH,
+    PROJECT_NPC_TEAM_PATH,
+    HISTORY_DB_DEFAULT_PATH,
+    READLINE_HISTORY_FILE,
+    NPCSH_CHAT_MODEL,
+    NPCSH_CHAT_PROVIDER,
+    NPCSH_DB_PATH,
+    NPCSH_VECTOR_DB_PATH,
+    NPCSH_DEFAULT_MODE,
+    NPCSH_VISION_MODEL,
+    NPCSH_VISION_PROVIDER,
+    NPCSH_IMAGE_GEN_MODEL,
+    NPCSH_IMAGE_GEN_PROVIDER,
+    NPCSH_VIDEO_GEN_MODEL,
+    NPCSH_VIDEO_GEN_PROVIDER,
+    NPCSH_EMBEDDING_MODEL,
+    NPCSH_EMBEDDING_PROVIDER,
+    NPCSH_REASONING_MODEL,
+    NPCSH_REASONING_PROVIDER,
+    NPCSH_STREAM_OUTPUT,
+    NPCSH_API_URL,
+    NPCSH_SEARCH_PROVIDER,
+    NPCSH_BUILD_KG,
+    setup_npcsh_config,
+    is_npcsh_initialized,
+    set_npcsh_initialized,
+    set_npcsh_config_value,
 )
-NPCSH_VECTOR_DB_PATH = os.path.expanduser(
-    os.environ.get("NPCSH_VECTOR_DB_PATH", "~/npcsh_chroma.db")
+from .ui import SpinnerContext, orange, get_file_color, format_file_listing, wrap_text
+from .parsing import split_by_pipes, parse_command_safely, parse_generic_command_flags
+from .execution import (
+    TERMINAL_EDITORS,
+    INTERACTIVE_COMMANDS as interactive_commands,
+    validate_bash_command,
+    handle_bash_command,
+    handle_cd_command,
+    handle_interactive_command,
+    open_terminal_editor,
+    list_directory,
 )
-
-
-NPCSH_DEFAULT_MODE = os.path.expanduser(os.environ.get("NPCSH_DEFAULT_MODE", "agent"))
-NPCSH_VISION_MODEL = os.environ.get("NPCSH_VISION_MODEL", "gemma3:4b")
-NPCSH_VISION_PROVIDER = os.environ.get("NPCSH_VISION_PROVIDER", "ollama")
-NPCSH_IMAGE_GEN_MODEL = os.environ.get(
-    "NPCSH_IMAGE_GEN_MODEL", "runwayml/stable-diffusion-v1-5"
-)
-NPCSH_IMAGE_GEN_PROVIDER = os.environ.get("NPCSH_IMAGE_GEN_PROVIDER", "diffusers")
-NPCSH_VIDEO_GEN_MODEL = os.environ.get(
-    "NPCSH_VIDEO_GEN_MODEL", "damo-vilab/text-to-video-ms-1.7b"
-)
-NPCSH_VIDEO_GEN_PROVIDER = os.environ.get("NPCSH_VIDEO_GEN_PROVIDER", "diffusers")
-
-NPCSH_EMBEDDING_MODEL = os.environ.get("NPCSH_EMBEDDING_MODEL", "nomic-embed-text")
-NPCSH_EMBEDDING_PROVIDER = os.environ.get("NPCSH_EMBEDDING_PROVIDER", "ollama")
-NPCSH_REASONING_MODEL = os.environ.get("NPCSH_REASONING_MODEL", "deepseek-r1")
-NPCSH_REASONING_PROVIDER = os.environ.get("NPCSH_REASONING_PROVIDER", "ollama")
-NPCSH_STREAM_OUTPUT = eval(os.environ.get("NPCSH_STREAM_OUTPUT", "0")) == 1
-NPCSH_API_URL = os.environ.get("NPCSH_API_URL", None)
-NPCSH_SEARCH_PROVIDER = os.environ.get("NPCSH_SEARCH_PROVIDER", "duckduckgo")
-NPCSH_BUILD_KG = os.environ.get("NPCSH_BUILD_KG") == "1" 
-READLINE_HISTORY_FILE = os.path.expanduser("~/.npcsh_history")
+from .completion import setup_readline, save_readline_history, make_completer, get_slash_commands
 
 
 
@@ -835,12 +838,7 @@ BASH_COMMANDS = [
 ]
 
 
-interactive_commands = {
-    "ipython": ["ipython"],
-    "python": ["python", "-i"],
-    "sqlite3": ["sqlite3"],
-    "r": ["R", "--interactive"],
-}
+# interactive_commands imported from .execution
 
 
 def start_interactive_session(command: str) -> int:
@@ -1184,13 +1182,8 @@ def save_readline_history():
 
 
 
-TERMINAL_EDITORS = ["vim", "emacs", "nano"]
-EMBEDDINGS_DB_PATH = os.path.expanduser("~/npcsh_chroma.db")
-HISTORY_DB_DEFAULT_PATH = os.path.expanduser("~/npcsh_history.db")
-READLINE_HISTORY_FILE = os.path.expanduser("~/.npcsh_readline_history")
-DEFAULT_NPC_TEAM_PATH = os.path.expanduser("~/.npcsh/npc_team/")
-PROJECT_NPC_TEAM_PATH = "./npc_team/"
-
+# ChromaDB client (lazy init)
+EMBEDDINGS_DB_PATH = NPCSH_VECTOR_DB_PATH
 
 try:
     chroma_client = chromadb.PersistentClient(path=EMBEDDINGS_DB_PATH) if chromadb else None
@@ -2244,7 +2237,14 @@ def process_pipeline_command(
         # get_llm_response uses 'response', check_llm_command uses 'output'
         if isinstance(llm_result, dict):
             state.messages = llm_result.get("messages", state.messages)
-            output = llm_result.get("output") or llm_result.get("response")
+            output_text = llm_result.get("output") or llm_result.get("response")
+            # Preserve usage info for process_result to accumulate
+            output = {
+                'output': output_text,
+                'usage': llm_result.get('usage'),
+                'model': exec_model,
+                'provider': exec_provider,
+            }
         else:
             output = llm_result
 
@@ -2444,13 +2444,16 @@ def execute_command(
                     review=review,
                     router=router
                 )
-                if isinstance(output, dict) and 'output' in output:
-                    output = output['output']
 
+                # For last command, preserve full dict with usage info
                 if is_last_command:
                     if total_stages > 1:
                         print(colored("✅ Pipeline complete", "green"))
                     return current_state, output
+
+                # For intermediate stages, extract output text for piping
+                if isinstance(output, dict) and 'output' in output:
+                    output = output['output']
 
                 if isinstance(output, str):
                     stdin_for_next = output
