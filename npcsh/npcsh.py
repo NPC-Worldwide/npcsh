@@ -32,16 +32,43 @@ except importlib.metadata.PackageNotFoundError:
     VERSION = "unknown"
 
 from npcsh._state import (
-    initial_state, 
+    initial_state,
     orange,
     ShellState,
-    execute_command, 
+    execute_command,
     make_completer,
     process_result,
     readline_safe_prompt,
-    setup_shell, 
+    setup_shell,
     get_multiline_input,
-    )
+)
+
+
+def display_usage(state: ShellState):
+    """Display token usage and cost summary."""
+    inp = state.session_input_tokens
+    out = state.session_output_tokens
+    cost = state.session_cost_usd
+    turns = state.turn_count
+    total = inp + out
+
+    def fmt(n):
+        return f"{n/1000:.1f}k" if n >= 1000 else str(n)
+
+    def fmt_cost(c):
+        if c == 0:
+            return "free"
+        elif c < 0.01:
+            return f"${c:.4f}"
+        else:
+            return f"${c:.2f}"
+
+    print(colored("\n─────────────────────────────", "cyan"))
+    print(colored("📊 Session Usage", "cyan", attrs=["bold"]))
+    print(f"   Tokens: {fmt(inp)} in / {fmt(out)} out ({fmt(total)} total)")
+    print(f"   Cost:   {fmt_cost(cost)}")
+    print(f"   Turns:  {turns}")
+    print(colored("─────────────────────────────\n", "cyan"))
 
 
 def print_welcome_message():
@@ -143,10 +170,13 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router)
         try:
             if state.messages is not None:
                 if len(state.messages) > 20:
+                    # Display usage before compacting
+                    display_usage(state)
+
                     planning_state = {
-                        "goal": "ongoing npcsh session", 
-                        "facts": [f"Working in {state.current_path}", f"Current mode: {state.current_mode}"], 
-                        "successes": [], 
+                        "goal": "ongoing npcsh session",
+                        "facts": [f"Working in {state.current_path}", f"Current mode: {state.current_mode}"],
+                        "successes": [],
                         "mistakes": [],
                         "todos": [],
                         "constraints": ["Follow user requests", "Use appropriate mode for tasks"]
