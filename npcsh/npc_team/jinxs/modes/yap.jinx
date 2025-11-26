@@ -1,25 +1,262 @@
-jinx_name: "yap"
-description: "Enter voice chat (yap) mode"
-inputs: [] # Yap mode takes its parameters directly from the environment/kwargs
-steps:
-  - name: "enter_yap"
-    engine: "python"
-    code: |
-      import traceback
-      from npcsh.yap import enter_yap_mode
-      
-      output_messages = context.get('messages', [])
+jinx_name: yap
+description: Voice chat mode - speech-to-text input, text-to-speech output
+inputs:
+  - model: null
+  - provider: null
+  - tts_model: kokoro
+  - voice: af_heart
+  - files: null
 
+steps:
+  - name: yap_repl
+    engine: python
+    code: |
+      import os
+      import sys
+      import time
+      import tempfile
+      import threading
+      import queue
+      from termcolor import colored
+
+      # Audio imports with graceful fallback
       try:
-          result = enter_yap_mode(**context) # Pass all context as kwargs
-          
-          if isinstance(result, dict):
-              context['output'] = result.get('output', 'Exited Yap Mode.')
-              context['messages'] = result.get('messages', output_messages)
-          else:
-              context['output'] = str(result)
-              context['messages'] = output_messages
-      except Exception as e:
-          traceback.print_exc()
-          context['output'] = f"Error entering yap mode: {e}"
-          context['messages'] = output_messages
+          import torch
+          import pyaudio
+          import wave
+          import numpy as np
+          from faster_whisper import WhisperModel
+          from gtts import gTTS
+          from npcpy.data.audio import (
+              FORMAT, CHANNELS, RATE, CHUNK,
+              transcribe_recording, convert_mp3_to_wav, cleanup_temp_files
+          )
+          AUDIO_AVAILABLE = True
+      except ImportError as e:
+          AUDIO_AVAILABLE = False
+          print(colored(f"Audio dependencies not available: {e}", "yellow"))
+          print("Install with: pip install npcsh[audio]")
+
+      from npcpy.llm_funcs import get_llm_response
+      from npcpy.npc_sysenv import get_system_message, render_markdown
+      from npcpy.data.load import load_file_contents
+      from npcpy.data.text import rag_search
+
+      npc = context.get('npc')
+      team = context.get('team')
+      messages = context.get('messages', [])
+      files = context.get('files')
+      tts_model = context.get('tts_model', 'kokoro')
+      voice = context.get('voice', 'af_heart')
+
+      model = context.get('model') or (npc.model if npc else None)
+      provider = context.get('provider') or (npc.provider if npc else None)
+
+      print("""
+      ██╗   ██╗ █████╗ ██████╗
+      ╚██╗ ██╔╝██╔══██╗██╔══██╗
+       ╚████╔╝ ███████║██████╔╝
+        ╚██╔╝  ██╔══██║██╔═══╝
+         ██║   ██║  ██║██║
+         ╚═╝   ╚═╝  ╚═╝╚═╝
+
+      Voice Chat Mode
+      """)
+
+      npc_name = npc.name if npc else "yap"
+      print(f"Entering yap mode (NPC: {npc_name}). Type '/yq' to exit.")
+
+      if not AUDIO_AVAILABLE:
+          print(colored("Audio not available. Falling back to text mode.", "yellow"))
+
+      # Load files for RAG context
+      loaded_chunks = {}
+      if files:
+          if isinstance(files, str):
+              files = [f.strip() for f in files.split(',')]
+          for file_path in files:
+              file_path = os.path.expanduser(file_path)
+              if os.path.exists(file_path):
+                  try:
+                      chunks = load_file_contents(file_path)
+                      loaded_chunks[file_path] = chunks
+                      print(colored(f"Loaded: {file_path}", "green"))
+                  except Exception as e:
+                      print(colored(f"Error loading {file_path}: {e}", "red"))
+
+      # System message for concise voice responses
+      sys_msg = get_system_message(npc) if npc else "You are a helpful assistant."
+      sys_msg += "\n\nProvide brief responses of 1-2 sentences unless asked for more detail. Keep responses clear and conversational for voice."
+
+      if not messages or messages[0].get("role") != "system":
+          messages.insert(0, {"role": "system", "content": sys_msg})
+
+      # Audio state
+      vad_model = None
+      whisper_model = None
+
+      if AUDIO_AVAILABLE:
+          try:
+              # Load VAD model for voice activity detection
+              vad_model, _ = torch.hub.load(
+                  repo_or_dir="snakers4/silero-vad",
+                  model="silero_vad",
+                  force_reload=False,
+                  onnx=False,
+                  verbose=False
+              )
+              vad_model.to('cpu')
+              print(colored("VAD model loaded.", "green"))
+
+              # Load Whisper for STT
+              whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+              print(colored("Whisper model loaded.", "green"))
+          except Exception as e:
+              print(colored(f"Error loading audio models: {e}", "red"))
+              AUDIO_AVAILABLE = False
+
+      def speak_text(text, tts_model='kokoro', voice='af_heart'):
+          """Convert text to speech and play it"""
+          if not AUDIO_AVAILABLE:
+              return
+
+          try:
+              # Use gTTS as fallback
+              tts = gTTS(text=text, lang='en')
+              with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as f:
+                  tts.save(f.name)
+                  wav_path = convert_mp3_to_wav(f.name)
+
+              # Play audio
+              import subprocess
+              if sys.platform == 'darwin':
+                  subprocess.run(['afplay', wav_path], check=True)
+              elif sys.platform == 'linux':
+                  subprocess.run(['aplay', wav_path], check=True)
+              else:
+                  # Windows
+                  import winsound
+                  winsound.PlaySound(wav_path, winsound.SND_FILENAME)
+
+              cleanup_temp_files([f.name, wav_path])
+          except Exception as e:
+              print(colored(f"TTS error: {e}", "red"))
+
+      def record_audio(duration=5):
+          """Record audio from microphone"""
+          if not AUDIO_AVAILABLE:
+              return None
+
+          try:
+              p = pyaudio.PyAudio()
+              stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+
+              print(colored("Recording...", "cyan"), end='', flush=True)
+              frames = []
+              for _ in range(0, int(RATE / CHUNK * duration)):
+                  data = stream.read(CHUNK)
+                  frames.append(data)
+              print(colored(" Done.", "cyan"))
+
+              stream.stop_stream()
+              stream.close()
+              p.terminate()
+
+              # Save to temp file
+              with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+                  wf = wave.open(f.name, 'wb')
+                  wf.setnchannels(CHANNELS)
+                  wf.setsampwidth(p.get_sample_size(FORMAT))
+                  wf.setframerate(RATE)
+                  wf.writeframes(b''.join(frames))
+                  wf.close()
+                  return f.name
+          except Exception as e:
+              print(colored(f"Recording error: {e}", "red"))
+              return None
+
+      def transcribe_audio(audio_path):
+          """Transcribe audio to text using Whisper"""
+          if not whisper_model or not audio_path:
+              return ""
+
+          try:
+              segments, _ = whisper_model.transcribe(audio_path, beam_size=5)
+              text = " ".join([seg.text for seg in segments])
+              cleanup_temp_files([audio_path])
+              return text.strip()
+          except Exception as e:
+              print(colored(f"Transcription error: {e}", "red"))
+              return ""
+
+      # REPL loop
+      while True:
+          try:
+              # Voice input or text input
+              if AUDIO_AVAILABLE:
+                  prompt_str = f"{npc_name}:yap> [Press Enter to speak, or type] "
+              else:
+                  prompt_str = f"{npc_name}:yap> "
+
+              user_input = input(prompt_str).strip()
+
+              if user_input.lower() == "/yq":
+                  print("Exiting yap mode.")
+                  break
+
+              # Empty input = record audio
+              if not user_input and AUDIO_AVAILABLE:
+                  audio_path = record_audio(5)
+                  if audio_path:
+                      user_input = transcribe_audio(audio_path)
+                      if user_input:
+                          print(colored(f"You said: {user_input}", "cyan"))
+                      else:
+                          print(colored("Could not transcribe audio.", "yellow"))
+                          continue
+                  else:
+                      continue
+
+              if not user_input:
+                  continue
+
+              # Add RAG context if files loaded
+              current_prompt = user_input
+              if loaded_chunks:
+                  context_content = ""
+                  for filename, chunks in loaded_chunks.items():
+                      full_text = "\n".join(chunks)
+                      retrieved = rag_search(user_input, full_text, similarity_threshold=0.3)
+                      if retrieved:
+                          context_content += f"\n{retrieved}\n"
+                  if context_content:
+                      current_prompt += f"\n\nContext:{context_content}"
+
+              # Get response
+              resp = get_llm_response(
+                  current_prompt,
+                  model=model,
+                  provider=provider,
+                  messages=messages,
+                  stream=False,  # Don't stream for voice
+                  npc=npc
+              )
+
+              messages = resp.get('messages', messages)
+              response_text = str(resp.get('response', ''))
+
+              # Display and speak response
+              print(colored(f"{npc_name}: ", "green") + response_text)
+
+              if AUDIO_AVAILABLE:
+                  speak_text(response_text, tts_model, voice)
+
+          except KeyboardInterrupt:
+              print("\nUse '/yq' to exit or continue.")
+              continue
+          except EOFError:
+              print("\nExiting yap mode.")
+              break
+
+      context['output'] = "Exited yap mode."
+      context['messages'] = messages
