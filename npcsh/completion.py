@@ -102,7 +102,7 @@ def get_slash_commands(state: Any, router: Any) -> List[str]:
     """Get list of available slash commands"""
     commands = set()
 
-    # Built-in commands
+    # Built-in commands and modes
     commands.update([
         '/help', '/set', '/agent', '/chat', '/cmd',
         '/sq', '/quit', '/exit', '/clear',
@@ -121,6 +121,26 @@ def get_slash_commands(state: Any, router: Any) -> List[str]:
     return sorted(commands)
 
 
+def get_npc_mentions(state: Any) -> List[str]:
+    """Get list of available @npc mentions"""
+    npcs = set()
+
+    # Team NPCs
+    if state.team and hasattr(state.team, 'npcs'):
+        for name in state.team.npcs:
+            npcs.add(f'@{name}')
+
+    # Also add forenpc if available
+    if state.team and hasattr(state.team, 'forenpc') and state.team.forenpc:
+        npcs.add(f'@{state.team.forenpc.name}')
+
+    # Default NPCs if team not loaded yet
+    if not npcs:
+        npcs.update(['@sibiji', '@guac', '@corca', '@kadiefa', '@plonk', '@forenpc'])
+
+    return sorted(npcs)
+
+
 def is_command_position(buffer: str, begidx: int) -> bool:
     """Check if we're completing a command (vs argument)"""
     # If we're at the start or after a pipe, it's command position
@@ -132,7 +152,6 @@ def make_completer(shell_state: Any, router: Any):
     """Create a completer function for readline"""
 
     executables = get_path_executables()
-    slash_commands = get_slash_commands(shell_state, router)
 
     def completer(text: str, state: int):
         if readline is None:
@@ -145,9 +164,17 @@ def make_completer(shell_state: Any, router: Any):
             # Build completion options
             options = []
 
+            # Refresh slash commands and NPC mentions each time (they may change)
+            slash_commands = get_slash_commands(shell_state, router)
+            npc_mentions = get_npc_mentions(shell_state)
+
             if text.startswith('/'):
                 # Slash command completion
                 options = [c for c in slash_commands if c.startswith(text)]
+
+            elif text.startswith('@'):
+                # @npc mention completion
+                options = [n for n in npc_mentions if n.startswith(text)]
 
             elif text.startswith('~') or '/' in text or text.startswith('.'):
                 # File path completion

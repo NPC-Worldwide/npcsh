@@ -8,7 +8,10 @@ from termcolor import colored
 
 
 class SpinnerContext:
-    """Context manager for showing a spinner during long operations"""
+    """Context manager for showing a spinner during long operations.
+
+    Supports ESC key to interrupt (raises KeyboardInterrupt).
+    """
 
     SPINNER_CHARS = {
         "dots": "⣾⣽⣻⢿⡿⣟⣯⣷",
@@ -25,11 +28,18 @@ class SpinnerContext:
         self.spinner = self.SPINNER_CHARS.get(style, self.SPINNER_CHARS["dots"])
         self._stop = False
         self._thread = None
+        self._key_thread = None
+        self._interrupted = False
+        self._old_settings = None
 
     def __enter__(self):
         self._stop = False
+        self._interrupted = False
         self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
+        # Start key listener for ESC
+        self._key_thread = threading.Thread(target=self._listen_for_esc, daemon=True)
+        self._key_thread.start()
         return self
 
     def __exit__(self, *args):
@@ -39,12 +49,41 @@ class SpinnerContext:
         # Clear spinner line
         sys.stdout.write('\r' + ' ' * (len(self.message) + 20) + '\r')
         sys.stdout.flush()
+        # Check if we were interrupted by ESC
+        if self._interrupted:
+            raise KeyboardInterrupt("ESC pressed")
+
+    def _listen_for_esc(self):
+        """Listen for ESC key press to interrupt processing."""
+        try:
+            import termios
+            import tty
+            import select
+
+            fd = sys.stdin.fileno()
+            self._old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setcbreak(fd)
+                while not self._stop:
+                    # Check if input is available (non-blocking)
+                    if select.select([sys.stdin], [], [], 0.1)[0]:
+                        ch = sys.stdin.read(1)
+                        if ch == '\x1b':  # ESC key
+                            self._interrupted = True
+                            self._stop = True
+                            break
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, self._old_settings)
+        except Exception:
+            # If we can't set up terminal raw mode (e.g., not a tty), just skip ESC detection
+            pass
 
     def _spin(self):
         idx = 0
         while not self._stop:
             char = self.spinner[idx % len(self.spinner)]
-            sys.stdout.write(f'\r{char} {self.message}...')
+            hint = colored(" (ESC to cancel)", "white", attrs=["dark"])
+            sys.stdout.write(f'\r{char} {self.message}...{hint}')
             sys.stdout.flush()
             idx += 1
             time.sleep(self.delay)
