@@ -11,6 +11,7 @@ class SpinnerContext:
     """Context manager for showing a spinner during long operations.
 
     Supports ESC key to interrupt (raises KeyboardInterrupt).
+    Tracks elapsed time and token counts.
     """
 
     SPINNER_CHARS = {
@@ -31,10 +32,24 @@ class SpinnerContext:
         self._key_thread = None
         self._interrupted = False
         self._old_settings = None
+        self._start_time = None
+        self._tokens_in = 0
+        self._tokens_out = 0
+        self._status_msg = ""
+
+    def update_tokens(self, tokens_in: int = 0, tokens_out: int = 0):
+        """Update token counts displayed in spinner."""
+        self._tokens_in += tokens_in
+        self._tokens_out += tokens_out
+
+    def set_status(self, msg: str):
+        """Set additional status message."""
+        self._status_msg = msg
 
     def __enter__(self):
         self._stop = False
         self._interrupted = False
+        self._start_time = time.time()
         self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
         # Start key listener for ESC
@@ -82,8 +97,28 @@ class SpinnerContext:
         idx = 0
         while not self._stop:
             char = self.spinner[idx % len(self.spinner)]
+
+            # Build status line with timer
+            elapsed = time.time() - self._start_time if self._start_time else 0
+            mins, secs = divmod(int(elapsed), 60)
+            timer_str = f"{mins}:{secs:02d}" if mins else f"{secs}s"
+
+            # Token info if available
+            token_str = ""
+            if self._tokens_in or self._tokens_out:
+                token_str = colored(f" [{self._tokens_in}→{self._tokens_out} tok]", "cyan")
+
+            # Additional status
+            status_str = ""
+            if self._status_msg:
+                status_str = colored(f" {self._status_msg}", "yellow")
+
             hint = colored(" (ESC to cancel)", "white", attrs=["dark"])
-            sys.stdout.write(f'\r{char} {self.message}...{hint}')
+            timer_display = colored(f" [{timer_str}]", "blue")
+
+            line = f'\r{char} {self.message}...{timer_display}{token_str}{status_str}{hint}'
+            # Clear rest of line
+            sys.stdout.write(line + ' ' * 10)
             sys.stdout.flush()
             idx += 1
             time.sleep(self.delay)
