@@ -1657,6 +1657,41 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
             elif c == '\t':  # Tab - do nothing for now
                 pass
 
+            elif c == '\x0f':  # Ctrl-O - show last tool call args
+                try:
+                    import builtins
+                    last_call = getattr(builtins, '_npcsh_last_tool_call', None)
+                    if last_call:
+                        from termcolor import colored
+                        # Save cursor, move down past hint, show args, restore
+                        sys.stdout.write('\n\033[K')  # New line, clear
+                        sys.stdout.write(colored(f"─── {last_call['name']} ───\n", "cyan"))
+                        args = last_call.get('arguments', {})
+                        for k, v in args.items():
+                            v_str = str(v)
+                            # Show with syntax highlighting for code
+                            if '\n' in v_str:
+                                sys.stdout.write(colored(f"{k}:\n", "yellow"))
+                                for line in v_str.split('\n')[:30]:  # Limit lines
+                                    sys.stdout.write(f"  {line}\n")
+                                if v_str.count('\n') > 30:
+                                    sys.stdout.write(colored(f"  ... ({v_str.count(chr(10)) - 30} more lines)\n", "white", attrs=["dark"]))
+                            else:
+                                sys.stdout.write(colored(f"{k}: ", "yellow") + f"{v_str}\n")
+                        sys.stdout.write(colored("─" * 40 + "\n", "cyan"))
+                        # Redraw prompt
+                        sys.stdout.write(prompt)
+                        sys.stdout.write(buf)
+                        sys.stdout.write('\n' + (token_hint or ''))
+                        sys.stdout.write('\033[A\r')
+                        if prompt_visible_len > 0:
+                            sys.stdout.write('\033[' + str(prompt_visible_len + pos) + 'C')
+                        sys.stdout.flush()
+                    else:
+                        pass  # No tool call to show
+                except:
+                    pass
+
             elif ord(c) >= 32:  # Printable
                 buf = buf[:pos] + c + buf[pos:]
                 pos += 1
@@ -2530,6 +2565,7 @@ def process_pipeline_command(
             logger.debug(f"[process_pipeline_command] After LLM call: received {len(new_messages)} messages (was {len(state.messages)})")
             state.messages = new_messages
             output_text = llm_result.get("output") or llm_result.get("response")
+
             # Preserve usage info for process_result to accumulate
             output = {
                 'output': output_text,
@@ -2643,8 +2679,30 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
             tool_map_for_npc = {}
             for jinx_name, jinx_obj in target_npc.jinxs_dict.items():
                 def make_executor(jname, jobj, npc):
-                    def executor(**kwargs):
-                        result = npc.execute_jinx(jname, kwargs)
+                    # Get expected input names from jinx
+                    expected_inputs = []
+                    for inp in (jobj.inputs or []):
+                        if isinstance(inp, str):
+                            expected_inputs.append(inp)
+                        elif isinstance(inp, dict):
+                            expected_inputs.append(list(inp.keys())[0])
+
+                    def executor(**received):
+                        # Map received args to expected jinx inputs
+                        mapped = {}
+                        if expected_inputs:
+                            # If we got unexpected keys, map first value to first expected input
+                            received_keys = list(received.keys())
+                            for i, expected in enumerate(expected_inputs):
+                                if expected in received:
+                                    mapped[expected] = received[expected]
+                                elif i < len(received_keys):
+                                    # Map positionally
+                                    mapped[expected] = received[received_keys[i]]
+                        else:
+                            mapped = received
+
+                        result = npc.execute_jinx(jname, mapped)
                         return result.get('output', str(result))
                     executor.__name__ = jname
                     return executor
