@@ -41,11 +41,11 @@ steps:
           
           current_npc = current_state.npc
           current_team = current_state.team
-          
+
           npc_name = getattr(current_npc, 'name', '__none__') if current_npc else '__none__'
           team_name = getattr(current_team, 'name', '__none__') if current_team else '__none__'
           current_path = os.getcwd()
-          db_path = os.path.expanduser(context.get("history_db_path"))
+          db_path = os.path.expanduser(context.get("history_db_path") or "~/.npcsh/npcsh_history.db")
           
           try:
               cmd_history = CommandHistory(db_path)
@@ -101,7 +101,7 @@ steps:
 
                   result = execute_rag_command(
                       command=query,
-                      vector_db_path=os.path.expanduser(context.get('vector_db_path')),
+                      vector_db_path=os.path.expanduser(context.get('vector_db_path') or "~/.npcsh/npcsh_chroma.db"),
                       embedding_model=emodel,
                       embedding_provider=eprovider,
                       file_contents=file_contents or None

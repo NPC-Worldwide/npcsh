@@ -1,22 +1,13 @@
-
-from colorama import Fore, Back, Style
+# Standard library imports
+import atexit
 from dataclasses import dataclass, field
+from datetime import datetime
 import filecmp
+import inspect
+import logging
 import os
 from pathlib import Path
 import platform
-try:
-    import pty
-    import tty
-    
-    import termios
-
-    import readline
-except:
-    readline = None
-    pty = None
-    tty = None
-
 import re
 import select
 import shlex
@@ -26,128 +17,121 @@ import sqlite3
 import subprocess
 import sys
 import time
-from typing import Dict, List,  Any, Tuple, Union, Optional, Callable
-import logging
 import textwrap
-from termcolor import colored
-from npcpy.memory.command_history import (
-    start_new_conversation,
-)
-from npcpy.npc_compiler import NPC, Team
+from typing import Dict, List, Any, Tuple, Union, Optional, Callable
+import yaml
 
+# Setup debug logging if NPCSH_DEBUG is set
+def _setup_debug_logging():
+    if os.environ.get("NPCSH_DEBUG", "0") == "1":
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
+            datefmt='%H:%M:%S'
+        )
+        # Set specific loggers to DEBUG
+        logging.getLogger("npcsh.state").setLevel(logging.DEBUG)
+        logging.getLogger("npcpy.llm_funcs").setLevel(logging.DEBUG)
+        logging.getLogger("npcsh.state").debug("Debug logging enabled via NPCSH_DEBUG=1")
 
-from npcpy.memory.command_history import CommandHistory
+_setup_debug_logging()
 
-
-
-import os
-import sys
-import atexit
-import subprocess
-import shlex
-import re
-from datetime import datetime
-import importlib.metadata
-import textwrap
-from typing import Optional, List, Dict, Any, Tuple, Union
-from dataclasses import dataclass, field
-import platform
+# Platform-specific imports
 try:
-    from termcolor import colored
-except: 
-    pass
+    import pty
+    import tty
+    import termios
+    import readline
+except ImportError:
+    readline = None
+    pty = None
+    tty = None
+    termios = None
 
+# Optional dependencies
 try:
     import chromadb
 except ImportError:
     chromadb = None
-import shutil
-import sqlite3
-import yaml
 
+# Third-party imports
+from colorama import Fore, Back, Style
+from litellm import RateLimitError
+from termcolor import colored
 
-from npcpy.npc_sysenv import (
-    print_and_process_stream_with_markdown,
-    render_markdown,
-    get_model_and_provider, 
-    get_locally_available_models,
-    lookup_provider
-)
-
-from npcpy.memory.command_history import (
-    CommandHistory,
-    save_conversation_message,
-    load_kg_from_db, 
-    save_kg_to_db, 
-)
-from npcpy.npc_compiler import NPC, Team, load_jinxs_from_directory, build_jinx_tool_catalog
+# npcpy imports
+from npcpy.data.load import load_file_contents
+from npcpy.data.web import search_web
+from npcpy.gen.embeddings import get_embeddings
 from npcpy.llm_funcs import (
     check_llm_command,
     get_llm_response,
     execute_llm_command,
-    breathe, 
-
+    breathe,
+)
+from npcpy.memory.command_history import (
+    CommandHistory,
+    start_new_conversation,
+    save_conversation_message,
+    load_kg_from_db,
+    save_kg_to_db,
+)
+from npcpy.memory.knowledge_graph import kg_evolve_incremental
+from npcpy.memory.search import execute_rag_command, execute_brainblast_command
+from npcpy.npc_compiler import NPC, Team, load_jinxs_from_directory, build_jinx_tool_catalog
+from npcpy.npc_sysenv import (
+    print_and_process_stream_with_markdown,
+    render_markdown,
+    get_model_and_provider,
+    get_locally_available_models,
+    lookup_provider
 )
 from npcpy.tools import auto_tools
 
-from npcpy.memory.knowledge_graph import (
-    kg_evolve_incremental, 
-    
+# Local module imports
+from .config import (
+    VERSION,
+    DEFAULT_NPC_TEAM_PATH,
+    PROJECT_NPC_TEAM_PATH,
+    HISTORY_DB_DEFAULT_PATH,
+    READLINE_HISTORY_FILE,
+    NPCSH_CHAT_MODEL,
+    NPCSH_CHAT_PROVIDER,
+    NPCSH_DB_PATH,
+    NPCSH_VECTOR_DB_PATH,
+    NPCSH_DEFAULT_MODE,
+    NPCSH_VISION_MODEL,
+    NPCSH_VISION_PROVIDER,
+    NPCSH_IMAGE_GEN_MODEL,
+    NPCSH_IMAGE_GEN_PROVIDER,
+    NPCSH_VIDEO_GEN_MODEL,
+    NPCSH_VIDEO_GEN_PROVIDER,
+    NPCSH_EMBEDDING_MODEL,
+    NPCSH_EMBEDDING_PROVIDER,
+    NPCSH_REASONING_MODEL,
+    NPCSH_REASONING_PROVIDER,
+    NPCSH_STREAM_OUTPUT,
+    NPCSH_API_URL,
+    NPCSH_SEARCH_PROVIDER,
+    NPCSH_BUILD_KG,
+    setup_npcsh_config,
+    is_npcsh_initialized,
+    set_npcsh_initialized,
+    set_npcsh_config_value,
 )
-from npcpy.gen.embeddings import get_embeddings
-
-import inspect
-import sys
-from npcpy.memory.search import execute_rag_command, execute_brainblast_command
-from npcpy.data.load import load_file_contents
-from npcpy.data.web import search_web
-try:
-    import readline
-except:
-    print('no readline support, some features may not work as desired. ')
-
-try:
-    VERSION = importlib.metadata.version("npcsh")
-except importlib.metadata.PackageNotFoundError:
-    VERSION = "unknown"
-
-
-from litellm import RateLimitError
-
-
-NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b")
-
-NPCSH_CHAT_PROVIDER = os.environ.get("NPCSH_CHAT_PROVIDER", "ollama")
-
-NPCSH_DB_PATH = os.path.expanduser(
-    os.environ.get("NPCSH_DB_PATH", "~/npcsh_history.db")
+from .ui import SpinnerContext, orange, get_file_color, format_file_listing, wrap_text
+from .parsing import split_by_pipes, parse_command_safely, parse_generic_command_flags
+from .execution import (
+    TERMINAL_EDITORS,
+    INTERACTIVE_COMMANDS as interactive_commands,
+    validate_bash_command,
+    handle_bash_command,
+    handle_cd_command,
+    handle_interactive_command,
+    open_terminal_editor,
+    list_directory,
 )
-NPCSH_VECTOR_DB_PATH = os.path.expanduser(
-    os.environ.get("NPCSH_VECTOR_DB_PATH", "~/npcsh_chroma.db")
-)
-
-
-NPCSH_DEFAULT_MODE = os.path.expanduser(os.environ.get("NPCSH_DEFAULT_MODE", "agent"))
-NPCSH_VISION_MODEL = os.environ.get("NPCSH_VISION_MODEL", "gemma3:4b")
-NPCSH_VISION_PROVIDER = os.environ.get("NPCSH_VISION_PROVIDER", "ollama")
-NPCSH_IMAGE_GEN_MODEL = os.environ.get(
-    "NPCSH_IMAGE_GEN_MODEL", "runwayml/stable-diffusion-v1-5"
-)
-NPCSH_IMAGE_GEN_PROVIDER = os.environ.get("NPCSH_IMAGE_GEN_PROVIDER", "diffusers")
-NPCSH_VIDEO_GEN_MODEL = os.environ.get(
-    "NPCSH_VIDEO_GEN_MODEL", "damo-vilab/text-to-video-ms-1.7b"
-)
-NPCSH_VIDEO_GEN_PROVIDER = os.environ.get("NPCSH_VIDEO_GEN_PROVIDER", "diffusers")
-
-NPCSH_EMBEDDING_MODEL = os.environ.get("NPCSH_EMBEDDING_MODEL", "nomic-embed-text")
-NPCSH_EMBEDDING_PROVIDER = os.environ.get("NPCSH_EMBEDDING_PROVIDER", "ollama")
-NPCSH_REASONING_MODEL = os.environ.get("NPCSH_REASONING_MODEL", "deepseek-r1")
-NPCSH_REASONING_PROVIDER = os.environ.get("NPCSH_REASONING_PROVIDER", "ollama")
-NPCSH_STREAM_OUTPUT = eval(os.environ.get("NPCSH_STREAM_OUTPUT", "0")) == 1
-NPCSH_API_URL = os.environ.get("NPCSH_API_URL", None)
-NPCSH_SEARCH_PROVIDER = os.environ.get("NPCSH_SEARCH_PROVIDER", "duckduckgo")
-NPCSH_BUILD_KG = os.environ.get("NPCSH_BUILD_KG") == "1" 
-READLINE_HISTORY_FILE = os.path.expanduser("~/.npcsh_history")
+from .completion import setup_readline, save_readline_history, make_completer, get_slash_commands
 
 
 
@@ -178,7 +162,12 @@ class ShellState:
     current_path: str = field(default_factory=os.getcwd)
     stream_output: bool = NPCSH_STREAM_OUTPUT
     attachments: Optional[List[Any]] = None
-    turn_count: int =0
+    turn_count: int = 0
+    # Token usage tracking
+    session_input_tokens: int = 0
+    session_output_tokens: int = 0
+    session_cost_usd: float = 0.0
+
     def get_model_for_command(self, model_type: str = "chat"):
         if model_type == "chat":
             return self.chat_model, self.chat_provider
@@ -864,12 +853,7 @@ BASH_COMMANDS = [
 ]
 
 
-interactive_commands = {
-    "ipython": ["ipython"],
-    "python": ["python", "-i"],
-    "sqlite3": ["sqlite3"],
-    "r": ["R", "--interactive"],
-}
+# interactive_commands imported from .execution
 
 
 def start_interactive_session(command: str) -> int:
@@ -1213,13 +1197,8 @@ def save_readline_history():
 
 
 
-TERMINAL_EDITORS = ["vim", "emacs", "nano"]
-EMBEDDINGS_DB_PATH = os.path.expanduser("~/npcsh_chroma.db")
-HISTORY_DB_DEFAULT_PATH = os.path.expanduser("~/npcsh_history.db")
-READLINE_HISTORY_FILE = os.path.expanduser("~/.npcsh_readline_history")
-DEFAULT_NPC_TEAM_PATH = os.path.expanduser("~/.npcsh/npc_team/")
-PROJECT_NPC_TEAM_PATH = "./npc_team/"
-
+# ChromaDB client (lazy init)
+EMBEDDINGS_DB_PATH = NPCSH_VECTOR_DB_PATH
 
 try:
     chroma_client = chromadb.PersistentClient(path=EMBEDDINGS_DB_PATH) if chromadb else None
@@ -1467,15 +1446,17 @@ def open_terminal_editor(command: str) -> str:
     except Exception as e:
         return f"Error opening terminal editor: {e}"
 
-def get_multiline_input(prompt: str) -> str:
+def get_multiline_input(prompt: str, state=None, router=None, token_hint: str = "") -> str:
+    """Get input with hint line below prompt."""
     lines = []
     current_prompt = prompt
     while True:
         try:
-            line = input(current_prompt)
+            line = _input_with_hint_below(current_prompt, state, router, token_hint)
             if line.endswith("\\"):
                 lines.append(line[:-1])
-                current_prompt = readline_safe_prompt("> ")
+                current_prompt = "> "
+                token_hint = ""
             else:
                 lines.append(line)
                 break
@@ -1483,6 +1464,295 @@ def get_multiline_input(prompt: str) -> str:
             print("Goodbye!")
             sys.exit(0)
     return "\n".join(lines)
+
+
+def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str = "") -> str:
+    """Custom input with hint displayed below. Arrow keys work for history."""
+    try:
+        import termios
+        import tty
+        import readline
+    except ImportError:
+        return input(prompt)
+
+    if not sys.stdin.isatty():
+        return input(prompt)
+
+    # Get history from readline
+    hist_len = readline.get_current_history_length()
+    history = [readline.get_history_item(i) for i in range(1, hist_len + 1)]
+    history_idx = len(history)
+    saved_line = ""
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+
+    buf = ""
+    pos = 0  # cursor position in buf
+
+    # Calculate visible prompt length (strip ANSI codes)
+    import re
+    prompt_visible_len = len(re.sub(r'\x1b\[[0-9;]*m|\x01|\x02', '', prompt))
+
+    def current_hint():
+        if buf.startswith('/') and len(buf) >= 1:
+            h = _get_slash_hints(state, router, buf)
+            return h if h else token_hint
+        elif buf.startswith('@') and len(buf) >= 1:
+            h = _get_npc_hints(state, buf)
+            return h if h else token_hint
+        return token_hint
+
+    # Get terminal width
+    try:
+        import shutil
+        term_width = shutil.get_terminal_size().columns
+    except:
+        term_width = 80
+
+    def draw():
+        # Calculate how many lines the input takes
+        total_len = prompt_visible_len + len(buf)
+        num_lines = (total_len // term_width) + 1
+
+        # Move to start of input (may need to go up multiple lines)
+        # First go to column 0
+        sys.stdout.write('\r')
+        # Move up for each wrapped line we're on
+        cursor_total = prompt_visible_len + pos
+        cursor_line = cursor_total // term_width
+        # Go up to the first line of input
+        for _ in range(num_lines - 1):
+            sys.stdout.write('\033[A')
+
+        # Clear from cursor to end of screen (clears all wrapped lines + hint)
+        sys.stdout.write('\033[J')
+
+        # Print prompt and buffer
+        sys.stdout.write(prompt + buf)
+
+        # Print hint on next line
+        sys.stdout.write('\n\033[K' + current_hint())
+
+        # Now position cursor back to correct spot
+        # Go back up to the line where cursor should be
+        lines_after_cursor = (total_len // term_width) - (cursor_total // term_width) + 1  # +1 for hint line
+        for _ in range(lines_after_cursor):
+            sys.stdout.write('\033[A')
+
+        # Position cursor in correct column
+        cursor_col = cursor_total % term_width
+        sys.stdout.write('\r')
+        if cursor_col > 0:
+            sys.stdout.write('\033[' + str(cursor_col) + 'C')
+
+        sys.stdout.flush()
+
+    # Print prompt and reserve hint line
+    sys.stdout.write(prompt + '\n' + (token_hint or '') + '\033[A\r')
+    if prompt_visible_len > 0:
+        sys.stdout.write('\033[' + str(prompt_visible_len) + 'C')
+    sys.stdout.flush()
+
+    try:
+        tty.setcbreak(fd)
+        while True:
+            c = sys.stdin.read(1)
+
+            if c in ('\n', '\r'):
+                # Clear hint and newline
+                sys.stdout.write('\n\033[K')
+                sys.stdout.flush()
+                if buf.strip():
+                    readline.add_history(buf)
+                return buf
+
+            elif c == '\x1b':  # ESC - could be arrow key
+                c2 = sys.stdin.read(1)
+                if c2 == '[':
+                    c3 = sys.stdin.read(1)
+                    if c3 == 'A':  # Up
+                        if history_idx > 0:
+                            if history_idx == len(history):
+                                saved_line = buf
+                            history_idx -= 1
+                            buf = history[history_idx] or ''
+                            pos = len(buf)
+                            draw()
+                    elif c3 == 'B':  # Down
+                        if history_idx < len(history):
+                            history_idx += 1
+                            buf = saved_line if history_idx == len(history) else (history[history_idx] or '')
+                            pos = len(buf)
+                            draw()
+                    elif c3 == 'C':  # Right
+                        if pos < len(buf):
+                            pos += 1
+                            sys.stdout.write('\033[C')
+                            sys.stdout.flush()
+                    elif c3 == 'D':  # Left
+                        if pos > 0:
+                            pos -= 1
+                            sys.stdout.write('\033[D')
+                            sys.stdout.flush()
+                    elif c3 == '3':  # Del
+                        sys.stdin.read(1)  # ~
+                        if pos < len(buf):
+                            buf = buf[:pos] + buf[pos+1:]
+                            draw()
+                    elif c3 == 'H':  # Home
+                        pos = 0
+                        draw()
+                    elif c3 == 'F':  # End
+                        pos = len(buf)
+                        draw()
+                elif c2 == '\x1b':  # Double ESC
+                    sys.stdout.write('\n\033[K')
+                    sys.stdout.flush()
+                    return '\x1b'
+
+            elif c == '\x7f' or c == '\x08':  # Backspace
+                if pos > 0:
+                    buf = buf[:pos-1] + buf[pos:]
+                    pos -= 1
+                    draw()
+
+            elif c == '\x03':  # Ctrl-C
+                sys.stdout.write('\n\033[K')
+                sys.stdout.flush()
+                raise KeyboardInterrupt
+
+            elif c == '\x04':  # Ctrl-D
+                if not buf:
+                    sys.stdout.write('\n\033[K')
+                    sys.stdout.flush()
+                    raise EOFError
+
+            elif c == '\x01':  # Ctrl-A
+                pos = 0
+                draw()
+
+            elif c == '\x05':  # Ctrl-E
+                pos = len(buf)
+                draw()
+
+            elif c == '\x15':  # Ctrl-U
+                buf = buf[pos:]
+                pos = 0
+                draw()
+
+            elif c == '\x0b':  # Ctrl-K
+                buf = buf[:pos]
+                draw()
+
+            elif c == '\x17':  # Ctrl-W - delete word back
+                while pos > 0 and buf[pos-1] == ' ':
+                    buf = buf[:pos-1] + buf[pos:]
+                    pos -= 1
+                while pos > 0 and buf[pos-1] != ' ':
+                    buf = buf[:pos-1] + buf[pos:]
+                    pos -= 1
+                draw()
+
+            elif c == '\t':  # Tab - do nothing for now
+                pass
+
+            elif c == '\x0f':  # Ctrl-O - show last tool call args
+                try:
+                    import builtins
+                    last_call = getattr(builtins, '_npcsh_last_tool_call', None)
+                    if last_call:
+                        from termcolor import colored
+                        # Save cursor, move down past hint, show args, restore
+                        sys.stdout.write('\n\033[K')  # New line, clear
+                        sys.stdout.write(colored(f"─── {last_call['name']} ───\n", "cyan"))
+                        args = last_call.get('arguments', {})
+                        for k, v in args.items():
+                            v_str = str(v)
+                            # Show with syntax highlighting for code
+                            if '\n' in v_str:
+                                sys.stdout.write(colored(f"{k}:\n", "yellow"))
+                                for line in v_str.split('\n')[:30]:  # Limit lines
+                                    sys.stdout.write(f"  {line}\n")
+                                if v_str.count('\n') > 30:
+                                    sys.stdout.write(colored(f"  ... ({v_str.count(chr(10)) - 30} more lines)\n", "white", attrs=["dark"]))
+                            else:
+                                sys.stdout.write(colored(f"{k}: ", "yellow") + f"{v_str}\n")
+                        sys.stdout.write(colored("─" * 40 + "\n", "cyan"))
+                        # Redraw prompt
+                        sys.stdout.write(prompt)
+                        sys.stdout.write(buf)
+                        sys.stdout.write('\n' + (token_hint or ''))
+                        sys.stdout.write('\033[A\r')
+                        if prompt_visible_len > 0:
+                            sys.stdout.write('\033[' + str(prompt_visible_len + pos) + 'C')
+                        sys.stdout.flush()
+                    else:
+                        pass  # No tool call to show
+                except:
+                    pass
+
+            elif ord(c) >= 32:  # Printable
+                buf = buf[:pos] + c + buf[pos:]
+                pos += 1
+                draw()
+
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def _get_slash_hints(state, router, prefix='/') -> str:
+    """Slash command hints - fits terminal width."""
+    cmds = {'help', 'set', 'agent', 'chat', 'cmd', 'sq', 'quit', 'exit', 'clear', 'npc'}
+    if state and state.team and hasattr(state.team, 'jinxs_dict'):
+        cmds.update(state.team.jinxs_dict.keys())
+    if router and hasattr(router, 'jinx_routes'):
+        cmds.update(router.jinx_routes.keys())
+    if len(prefix) > 1:
+        f = prefix[1:].lower()
+        cmds = {c for c in cmds if c.lower().startswith(f)}
+    if cmds:
+        # Get terminal width, default 80
+        try:
+            import shutil
+            term_width = shutil.get_terminal_size().columns
+        except:
+            term_width = 80
+
+        # Build hint string that fits in terminal
+        sorted_cmds = sorted(cmds)
+        hint_parts = []
+        current_len = 2  # leading spaces
+        for c in sorted_cmds:
+            item = '/' + c
+            if current_len + len(item) + 2 > term_width - 5:  # leave margin
+                break
+            hint_parts.append(item)
+            current_len += len(item) + 2
+
+        if hint_parts:
+            return colored('  ' + '  '.join(hint_parts), 'white', attrs=['dark'])
+    return ""
+
+
+def _get_npc_hints(state, prefix='@') -> str:
+    """NPC hints."""
+    npcs = set()
+    if state and state.team:
+        if hasattr(state.team, 'npcs') and state.team.npcs:
+            npcs.update(state.team.npcs.keys())
+        if hasattr(state.team, 'forenpc') and state.team.forenpc:
+            npcs.add(state.team.forenpc.name)
+    if not npcs:
+        npcs = {'sibiji', 'guac', 'corca', 'kadiefa', 'plonk'}
+    if len(prefix) > 1:
+        f = prefix[1:].lower()
+        npcs = {n for n in npcs if n.lower().startswith(f)}
+    if npcs:
+        return colored('  ' + '  '.join('@' + n for n in sorted(npcs)), 'cyan')
+    return ""
+
+
 
 def split_by_pipes(command: str) -> List[str]:
     parts = []
@@ -1847,6 +2117,7 @@ def model_supports_tool_calls(model: Optional[str], provider: Optional[str]) -> 
         "llama3.1",
         "llama-3.2",
         "llama3.2",
+        "gemini",
         "tool",
     ]
     return any(marker in model_lower for marker in toolish_markers)
@@ -1960,19 +2231,6 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
         if name:
             deduped[name] = tool_def
     return list(deduped.values()), tool_map
-
-
-def normalize_llm_result(llm_result: Any, fallback_messages: List[Dict[str, Any]]) -> Tuple[Any, List[Dict[str, Any]]]:
-    """
-    Normalize varying LLM return shapes into (output, messages).
-    """
-    if isinstance(llm_result, dict):
-        messages = llm_result.get("messages", fallback_messages)
-        output = llm_result.get("output")
-        if output is None:
-            output = llm_result.get("response")
-        return output, messages
-    return llm_result, fallback_messages
 
 
 def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
@@ -2209,8 +2467,8 @@ def process_pipeline_command(
             f"Platform: {platform.system()} {platform.release()} "
             f"({platform.machine()})"
         )
-        info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n' 
-        state.messages.append({'role':'user', 'content':full_llm_cmd})
+        info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n'
+        # Note: Don't append user message here - get_llm_response/check_llm_command handle it
 
         tools_for_llm: List[Dict[str, Any]] = []
         tool_exec_map: Dict[str, Callable] = {}
@@ -2246,8 +2504,29 @@ def process_pipeline_command(
             for name, func in inspect.getmembers(current_module, inspect.isfunction):
                 application_globals_for_jinx[name] = func
 
+            # Log messages before LLM call
+            logger = logging.getLogger("npcsh.state")
+            logger.debug(f"[process_pipeline_command] Before LLM call: {len(state.messages)} messages, tool_capable={tool_capable}")
+            for i, msg in enumerate(state.messages[-3:]):
+                role = msg.get('role', 'unknown')
+                content = msg.get('content', '')
+                preview = content[:80] if isinstance(content, str) else str(type(content))
+                logger.debug(f"  msg[{len(state.messages)-3+i}] role={role}: {preview}...")
+
             try: # Added try-except for KeyboardInterrupt here
                 if tool_capable:
+                    # Build kwargs - don't pass tool_choice for gemini as it doesn't support it
+                    llm_kwargs = {
+                        "auto_process_tool_calls": True,
+                        "tools": tools_for_llm,
+                        "tool_map": tool_exec_map,
+                    }
+                    # Only add tool_choice for providers that support it (not gemini)
+                    is_gemini = (exec_provider and "gemini" in exec_provider.lower()) or \
+                                (exec_model and "gemini" in exec_model.lower())
+                    if not is_gemini:
+                        llm_kwargs["tool_choice"] = {"type": "auto"}
+
                     llm_result = get_llm_response(
                         full_llm_cmd,
                         model=exec_model,
@@ -2258,16 +2537,13 @@ def process_pipeline_command(
                         stream=stream_final,
                         attachments=state.attachments,
                         context=info,
-                        auto_process_tool_calls=True,
-                        tools=tools_for_llm,
-                        tool_map=tool_exec_map,
-                        tool_choice={"type": "auto"},
+                        **llm_kwargs,
                     )
                 else:
                     llm_result = check_llm_command(
                         full_llm_cmd,
-                        model=exec_model,      
-                        provider=exec_provider, 
+                        model=exec_model,
+                        provider=exec_provider,
                         api_url=state.api_url,
                         api_key=state.api_key,
                         npc=state.npc,
@@ -2276,24 +2552,32 @@ def process_pipeline_command(
                         images=state.attachments,
                         stream=stream_final,
                         context=info,
-                        extra_globals=application_globals_for_jinx  
+                        extra_globals=application_globals_for_jinx
                     )
             except KeyboardInterrupt:
                 print(colored("\nLLM processing interrupted by user.", "yellow"))
                 return state, colored("LLM processing interrupted.", "red")
 
-        if tool_capable:
-            output, updated_messages = normalize_llm_result(llm_result, state.messages)
-            state.messages = updated_messages
-            return state, output
+        # Extract output and messages from llm_result
+        # get_llm_response uses 'response', check_llm_command uses 'output'
+        if isinstance(llm_result, dict):
+            new_messages = llm_result.get("messages", state.messages)
+            logger.debug(f"[process_pipeline_command] After LLM call: received {len(new_messages)} messages (was {len(state.messages)})")
+            state.messages = new_messages
+            output_text = llm_result.get("output") or llm_result.get("response")
 
-        if not review:
-            if isinstance(llm_result, dict):
-                state.messages = llm_result.get("messages", state.messages)
-                output = llm_result.get("output")
-                return state, output
-            else:
-                return state, llm_result        
+            # Preserve usage info for process_result to accumulate
+            output = {
+                'output': output_text,
+                'usage': llm_result.get('usage'),
+                'model': exec_model,
+                'provider': exec_provider,
+            }
+        else:
+            output = llm_result
+
+        if tool_capable or not review:
+            return state, output
         else:
             return review_and_iterate_command(
                 original_command=full_llm_cmd,
@@ -2359,299 +2643,320 @@ Please review and improve this response if needed. Provide a better, more comple
         state.messages = current_messages
         return state, refined_result
 def check_mode_switch(command:str , state: ShellState):
-    if command in ['/cmd', '/agent', '/chat',]:
+    if command in ['/cmd', '/agent', '/chat']:
         state.current_mode = command[1:]
-        return True, state     
+        return True, state
     return False, state
 
-import sys
-import time
-import threading
-from itertools import cycle
 
-class SpinnerContext:
-    def __init__(self, message="Processing", style="dots"):
-        self.message = message
-        self.spinning = False
-        self.thread = None
-        
-        styles = {
-            "dots": ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
-            "line": ["-", "\\", "|", "/"],
-            "arrow": ["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"],
-            "box": ["◰", "◳", "◲", "◱"],
-            "dots_pulse": ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"],
-            "brain": ["🧠", "💭", "🤔", "💡"],
-        }
-        self.frames = cycle(styles.get(style, styles["dots"]))
-    
-    def _spin(self):
-        while self.spinning:
-            sys.stdout.write(
-                f"\r{colored(next(self.frames), 'cyan')} "
-                f"{colored(self.message, 'yellow')}..."
+def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_depth: int = 0) -> Tuple[ShellState, Any]:
+    """
+    Delegate a command to a specific NPC.
+
+    Specialists just receive the task directly - no mention of delegation.
+    Only forenpc can delegate (depth 0), and we catch @mentions in forenpc responses.
+    """
+    import re
+
+    MAX_DELEGATION_DEPTH = 1  # Only allow one level of delegation
+
+    if delegation_depth > MAX_DELEGATION_DEPTH:
+        return state, {'output': f"⚠ Maximum delegation depth reached."}
+
+    if not state.team or not hasattr(state.team, 'npcs') or npc_name not in state.team.npcs:
+        return state, {'output': f"⚠ NPC '{npc_name}' not found in team"}
+
+    target_npc = state.team.npcs[npc_name]
+    model_name = target_npc.model if hasattr(target_npc, 'model') else 'unknown'
+
+    try:
+        # Build tools from the NPC's jinx catalog
+        tools_for_npc = None
+        tool_map_for_npc = None
+        if hasattr(target_npc, 'jinx_tool_catalog') and target_npc.jinx_tool_catalog:
+            tools_for_npc = list(target_npc.jinx_tool_catalog.values())
+            # Build tool_map that executes jinxs
+            tool_map_for_npc = {}
+            for jinx_name, jinx_obj in target_npc.jinxs_dict.items():
+                def make_executor(jname, jobj, npc):
+                    # Get expected input names from jinx
+                    expected_inputs = []
+                    for inp in (jobj.inputs or []):
+                        if isinstance(inp, str):
+                            expected_inputs.append(inp)
+                        elif isinstance(inp, dict):
+                            expected_inputs.append(list(inp.keys())[0])
+
+                    def executor(**received):
+                        # Map received args to expected jinx inputs
+                        mapped = {}
+                        if expected_inputs:
+                            # If we got unexpected keys, map first value to first expected input
+                            received_keys = list(received.keys())
+                            for i, expected in enumerate(expected_inputs):
+                                if expected in received:
+                                    mapped[expected] = received[expected]
+                                elif i < len(received_keys):
+                                    # Map positionally
+                                    mapped[expected] = received[received_keys[i]]
+                        else:
+                            mapped = received
+
+                        result = npc.execute_jinx(jname, mapped)
+                        return result.get('output', str(result))
+                    executor.__name__ = jname
+                    return executor
+                tool_map_for_npc[jinx_name] = make_executor(jinx_name, jinx_obj, target_npc)
+
+        with SpinnerContext(
+            f"{npc_name} processing with {model_name}",
+            style="dots_pulse"
+        ):
+            # Just send the command directly - don't pass team context so they don't know about other NPCs
+            result = target_npc.get_llm_response(
+                command,
+                messages=[],  # Fresh messages - don't leak conversation history
+                context={},   # No team context - they shouldn't know about teammates
+                tools=tools_for_npc,
+                tool_map=tool_map_for_npc,
+                auto_process_tool_calls=True
             )
-            sys.stdout.flush()
-            time.sleep(0.1)
-    
-    def __enter__(self):
-        self.spinning = True
-        self.thread = threading.Thread(target=self._spin)
-        self.thread.start()
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.spinning = False
-        if self.thread:
-            self.thread.join()
-        sys.stdout.write("\r" + " " * 80 + "\r")
-        sys.stdout.flush()
 
-def show_thinking_animation(message="Thinking", duration=None):
-    frames = ["🤔", "💭", "🧠", "💡", "✨"]
-    colors = ["cyan", "blue", "magenta", "yellow", "green"]
-    
-    start = time.time()
-    i = 0
-    while duration is None or (time.time() - start) < duration:
-        frame = frames[i % len(frames)]
-        color = colors[i % len(colors)]
-        sys.stdout.write(
-            f"\r{colored(frame, color)} "
-            f"{colored(message, 'yellow')}..."
-        )
-        sys.stdout.flush()
-        time.sleep(0.3)
-        i += 1
-        if duration and (time.time() - start) >= duration:
-            break
-    
-    sys.stdout.write("\r" + " " * 80 + "\r")
-    sys.stdout.flush()
+        output = result.get("response") or result.get("output", "")
+        if result.get("messages"):
+            state.messages = result["messages"]
+
+        # Only forenpc/sibiji (depth 0) can have @mentions processed
+        if delegation_depth == 0 and output and isinstance(output, str):
+            # Look for @npc_name patterns in the response
+            at_mention_pattern = r'@(\w+)\s*,?\s*(?:could you|can you|please|would you)?[^.!?\n]*[.!?\n]?'
+            matches = re.findall(at_mention_pattern, output, re.IGNORECASE)
+
+            for mentioned_npc in matches:
+                mentioned_npc = mentioned_npc.lower()
+                if mentioned_npc in state.team.npcs and mentioned_npc != npc_name:
+                    # Extract what they're asking the other NPC to do
+                    delegation_match = re.search(
+                        rf'@{mentioned_npc}\s*,?\s*(.*?)(?:\n|$)',
+                        output,
+                        re.IGNORECASE
+                    )
+                    if delegation_match:
+                        sub_request = delegation_match.group(1).strip()
+                        if sub_request:
+                            # Recursive delegation will show its own spinner
+                            state, sub_output = _delegate_to_npc(
+                                state, mentioned_npc, sub_request, delegation_depth + 1
+                            )
+                            # Append the sub-NPC's response
+                            if isinstance(sub_output, dict):
+                                sub_text = sub_output.get('output', '')
+                            else:
+                                sub_text = str(sub_output)
+                            if sub_text:
+                                output += f"\n\n--- Response from {mentioned_npc} ---\n{sub_text}"
+
+        return state, {'output': output}
+
+    except KeyboardInterrupt:
+        print(colored(f"\n{npc_name} interrupted.", "yellow"))
+        return state, {'output': colored("Interrupted.", "red")}
+
 
 def execute_command(
     command: str,
     state: ShellState,
-    review = False, 
+    review = False,
     router = None,
     command_history = None,
     ) -> Tuple[ShellState, Any]:
+    """
+    Execute a command in npcsh.
 
+    Routes commands based on:
+    1. Mode switch commands (/agent, /chat, /cmd, etc.)
+    2. Slash commands (/jinx_name) -> execute via router
+    3. Default mode behavior -> pipeline processing in agent mode, or jinx execution for other modes
+    """
     if not command.strip():
         return state, ""
-    
+
+    # Check for mode switch commands
     mode_change, state = check_mode_switch(command, state)
     if mode_change:
         print(colored(f"⚡ Switched to {state.current_mode} mode", "green"))
         return state, 'Mode changed.'
 
-    npc_name = (
-        state.npc.name 
-        if isinstance(state.npc, NPC) 
-        else "__none__"
-    )
-    team_name = state.team.name if state.team else "__none__"
-    
+    # Check for @npc delegation syntax: @sibiji do something
+    if command.startswith('@') and ' ' in command:
+        npc_name = command.split()[0][1:]  # Remove @ prefix
+        delegated_command = command[len(npc_name) + 2:]  # Rest of command
+
+        # Check if NPC exists in team
+        if state.team and hasattr(state.team, 'npcs') and npc_name in state.team.npcs:
+            state, output = _delegate_to_npc(state, npc_name, delegated_command)
+            return state, output
+        else:
+            print(colored(f"⚠ NPC '{npc_name}' not found in team", "yellow"))
+            # Fall through to normal processing
+
     original_command_for_embedding = command
     commands = split_by_pipes(command)
 
     stdin_for_next = None
     final_output = None
-    current_state = state 
-    npc_model = (
-        state.npc.model 
-        if isinstance(state.npc, NPC) and state.npc.model 
-        else None
-    )
-    npc_provider = (
-        state.npc.provider 
-        if isinstance(state.npc, NPC) and state.npc.provider 
-        else None
-    )
-    active_model = npc_model or state.chat_model
-    active_provider = npc_provider or state.chat_provider
-    
+    current_state = state
+
+    # Agent mode uses pipeline processing (the original behavior)
+    # Other modes route to their respective jinxs
     if state.current_mode == 'agent':
         total_stages = len(commands)
-        
+
         for i, cmd_segment in enumerate(commands):
             stage_num = i + 1
             stage_emoji = ["🎯", "⚙️", "🔧", "✨", "🚀"][i % 5]
-            
-            print(colored(
-                f"\n{stage_emoji} Pipeline Stage {stage_num}/{total_stages}", 
-                "cyan", 
-                attrs=["bold"]
-            ))
-            
+
+            if total_stages > 1:
+                print(colored(
+                    f"\n{stage_emoji} Pipeline Stage {stage_num}/{total_stages}",
+                    "cyan",
+                    attrs=["bold"]
+                ))
+
             is_last_command = (i == len(commands) - 1)
-            stream_this_segment = state.stream_output and not is_last_command 
-            
+            stream_this_segment = state.stream_output and not is_last_command
+
             try:
                 current_state, output = process_pipeline_command(
                     cmd_segment.strip(),
                     stdin_for_next,
-                    current_state, 
-                    stream_final=stream_this_segment, 
+                    current_state,
+                    stream_final=stream_this_segment,
                     review=review,
                     router=router
                 )
+
+                # For last command, preserve full dict with usage info
+                if is_last_command:
+                    if total_stages > 1:
+                        print(colored("✅ Pipeline complete", "green"))
+                    return current_state, output
+
+                # For intermediate stages, extract output text for piping
                 if isinstance(output, dict) and 'output' in output:
                     output = output['output']
 
-                if is_last_command:
-                    print(colored("✅ Pipeline complete", "green"))
-                    return current_state, output
-                    
                 if isinstance(output, str):
                     stdin_for_next = output
-                elif not isinstance(output, str):
+                else:
                     try:
                         if stream_this_segment:
                             full_stream_output = (
                                 print_and_process_stream_with_markdown(
-                                    output, 
-                                    state.npc.model, 
-                                    state.npc.provider, 
+                                    output,
+                                    state.npc.model if isinstance(state.npc, NPC) else state.chat_model,
+                                    state.npc.provider if isinstance(state.npc, NPC) else state.chat_provider,
                                     show=True
                                 )
                             )
                             stdin_for_next = full_stream_output
-                            if is_last_command: 
-                                final_output = full_stream_output
                     except:
-                        if output is not None:  
-                            try: 
+                        if output is not None:
+                            try:
                                 stdin_for_next = str(output)
                             except Exception:
-                                print(
-                                    f"Warning: Cannot convert output to "
-                                    f"string for piping: {type(output)}", 
-                                    file=sys.stderr
-                                )
                                 stdin_for_next = None
-                        else: 
+                        else:
                             stdin_for_next = None
-                            
-                print(colored(
-                    f"  → Passing to stage {stage_num + 1}", 
-                    "blue"
-                ))
+
+                if total_stages > 1:
+                    print(colored(f"  → Passing to stage {stage_num + 1}", "blue"))
+
             except KeyboardInterrupt:
                 print(colored("\nOperation interrupted by user.", "yellow"))
                 return current_state, colored("Command interrupted.", "red")
             except RateLimitError:
-                print(colored('Rate Limit Exceeded'))
-                # wait 30 seconds then truncate messages/condense context with breathing mechanism
-                # for now just limit to first plus last 10
+                print(colored('Rate Limit Exceeded', 'yellow'))
                 messages = current_state.messages[0:1] + current_state.messages[-2:]
                 current_state.messages = messages
-                #retry 
-                import time 
-                print('sleeping...')
-                print(current_state)
-                print(current_state.messages)
+                import time
+                print('Waiting 30s before retry...')
                 time.sleep(30)
-
-
-                return execute_command(command, current_state, review=review, router=router,)
-
-
+                return execute_command(command, current_state, review=review, router=router)
             except Exception as pipeline_error:
                 import traceback
                 traceback.print_exc()
                 error_msg = colored(
-                    f"❌ Error in stage {stage_num} "
-                    f"('{cmd_segment[:50]}...'): {pipeline_error}", 
+                    f"❌ Error in stage {stage_num} ('{cmd_segment[:50]}...'): {pipeline_error}",
                     "red"
                 )
                 return current_state, error_msg
 
-        if final_output is not None and isinstance(final_output,str):
-            store_command_embeddings(
-                original_command_for_embedding, 
-                final_output, 
-                current_state
-            )
+        if final_output is not None and isinstance(final_output, str):
+            store_command_embeddings(original_command_for_embedding, final_output, current_state)
 
         return current_state, final_output
 
-    elif state.current_mode == 'chat':
-        cmd_parts = parse_command_safely(command)
-        is_probably_bash = (
-            cmd_parts
-            and (
-                cmd_parts[0] in interactive_commands
-                or cmd_parts[0] in BASH_COMMANDS
-                or command.strip().startswith("./")
-                or command.strip().startswith("/")
-            )
-        )
-        
-        if is_probably_bash:
-            try:
-                command_name = cmd_parts[0]
-                if command_name in interactive_commands:
-                    return handle_interactive_command(cmd_parts, state)
-                elif command_name == "cd":
-                    return handle_cd_command(cmd_parts, state)
-                else:
-                    try:
-                        bash_state, bash_output = handle_bash_command(
-                            cmd_parts, 
-                            command, 
-                            None, 
-                            state
-                        )
-                        return state, bash_output
-                    except Exception as bash_err:
-                        return state, colored(
-                            f"Bash execution failed: {bash_err}", 
-                            "red"
-                        )
-            except Exception:
-                pass
+    else:
+        # For non-agent modes (chat, cmd, or any custom mode), route through the jinx
+        mode_jinx_name = state.current_mode
 
-        with SpinnerContext(
-            f"Chatting with {active_model}", 
-            style="brain"
-        ):
-            try: # Added try-except for KeyboardInterrupt here
+        # Check if mode jinx exists in team or router
+        mode_jinx = None
+        if state.team and hasattr(state.team, 'jinxs_dict') and mode_jinx_name in state.team.jinxs_dict:
+            mode_jinx = state.team.jinxs_dict[mode_jinx_name]
+        elif router and mode_jinx_name in router.jinx_routes:
+            # Execute via router
+            try:
+                result = router.execute(f"/{mode_jinx_name} {command}",
+                                        state=state, npc=state.npc, messages=state.messages)
+                if isinstance(result, dict):
+                    state.messages = result.get('messages', state.messages)
+                    return state, result.get('output', '')
+                return state, str(result) if result else ''
+            except KeyboardInterrupt:
+                print(colored(f"\n{mode_jinx_name} interrupted.", "yellow"))
+                return state, colored("Interrupted.", "red")
+
+        if mode_jinx:
+            # Execute the mode jinx directly
+            try:
+                result = mode_jinx.execute(
+                    input_values={'query': command, 'stream': state.stream_output},
+                    npc=state.npc,
+                    messages=state.messages,
+                    extra_globals={'state': state}
+                )
+                if isinstance(result, dict):
+                    state.messages = result.get('messages', state.messages)
+                    return state, result.get('output', '')
+                return state, str(result) if result else ''
+            except KeyboardInterrupt:
+                print(colored(f"\n{mode_jinx_name} interrupted.", "yellow"))
+                return state, colored("Interrupted.", "red")
+
+        # Fallback: if mode jinx not found, use basic LLM response
+        npc_model = state.npc.model if isinstance(state.npc, NPC) and state.npc.model else None
+        npc_provider = state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else None
+        active_model = npc_model or state.chat_model
+        active_provider = npc_provider or state.chat_provider
+
+        with SpinnerContext(f"Processing with {active_model}", style="brain"):
+            try:
                 response = get_llm_response(
-                    command, 
-                    model=active_model,          
-                    provider=active_provider,    
+                    command,
+                    model=active_model,
+                    provider=active_provider,
                     npc=state.npc,
                     stream=state.stream_output,
                     messages=state.messages
                 )
             except KeyboardInterrupt:
-                print(colored("\nChat interrupted by user.", "yellow"))
-                return state, colored("Chat interrupted.", "red")
-        
-        state.messages = response['messages']
-        return state, response['response']
+                print(colored("\nInterrupted.", "yellow"))
+                return state, colored("Interrupted.", "red")
 
-    elif state.current_mode == 'cmd':
-        with SpinnerContext(
-            f"Executing with {active_model}", 
-            style="dots_pulse"
-        ):
-            try: # Added try-except for KeyboardInterrupt here
-                response = execute_llm_command(
-                    command, 
-                    model=active_model,          
-                    provider=active_provider,  
-                    npc=state.npc, 
-                    stream=state.stream_output, 
-                    messages=state.messages
-                ) 
-            except KeyboardInterrupt:
-                print(colored("\nCommand execution interrupted by user.", "yellow"))
-                return state, colored("Command interrupted.", "red")
-        
-        state.messages = response['messages']     
-        return state, response['response']
+        state.messages = response.get('messages', state.messages)
+        return state, response.get('response', '')
 
 
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
@@ -2887,13 +3192,26 @@ def process_result(
     result_state.attachments = None
 
     final_output_str = None
-    
+
     # FIX: Handle dict output properly
     if isinstance(output, dict):
         output_content = output.get('output')
         model_for_stream = output.get('model', active_npc.model)
         provider_for_stream = output.get('provider', active_npc.provider)
-        
+
+        # Accumulate token usage if available
+        if 'usage' in output:
+            usage = output['usage']
+            result_state.session_input_tokens += usage.get('input_tokens', 0)
+            result_state.session_output_tokens += usage.get('output_tokens', 0)
+            # Calculate cost
+            from npcpy.gen.response import calculate_cost
+            result_state.session_cost_usd += calculate_cost(
+                model_for_stream,
+                usage.get('input_tokens', 0),
+                usage.get('output_tokens', 0)
+            )
+
         # If output_content is still a dict or None, convert to string
         if isinstance(output_content, dict):
             output_content = str(output_content)
@@ -2927,14 +3245,19 @@ def process_result(
         render_markdown(final_output_str)
         
 
+    # Log message state after processing
+    logger = logging.getLogger("npcsh.state")
+    logger.debug(f"[process_result] Before final append: {len(result_state.messages)} messages, final_output_str={'set' if final_output_str else 'None'}")
+
     if final_output_str:
         if result_state.messages:
             if not result_state.messages or result_state.messages[-1].get("role") != "assistant":
                 result_state.messages.append({
-                    "role": "assistant", 
+                    "role": "assistant",
                     "content": final_output_str
                 })
-        
+                logger.debug(f"[process_result] Appended assistant message, now {len(result_state.messages)} messages")
+
         save_conversation_message(
             command_history,
             result_state.conversation_id,
