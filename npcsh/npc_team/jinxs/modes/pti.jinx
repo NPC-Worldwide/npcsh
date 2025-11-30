@@ -1,28 +1,170 @@
-jinx_name: "pti"
-description: "Enter Pardon-The-Interruption mode for human-in-the-loop reasoning."
+jinx_name: pti
+description: Pardon-The-Interruption - human-in-the-loop reasoning with think tags and interruptible streaming
+npc: frederic
 inputs:
-  - command_args: "" # The full command string or specific arguments for PTI mode.
+  - model: null
+  - provider: null
+  - files: null
+  - reasoning_model: null
+
 steps:
-  - name: "enter_pti"
-    engine: "python"
+  - name: pti_repl
+    engine: python
     code: |
-      import traceback
-      from npcsh.pti import enter_pti_mode
-      
-      command_args = context.get('command_args', '') # The full command string from router
-      output_messages = context.get('messages', [])
-      
-      try:
-          # enter_pti_mode likely expects the full command string for its own parsing
-          result = enter_pti_mode(command=command_args, **context)
-          
-          if isinstance(result, dict):
-              context['output'] = result.get('output', 'Entered PTI mode.')
-              context['messages'] = result.get('messages', output_messages)
-          else:
-              context['output'] = str(result)
-              context['messages'] = output_messages
-      except Exception as e:
-          traceback.print_exc()
-          context['output'] = f"Error entering pti mode: {e}"
-          context['messages'] = output_messages
+      import os
+      import sys
+      from termcolor import colored
+
+      from npcpy.llm_funcs import get_llm_response
+      from npcpy.npc_sysenv import get_system_message, render_markdown
+      from npcpy.data.load import load_file_contents
+      from npcpy.data.text import rag_search
+
+      npc = context.get('npc')
+      team = context.get('team')
+      messages = context.get('messages', [])
+      files = context.get('files')
+
+      # PTI uses reasoning model for deeper thinking
+      model = context.get('reasoning_model') or context.get('model') or (npc.model if npc else None)
+      provider = context.get('provider') or (npc.provider if npc else None)
+
+      print("""
+      ██████╗ ████████╗██╗
+      ██╔══██╗╚══██╔══╝██║
+      ██████╔╝   ██║   ██║
+      ██╔═══╝    ██║   ██║
+      ██║        ██║   ██║
+      ╚═╝        ╚═╝   ╚═╝
+
+      Pardon-The-Interruption
+      Human-in-the-loop reasoning mode
+      """)
+
+      npc_name = npc.name if npc else "pti"
+      print(f"Entering PTI mode (NPC: {npc_name}). Type '/pq' to exit.")
+      print("  - AI will use <think> tags for step-by-step reasoning")
+      print("  - Use <request_for_input> to pause and ask questions")
+      print("  - Ctrl+C interrupts stream for immediate feedback")
+
+      # Load files if provided
+      loaded_content = {}
+      if files:
+          if isinstance(files, str):
+              files = [f.strip() for f in files.split(',')]
+          for file_path in files:
+              file_path = os.path.expanduser(file_path)
+              if os.path.exists(file_path):
+                  try:
+                      chunks = load_file_contents(file_path)
+                      loaded_content[file_path] = "\n".join(chunks)
+                      print(colored(f"Loaded: {file_path}", "green"))
+                  except Exception as e:
+                      print(colored(f"Error loading {file_path}: {e}", "red"))
+
+      # System message for PTI mode
+      pti_system = """You are an AI assistant in PTI (Pardon-The-Interruption) mode.
+
+      IMPORTANT INSTRUCTIONS:
+      1. Think step-by-step using <think>...</think> tags to show your reasoning
+      2. When you need more information from the user, use <request_for_input>your question</request_for_input>
+      3. Be thorough but concise in your reasoning
+      4. The user can interrupt at any time to provide guidance
+
+      Example:
+      <think>
+      Let me break this down...
+      Step 1: First I need to understand X
+      Step 2: Then consider Y
+      </think>
+
+      <request_for_input>
+      I notice you mentioned Z. Could you clarify what you mean by that?
+      </request_for_input>"""
+
+      if not messages or messages[0].get("role") != "system":
+          messages.insert(0, {"role": "system", "content": pti_system})
+
+      # REPL loop
+      user_input = None
+      while True:
+          try:
+              if not user_input:
+                  prompt_str = f"{npc_name}:pti> "
+                  user_input = input(prompt_str).strip()
+
+              if not user_input:
+                  user_input = None
+                  continue
+
+              if user_input.lower() == "/pq":
+                  print("Exiting PTI mode.")
+                  break
+
+              # Build prompt with file context
+              prompt_for_llm = user_input
+              if loaded_content:
+                  context_str = "\n".join([f"--- {fname} ---\n{content}" for fname, content in loaded_content.items()])
+                  prompt_for_llm += f"\n\nContext:\n{context_str}"
+
+              prompt_for_llm += "\n\nThink step-by-step using <think> tags. Use <request_for_input> when you need clarification."
+
+              messages.append({"role": "user", "content": user_input})
+
+              try:
+                  resp = get_llm_response(
+                      prompt_for_llm,
+                      model=model,
+                      provider=provider,
+                      messages=messages[:-1],  # Don't duplicate the user message
+                      stream=True,
+                      npc=npc
+                  )
+
+                  response_stream = resp.get('response')
+                  full_response = ""
+                  request_found = False
+
+                  # Stream the response
+                  for chunk in response_stream:
+                      chunk_content = ""
+                      if hasattr(chunk, 'choices') and chunk.choices:
+                          delta = chunk.choices[0].delta
+                          if hasattr(delta, 'content') and delta.content:
+                              chunk_content = delta.content
+                      elif isinstance(chunk, dict):
+                          chunk_content = chunk.get("message", {}).get("content", "")
+
+                      if chunk_content:
+                          print(chunk_content, end='', flush=True)
+                          full_response += chunk_content
+
+                          # Check for request_for_input
+                          if "</request_for_input>" in full_response:
+                              request_found = True
+                              break
+
+                  print()  # newline after stream
+
+                  messages.append({"role": "assistant", "content": full_response})
+                  user_input = None  # Reset for next iteration
+
+              except KeyboardInterrupt:
+                  print(colored("\n\n--- Interrupted ---", "yellow"))
+                  interrupt_input = input("Your feedback: ").strip()
+                  if interrupt_input:
+                      user_input = interrupt_input
+                  else:
+                      user_input = None
+                  continue
+
+          except KeyboardInterrupt:
+              print("\nUse '/pq' to exit or continue.")
+              user_input = None
+              continue
+          except EOFError:
+              print("\nExiting PTI mode.")
+              break
+
+      context['output'] = "Exited PTI mode."
+      context['messages'] = messages

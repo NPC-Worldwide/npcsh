@@ -1,28 +1,249 @@
-jinx_name: "corca"
-description: "Enter the Corca MCP-powered agentic shell"
+jinx_name: corca
+description: MCP-powered agentic shell - LLM with tool use via MCP servers
 inputs:
-  - mcp_server_path: '~/.npcsh/npc_team/mcp_server.py'
-  - force_global: false
+  - mcp_server_path: null
   - initial_command: null
+  - model: null
+  - provider: null
+
 steps:
-  - name: "enter_corca"
-    engine: "python"
+  - name: corca_repl
+    engine: python
     code: |
-      from npcsh._state import setup_shell 
-      from npcsh.corca import corca_session
-      
+      import os
+      import sys
+      import asyncio
+      import json
+      from contextlib import AsyncExitStack
+      from termcolor import colored
+
+      from npcpy.llm_funcs import get_llm_response
+      from npcpy.npc_sysenv import render_markdown, get_system_message
+
+      # MCP imports
+      try:
+          from mcp import ClientSession, StdioServerParameters
+          from mcp.client.stdio import stdio_client
+          MCP_AVAILABLE = True
+      except ImportError:
+          MCP_AVAILABLE = False
+          print(colored("MCP not available. Install with: pip install mcp-client", "yellow"))
+
+      npc = context.get('npc')
+      team = context.get('team')
+      messages = context.get('messages', [])
       mcp_server_path = context.get('mcp_server_path')
-      force_global = context.get('force_global', False)
       initial_command = context.get('initial_command')
-      
-      command_history, _, _ = setup_shell()
-      
-      result = corca_session(
-          command_history=command_history,
-          mcp_server_path=mcp_server_path,
-          force_global=force_global,
-          initial_command=initial_command
-      )
-      
-      context['output'] = result.get('output', 'Exited Corca mode.')
-      context['messages'] = result.get('messages', [])
+
+      model = context.get('model') or (npc.model if npc else None)
+      provider = context.get('provider') or (npc.provider if npc else None)
+
+      # Use shared_context for MCP state
+      shared_ctx = npc.shared_context if npc and hasattr(npc, 'shared_context') else {}
+
+      print("""
+       ██████╗ ██████╗ ██████╗  ██████╗ █████╗
+      ██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔══██╗
+      ██║     ██║   ██║██████╔╝██║     ███████║
+      ██║     ██║   ██║██╔══██╗██║     ██╔══██╗
+      ╚██████╗╚██████╔╝██║  ██║╚██████╗██║  ██║
+       ╚═════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
+      """)
+
+      npc_name = npc.name if npc else "corca"
+      print(f"Entering corca mode (NPC: {npc_name}). Type '/cq' to exit.")
+
+      # ========== MCP Connection Setup ==========
+      async def connect_mcp(server_path):
+          """Connect to MCP server and return tools"""
+          if not MCP_AVAILABLE:
+              return [], {}
+
+          abs_path = os.path.abspath(os.path.expanduser(server_path))
+          if not os.path.exists(abs_path):
+              print(colored(f"MCP server not found: {abs_path}", "red"))
+              return [], {}
+
+          try:
+              loop = asyncio.get_event_loop()
+          except RuntimeError:
+              loop = asyncio.new_event_loop()
+              asyncio.set_event_loop(loop)
+
+          exit_stack = AsyncExitStack()
+
+          if abs_path.endswith('.py'):
+              cmd_parts = [sys.executable, abs_path]
+          else:
+              cmd_parts = [abs_path]
+
+          server_params = StdioServerParameters(
+              command=cmd_parts[0],
+              args=[abs_path],
+              env=os.environ.copy()
+          )
+
+          stdio_transport = await exit_stack.enter_async_context(stdio_client(server_params))
+          session = await exit_stack.enter_async_context(ClientSession(*stdio_transport))
+          await session.initialize()
+
+          response = await session.list_tools()
+          tools_llm = []
+          tool_map = {}
+
+          if response.tools:
+              for mcp_tool in response.tools:
+                  tool_def = {
+                      "type": "function",
+                      "function": {
+                          "name": mcp_tool.name,
+                          "description": mcp_tool.description or f"MCP tool: {mcp_tool.name}",
+                          "parameters": getattr(mcp_tool, "inputSchema", {"type": "object", "properties": {}})
+                      }
+                  }
+                  tools_llm.append(tool_def)
+
+                  # Create sync wrapper for async tool call
+                  def make_tool_func(tool_name, sess, lp):
+                      async def call_tool(**kwargs):
+                          cleaned = {k: (None if v == 'None' else v) for k, v in kwargs.items()}
+                          result = await asyncio.wait_for(sess.call_tool(tool_name, cleaned), timeout=30.0)
+                          return result
+                      def sync_call(**kwargs):
+                          return lp.run_until_complete(call_tool(**kwargs))
+                      return sync_call
+
+                  tool_map[mcp_tool.name] = make_tool_func(mcp_tool.name, session, loop)
+
+          # Store in shared context
+          shared_ctx['mcp_client'] = session
+          shared_ctx['mcp_tools'] = tools_llm
+          shared_ctx['mcp_tool_map'] = tool_map
+          shared_ctx['_mcp_exit_stack'] = exit_stack
+          shared_ctx['_mcp_loop'] = loop
+
+          print(colored(f"Connected to MCP server. Tools: {', '.join(tool_map.keys())}", "green"))
+          return tools_llm, tool_map
+
+      # Try to connect if server path provided
+      tools_llm = shared_ctx.get('mcp_tools', [])
+      tool_map = shared_ctx.get('mcp_tool_map', {})
+
+      if mcp_server_path and not tools_llm:
+          try:
+              loop = asyncio.get_event_loop()
+          except RuntimeError:
+              loop = asyncio.new_event_loop()
+              asyncio.set_event_loop(loop)
+          tools_llm, tool_map = loop.run_until_complete(connect_mcp(mcp_server_path))
+
+      # Find default MCP server if none provided
+      if not tools_llm:
+          default_paths = [
+              os.path.expanduser("~/.npcsh/npc_team/mcp_server.py"),
+              os.path.join(team.team_path, "mcp_server.py") if team and hasattr(team, 'team_path') else None,
+          ]
+          for path in default_paths:
+              if path and os.path.exists(path):
+                  try:
+                      loop = asyncio.get_event_loop()
+                  except RuntimeError:
+                      loop = asyncio.new_event_loop()
+                      asyncio.set_event_loop(loop)
+                  tools_llm, tool_map = loop.run_until_complete(connect_mcp(path))
+                  if tools_llm:
+                      break
+
+      # Ensure system message
+      if not messages or messages[0].get("role") != "system":
+          sys_msg = get_system_message(npc) if npc else "You are an AI assistant with access to tools."
+          if tools_llm:
+              sys_msg += f"\n\nYou have access to these tools: {', '.join(t['function']['name'] for t in tools_llm)}"
+          messages.insert(0, {"role": "system", "content": sys_msg})
+
+      # Handle initial command if provided (one-shot mode)
+      if initial_command:
+          resp = get_llm_response(
+              initial_command,
+              model=model,
+              provider=provider,
+              messages=messages,
+              tools=tools_llm if tools_llm else None,
+              tool_map=tool_map if tool_map else None,
+              auto_process_tool_calls=True,
+              npc=npc
+          )
+          messages = resp.get('messages', messages)
+          render_markdown(str(resp.get('response', '')))
+          context['output'] = resp.get('response', 'Done.')
+          context['messages'] = messages
+          # Don't enter REPL for one-shot
+          exit()
+
+      # REPL loop
+      while True:
+          try:
+              prompt_str = f"{npc_name}:corca> "
+              user_input = input(prompt_str).strip()
+
+              if not user_input:
+                  continue
+
+              if user_input.lower() == "/cq":
+                  print("Exiting corca mode.")
+                  break
+
+              # Handle /tools to list available tools
+              if user_input.lower() == "/tools":
+                  if tools_llm:
+                      print(colored("Available MCP tools:", "cyan"))
+                      for t in tools_llm:
+                          print(f"  - {t['function']['name']}: {t['function'].get('description', '')[:60]}")
+                  else:
+                      print(colored("No MCP tools connected.", "yellow"))
+                  continue
+
+              # Handle /connect to connect to new MCP server
+              if user_input.startswith("/connect "):
+                  new_path = user_input[9:].strip()
+                  try:
+                      loop = asyncio.get_event_loop()
+                  except RuntimeError:
+                      loop = asyncio.new_event_loop()
+                      asyncio.set_event_loop(loop)
+                  tools_llm, tool_map = loop.run_until_complete(connect_mcp(new_path))
+                  continue
+
+              # Get LLM response with tools
+              resp = get_llm_response(
+                  user_input,
+                  model=model,
+                  provider=provider,
+                  messages=messages,
+                  tools=tools_llm if tools_llm else None,
+                  tool_map=tool_map if tool_map else None,
+                  auto_process_tool_calls=True,
+                  stream=False,  # Tool calls don't work well with streaming
+                  npc=npc
+              )
+
+              messages = resp.get('messages', messages)
+              response_text = resp.get('response', '')
+              render_markdown(str(response_text))
+
+              # Track usage
+              if 'usage' in resp and npc and hasattr(npc, 'shared_context'):
+                  usage = resp['usage']
+                  npc.shared_context['session_input_tokens'] += usage.get('input_tokens', 0)
+                  npc.shared_context['session_output_tokens'] += usage.get('output_tokens', 0)
+                  npc.shared_context['turn_count'] += 1
+
+          except KeyboardInterrupt:
+              print("\nUse '/cq' to exit or continue.")
+              continue
+          except EOFError:
+              print("\nExiting corca mode.")
+              break
+
+      context['output'] = "Exited corca mode."
+      context['messages'] = messages

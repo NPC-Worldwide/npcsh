@@ -32,16 +32,43 @@ except importlib.metadata.PackageNotFoundError:
     VERSION = "unknown"
 
 from npcsh._state import (
-    initial_state, 
+    initial_state,
     orange,
     ShellState,
-    execute_command, 
+    execute_command,
     make_completer,
     process_result,
     readline_safe_prompt,
-    setup_shell, 
+    setup_shell,
     get_multiline_input,
-    )
+)
+
+
+def display_usage(state: ShellState):
+    """Display token usage and cost summary."""
+    inp = state.session_input_tokens
+    out = state.session_output_tokens
+    cost = state.session_cost_usd
+    turns = state.turn_count
+    total = inp + out
+
+    def fmt(n):
+        return f"{n/1000:.1f}k" if n >= 1000 else str(n)
+
+    def fmt_cost(c):
+        if c == 0:
+            return "free"
+        elif c < 0.01:
+            return f"${c:.4f}"
+        else:
+            return f"${c:.2f}"
+
+    print(colored("\n─────────────────────────────", "cyan"))
+    print(colored("📊 Session Usage", "cyan", attrs=["bold"]))
+    print(f"   Tokens: {fmt(inp)} in / {fmt(out)} out ({fmt(total)} total)")
+    print(f"   Cost:   {fmt_cost(cost)}")
+    print(f"   Turns:  {turns}")
+    print(colored("─────────────────────────────\n", "cyan"))
 
 
 def print_welcome_message():
@@ -143,10 +170,13 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router)
         try:
             if state.messages is not None:
                 if len(state.messages) > 20:
+                    # Display usage before compacting
+                    display_usage(state)
+
                     planning_state = {
-                        "goal": "ongoing npcsh session", 
-                        "facts": [f"Working in {state.current_path}", f"Current mode: {state.current_mode}"], 
-                        "successes": [], 
+                        "goal": "ongoing npcsh session",
+                        "facts": [f"Working in {state.current_path}", f"Current mode: {state.current_mode}"],
+                        "successes": [],
                         "mistakes": [],
                         "todos": [],
                         "constraints": ["Follow user requests", "Use appropriate mode for tasks"]
@@ -164,22 +194,48 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router)
             if isinstance(state.npc, NPC) and state.npc.model:
                 display_model = state.npc.model
 
-            if is_windows:
-                cwd_part = os.path.basename(state.current_path)
-                if isinstance(state.npc, NPC):
-                    prompt_end = f":{state.npc.name}:{display_model}> "
-                else:
-                    prompt_end = ":npcsh> "
-                prompt = f"{cwd_part}{prompt_end}"
-            else:
-                cwd_colored = colored(os.path.basename(state.current_path), "blue")
-                if isinstance(state.npc, NPC):
-                    prompt_end = f":🤖{orange(state.npc.name)}:{display_model}> "
-                else:
-                    prompt_end = f":🤖{colored('npc', 'blue', attrs=['bold'])}{colored('sh', 'yellow')}> "
-                prompt = readline_safe_prompt(f"{cwd_colored}{prompt_end}")
+            npc_name = state.npc.name if isinstance(state.npc, NPC) else "npcsh"
+            team_name = state.team.name if state.team else ""
 
-            user_input = get_multiline_input(prompt).strip()
+            # Check if model is local (ollama) or remote (has cost)
+            provider = state.chat_provider
+            if isinstance(state.npc, NPC) and state.npc.provider:
+                provider = state.npc.provider
+            is_local = provider and provider.lower() in ['ollama', 'transformers', 'local']
+
+            # Build token/cost string for hint line
+            if state.session_input_tokens > 0 or state.session_output_tokens > 0:
+                usage_str = f"📊 {state.session_input_tokens:,} in / {state.session_output_tokens:,} out"
+                if not is_local and state.session_cost_usd > 0:
+                    usage_str += f" | ${state.session_cost_usd:.4f}"
+                token_hint = colored(usage_str, "white", attrs=["dark"])
+            else:
+                token_hint = ""
+
+            if is_windows:
+                print(f"cwd: {state.current_path}")
+                status = f"{npc_name}"
+                if team_name:
+                    status += f" | {team_name}"
+                status += f" | {display_model}"
+                print(status)
+                prompt = "> "
+            else:
+                # Line 1: cwd (full path)
+                cwd_line = colored("📁 ", "blue") + colored(state.current_path, "blue")
+                print(cwd_line)
+
+                # Line 2: npc | team | model
+                npc_colored = orange(npc_name) if isinstance(state.npc, NPC) else colored("npcsh", "cyan")
+                parts = [colored("🤖 ", "yellow") + npc_colored]
+                if team_name:
+                    parts.append(colored("👥 ", "magenta") + colored(team_name, "magenta"))
+                parts.append(colored(display_model, "white", attrs=["dark"]))
+                print(" | ".join(parts))
+
+                prompt = colored("> ", "green")
+
+            user_input = get_multiline_input(prompt, state=state, router=router, token_hint=token_hint).strip()
           
             if user_input == "\x1a":
                 exit_shell(state)

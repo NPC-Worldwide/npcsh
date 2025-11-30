@@ -1,0 +1,33 @@
+jinx_name: usage
+description: Display current session token usage and cost
+inputs: []
+steps:
+  - name: show_usage
+    engine: python
+    code: |
+      state = context.get('state')
+      if not state:
+          output = "No state available"
+      else:
+          inp = getattr(state, 'session_input_tokens', 0)
+          out = getattr(state, 'session_output_tokens', 0)
+          cost = getattr(state, 'session_cost_usd', 0.0)
+          turns = getattr(state, 'turn_count', 0)
+          total = inp + out
+
+          def fmt(n):
+              return f"{n/1000:.1f}k" if n >= 1000 else str(n)
+
+          def fmt_cost(c):
+              if c == 0:
+                  return "free (local)"
+              elif c < 0.01:
+                  return f"${c:.4f}"
+              else:
+                  return f"${c:.2f}"
+
+          output = f"Session Usage\n"
+          output += f"Tokens: {fmt(inp)} in / {fmt(out)} out ({fmt(total)} total)\n"
+          output += f"Cost:   {fmt_cost(cost)}\n"
+          output += f"Turns:  {turns}"
+      context['output'] = output
