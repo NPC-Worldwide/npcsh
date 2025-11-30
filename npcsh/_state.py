@@ -2167,8 +2167,20 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
         if not jinja_env_for_jinx and state.team and isinstance(state.team, Team):
             jinja_env_for_jinx = getattr(state.team, "jinja_env", None)
 
+        # Build extra_globals with all necessary functions for jinx execution
+        jinx_extra_globals = {
+            "state": state,
+            "CommandHistory": CommandHistory,
+            "load_kg_from_db": load_kg_from_db,
+            "execute_rag_command": execute_rag_command,
+            "execute_brainblast_command": execute_brainblast_command,
+            "load_file_contents": load_file_contents,
+            "search_web": search_web,
+            "get_relevant_memories": get_relevant_memories,
+        }
+
         for name, jinx_obj in aggregated_jinxs.items():
-            def _make_runner(jinx=jinx_obj, jinja_env=jinja_env_for_jinx, tool_name=name):
+            def _make_runner(jinx=jinx_obj, jinja_env=jinja_env_for_jinx, tool_name=name, extra_globals=jinx_extra_globals):
                 def runner(**kwargs):
                     input_values = kwargs if isinstance(kwargs, dict) else {}
                     try:
@@ -2176,7 +2188,7 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
                             input_values=input_values,
                             npc=npc_obj,
                             messages=state.messages,
-                            extra_globals={"state": state},
+                            extra_globals=extra_globals,
                             jinja_env=jinja_env
                         )
                         return ctx.get("output", ctx)
