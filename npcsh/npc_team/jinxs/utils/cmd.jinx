@@ -1,5 +1,5 @@
-jinx_name: chat
-description: Simple chat mode - LLM conversation without tool execution
+jinx_name: cmd
+description: Command mode - LLM generates and executes shell commands
 inputs:
   - query: null
   - model: null
@@ -7,10 +7,10 @@ inputs:
   - stream: true
 
 steps:
-  - name: chat_response
+  - name: cmd_execute
     engine: python
     code: |
-      from npcpy.llm_funcs import get_llm_response
+      from npcpy.llm_funcs import execute_llm_command
 
       npc = context.get('npc')
       messages = context.get('messages', [])
@@ -24,7 +24,7 @@ steps:
           context['output'] = ''
           context['messages'] = messages
       else:
-          response = get_llm_response(
+          response = execute_llm_command(
               query,
               model=model,
               provider=provider,

@@ -7,28 +7,24 @@ steps:
     engine: python
     code: |
       import subprocess
-      import sys # Import sys to explicitly write to stderr for visibility
-
-      # Force a simple print to see if anything comes out
-      print("--- Jinx 'sh' code started ---", file=sys.stderr) 
+      import os
 
       cmd = '{{ bash_command }}'
-      
-      # Initialize output to an empty string to ensure it always exists
-      output = "" 
-
+      output = ""
 
       process = subprocess.Popen(
-          cmd, 
-          shell=True, 
-          stdout=subprocess.PIPE, 
+          cmd,
+          shell=True,
+          stdout=subprocess.PIPE,
           stderr=subprocess.PIPE
       )
       stdout, stderr = process.communicate()
-      
-      # Print raw stdout/stderr to sys.stderr for better visibility in some environments
-      print(f"Jinx 'sh' raw stdout: {stdout.decode('utf-8', errors='ignore')}", file=sys.stderr)
-      print(f"Jinx 'sh' raw stderr: {stderr.decode('utf-8', errors='ignore')}", file=sys.stderr)
+
+      # Only show debug output if NPCSH_DEBUG is set
+      if os.environ.get("NPCSH_DEBUG") == "1":
+          import sys
+          print(f"[sh] cmd: {cmd}", file=sys.stderr)
+          print(f"[sh] stdout: {stdout.decode('utf-8', errors='ignore')[:200]}", file=sys.stderr)
 
       if stderr:
           output = f"Error: {stderr.decode('utf-8')}"
