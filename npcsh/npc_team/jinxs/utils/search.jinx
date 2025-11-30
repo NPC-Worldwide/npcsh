@@ -120,9 +120,17 @@ steps:
 
               else:
                   # Default to web search
-                  provider = context.get('sprovider') or current_state.search_provider
+                  provider = context.get('sprovider') or getattr(current_state, 'search_provider', None)
                   results = search_web(query, provider=provider)
-                  output = "\n".join([f"- {res}" for res in results]) if results else "No web results found."
+                  # search_web returns [content_str, links_str]
+                  if results and len(results) >= 2:
+                      content_str, links_str = results[0], results[1]
+                      if content_str and content_str.strip():
+                          output = f"Web Search Results:\n\n{content_str}"
+                      else:
+                          output = "No web results found."
+                  else:
+                      output = "No web results found."
 
           except Exception as e:
               output = f"An error occurred in the search jinx: {e}\n{traceback.format_exc()}"
