@@ -2524,8 +2524,7 @@ def process_pipeline_command(
                     # Only add tool_choice for providers that support it (not gemini)
                     is_gemini = (exec_provider and "gemini" in exec_provider.lower()) or \
                                 (exec_model and "gemini" in exec_model.lower())
-                    if not is_gemini:
-                        llm_kwargs["tool_choice"] = {"type": "auto"}
+                    llm_kwargs["tool_choice"] = 'auto'
 
                     llm_result = get_llm_response(
                         full_llm_cmd,
@@ -2552,7 +2551,8 @@ def process_pipeline_command(
                         images=state.attachments,
                         stream=stream_final,
                         context=info,
-                        extra_globals=application_globals_for_jinx
+                        extra_globals=application_globals_for_jinx,
+                        tool_capable=tool_capable,
                     )
             except KeyboardInterrupt:
                 print(colored("\nLLM processing interrupted by user.", "yellow"))
