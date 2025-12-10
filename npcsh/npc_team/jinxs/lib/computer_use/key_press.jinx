@@ -1,0 +1,21 @@
+jinx_name: key_press
+description: Press a keyboard key (enter, tab, escape, etc.)
+inputs:
+  - key: "enter"  # Key to press
+
+steps:
+  - name: perform_key
+    engine: python
+    code: |
+      from npcpy.work.desktop import perform_action
+
+      key = context.get('key', 'enter')
+      messages = context.get('messages', [])
+
+      try:
+          perform_action('key', key=key)
+          context['output'] = f"Pressed key: {key}"
+      except Exception as e:
+          context['output'] = f"Key press failed: {e}"
+
+      context['messages'] = messages

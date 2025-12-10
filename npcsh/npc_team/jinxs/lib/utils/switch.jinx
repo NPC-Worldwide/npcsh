@@ -1,0 +1,62 @@
+jinx_name: switch
+description: Get or set a switch in the .ctx file
+inputs:
+  - name: ""  # Switch name
+  - value: null  # Value to set (omit to get current value)
+  - scope: "workspace"  # "workspace" or "global"
+
+steps:
+  - name: manage_switch
+    engine: python
+    code: |
+      import os
+      import yaml
+      from pathlib import Path
+
+      switch_name = context.get('name', '')
+      switch_value = context.get('value')
+      scope = context.get('scope', 'workspace')
+      messages = context.get('messages', [])
+
+      if not switch_name:
+          context['output'] = "Usage: /switch <name> [value] [--scope workspace|global]"
+          context['messages'] = messages
+          exit()
+
+      # Determine .ctx path based on scope
+      if scope == "global":
+          ctx_path = Path.home() / ".npcsh" / "npc_team" / "npcsh.ctx"
+      else:
+          cwd = os.getcwd()
+          # Look for npc_team/*.ctx in workspace
+          npc_team_dir = Path(cwd) / "npc_team"
+          ctx_files = list(npc_team_dir.glob("*.ctx")) if npc_team_dir.exists() else []
+          ctx_path = ctx_files[0] if ctx_files else npc_team_dir / "team.ctx"
+
+      # Load existing ctx
+      ctx_data = {}
+      if ctx_path.exists():
+          try:
+              with open(ctx_path) as f:
+                  ctx_data = yaml.safe_load(f) or {}
+          except:
+              ctx_data = {}
+
+      # Ensure switches dict exists
+      if 'switches' not in ctx_data:
+          ctx_data['switches'] = {}
+
+      if switch_value is None:
+          # Get mode
+          current = ctx_data['switches'].get(switch_name, "not set")
+          context['output'] = f"{switch_name} ({scope}): {current}"
+      else:
+          # Set mode
+          ctx_path.parent.mkdir(parents=True, exist_ok=True)
+          ctx_data['switches'][switch_name] = switch_value
+          with open(ctx_path, 'w') as f:
+              yaml.dump(ctx_data, f, default_flow_style=False)
+          context['output'] = f"Set {switch_name} = {switch_value} ({scope})"
+
+      context['messages'] = messages
+      context['switch_value'] = ctx_data['switches'].get(switch_name)

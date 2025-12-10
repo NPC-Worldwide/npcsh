@@ -1,0 +1,17 @@
+jinx_name: "shh"
+description: "Enable silent mode - only shows warnings and errors"
+inputs: []
+steps:
+  - name: "set_silent"
+    engine: "python"
+    code: |
+      state = context.get('state')
+      output_messages = context.get('messages', [])
+
+      if state:
+          result = state.set_log_level("silent")
+          context['output'] = result
+      else:
+          context['output'] = "Error: state not available"
+
+      context['messages'] = output_messages

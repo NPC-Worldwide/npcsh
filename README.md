@@ -5,7 +5,9 @@
 
 # NPC Shell
 
-The NPC shell is the toolkit for tomorrow, providing a suite of programs to make use of multi-modal LLMs and agents in novel interactive modes. `npcsh` is based in the command line, and so can be used wherever you work. 
+`npcsh` - a new standard in human-agent interaction. Co-create with agents to build organizations that refine themselves and evolve to your needs.
+
+The NPC shell is a suite of programs to make use of multi-modal LLMs and agents in novel interactive modes. Based in the command line, use it wherever you work. 
 
 - It is developed to work reliably with small models and performs excellently with the state-of-the-art models from major model providers. 
 - Fundamentally, the core program of npcsh extends the familiar bash environment with an intelligent layer that lets users seamlessly ask agents questions, run pre-built or custom macros or agents, all without breaking the flow of command-line work.

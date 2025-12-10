@@ -1,11 +1,26 @@
 from setuptools import setup, find_packages
 import os
+from pathlib import Path
+
+
 def package_files(directory):
     paths = []
     for path, directories, filenames in os.walk(directory):
         for filename in filenames:
             paths.append(os.path.join(path, filename))
     return paths
+
+
+# Entry points discovered at runtime via npcpy Team/Jinx loading
+# Static list - add new NPCs/jinxes here as they're created
+npc_entries = [
+    "guac", "corca", "sibiji", "plonk", "plonkjr",
+    "frederic", "kadiefa", "alicanto",
+]
+jinx_entries = ["yap", "wander", "spool"]
+
+dynamic_entries = [f"{name}=npcsh.npcsh:main" for name in npc_entries + jinx_entries]
+
 base_requirements = [
     'npcpy', 
     "jinja2",
@@ -89,15 +104,11 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "corca=npcsh.corca:main",
+            # Main entry points
             "npcsh=npcsh.npcsh:main",
             "npc=npcsh.npc:main",
-            "yap=npcsh.yap:main",
-            "pti=npcsh.pti:main",
-            "guac=npcsh.guac:main",
-            "wander=npcsh.wander:main",
-            "spool=npcsh.spool:main", 
-        ],
+            # Dynamic entry points from data files (NPCs and bin/ jinxes)
+        ] + dynamic_entries,
     },
     author="Christopher Agostino",
     author_email="info@npcworldwi.de",

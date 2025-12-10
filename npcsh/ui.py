@@ -61,6 +61,9 @@ class SpinnerContext:
         self._stop = True
         if self._thread:
             self._thread.join(timeout=0.5)
+        # Wait for key listener to restore terminal settings
+        if self._key_thread:
+            self._key_thread.join(timeout=0.5)
         # Clear spinner line
         sys.stdout.write('\r' + ' ' * (len(self.message) + 20) + '\r')
         sys.stdout.flush()
@@ -74,6 +77,8 @@ class SpinnerContext:
             import termios
             import tty
             import select
+            import signal
+            import os
 
             fd = sys.stdin.fileno()
             self._old_settings = termios.tcgetattr(fd)
@@ -86,6 +91,8 @@ class SpinnerContext:
                         if ch == '\x1b':  # ESC key
                             self._interrupted = True
                             self._stop = True
+                            # Send SIGINT to main thread to interrupt blocking calls
+                            os.kill(os.getpid(), signal.SIGINT)
                             break
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, self._old_settings)

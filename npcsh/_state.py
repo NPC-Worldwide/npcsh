@@ -167,6 +167,8 @@ class ShellState:
     session_input_tokens: int = 0
     session_output_tokens: int = 0
     session_cost_usd: float = 0.0
+    # Logging level: "silent", "normal", "verbose"
+    log_level: str = "normal"
 
     def get_model_for_command(self, model_type: str = "chat"):
         if model_type == "chat":
@@ -182,7 +184,34 @@ class ShellState:
         elif model_type == "video_gen":
             return self.video_gen_model, self.video_gen_provider
         else:
-            return self.chat_model, self.chat_provider 
+            return self.chat_model, self.chat_provider
+
+    def set_log_level(self, level: str) -> str:
+        """Set the logging level and configure npcpy loggers accordingly."""
+        level = level.lower()
+        if level not in ("silent", "normal", "verbose"):
+            return f"Invalid log level: {level}. Use 'silent', 'normal', or 'verbose'."
+
+        self.log_level = level
+
+        # Map to Python logging levels
+        level_map = {
+            "silent": logging.WARNING,
+            "normal": logging.INFO,
+            "verbose": logging.DEBUG,
+        }
+        log_level = level_map[level]
+
+        # Configure npcpy loggers
+        for logger_name in ["npcpy", "npcpy.gen", "npcpy.gen.response", "npcsh"]:
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(log_level)
+
+        # Also set root logger for npcpy
+        logging.getLogger("npcpy").setLevel(log_level)
+
+        return f"Log level set to: {level}"
+
 CONFIG_KEY_MAP = {
   
     "model": "NPCSH_CHAT_MODEL",
@@ -1559,6 +1588,11 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         while True:
             c = sys.stdin.read(1)
 
+            if not c:  # EOF/stdin closed
+                sys.stdout.write('\n\033[K')
+                sys.stdout.flush()
+                raise EOFError
+
             if c in ('\n', '\r'):
                 # Clear hint and newline
                 sys.stdout.write('\n\033[K')
@@ -1692,7 +1726,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                 except:
                     pass
 
-            elif ord(c) >= 32:  # Printable
+            elif c and ord(c) >= 32:  # Printable
                 buf = buf[:pos] + c + buf[pos:]
                 pos += 1
                 draw()
@@ -2123,6 +2157,65 @@ def model_supports_tool_calls(model: Optional[str], provider: Optional[str]) -> 
     return any(marker in model_lower for marker in toolish_markers)
 
 
+def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellState) -> Callable:
+    """Wrap a tool function to add visual feedback when it executes.
+
+    Respects state.log_level:
+    - "silent": no output
+    - "normal": show tool name and success/failure
+    - "verbose": show tool name, args, success/failure, and result preview
+    """
+    def wrapped(**kwargs):
+        log_level = getattr(state, 'log_level', 'normal')
+
+        # Display tool call (skip in silent mode)
+        if log_level != "silent":
+            try:
+                args_display = ""
+                if log_level == "verbose" and kwargs:
+                    arg_parts = []
+                    for _, v in kwargs.items():
+                        v_str = str(v)
+                        if len(v_str) > 40:
+                            v_str = v_str[:40] + "…"
+                        arg_parts.append(f"{v_str}")
+                    args_display = " ".join(arg_parts)
+                    if len(args_display) > 60:
+                        args_display = args_display[:60] + "…"
+
+                if args_display:
+                    print(colored(f"  ⚡ {tool_name}", "cyan") + colored(f" {args_display}", "white", attrs=["dark"]), end="", flush=True)
+                else:
+                    print(colored(f"  ⚡ {tool_name}", "cyan"), end="", flush=True)
+            except:
+                pass
+
+        # Execute tool
+        try:
+            result = tool_func(**kwargs)
+            if log_level != "silent":
+                try:
+                    print(colored(" ✓", "green"), flush=True)
+                    # Show preview of result only in verbose mode
+                    if log_level == "verbose":
+                        result_preview = str(result)
+                        if len(result_preview) > 200:
+                            result_preview = result_preview[:200] + "..."
+                        if result_preview and result_preview not in ('None', '', '{}', '[]'):
+                            print(colored(f"    → {result_preview}", "white", attrs=["dark"]), flush=True)
+                except:
+                    pass
+            return result
+        except Exception as e:
+            if log_level != "silent":
+                try:
+                    print(colored(f" ✗ {str(e)[:100]}", "red"), flush=True)
+                except:
+                    pass
+            raise
+    return wrapped
+
+
 def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str, Callable]]:
     """
     Assemble tool definitions + executable map from NPC tools, Jinxs, and MCP servers.
@@ -2230,7 +2323,11 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
         name = tool_def.get("function", {}).get("name")
         if name:
             deduped[name] = tool_def
-    return list(deduped.values()), tool_map
+
+    # Wrap all tools with display feedback for npcsh
+    wrapped_tool_map = {name: wrap_tool_with_display(name, func, state) for name, func in tool_map.items()}
+
+    return list(deduped.values()), wrapped_tool_map
 
 
 def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
@@ -2454,15 +2551,19 @@ def process_pipeline_command(
             else cmd_to_process
         )
         path_cmd = 'The current working directory is: ' + state.current_path
-        ls_files = (
-            'Files in the current directory (full paths):\n' + 
-            "\n".join([
-                os.path.join(state.current_path, f) 
-                for f in os.listdir(state.current_path)
-            ]) 
-            if os.path.exists(state.current_path) 
-            else 'No files found in the current directory.'
-        )
+        if os.path.exists(state.current_path):
+            all_files = os.listdir(state.current_path)
+            # Limit to first 100 files to avoid token explosion
+            limited_files = all_files[:100]
+            file_list = "\n".join([
+                os.path.join(state.current_path, f)
+                for f in limited_files
+            ])
+            if len(all_files) > 100:
+                file_list += f"\n... and {len(all_files) - 100} more files"
+            ls_files = 'Files in the current directory (full paths):\n' + file_list
+        else:
+            ls_files = 'No files found in the current directory.'
         platform_info = (
             f"Platform: {platform.system()} {platform.release()} "
             f"({platform.machine()})"
@@ -2526,18 +2627,66 @@ def process_pipeline_command(
                                 (exec_model and "gemini" in exec_model.lower())
                     llm_kwargs["tool_choice"] = 'auto'
 
-                    llm_result = get_llm_response(
-                        full_llm_cmd,
-                        model=exec_model,
-                        provider=exec_provider,
-                        npc=state.npc,
-                        team=state.team,
-                        messages=state.messages,
-                        stream=stream_final,
-                        attachments=state.attachments,
-                        context=info,
-                        **llm_kwargs,
-                    )
+                    # Agent loop: keep calling LLM until it stops making tool calls
+                    # The LLM decides when it's done - npcsh just facilitates
+                    iteration = 0
+                    max_iterations = 50  # Safety limit to prevent infinite loops
+                    total_usage = {"input_tokens": 0, "output_tokens": 0}
+
+                    while iteration < max_iterations:
+                        iteration += 1
+
+                        llm_result = get_llm_response(
+                            full_llm_cmd if iteration == 1 else None,  # Only pass prompt on first call
+                            model=exec_model,
+                            provider=exec_provider,
+                            npc=state.npc,
+                            team=state.team,
+                            messages=state.messages,
+                            stream=False,  # Don't stream intermediate calls
+                            attachments=state.attachments if iteration == 1 else None,
+                            context=info if iteration == 1 else None,
+                            **llm_kwargs,
+                        )
+
+                        # Accumulate usage
+                        if isinstance(llm_result, dict) and llm_result.get('usage'):
+                            total_usage["input_tokens"] += llm_result['usage'].get('input_tokens', 0)
+                            total_usage["output_tokens"] += llm_result['usage'].get('output_tokens', 0)
+
+                        # Update state messages
+                        old_msg_count = len(state.messages) if state.messages else 0
+                        if isinstance(llm_result, dict):
+                            state.messages = llm_result.get("messages", state.messages)
+
+                        # Display tool outputs from this iteration
+                        for msg in state.messages[old_msg_count:]:
+                            if msg.get("role") == "tool":
+                                tool_name = msg.get("name", "tool")
+                                tool_content = msg.get("content", "")
+                                if tool_content and tool_content.strip():
+                                    print(colored(f"\n⚡ {tool_name}:", "cyan"))
+                                    lines = tool_content.split('\n')
+                                    if len(lines) > 50:
+                                        print('\n'.join(lines[:25]))
+                                        print(colored(f"\n... ({len(lines) - 50} lines hidden) ...\n", "white", attrs=["dark"]))
+                                        print('\n'.join(lines[-25:]))
+                                    else:
+                                        print(tool_content)
+
+                        # Check if LLM made tool calls - if not, it's done
+                        tool_calls_made = isinstance(llm_result, dict) and llm_result.get("tool_calls")
+                        if not tool_calls_made:
+                            # LLM is done - no more tool calls
+                            break
+
+                        # Clear the prompt for continuation calls - context is in messages
+                        full_llm_cmd = None
+
+                    # Store accumulated usage
+                    if isinstance(llm_result, dict):
+                        llm_result['usage'] = total_usage
+
                 else:
                     llm_result = check_llm_command(
                         full_llm_cmd,
@@ -2993,32 +3142,44 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         default_forenpc_name = "forenpc"
     else:
         if not os.path.exists('.npcsh_global'):
-            resp = input(f"No npc_team found in {os.getcwd()}. Create a new team here? [Y/n]: ").strip().lower()
+            try:
+                resp = input(f"No npc_team found in {os.getcwd()}. Create a new team here? [Y/n]: ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print("\nAborted.")
+                sys.exit(0)
             if resp in ("", "y", "yes"):
                 team_dir = project_team_path
                 os.makedirs(team_dir, exist_ok=True)
                 default_forenpc_name = "forenpc"
-                forenpc_directive = input(
-                    f"Enter a primary directive for {default_forenpc_name} (default: 'You are the forenpc of the team...'): "
-                ).strip() or "You are the forenpc of the team, coordinating activities between NPCs on the team, verifying that results from NPCs are high quality and can help to adequately answer user requests."
-                forenpc_model = input("Enter a model for your forenpc (default: llama3.2): ").strip() or "llama3.2"
-                forenpc_provider = input("Enter a provider for your forenpc (default: ollama): ").strip() or "ollama"
-                
+                try:
+                    forenpc_directive = input(
+                        f"Enter a primary directive for {default_forenpc_name} (default: 'You are the forenpc of the team...'): "
+                    ).strip() or "You are the forenpc of the team, coordinating activities between NPCs on the team, verifying that results from NPCs are high quality and can help to adequately answer user requests."
+                    forenpc_model = input("Enter a model for your forenpc (default: llama3.2): ").strip() or "llama3.2"
+                    forenpc_provider = input("Enter a provider for your forenpc (default: ollama): ").strip() or "ollama"
+                except (KeyboardInterrupt, EOFError):
+                    print("\nAborted.")
+                    sys.exit(0)
+
                 with open(os.path.join(team_dir, f"{default_forenpc_name}.npc"), "w") as f:
                     yaml.dump({
                         "name": default_forenpc_name, "primary_directive": forenpc_directive,
                         "model": forenpc_model, "provider": forenpc_provider
                     }, f)
-                
+
                 ctx_path = os.path.join(team_dir, "team.ctx")
-                folder_context = input("Enter a short description for this project/team (optional): ").strip()
-                team_ctx_data = {
-                    "forenpc": default_forenpc_name, 
-                    "model": forenpc_model,
-                    "provider": forenpc_provider, 
-                    "context": folder_context if folder_context else None
-                }
-                use_jinxs = input("Use global jinxs folder (g) or copy to this project (c)? [g/c, default: g]: ").strip().lower()
+                try:
+                    folder_context = input("Enter a short description for this project/team (optional): ").strip()
+                    team_ctx_data = {
+                        "forenpc": default_forenpc_name,
+                        "model": forenpc_model,
+                        "provider": forenpc_provider,
+                        "context": folder_context if folder_context else None
+                    }
+                    use_jinxs = input("Use global jinxs folder (g) or copy to this project (c)? [g/c, default: g]: ").strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    print("\nAborted.")
+                    sys.exit(0)
                 if use_jinxs == "c":
                     global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
                     if os.path.exists(global_jinxs_dir):
@@ -3035,7 +3196,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                 with open(".npcsh_global", "w") as f:
                     pass
                 team_dir = global_team_path
-                default_forenpc_name = "sibiji"  
+                default_forenpc_name = "sibiji"
         else:
             team_dir = global_team_path
             default_forenpc_name = "sibiji"
