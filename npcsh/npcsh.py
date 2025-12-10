@@ -71,38 +71,72 @@ def display_usage(state: ShellState):
     print(colored("─────────────────────────────\n", "cyan"))
 
 
-def print_welcome_message():
-    print(
-            """
-___________________________________________          
-___________________________________________
-___________________________________________
+def print_welcome_art(npc=None):
+    """Print welcome art - from NPC if available, otherwise default npcsh art."""
+    BLUE = "\033[1;94m"
+    RUST = "\033[1;38;5;202m"
+    RESET = "\033[0m"
 
-Welcome to \033[1;94mnpc\033[0m\033[1;38;5;202msh\033[0m!
-\033[1;94m                    \033[0m\033[1;38;5;202m        _       \\\\
-\033[1;94m _ __   _ __    ___ \033[0m\033[1;38;5;202m  ___  | |___    \\\\
-\033[1;94m| '_ \\ | '_ \\  / __|\033[0m\033[1;38;5;202m / __/ | |_ _|    \\\\
-\033[1;94m| | | || |_) |( |__ \033[0m\033[1;38;5;202m \\_  \\ | | | |    //
-\033[1;94m|_| |_|| .__/  \\___|\033[0m\033[1;38;5;202m |___/ |_| |_|   //
-       \033[1;94m|🤖|          \033[0m\033[1;38;5;202m               //
-       \033[1;94m|🤖|
-       \033[1;94m|🤖|
-___________________________________________
-___________________________________________
-___________________________________________
+    # If NPC has ascii_art, display it with colors
+    if npc and hasattr(npc, 'ascii_art') and npc.ascii_art:
+        art = npc.ascii_art
+        colors = getattr(npc, 'colors', {}) or {}
+
+        if colors:
+            top = colors.get("top", "255,255,255")
+            bottom = colors.get("bottom", "255,255,255")
+            lines = art.strip().split("\n")
+            mid = len(lines) // 2
+
+            try:
+                tr, tg, tb = map(int, top.split(","))
+                br, bg, bb = map(int, bottom.split(","))
+            except:
+                tr, tg, tb = 255, 255, 255
+                br, bg, bb = 255, 255, 255
+
+            for i, line in enumerate(lines):
+                if i < mid:
+                    print(f"\033[38;2;{tr};{tg};{tb}m{line}\033[0m")
+                else:
+                    print(f"\033[38;2;{br};{bg};{bb}m{line}\033[0m")
+        else:
+            print(art)
+        print()
+        return
+
+    # Default npcsh art
+    print(f"""
+{BLUE}___________________________________________{RESET}
+
+Welcome to {BLUE}npc{RESET}{RUST}sh{RESET}!
+{BLUE}                    {RESET}{RUST}        _       \\\\{RESET}
+{BLUE} _ __   _ __    ___ {RESET}{RUST}  ___  | |___    \\\\{RESET}
+{BLUE}| '_ \\ | '_ \\  / __|{RESET}{RUST} / __/ | |_ _|    \\\\{RESET}
+{BLUE}| | | || |_) |( |__ {RESET}{RUST} \\_  \\ | | | |    //{RESET}
+{BLUE}|_| |_|| .__/  \\___/{RESET}{RUST} |___/ |_| |_|   //{RESET}
+       {BLUE}|🤖|          {RESET}{RUST}               //{RESET}
+       {BLUE}|🤖|{RESET}
+       {BLUE}|🤖|{RESET}
+{RUST}___________________________________________{RESET}
 
 Begin by asking a question, issuing a bash command, or typing '/help' for more information.
-
-            """
-        )
+""")
 
 
-def run_repl(command_history: CommandHistory, initial_state: ShellState, router):
+def run_repl(command_history: CommandHistory, initial_state: ShellState, router, launched_agent: str = None, launched_jinx: str = None):
     state = initial_state
-        
-    print_welcome_message()
 
-    render_markdown(f'- Using {state.current_mode} mode. Use /agent, /cmd, or /chat to switch to other modes')
+    # Print welcome art - NPC art if launched with an agent, otherwise default
+    if not launched_jinx:
+        print_welcome_art(state.npc if launched_agent else None)
+
+    # If launched with a jinx mode, auto-execute that jinx
+    if launched_jinx:
+        state, output = execute_command(f"/{launched_jinx}", state, router=router, command_history=command_history)
+        process_result(f"/{launched_jinx}", state, output, command_history)
+    else:
+        render_markdown(f'- Using {state.current_mode} mode. Use /agent, /cmd, or /chat to switch to other modes')
     render_markdown(f'- To switch to a different NPC, type /npc <npc_name> or /n <npc_name> to switch to that NPC.')
     render_markdown('\n- Here are the current NPCs available in your team: ' + ', '.join([npc_name for npc_name in state.team.npcs.keys()]))
     render_markdown('\n- Here are the currently available Jinxs: ' + ', '.join([jinx_name for jinx_name in state.team.jinxs_dict.keys()]))
@@ -282,9 +316,22 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router)
             raise
         
 
-def main() -> None:
+def main(npc_name: str = None) -> None:
+    """
+    Main entry point for npcsh.
+
+    Args:
+        npc_name: If provided, start with this NPC active. Used by agent-specific
+                  entry points (guac, plonk, corca, etc.)
+    """
     from npcsh.routes import router
-    
+
+    # If no npc_name provided, check how we were invoked
+    if npc_name is None:
+        invoked_as = os.path.basename(sys.argv[0])
+        if invoked_as not in ('npcsh', 'npc'):
+            npc_name = invoked_as
+
     parser = argparse.ArgumentParser(description="npcsh - An NPC-powered shell.")
     parser.add_argument(
         "-v", "--version", action="version", version=f"npcsh version {VERSION}"
@@ -292,28 +339,52 @@ def main() -> None:
     parser.add_argument(
          "-c", "--command", type=str, help="Execute a single command and exit."
     )
+    parser.add_argument(
+         "-n", "--npc", type=str, help="Start with a specific NPC active."
+    )
     args = parser.parse_args()
 
     command_history, team, default_npc = setup_shell()
-    
+
     if team and hasattr(team, 'jinxs_dict'):
         for jinx_name, jinx_obj in team.jinxs_dict.items():
             router.register_jinx(jinx_obj)
 
-    initial_state.npc = default_npc 
-    initial_state.team = team    
+    # Determine which NPC to start with
+    # Special cases: these are jinxes/modes, not NPCs
+    jinx_modes = {"yap", "spool", "wander"}
+    target_npc_name = npc_name or args.npc
+
+    if target_npc_name and target_npc_name.lower() in jinx_modes:
+        # It's a jinx mode, use default NPC
+        initial_state.npc = default_npc
+    elif target_npc_name and team:
+        target_npc = team.npcs.get(target_npc_name)
+        if target_npc:
+            initial_state.npc = target_npc
+        else:
+            print(f"Warning: NPC '{target_npc_name}' not found. Using default.")
+            initial_state.npc = default_npc
+    else:
+        initial_state.npc = default_npc
+
+    initial_state.team = team
     if args.command:
          state = initial_state
          state.current_path = os.getcwd()
          final_state, output = execute_command(args.command, state, router=router, command_history=command_history)
          if final_state.stream_output:
-              for chunk in output: 
+              for chunk in output:
                   print(str(chunk), end='')
               print()
          elif output is not None:
               print(output)
     else:
-        run_repl(command_history, initial_state, router)
+        # Determine if launching an NPC or a jinx mode
+        if target_npc_name and target_npc_name.lower() in jinx_modes:
+            run_repl(command_history, initial_state, router, launched_jinx=target_npc_name.lower())
+        else:
+            run_repl(command_history, initial_state, router, launched_agent=npc_name)
         
 if __name__ == "__main__":
     main()
