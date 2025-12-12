@@ -23,4 +23,5 @@ jinxs:
   - lib/core/sh
   - lib/core/load_file
   - lib/core/search
+  - lib/gen/*
   - bin/wander
