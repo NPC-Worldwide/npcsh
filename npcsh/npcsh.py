@@ -2,6 +2,10 @@ import os
 import sys
 import argparse
 import importlib.metadata
+import warnings
+
+# Suppress pydantic serialization warnings from litellm
+warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
 
 import platform
 try:
@@ -242,6 +246,19 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                 usage_str = f"📊 {state.session_input_tokens:,} in / {state.session_output_tokens:,} out"
                 if not is_local and state.session_cost_usd > 0:
                     usage_str += f" | ${state.session_cost_usd:.4f}"
+                # Add elapsed time
+                import time
+                elapsed = time.time() - state.session_start_time
+                if elapsed >= 3600:
+                    hours = int(elapsed // 3600)
+                    mins = int((elapsed % 3600) // 60)
+                    usage_str += f" | {hours}h{mins}m"
+                elif elapsed >= 60:
+                    mins = int(elapsed // 60)
+                    secs = int(elapsed % 60)
+                    usage_str += f" | {mins}m{secs}s"
+                else:
+                    usage_str += f" | {int(elapsed)}s"
                 token_hint = colored(usage_str, "white", attrs=["dark"])
             else:
                 token_hint = ""
@@ -302,10 +319,8 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                            )
         
         except KeyboardInterrupt:
-            print("^C")
-            if input("\nExit? (y/n): ").lower().startswith('y'):
-                exit_shell(state)
-            continue
+            # Double Ctrl+C exits (handled in _input_with_hint_below)
+            exit_shell(state)
 
         except EOFError:
             exit_shell(state)
@@ -387,4 +402,8 @@ def main(npc_name: str = None) -> None:
             run_repl(command_history, initial_state, router, launched_agent=npc_name)
         
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print()  # Clean exit on Ctrl+C without "KeyboardInterrupt" message
+        sys.exit(0)

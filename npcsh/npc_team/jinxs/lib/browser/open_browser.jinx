@@ -1,0 +1,43 @@
+jinx_name: open_browser
+description: |
+  Open a browser and navigate to a URL. The browser stays open for follow-up commands.
+  Use this to start browser automation.
+inputs:
+  - url:
+      description: "URL to navigate to"
+  - browser: "firefox"
+
+steps:
+  - name: open_browser
+    engine: python
+    code: |
+      from selenium import webdriver
+      from selenium.webdriver.firefox.service import Service as FirefoxService
+      from selenium.webdriver.chrome.service import Service as ChromeService
+      from webdriver_manager.firefox import GeckoDriverManager
+      from webdriver_manager.chrome import ChromeDriverManager
+      from npcpy.work.browser import set_driver
+      import uuid
+
+      url = context.get('url', '')
+      browser_type = context.get('browser', 'firefox').lower()
+
+      try:
+          if browser_type == 'chrome':
+              options = webdriver.ChromeOptions()
+              options.add_argument('--start-maximized')
+              driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
+          else:
+              options = webdriver.FirefoxOptions()
+              driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()), options=options)
+              driver.maximize_window()
+
+          driver.get(url)
+
+          session_id = str(uuid.uuid4())[:8]
+          set_driver(session_id, driver)
+
+          output = "Browser opened. Session: {}. Navigated to: {}. Title: {}".format(session_id, url, driver.title)
+      except Exception as e:
+          import traceback
+          output = "Failed to open browser: {}\n{}".format(str(e), traceback.format_exc())

@@ -1,0 +1,76 @@
+jinx_name: arxiv
+description: Search arXiv for preprints and papers
+inputs:
+  - query: ""
+  - limit: 10
+steps:
+  - name: search_arxiv
+    engine: python
+    code: |
+      import urllib.request
+      import urllib.parse
+      import xml.etree.ElementTree as ET
+
+      query = context.get('query', '')
+      limit = int(context.get('limit', 10))
+
+      if not query:
+          context['output'] = "Usage: /arxiv <query> [--limit N]"
+          exit()
+
+      base_url = "http://export.arxiv.org/api/query"
+      params = {
+          "search_query": f"all:{query}",
+          "start": 0,
+          "max_results": limit,
+          "sortBy": "relevance",
+          "sortOrder": "descending"
+      }
+
+      url = f"{base_url}?{urllib.parse.urlencode(params)}"
+
+      try:
+          with urllib.request.urlopen(url, timeout=30) as response:
+              data = response.read().decode('utf-8')
+
+          root = ET.fromstring(data)
+          ns = {'atom': 'http://www.w3.org/2005/Atom'}
+
+          entries = root.findall('atom:entry', ns)
+
+          if not entries:
+              context['output'] = f"No papers found for: {query}"
+              exit()
+
+          results = []
+          papers = []
+          for i, entry in enumerate(entries, 1):
+              title = entry.find('atom:title', ns).text.strip().replace('\n', ' ')
+              summary = entry.find('atom:summary', ns).text.strip()[:300] + '...'
+              published = entry.find('atom:published', ns).text[:10]
+              authors = [a.find('atom:name', ns).text for a in entry.findall('atom:author', ns)]
+              author_str = ', '.join(authors[:3])
+              if len(authors) > 3:
+                  author_str += ' et al.'
+              link = entry.find('atom:id', ns).text
+
+              results.append(f"{i}. {title}")
+              results.append(f"   Authors: {author_str}")
+              results.append(f"   Published: {published}")
+              results.append(f"   Abstract: {summary}")
+              results.append(f"   URL: {link}")
+              results.append("")
+
+              papers.append({
+                  'title': title,
+                  'authors': authors,
+                  'abstract': entry.find('atom:summary', ns).text.strip(),
+                  'published': published,
+                  'url': link
+              })
+
+          context['output'] = f"Found {len(entries)} papers on arXiv:\n\n" + "\n".join(results)
+          context['papers'] = papers
+
+      except Exception as e:
+          context['output'] = f"arXiv search error: {e}"
