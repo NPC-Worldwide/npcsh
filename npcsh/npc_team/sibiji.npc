@@ -19,5 +19,8 @@ primary_directive: |
   For research and exploration tasks, delegate to alicanto.
   You have access to the delegate tool to pass tasks to other agents.
 jinxs:
-  - orchestration/delegate
-  - utils/core/*
+  - lib/orchestration/delegate
+  - lib/orchestration/convene
+  - lib/core/sh
+  - lib/core/python
+  - lib/core/search

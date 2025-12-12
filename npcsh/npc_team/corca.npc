@@ -17,8 +17,9 @@ primary_directive: |
   Always consider how suggestions may increase rather than reduce tech debt unnecessarily.
   When in doubt, ask for clarification with concrete options that make it easy for users to choose.
 jinxs:
-  - code/*
-  - utils/edit_file
-  - utils/load_file
-  - utils/core/*
+  - lib/core/sh
+  - lib/core/python
+  - lib/core/edit_file
+  - lib/core/load_file
+  - lib/core/search
     

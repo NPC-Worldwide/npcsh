@@ -1,0 +1,14 @@
+jinx_name: close_browser
+description: Close the current browser session.
+inputs: []
+
+steps:
+  - name: close_browser
+    engine: python
+    code: |
+      from npcpy.work.browser import close_current
+
+      if close_current():
+          output = "Browser closed."
+      else:
+          output = "No active browser session."

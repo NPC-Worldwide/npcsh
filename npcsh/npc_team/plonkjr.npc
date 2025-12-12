@@ -16,8 +16,8 @@ primary_directive: |
   you focus on executing the core actions without complex vision-based planning.
   Just do what's asked: screenshot, click, type, key press.
 jinxs:
-  - computer_use/screenshot
-  - computer_use/click
-  - computer_use/type_text
-  - computer_use/key_press
-  - utils/core/*
+  - lib/computer_use/screenshot
+  - lib/computer_use/click
+  - lib/computer_use/type_text
+  - lib/computer_use/key_press
+  - lib/core/sh

@@ -17,6 +17,5 @@ primary_directive: |
   wherever they lead. You help users explore complex research questions and think outside the box.
   Use web search and browsing tools to discover new information.
 jinxs:
-  - utils/search
-  - research/*
-  - utils/core/*
+  - lib/core/python
+  - bin/wander
