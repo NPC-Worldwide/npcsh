@@ -1,0 +1,132 @@
+jinx_name: install
+description: |
+  Install an NPC team folder, making its agents and bin jinxs available as CLI commands.
+  Creates an editable pip install so changes to the team are reflected immediately.
+
+  Usage: npc install [path]
+  If no path given, installs the current directory's npc_team or ./
+inputs:
+  - path:
+      description: "Path to npc_team folder (default: ./npc_team or ./)"
+      default: ""
+
+steps:
+  - name: install_team
+    engine: python
+    code: |
+      import os
+      import subprocess
+      import tempfile
+      from pathlib import Path
+
+      target = context.get('path', '').strip()
+
+      # Find the npc_team folder
+      if not target:
+          if os.path.exists('./npc_team'):
+              target = './npc_team'
+          elif os.path.exists('.') and any(f.endswith('.npc') for f in os.listdir('.')):
+              target = '.'
+          else:
+              output = "Error: No npc_team folder found. Specify a path or run from a directory with .npc files."
+              exit()
+
+      target = os.path.abspath(target)
+
+      if not os.path.isdir(target):
+          output = "Error: {} is not a directory".format(target)
+          exit()
+
+      # Discover NPCs and bin jinxs
+      npc_files = list(Path(target).glob("*.npc"))
+      bin_dir = Path(target) / "jinxs" / "bin"
+      jinx_files = list(bin_dir.glob("*.jinx")) if bin_dir.exists() else []
+
+      if not npc_files and not jinx_files:
+          output = "Error: No .npc files or bin/*.jinx files found in {}".format(target)
+          exit()
+
+      npc_names = [f.stem for f in npc_files]
+      jinx_names = [f.stem for f in jinx_files]
+
+      # Get package name from team.ctx or *.ctx
+      import yaml
+      pkg_name = None
+      ctx_files = list(Path(target).glob("*.ctx"))
+      for ctx_file in ctx_files:
+          try:
+              with open(ctx_file, 'r') as f:
+                  ctx = yaml.safe_load(f)
+              if ctx and ctx.get('name'):
+                  pkg_name = ctx['name']
+                  break
+          except:
+              pass
+
+      if not pkg_name:
+          pkg_name = os.path.basename(target)
+          if pkg_name == 'npc_team':
+              pkg_name = os.path.basename(os.path.dirname(target))
+
+      # Sanitize for package name
+      pkg_name = pkg_name.lower().replace('-', '_').replace(' ', '_')
+
+      # Generate setup.py
+      setup_content = '''from setuptools import setup
+from pathlib import Path
+
+# Auto-discovered entry points
+npc_names = {npc_names}
+jinx_names = {jinx_names}
+
+# All commands run npcsh:main which handles routing
+entries = [f"{{name}}=npcsh.npcsh:main" for name in npc_names + jinx_names]
+
+setup(
+    name="{pkg_name}",
+    version="0.1.0",
+    py_modules=[],
+    entry_points={{
+        "console_scripts": entries,
+    }},
+    install_requires=["npcsh"],
+)
+'''.format(npc_names=npc_names, jinx_names=jinx_names, pkg_name=pkg_name)
+
+      setup_path = os.path.join(target, 'setup.py')
+
+      # Check if setup.py already exists
+      if os.path.exists(setup_path):
+          with open(setup_path, 'r') as f:
+              existing = f.read()
+          if 'Auto-discovered entry points' not in existing:
+              output = "Error: setup.py already exists and wasn't created by npc install. Remove it first or use a different folder."
+              exit()
+
+      with open(setup_path, 'w') as f:
+          f.write(setup_content)
+
+      # Run pip install -e
+      result = subprocess.run(
+          ['pip', 'install', '-e', target],
+          capture_output=True,
+          text=True
+      )
+
+      if result.returncode != 0:
+          output = "pip install failed:\n{}".format(result.stderr)
+          exit()
+
+      output = """Installed {} from {}
+
+NPCs: {}
+Bin jinxs: {}
+
+These are now available as CLI commands and in npcsh.
+Run any of: {}""".format(
+          pkg_name,
+          target,
+          ', '.join(npc_names) if npc_names else '(none)',
+          ', '.join(jinx_names) if jinx_names else '(none)',
+          ', '.join(npc_names + jinx_names)
+      )

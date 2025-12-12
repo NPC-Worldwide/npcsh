@@ -11,13 +11,11 @@ def package_files(directory):
     return paths
 
 
-# Entry points discovered at runtime via npcpy Team/Jinx loading
-# Static list - add new NPCs/jinxes here as they're created
-npc_entries = [
-    "guac", "corca", "sibiji", "plonk", "plonkjr",
-    "frederic", "kadiefa", "alicanto",
-]
-jinx_entries = ["yap", "wander", "spool"]
+# Auto-discover NPCs and bin jinxs for console_scripts entry points
+npc_team_dir = Path(__file__).parent / "npcsh" / "npc_team"
+npc_entries = [f.stem for f in npc_team_dir.glob("*.npc")] if npc_team_dir.exists() else []
+jinx_bin_dir = npc_team_dir / "jinxs" / "bin"
+jinx_entries = [f.stem for f in jinx_bin_dir.glob("*.jinx")] if jinx_bin_dir.exists() else []
 
 dynamic_entries = [f"{name}=npcsh.npcsh:main" for name in npc_entries + jinx_entries]
 
@@ -93,7 +91,7 @@ extra_files = package_files("npcsh/npc_team/")
 
 setup(
     name="npcsh",
-    version="1.1.14",
+    version="1.1.15",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
