@@ -2,7 +2,7 @@ jinx_name: "build"
 description: "Build deployment artifacts for NPC team"
 inputs:
   - target: "flask" # The type of deployment target (e.g., flask, docker, cli, static).
-  - output: "./build" # The output directory for built artifacts.
+  - outdir: "./build" # The output directory for built artifacts.
   - team: "./npc_team" # The path to the NPC team directory.
   - port: 5337 # The port for flask server builds.
   - cors: "" # Comma-separated CORS origins for flask server builds.
@@ -28,13 +28,13 @@ steps:
           def build_cli_executable(config, **kwargs): return {"output": f"Mock build cli: {config}", "messages": []}
           def build_static_site(config, **kwargs): return {"output": f"Mock build static: {config}", "messages": []}
 
-      target = context.get('target')
-      output_dir = context.get('output')
-      team_path = context.get('team')
-      port = context.get('port')
-      cors_origins_str = context.get('cors')
-      
-      cors_origins = [origin.strip() for origin in cors_origins_str.split(',')] if cors_origins_str.strip() else None
+      target = context.get('target') or 'flask'
+      output_dir = context.get('outdir') or './build'
+      team_path = context.get('team') or './npc_team'
+      port = context.get('port') or 5337
+      cors_origins_str = context.get('cors') or ''
+
+      cors_origins = [origin.strip() for origin in cors_origins_str.split(',') if origin.strip()] or None
 
       build_config = {
           'team_path': os.path.abspath(os.path.expanduser(team_path)),
