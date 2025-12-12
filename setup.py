@@ -1,11 +1,27 @@
 from setuptools import setup, find_packages
 import os
+from pathlib import Path
+
+
 def package_files(directory):
     paths = []
     for path, directories, filenames in os.walk(directory):
         for filename in filenames:
             paths.append(os.path.join(path, filename))
     return paths
+
+
+# Auto-discover NPCs and bin jinxs for console_scripts entry points
+npc_team_dir = Path(__file__).parent / "npcsh" / "npc_team"
+npc_entries = [f.stem for f in npc_team_dir.glob("*.npc")] if npc_team_dir.exists() else []
+jinx_bin_dir = npc_team_dir / "jinxs" / "bin"
+jinx_entries = [f.stem for f in jinx_bin_dir.glob("*.jinx")] if jinx_bin_dir.exists() else []
+
+# NPC entries use npcsh:main, bin jinx entries use npc:jinx_main
+npc_dynamic = [f"{name}=npcsh.npcsh:main" for name in npc_entries]
+jinx_dynamic = [f"{name}=npcsh.npc:jinx_main" for name in jinx_entries]
+dynamic_entries = npc_dynamic + jinx_dynamic
+
 base_requirements = [
     'npcpy', 
     "jinja2",
@@ -78,7 +94,7 @@ extra_files = package_files("npcsh/npc_team/")
 
 setup(
     name="npcsh",
-    version="1.1.14",
+    version="1.1.15",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
@@ -89,15 +105,11 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "corca=npcsh.corca:main",
+            # Main entry points
             "npcsh=npcsh.npcsh:main",
             "npc=npcsh.npc:main",
-            "yap=npcsh.yap:main",
-            "pti=npcsh.pti:main",
-            "guac=npcsh.guac:main",
-            "wander=npcsh.wander:main",
-            "spool=npcsh.spool:main", 
-        ],
+            # Dynamic entry points from data files (NPCs and bin/ jinxes)
+        ] + dynamic_entries,
     },
     author="Christopher Agostino",
     author_email="info@npcworldwi.de",

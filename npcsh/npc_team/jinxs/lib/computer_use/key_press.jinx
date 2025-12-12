@@ -1,0 +1,26 @@
+jinx_name: key_press
+description: |
+  Press a keyboard key or key combination.
+  Valid keys: enter, tab, escape, backspace, delete, space, up, down, left, right,
+  home, end, pageup, pagedown, f1-f12, ctrl, alt, shift, command.
+  For combinations use + like: ctrl+a, ctrl+c, ctrl+v, alt+tab, ctrl+shift+t
+  For regular letters/numbers, use type_text instead.
+inputs:
+  - key: "enter"
+
+steps:
+  - name: perform_key
+    engine: python
+    code: |
+      from npcpy.work.desktop import perform_action
+
+      key = context.get('key', 'enter')
+      messages = context.get('messages', [])
+
+      try:
+          perform_action({'type': 'key', 'keys': key})
+          context['output'] = "Pressed key: " + str(key)
+      except Exception as e:
+          context['output'] = "Key press failed: " + str(e)
+
+      context['messages'] = messages

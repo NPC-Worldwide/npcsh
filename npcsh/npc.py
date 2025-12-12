@@ -95,9 +95,20 @@ def main():
     global_model = args.model
     global_provider = args.provider
 
+    # Load team early so we can check for jinxs
+    try:
+        command_history, team, forenpc_obj = setup_shell()
+        # Load jinxs into router so they're recognized as commands
+        from npcsh._state import initialize_router_with_jinxs
+        initialize_router_with_jinxs(team, router)
+    except Exception as e:
+        print(f"Warning: Could not set up full npcsh environment: {e}", file=sys.stderr)
+        team = None
+        forenpc_obj = None
+
     is_valid_command = False
     command_name = None
-    
+
     if all_args:
         first_arg = all_args[0]
         if first_arg.startswith('/'):
@@ -145,15 +156,8 @@ def main():
     if args.provider is None:
         args.provider = global_provider
 
-    try:
-        command_history, team, forenpc_obj = setup_shell()
-    except Exception as e:
-        print(
-            f"Warning: Could not set up full npcsh environment: {e}", 
-            file=sys.stderr
-        )
-        print("Falling back to basic NPC loading...", file=sys.stderr)
-        team = None
+    # Team already loaded above, just set up NPC
+    if not forenpc_obj:
         forenpc_obj = load_npc_by_name(args.npc, NPCSH_DB_PATH)
 
     npc_instance = None
@@ -172,25 +176,6 @@ def main():
     if not npc_instance:
         print(f"Error: Could not load NPC '{args.npc}'", file=sys.stderr)
         sys.exit(1)
-
-    if not is_valid_command and all_args:
-        first_arg = all_args[0]
-        
-        jinx_found = False
-        if team and first_arg in team.jinxs_dict:
-            jinx_found = True
-        elif (
-            isinstance(npc_instance, NPC) 
-            and hasattr(npc_instance, 'jinxs_dict') 
-            and first_arg in npc_instance.jinxs_dict
-        ):
-            jinx_found = True
-            
-        if jinx_found:
-            is_valid_command = True
-            command_name = '/' + first_arg
-            all_args = all_args[1:]
-            unknown_args = all_args
 
     shell_state = initial_state
     shell_state.npc = npc_instance
@@ -245,12 +230,13 @@ def main():
                 )
                 
                 if (
-                    NPCSH_STREAM_OUTPUT 
+                    NPCSH_STREAM_OUTPUT
+                    and output is not None
                     and not isinstance(output, str)
                 ):
                     print_and_process_stream_with_markdown(
-                        output, 
-                        model_for_stream, 
+                        output,
+                        model_for_stream,
                         provider_for_stream
                     )
                 elif output is not None:
@@ -315,6 +301,72 @@ def main():
 
     except Exception as e:
         print(f"Error executing command: {e}", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def jinx_main():
+    """Entry point for bin jinxs called directly from CLI.
+
+    Parses arguments as key=value pairs and executes the jinx.
+    Example: nql show=1 model=daily_summary
+    """
+    import os
+
+    # Get jinx name from command name
+    jinx_name = os.path.basename(sys.argv[0])
+
+    # Parse remaining args as key=value pairs
+    args = sys.argv[1:]
+    jinx_args = []
+
+    for arg in args:
+        if arg in ['-h', '--help']:
+            print(f"Usage: {jinx_name} [key=value ...]")
+            print(f"\nRun the '{jinx_name}' jinx with specified parameters.")
+            print(f"\nExamples:")
+            print(f"  {jinx_name} show=1")
+            print(f"  {jinx_name} model=my_model db=~/mydb.db")
+            print(f"\nOr use: npc {jinx_name} [key=value ...]")
+            sys.exit(0)
+        jinx_args.append(arg)
+
+    # Build command string
+    if jinx_args:
+        command = f"/{jinx_name} " + " ".join(jinx_args)
+    else:
+        command = f"/{jinx_name}"
+
+    try:
+        _, team, forenpc_obj = setup_shell()
+
+        from npcsh._state import initialize_router_with_jinxs
+        initialize_router_with_jinxs(team, router)
+
+        # Update the global initial_state with team/npc context
+        initial_state.team = team
+        initial_state.npc = forenpc_obj
+        if forenpc_obj:
+            initial_state.chat_model = forenpc_obj.model or NPCSH_CHAT_MODEL
+            initial_state.chat_provider = forenpc_obj.provider or NPCSH_CHAT_PROVIDER
+
+        _, result = execute_slash_command(
+            command,
+            stdin_input=None,
+            state=initial_state,
+            stream=NPCSH_STREAM_OUTPUT,
+            router=router
+        )
+
+        if isinstance(result, dict):
+            output = result.get("output") or result.get("response")
+            if output is not None:
+                render_markdown(str(output))
+        elif result is not None:
+            render_markdown(str(result))
+
+    except Exception as e:
+        print(f"Error executing jinx '{jinx_name}': {e}", file=sys.stderr)
         traceback.print_exc()
         sys.exit(1)
 

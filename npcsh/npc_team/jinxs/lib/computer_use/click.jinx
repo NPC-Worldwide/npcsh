@@ -1,0 +1,23 @@
+jinx_name: click
+description: Click at screen coordinates (0-100 percentage)
+inputs:
+  - x: 50  # X coordinate as percentage (0-100)
+  - y: 50  # Y coordinate as percentage (0-100)
+
+steps:
+  - name: perform_click
+    engine: python
+    code: |
+      from npcpy.work.desktop import perform_action
+
+      x = float(context.get('x', 50))
+      y = float(context.get('y', 50))
+      messages = context.get('messages', [])
+
+      try:
+          perform_action({'type': 'click', 'x': x, 'y': y})
+          context['output'] = f"Clicked at ({x}%, {y}%)"
+      except Exception as e:
+          context['output'] = f"Click failed: {e}"
+
+      context['messages'] = messages

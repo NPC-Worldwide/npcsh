@@ -1,0 +1,61 @@
+jinx_name: switches
+description: List all switches from .ctx files
+inputs:
+  - scope: "all"  # "workspace", "global", or "all"
+
+steps:
+  - name: list_switches
+    engine: python
+    code: |
+      import os
+      import yaml
+      from pathlib import Path
+
+      scope = context.get('scope', 'all')
+      messages = context.get('messages', [])
+
+      output_lines = []
+
+      # Global switches
+      if scope in ["global", "all"]:
+          global_ctx = Path.home() / ".npcsh" / "npc_team" / "npcsh.ctx"
+          if global_ctx.exists():
+              try:
+                  with open(global_ctx) as f:
+                      data = yaml.safe_load(f) or {}
+                  switches = data.get('switches', {})
+                  if switches:
+                      output_lines.append("Global switches:")
+                      for k, v in switches.items():
+                          output_lines.append(f"  {k}: {v}")
+                  else:
+                      output_lines.append("Global switches: (none)")
+              except:
+                  output_lines.append("Global switches: (none)")
+          else:
+              output_lines.append("Global switches: (none)")
+
+      # Workspace switches
+      if scope in ["workspace", "all"]:
+          cwd = os.getcwd()
+          npc_team_dir = Path(cwd) / "npc_team"
+          ctx_files = list(npc_team_dir.glob("*.ctx")) if npc_team_dir.exists() else []
+
+          if ctx_files:
+              try:
+                  with open(ctx_files[0]) as f:
+                      data = yaml.safe_load(f) or {}
+                  switches = data.get('switches', {})
+                  if switches:
+                      output_lines.append(f"Workspace switches:")
+                      for k, v in switches.items():
+                          output_lines.append(f"  {k}: {v}")
+                  else:
+                      output_lines.append("Workspace switches: (none)")
+              except:
+                  output_lines.append("Workspace switches: (none)")
+          else:
+              output_lines.append("Workspace switches: (none)")
+
+      context['output'] = "\n".join(output_lines) if output_lines else "No switches configured."
+      context['messages'] = messages

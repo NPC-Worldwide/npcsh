@@ -1,0 +1,141 @@
+jinx_name: nql
+description: "Run NPC-SQL models with AI-powered transformations. Supports cron scheduling."
+inputs:
+  - models_dir: "~/.npcsh/npc_team/models"
+  - db: "~/npcsh_history.db"
+  - model: ""
+  - schema: ""
+  - show: ""
+  - cron: ""
+  - install_cron: ""
+
+steps:
+  - name: run_nql
+    engine: python
+    code: |
+      import os
+      import sys
+      from pathlib import Path
+
+      models_dir = context.get('models_dir') or '~/.npcsh/npc_team/models'
+      db_path = context.get('db') or '~/npcsh_history.db'
+      model_name = context.get('model') or ''
+      schema = context.get('schema') or ''
+      list_models = context.get('show') or ''
+      cron_expr = context.get('cron') or ''
+      install_cron = context.get('install_cron') or ''
+
+      models_dir = os.path.expanduser(models_dir)
+      db_path = os.path.expanduser(db_path)
+
+      # Find NPC team directory
+      npc_dir = None
+      if os.path.exists('./npc_team'):
+          npc_dir = './npc_team'
+      elif os.path.exists(os.path.expanduser('~/.npcsh/npc_team')):
+          npc_dir = os.path.expanduser('~/.npcsh/npc_team')
+
+      # Import npcsql
+      try:
+          from npcpy.sql.npcsql import ModelCompiler, SQLModel
+      except ImportError:
+          output = "Error: npcpy.sql.npcsql not found. Install npcpy first."
+          raise SystemExit(1)
+
+      # List models mode
+      if list_models:
+          if not os.path.exists(models_dir):
+              output = "No models directory found at " + models_dir
+          else:
+              models_path = Path(models_dir)
+              sql_files = list(models_path.glob("**/*.sql"))
+              if not sql_files:
+                  output = "No .sql models found in " + models_dir
+              else:
+                  lines = ["Available NQL models in " + models_dir + ":", ""]
+                  for f in sorted(sql_files):
+                      rel = f.relative_to(models_path)
+                      # Check for nql functions
+                      with open(f, 'r') as fh:
+                          content = fh.read()
+                      has_nql = "nql." in content
+                      marker = " [NQL]" if has_nql else ""
+                      lines.append("  " + str(rel) + marker)
+                  output = "\n".join(lines)
+
+      # Install cron mode
+      elif install_cron:
+          import subprocess
+          # Parse cron expression and model
+          parts = install_cron.split()
+          if len(parts) < 5:
+              output = "Error: cron expression must have 5 fields (min hour day month weekday)"
+          else:
+              cron_time = " ".join(parts[:5])
+              cron_model = parts[5] if len(parts) > 5 else ""
+
+              # Build command
+              nql_cmd = "npc nql"
+              if cron_model:
+                  nql_cmd += " model=" + cron_model
+              nql_cmd += " models_dir=" + models_dir
+              nql_cmd += " db=" + db_path
+              if schema:
+                  nql_cmd += " schema=" + schema
+
+              cron_line = cron_time + " " + nql_cmd
+
+              # Get current crontab
+              try:
+                  result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
+                  current = result.stdout if result.returncode == 0 else ""
+              except:
+                  current = ""
+
+              # Check if already installed
+              if nql_cmd in current:
+                  output = "Cron job already exists for: " + nql_cmd
+              else:
+                  # Add new cron line
+                  new_crontab = current.rstrip() + "\n" + cron_line + "\n"
+                  proc = subprocess.run(['crontab', '-'], input=new_crontab, text=True, capture_output=True)
+                  if proc.returncode == 0:
+                      output = "Installed cron job:\n  " + cron_line
+                  else:
+                      output = "Failed to install cron: " + proc.stderr
+
+      # Run models mode
+      else:
+          if not os.path.exists(models_dir):
+              output = "Models directory not found: " + models_dir + "\nCreate it with: mkdir -p " + models_dir
+          else:
+              try:
+                  compiler = ModelCompiler(
+                      models_dir=models_dir,
+                      target_engine=db_path,
+                      npc_directory=npc_dir,
+                      target_schema=schema if schema else None
+                  )
+
+                  if model_name:
+                      # Run specific model
+                      compiler.discover_models()
+                      if model_name not in compiler.models:
+                          available = list(compiler.models.keys())
+                          output = "Model '" + model_name + "' not found. Available: " + str(available)
+                      else:
+                          print("Running model: " + model_name)
+                          df = compiler.execute_model(model_name)
+                          output = "Model '" + model_name + "' completed. Rows: " + str(len(df))
+                  else:
+                      # Run all models in dependency order
+                      results = compiler.run_all_models()
+                      lines = ["NQL run complete:", ""]
+                      for name, df in results.items():
+                          lines.append("  " + name + ": " + str(len(df)) + " rows")
+                      output = "\n".join(lines)
+
+              except Exception as e:
+                  output = "NQL Error: " + str(e)
+                  import traceback
+                  traceback.print_exc()
