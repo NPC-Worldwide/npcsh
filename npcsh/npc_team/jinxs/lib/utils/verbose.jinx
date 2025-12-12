@@ -1,0 +1,17 @@
+jinx_name: "verbose"
+description: "Enable verbose logging - shows debug output from npcpy"
+inputs: []
+steps:
+  - name: "set_verbose"
+    engine: "python"
+    code: |
+      state = context.get('state')
+      output_messages = context.get('messages', [])
+
+      if state:
+          result = state.set_log_level("verbose")
+          context['output'] = result
+      else:
+          context['output'] = "Error: state not available"
+
+      context['messages'] = output_messages

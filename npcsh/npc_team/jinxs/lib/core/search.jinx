@@ -25,7 +25,8 @@ steps:
     code: |
       import os
       import traceback
-      
+      from npcpy.data.web import search_web
+
       # Access query from context
       query = context.get('query')
       if not query or not query.strip():

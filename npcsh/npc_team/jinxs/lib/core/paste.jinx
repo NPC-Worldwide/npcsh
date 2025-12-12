@@ -1,0 +1,134 @@
+jinx_name: paste
+description: Grabs content from clipboard (images or text) and saves/displays it. Use this when Ctrl+V paste doesn't work properly.
+inputs:
+- output_path:
+    default: ""
+    description: "Optional path to save image to. If empty, saves to temp file."
+steps:
+  - name: "paste_clipboard"
+    engine: "python"
+    code: |
+      import tempfile
+      import os
+      from datetime import datetime
+      import io
+
+      output_path = "{{ output_path }}".strip()
+      image_saved = False
+      text_content = None
+
+      # Try PIL/Pillow with ImageGrab first (works on most systems)
+      try:
+          from PIL import ImageGrab, Image
+
+          # Try to grab image from clipboard
+          img = ImageGrab.grabclipboard()
+
+          if img is not None:
+              if isinstance(img, Image.Image):
+                  # It's an image
+                  if output_path:
+                      save_path = os.path.expanduser(output_path)
+                  else:
+                      timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                      fd, save_path = tempfile.mkstemp(suffix='.png', prefix=f'npcsh_paste_{timestamp}_')
+                      os.close(fd)
+
+                  img.save(save_path, 'PNG')
+                  file_size = os.path.getsize(save_path)
+
+                  if file_size > 1024 * 1024:
+                      size_str = f"{file_size / (1024*1024):.1f} MB"
+                  elif file_size > 1024:
+                      size_str = f"{file_size / 1024:.1f} KB"
+                  else:
+                      size_str = f"{file_size} bytes"
+
+                  output = f"Image saved to: {save_path} ({size_str}, {img.size[0]}x{img.size[1]})"
+                  context['pasted_image_path'] = save_path
+                  image_saved = True
+
+              elif isinstance(img, list):
+                  # It's a list of file paths (copied files)
+                  output = f"Clipboard contains {len(img)} file(s):\n" + "\n".join(img)
+                  context['pasted_files'] = img
+                  image_saved = True
+
+      except ImportError:
+          pass
+      except Exception as e:
+          # ImageGrab failed, try other methods
+          pass
+
+      # If no image, try to get text via tkinter
+      if not image_saved:
+          try:
+              import tkinter as tk
+
+              root = tk.Tk()
+              root.withdraw()
+
+              try:
+                  text_content = root.clipboard_get()
+              except tk.TclError:
+                  text_content = None
+
+              root.destroy()
+
+          except Exception as e:
+              pass
+
+      # If still nothing, try GTK
+      if not image_saved and text_content is None:
+          try:
+              import gi
+              gi.require_version('Gtk', '3.0')
+              from gi.repository import Gtk, Gdk, GdkPixbuf
+
+              clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+
+              # Try image first
+              pixbuf = clipboard.wait_for_image()
+              if pixbuf:
+                  if output_path:
+                      save_path = os.path.expanduser(output_path)
+                  else:
+                      timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                      fd, save_path = tempfile.mkstemp(suffix='.png', prefix=f'npcsh_paste_{timestamp}_')
+                      os.close(fd)
+
+                  pixbuf.savev(save_path, 'png', [], [])
+                  file_size = os.path.getsize(save_path)
+
+                  if file_size > 1024 * 1024:
+                      size_str = f"{file_size / (1024*1024):.1f} MB"
+                  elif file_size > 1024:
+                      size_str = f"{file_size / 1024:.1f} KB"
+                  else:
+                      size_str = f"{file_size} bytes"
+
+                  output = f"Image saved to: {save_path} ({size_str}, {pixbuf.get_width()}x{pixbuf.get_height()})"
+                  context['pasted_image_path'] = save_path
+                  image_saved = True
+              else:
+                  # Try text
+                  text_content = clipboard.wait_for_text()
+
+          except Exception as e:
+              pass
+
+      # Handle text content
+      if not image_saved and text_content:
+          line_count = text_content.count('\n') + 1
+          char_count = len(text_content)
+          context['pasted_text'] = text_content
+
+          if line_count > 10:
+              preview_lines = text_content.split('\n')[:10]
+              preview = '\n'.join(preview_lines)
+              output = f"Clipboard text ({line_count} lines, {char_count} chars):\n---\n{preview}\n... ({line_count - 10} more lines)\n---"
+          else:
+              output = f"Clipboard text ({line_count} lines, {char_count} chars):\n---\n{text_content}\n---"
+
+      elif not image_saved:
+          output = "Clipboard is empty or could not access clipboard.\nMake sure you have PIL/Pillow installed: pip install Pillow"

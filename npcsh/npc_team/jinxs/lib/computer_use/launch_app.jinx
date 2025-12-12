@@ -1,0 +1,37 @@
+jinx_name: launch_app
+description: Launch an application on the system
+inputs:
+  - command: ""  # Command to launch (e.g., "open -a Firefox" on macOS)
+
+steps:
+  - name: perform_launch
+    engine: python
+    code: |
+      import platform
+      from npcpy.work.desktop import perform_action
+
+      command = context.get('command', '')
+      messages = context.get('messages', [])
+
+      if not command:
+          system = platform.system()
+          if system == "Darwin":
+              examples = "open -a Firefox, open -a TextEdit"
+          elif system == "Windows":
+              examples = "start firefox, notepad, calc"
+          else:
+              examples = "firefox &, gedit &"
+          context['output'] = f"Usage: /launch_app <command>\nExamples: {examples}"
+          context['messages'] = messages
+          exit()
+
+      try:
+          result = perform_action({'type': 'bash', 'command': command})
+          if result.get('status') == 'success':
+              context['output'] = f"Launched: {command}"
+          else:
+              context['output'] = f"Launch failed: {result.get('message', 'unknown error')}"
+      except Exception as e:
+          context['output'] = f"Launch failed: {e}"
+
+      context['messages'] = messages
