@@ -21,20 +21,19 @@ import textwrap
 from typing import Dict, List, Any, Tuple, Union, Optional, Callable
 import yaml
 
-# Setup debug logging if NPCSH_DEBUG is set
-def _setup_debug_logging():
-    if os.environ.get("NPCSH_DEBUG", "0") == "1":
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
-            datefmt='%H:%M:%S'
-        )
-        # Set specific loggers to DEBUG
-        logging.getLogger("npcsh.state").setLevel(logging.DEBUG)
-        logging.getLogger("npcpy.llm_funcs").setLevel(logging.DEBUG)
-        logging.getLogger("npcsh.state").debug("Debug logging enabled via NPCSH_DEBUG=1")
+# Setup logging - INFO by default, DEBUG if NPCSH_DEBUG=1
+def _setup_logging():
+    level = logging.DEBUG if os.environ.get("NPCSH_DEBUG", "0") == "1" else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format='%(message)s',  # Simple format - just the message
+        datefmt='%H:%M:%S'
+    )
+    # Always show tool calls from llm_funcs at INFO level
+    logging.getLogger("npcpy.llm_funcs").setLevel(level)
+    logging.getLogger("npcsh.state").setLevel(level)
 
-_setup_debug_logging()
+_setup_logging()
 
 # Platform-specific imports
 try:
@@ -167,6 +166,8 @@ class ShellState:
     session_input_tokens: int = 0
     session_output_tokens: int = 0
     session_cost_usd: float = 0.0
+    # Session timing
+    session_start_time: float = field(default_factory=lambda: __import__('time').time())
     # Logging level: "silent", "normal", "verbose"
     log_level: str = "normal"
 
@@ -1577,34 +1578,134 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
 
         sys.stdout.flush()
 
+    # Enable bracketed paste mode - terminal will wrap pastes with escape sequences
+    sys.stdout.write('\033[?2004h')
+
     # Print prompt and reserve hint line
     sys.stdout.write(prompt + '\n' + (token_hint or '') + '\033[A\r')
     if prompt_visible_len > 0:
         sys.stdout.write('\033[' + str(prompt_visible_len) + 'C')
     sys.stdout.flush()
 
+    # Store pasted content separately
+    pasted_content = None
+    in_paste = False
+    paste_buffer = ""
+
+    # Track Ctrl+C for double-press exit
+    import time
+    last_ctrl_c_time = 0
+
     try:
         tty.setcbreak(fd)
+
         while True:
             c = sys.stdin.read(1)
 
             if not c:  # EOF/stdin closed
+                sys.stdout.write('\033[?2004l')  # Disable bracketed paste
                 sys.stdout.write('\n\033[K')
                 sys.stdout.flush()
                 raise EOFError
 
-            if c in ('\n', '\r'):
-                # Clear hint and newline
-                sys.stdout.write('\n\033[K')
-                sys.stdout.flush()
-                if buf.strip():
-                    readline.add_history(buf)
-                return buf
-
-            elif c == '\x1b':  # ESC - could be arrow key
+            # Check for bracketed paste start: ESC [ 2 0 0 ~
+            if c == '\x1b':
                 c2 = sys.stdin.read(1)
                 if c2 == '[':
                     c3 = sys.stdin.read(1)
+                    if c3 == '2':
+                        c4 = sys.stdin.read(1)
+                        if c4 == '0':
+                            c5 = sys.stdin.read(1)
+                            if c5 == '0':
+                                c6 = sys.stdin.read(1)
+                                if c6 == '~':
+                                    # Start of bracketed paste
+                                    in_paste = True
+                                    paste_buffer = ""
+                                    continue
+                            elif c5 == '1':
+                                c6 = sys.stdin.read(1)
+                                if c6 == '~':
+                                    # End of bracketed paste ESC [ 2 0 1 ~
+                                    in_paste = False
+                                    if paste_buffer:
+                                        # Check if this looks like binary/image data
+                                        # Image signatures: PNG (\x89PNG), JPEG (\xff\xd8\xff), GIF (GIF8), BMP (BM)
+                                        # Also check for high ratio of non-printable chars
+                                        is_binary = False
+                                        if len(paste_buffer) > 4:
+                                            # Check for common image magic bytes
+                                            if paste_buffer[:4] == '\x89PNG' or paste_buffer[:8] == '\x89PNG\r\n\x1a\n':
+                                                is_binary = True
+                                            elif paste_buffer[:2] == '\xff\xd8':  # JPEG
+                                                is_binary = True
+                                            elif paste_buffer[:4] == 'GIF8':  # GIF
+                                                is_binary = True
+                                            elif paste_buffer[:2] == 'BM':  # BMP
+                                                is_binary = True
+                                            elif paste_buffer.startswith('data:image/'):  # Base64 data URL
+                                                is_binary = True
+                                            else:
+                                                # Check for high ratio of non-printable characters
+                                                non_printable = sum(1 for c in paste_buffer[:100] if ord(c) < 32 and c not in '\n\r\t')
+                                                if non_printable > 10:  # More than 10% non-printable in first 100 chars
+                                                    is_binary = True
+
+                                        if is_binary:
+                                            # Save image data to temp file
+                                            import tempfile
+                                            import os
+                                            try:
+                                                # Determine extension from magic bytes
+                                                ext = '.bin'
+                                                if '\x89PNG' in paste_buffer[:8]:
+                                                    ext = '.png'
+                                                elif paste_buffer[:2] == '\xff\xd8':
+                                                    ext = '.jpg'
+                                                elif paste_buffer[:4] == 'GIF8':
+                                                    ext = '.gif'
+                                                elif paste_buffer.startswith('data:image/'):
+                                                    # Extract from data URL
+                                                    if 'png' in paste_buffer[:30]:
+                                                        ext = '.png'
+                                                    elif 'jpeg' in paste_buffer[:30] or 'jpg' in paste_buffer[:30]:
+                                                        ext = '.jpg'
+                                                    elif 'gif' in paste_buffer[:30]:
+                                                        ext = '.gif'
+
+                                                fd, temp_path = tempfile.mkstemp(suffix=ext, prefix='npcsh_paste_')
+                                                with os.fdopen(fd, 'wb') as f:
+                                                    if paste_buffer.startswith('data:image/'):
+                                                        # Decode base64 data URL
+                                                        import base64
+                                                        _, data = paste_buffer.split(',', 1)
+                                                        f.write(base64.b64decode(data))
+                                                    else:
+                                                        f.write(paste_buffer.encode('latin-1'))
+                                                pasted_content = temp_path  # Store path to image
+                                                placeholder = f"[pasted image: {temp_path}]"
+                                            except:
+                                                pasted_content = None
+                                                placeholder = "[pasted image: failed to save]"
+                                        else:
+                                            pasted_content = paste_buffer.rstrip('\r\n')
+                                            line_count = pasted_content.count('\n') + 1
+                                            char_count = len(pasted_content)
+                                            if line_count > 1:
+                                                placeholder = f"[pasted: {line_count} lines, {char_count} chars]"
+                                            else:
+                                                # Single line paste - just insert it directly
+                                                buf = buf[:pos] + pasted_content + buf[pos:]
+                                                pos += len(pasted_content)
+                                                pasted_content = None  # Clear so we don't replace on submit
+                                                draw()
+                                                continue
+                                        buf = buf[:pos] + placeholder + buf[pos:]
+                                        pos += len(placeholder)
+                                        draw()
+                                    continue
+                    # Handle arrow keys and other escape sequences
                     if c3 == 'A':  # Up
                         if history_idx > 0:
                             if history_idx == len(history):
@@ -1613,37 +1714,67 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                             buf = history[history_idx] or ''
                             pos = len(buf)
                             draw()
+                        continue
                     elif c3 == 'B':  # Down
                         if history_idx < len(history):
                             history_idx += 1
                             buf = saved_line if history_idx == len(history) else (history[history_idx] or '')
                             pos = len(buf)
                             draw()
+                        continue
                     elif c3 == 'C':  # Right
                         if pos < len(buf):
                             pos += 1
                             sys.stdout.write('\033[C')
                             sys.stdout.flush()
+                        continue
                     elif c3 == 'D':  # Left
                         if pos > 0:
                             pos -= 1
                             sys.stdout.write('\033[D')
                             sys.stdout.flush()
+                        continue
                     elif c3 == '3':  # Del
                         sys.stdin.read(1)  # ~
                         if pos < len(buf):
                             buf = buf[:pos] + buf[pos+1:]
                             draw()
+                        continue
                     elif c3 == 'H':  # Home
                         pos = 0
                         draw()
+                        continue
                     elif c3 == 'F':  # End
                         pos = len(buf)
                         draw()
+                        continue
                 elif c2 == '\x1b':  # Double ESC
+                    sys.stdout.write('\033[?2004l')  # Disable bracketed paste
                     sys.stdout.write('\n\033[K')
                     sys.stdout.flush()
                     return '\x1b'
+                continue
+
+            # If we're in a paste, accumulate to paste buffer
+            if in_paste:
+                paste_buffer += c
+                continue
+
+            if c in ('\n', '\r'):
+                # Clear hint and newline
+                sys.stdout.write('\033[?2004l')  # Disable bracketed paste
+                sys.stdout.write('\n\033[K')
+                sys.stdout.flush()
+                # If we have pasted content, replace placeholder with actual content
+                if pasted_content is not None:
+                    import re
+                    result = re.sub(r'\[pasted: \d+ lines?, \d+ chars?\]', pasted_content, buf)
+                    if result.strip():
+                        readline.add_history(result)
+                    return result
+                if buf.strip():
+                    readline.add_history(buf)
+                return buf
 
             elif c == '\x7f' or c == '\x08':  # Backspace
                 if pos > 0:
@@ -1652,9 +1783,27 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                     draw()
 
             elif c == '\x03':  # Ctrl-C
-                sys.stdout.write('\n\033[K')
-                sys.stdout.flush()
-                raise KeyboardInterrupt
+                current_time = time.time()
+                if current_time - last_ctrl_c_time < 1.0:  # Double Ctrl+C within 1 second
+                    # Exit
+                    sys.stdout.write('\033[?2004l')  # Disable bracketed paste
+                    sys.stdout.write('\n\033[K')
+                    sys.stdout.flush()
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                    raise KeyboardInterrupt
+                else:
+                    # First Ctrl+C - clear the line
+                    last_ctrl_c_time = current_time
+                    buf = ""
+                    pos = 0
+                    pasted_content = None
+                    sys.stdout.write('\r\033[K')  # Clear current line
+                    sys.stdout.write('^C\n')
+                    # Redraw prompt
+                    sys.stdout.write(prompt + '\n' + current_hint() + '\033[A\r')
+                    if prompt_visible_len > 0:
+                        sys.stdout.write('\033[' + str(prompt_visible_len) + 'C')
+                    sys.stdout.flush()
 
             elif c == '\x04':  # Ctrl-D
                 if not buf:
@@ -1732,6 +1881,8 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                 draw()
 
     finally:
+        sys.stdout.write('\033[?2004l')  # Disable bracketed paste mode
+        sys.stdout.flush()
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
@@ -2172,16 +2323,47 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
         if log_level != "silent":
             try:
                 args_display = ""
-                if log_level == "verbose" and kwargs:
-                    arg_parts = []
-                    for _, v in kwargs.items():
-                        v_str = str(v)
-                        if len(v_str) > 40:
-                            v_str = v_str[:40] + "…"
-                        arg_parts.append(f"{v_str}")
-                    args_display = " ".join(arg_parts)
-                    if len(args_display) > 60:
-                        args_display = args_display[:60] + "…"
+                # Always show a preview of args for key tools
+                if kwargs:
+                    # For sh/python/sql, show the code/command being run
+                    if tool_name in ('sh', 'python', 'sql', 'cmd') and 'code' in kwargs:
+                        code_preview = str(kwargs['code']).strip().split('\n')[0]  # First line
+                        if len(code_preview) > 80:
+                            code_preview = code_preview[:80] + "…"
+                        args_display = code_preview
+                    elif tool_name == 'sh' and 'bash_command' in kwargs:
+                        cmd_preview = str(kwargs['bash_command']).strip().split('\n')[0]
+                        if len(cmd_preview) > 80:
+                            cmd_preview = cmd_preview[:80] + "…"
+                        args_display = cmd_preview
+                    elif tool_name in ('sh', 'cmd') and 'command' in kwargs:
+                        cmd_preview = str(kwargs['command']).strip().split('\n')[0]
+                        if len(cmd_preview) > 80:
+                            cmd_preview = cmd_preview[:80] + "…"
+                        args_display = cmd_preview
+                    elif tool_name == 'python' and 'python_code' in kwargs:
+                        code_preview = str(kwargs['python_code']).strip().split('\n')[0]
+                        if len(code_preview) > 80:
+                            code_preview = code_preview[:80] + "…"
+                        args_display = code_preview
+                    elif tool_name == 'agent' and 'npc_name' in kwargs:
+                        args_display = f"@{kwargs['npc_name']}"
+                        if 'request' in kwargs:
+                            req = str(kwargs['request'])[:50]
+                            args_display += f": {req}…" if len(str(kwargs['request'])) > 50 else f": {req}"
+                    elif tool_name == 'agent' and 'query' in kwargs:
+                        query_preview = str(kwargs['query']).strip()[:60]
+                        args_display = query_preview + ("…" if len(str(kwargs['query'])) > 60 else "")
+                    elif log_level == "verbose":
+                        arg_parts = []
+                        for _, v in kwargs.items():
+                            v_str = str(v)
+                            if len(v_str) > 40:
+                                v_str = v_str[:40] + "…"
+                            arg_parts.append(f"{v_str}")
+                        args_display = " ".join(arg_parts)
+                        if len(args_display) > 60:
+                            args_display = args_display[:60] + "…"
 
                 if args_display:
                     print(colored(f"  ⚡ {tool_name}", "cyan") + colored(f" {args_display}", "white", attrs=["dark"]), end="", flush=True)
@@ -3356,7 +3538,8 @@ def process_result(
 
     # FIX: Handle dict output properly
     if isinstance(output, dict):
-        output_content = output.get('output')
+        # Use None-safe check to not skip empty strings
+        output_content = output.get('output') if 'output' in output else output.get('response')
         model_for_stream = output.get('model', active_npc.model)
         provider_for_stream = output.get('provider', active_npc.provider)
 
@@ -3373,18 +3556,22 @@ def process_result(
                 usage.get('output_tokens', 0)
             )
 
-        # If output_content is still a dict or None, convert to string
+        # If output_content is still a dict, convert to string
         if isinstance(output_content, dict):
             output_content = str(output_content)
-        elif output_content is None:
-            output_content = "Command completed with no output"
+        elif output_content is None or output_content == '':
+            # No output from the agent - this is fine, don't show annoying message
+            output_content = None
     else:
         output_content = output
         model_for_stream = active_npc.model
         provider_for_stream = active_npc.provider
 
     print('\n')
-    if user_input == '/help':
+    if output_content is None:
+        # No output to display - tool results already shown during execution
+        pass
+    elif user_input == '/help':
         if isinstance(output_content, str):
             render_markdown(output_content)
         else:
@@ -3396,12 +3583,12 @@ def process_result(
             render_markdown(final_output_str)
         else:
             final_output_str = print_and_process_stream_with_markdown(
-                output_content, 
-                model_for_stream, 
-                provider_for_stream, 
+                output_content,
+                model_for_stream,
+                provider_for_stream,
                 show=True
             )
-    elif output_content is not None:
+    else:
         final_output_str = str(output_content)
         render_markdown(final_output_str)
         

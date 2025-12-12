@@ -6,6 +6,12 @@ import threading
 import time
 from termcolor import colored
 
+# Global reference to current active spinner for sub-agent updates
+_current_spinner = None
+
+def get_current_spinner():
+    """Get the currently active spinner, if any."""
+    return _current_spinner
 
 class SpinnerContext:
     """Context manager for showing a spinner during long operations.
@@ -46,7 +52,13 @@ class SpinnerContext:
         """Set additional status message."""
         self._status_msg = msg
 
+    def set_message(self, msg: str):
+        """Update the main spinner message (e.g., when delegating to sub-agent)."""
+        self.message = msg
+
     def __enter__(self):
+        global _current_spinner
+        _current_spinner = self
         self._stop = False
         self._interrupted = False
         self._start_time = time.time()
@@ -58,6 +70,8 @@ class SpinnerContext:
         return self
 
     def __exit__(self, *args):
+        global _current_spinner
+        _current_spinner = None
         self._stop = True
         if self._thread:
             self._thread.join(timeout=0.5)
@@ -65,7 +79,7 @@ class SpinnerContext:
         if self._key_thread:
             self._key_thread.join(timeout=0.5)
         # Clear spinner line
-        sys.stdout.write('\r' + ' ' * (len(self.message) + 20) + '\r')
+        sys.stdout.write('\r' + ' ' * (len(self.message) + 60) + '\r')
         sys.stdout.flush()
         # Check if we were interrupted by ESC
         if self._interrupted:

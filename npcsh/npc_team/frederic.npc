@@ -18,6 +18,9 @@ primary_directive: |
   You help users with hard math, physics problems, and music composition.
   Cut through the ice to get to what matters. Make the complex feel simple and beautiful.
 jinxs:
-  - code/python
-  - data/*
-  - utils/core/* 
+  - lib/core/python
+  - lib/core/sql
+  - lib/core/sh
+  - lib/core/load_file
+  - lib/core/search
+  - bin/wander

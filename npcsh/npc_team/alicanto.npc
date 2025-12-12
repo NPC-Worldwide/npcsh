@@ -16,5 +16,8 @@ primary_directive: |
   Your role is web research, searching, and helping users explore topics.
   Use search tools to find information and present findings clearly.
 jinxs:
-  - utils/search
-  - utils/core/* 
+  - lib/core/search
+  - lib/core/sh
+  - lib/core/python
+  - lib/core/load_file
+  - lib/research/*

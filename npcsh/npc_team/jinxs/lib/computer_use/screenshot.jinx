@@ -12,7 +12,7 @@ steps:
       output_path = context.get('output_path')
       messages = context.get('messages', [])
 
-      result = capture_screenshot(output_path=output_path)
+      result = capture_screenshot(full=True)
 
       if result and 'file_path' in result:
           context['output'] = f"Screenshot saved to: {result['file_path']}"

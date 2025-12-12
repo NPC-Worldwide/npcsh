@@ -18,7 +18,7 @@ steps:
           exit()
 
       try:
-          perform_action('type', text=text)
+          perform_action({'type': 'type', 'text': text})
           preview = text[:30] + "..." if len(text) > 30 else text
           context['output'] = f"Typed: {preview}"
       except Exception as e:

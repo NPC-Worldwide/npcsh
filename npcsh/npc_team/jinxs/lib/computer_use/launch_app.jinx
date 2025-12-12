@@ -26,8 +26,11 @@ steps:
           exit()
 
       try:
-          perform_action('launch', command=command)
-          context['output'] = f"Launched: {command}"
+          result = perform_action({'type': 'bash', 'command': command})
+          if result.get('status') == 'success':
+              context['output'] = f"Launched: {command}"
+          else:
+              context['output'] = f"Launch failed: {result.get('message', 'unknown error')}"
       except Exception as e:
           context['output'] = f"Launch failed: {e}"
 

@@ -16,5 +16,7 @@ primary_directive: |
   You work with pandas DataFrames, numpy arrays, and matplotlib plots.
   Help users load data files, run Python code for analysis, and create visualizations.
 jinxs:
-  - data/*
-  - utils/core/*
+  - lib/core/python
+  - lib/core/sql
+  - lib/core/sh
+  - lib/core/load_file
