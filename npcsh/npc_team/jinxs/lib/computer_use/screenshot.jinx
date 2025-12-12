@@ -1,0 +1,23 @@
+jinx_name: screenshot
+description: Capture a screenshot of the current screen
+inputs:
+  - output_path: null  # Optional path to save screenshot
+
+steps:
+  - name: capture_screenshot
+    engine: python
+    code: |
+      from npcpy.data.image import capture_screenshot
+
+      output_path = context.get('output_path')
+      messages = context.get('messages', [])
+
+      result = capture_screenshot(full=True)
+
+      if result and 'file_path' in result:
+          context['output'] = f"Screenshot saved to: {result['file_path']}"
+          context['screenshot_path'] = result['file_path']
+      else:
+          context['output'] = "Failed to capture screenshot"
+
+      context['messages'] = messages

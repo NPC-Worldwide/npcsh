@@ -1,0 +1,21 @@
+jinx_name: wait
+description: Wait/pause for a specified duration in seconds
+inputs:
+  - duration: 1  # Duration to wait in seconds
+
+steps:
+  - name: perform_wait
+    engine: python
+    code: |
+      import time
+
+      duration = float(context.get('duration', 1))
+      messages = context.get('messages', [])
+
+      try:
+          time.sleep(duration)
+          context['output'] = f"Waited {duration} seconds"
+      except Exception as e:
+          context['output'] = f"Wait failed: {e}"
+
+      context['messages'] = messages

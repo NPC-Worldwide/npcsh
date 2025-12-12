@@ -1,0 +1,69 @@
+jinx_name: semantic_scholar
+description: Search Semantic Scholar for academic papers. Requires S2_API_KEY env var.
+inputs:
+  - query: ""
+  - limit: 10
+steps:
+  - name: search_s2
+    engine: python
+    code: |
+      import os
+      import time
+      import requests
+
+      query = context.get('query', '')
+      limit = int(context.get('limit', 10))
+
+      if not query:
+          context['output'] = "Usage: /semantic_scholar <query> [--limit N]"
+          exit()
+
+      api_key = os.environ.get('S2_API_KEY')
+      if not api_key:
+          context['output'] = "Error: S2_API_KEY environment variable not set. Get one at https://www.semanticscholar.org/product/api"
+          exit()
+
+      url = "https://api.semanticscholar.org/graph/v1/paper/search"
+      headers = {"x-api-key": api_key}
+      params = {
+          "query": query,
+          "limit": limit,
+          "fields": "title,abstract,authors,year,citationCount,url,tldr"
+      }
+
+      try:
+          response = requests.get(url, headers=headers, params=params, timeout=30)
+          response.raise_for_status()
+          data = response.json().get('data', [])
+
+          if not data:
+              context['output'] = f"No papers found for: {query}"
+              exit()
+
+          results = []
+          for i, paper in enumerate(data, 1):
+              title = paper.get('title', 'No title')
+              year = paper.get('year', '?')
+              citations = paper.get('citationCount', 0)
+              authors = ', '.join([a.get('name', '') for a in paper.get('authors', [])[:3]])
+              if len(paper.get('authors', [])) > 3:
+                  authors += ' et al.'
+              abstract = paper.get('abstract', '')[:200] + '...' if paper.get('abstract') else 'No abstract'
+              tldr = paper.get('tldr', {}).get('text', '') if paper.get('tldr') else ''
+              url = paper.get('url', '')
+
+              results.append(f"{i}. {title} ({year})")
+              results.append(f"   Authors: {authors}")
+              results.append(f"   Citations: {citations}")
+              if tldr:
+                  results.append(f"   TL;DR: {tldr}")
+              else:
+                  results.append(f"   Abstract: {abstract}")
+              results.append(f"   URL: {url}")
+              results.append("")
+
+          context['output'] = f"Found {len(data)} papers:\n\n" + "\n".join(results)
+          context['papers'] = data
+
+      except requests.exceptions.RequestException as e:
+          context['output'] = f"Semantic Scholar API error: {e}"

@@ -1,0 +1,232 @@
+jinx_name: convene
+description: Run a cycle of discussions between NPCs on a topic. The orchestrator convenes agents to discuss and synthesize.
+inputs:
+  - topic: ""
+  - npcs: "alicanto,corca,guac"
+  - rounds: 3
+  - model: null
+  - provider: null
+steps:
+  - name: convene_discussion
+    engine: python
+    code: |
+      from termcolor import colored
+      from npcpy.llm_funcs import get_llm_response
+
+      topic = context.get('topic', '')
+      npcs_str = context.get('npcs', 'alicanto,corca,guac')
+      rounds = int(context.get('rounds', 3))
+
+      npc = context.get('npc')
+      team = context.get('team')
+      messages = context.get('messages', [])
+
+      model = context.get('model') or (npc.model if npc else 'gemini-1.5-flash')
+      provider = context.get('provider') or (npc.provider if npc else 'gemini')
+
+      if not topic:
+          context['output'] = """Usage: /convene <topic>
+
+      Options:
+        --npcs LIST      Comma-separated NPC names (default: alicanto,corca,guac)
+        --rounds N       Number of discussion rounds (default: 3)
+
+      Example: /convene "How should we approach the database migration?" --npcs corca,guac,frederic
+      """
+          exit()
+
+      npc_names = [n.strip() for n in npcs_str.split(',')]
+
+      print(f"""
+       ██████  ██████  ███    ██ ██    ██ ███████ ███    ██ ███████
+      ██      ██    ██ ████   ██ ██    ██ ██      ████   ██ ██
+      ██      ██    ██ ██ ██  ██ ██    ██ █████   ██ ██  ██ █████
+      ██      ██    ██ ██  ██ ██  ██  ██  ██      ██  ██ ██ ██
+       ██████  ██████  ██   ████   ████   ███████ ██   ████ ███████
+
+      Convening Discussion
+      Topic: {topic}
+      Participants: {', '.join(npc_names)}
+      Rounds: {rounds}
+      """)
+
+      # Get NPC personas
+      participants = []
+      for name in npc_names:
+          if team and hasattr(team, 'npcs') and name in team.npcs:
+              target_npc = team.npcs[name]
+              persona = getattr(target_npc, 'primary_directive', f'{name} specialist')
+              participants.append({'name': name, 'persona': persona, 'npc': target_npc})
+          else:
+              participants.append({'name': name, 'persona': f'{name} - general assistant', 'npc': None})
+
+      import random
+
+      discussion_log = []
+
+      for round_num in range(1, rounds + 1):
+          print(colored(f"\n{'='*60}", "cyan"))
+          print(colored(f"  ROUND {round_num}/{rounds}", "cyan", attrs=["bold"]))
+          print(colored(f"{'='*60}", "cyan"))
+
+          round_contributions = []
+
+          for participant in participants:
+              name = participant['name']
+              persona = participant['persona']
+
+              # Build context from previous contributions
+              prev_context = ""
+              if discussion_log:
+                  prev_context = "\n\nPrevious discussion:\n"
+                  for entry in discussion_log[-len(participants)*2:]:
+                      prev_context += f"[{entry['speaker']}]: {entry['contribution'][:200]}...\n"
+
+              if round_contributions:
+                  prev_context += "\nThis round so far:\n"
+                  for entry in round_contributions:
+                      prev_context += f"[{entry['speaker']}]: {entry['contribution'][:200]}...\n"
+
+              prompt = f"""You are {name}. {persona}
+
+      Topic under discussion: "{topic}"
+      {prev_context}
+
+      Provide your perspective on this topic. Be concise but insightful.
+      Build on what others have said if applicable.
+      If you disagree with something, explain why constructively.
+      """
+
+              print(colored(f"\n[{name}]:", "yellow", attrs=["bold"]))
+
+              resp = get_llm_response(
+                  prompt,
+                  model=model,
+                  provider=provider,
+                  npc=participant.get('npc') or npc,
+                  temperature=0.7
+              )
+
+              contribution = str(resp.get('response', ''))
+              print(contribution)
+
+              entry = {
+                  'round': round_num,
+                  'speaker': name,
+                  'contribution': contribution
+              }
+              round_contributions.append(entry)
+              discussion_log.append(entry)
+
+              # Sample a followup from another participant
+              other_participants = [p for p in participants if p['name'] != name]
+              if other_participants:
+                  followup_participant = random.choice(other_participants)
+                  followup_name = followup_participant['name']
+                  followup_persona = followup_participant['persona']
+
+                  followup_prompt = f"""You are {followup_name}. {followup_persona}
+
+      Topic: "{topic}"
+
+      {name} just said: "{contribution[:500]}"
+
+      Respond briefly to this specific point - agree, disagree, build on it, or ask a clarifying question.
+      Keep it to 2-3 sentences.
+      """
+
+                  print(colored(f"\n  [{followup_name} responds]:", "cyan"))
+
+                  followup_resp = get_llm_response(
+                      followup_prompt,
+                      model=model,
+                      provider=provider,
+                      npc=followup_participant.get('npc') or npc,
+                      temperature=0.7
+                  )
+
+                  followup_contribution = str(followup_resp.get('response', ''))
+                  print(f"  {followup_contribution}")
+
+                  discussion_log.append({
+                      'round': round_num,
+                      'speaker': followup_name,
+                      'contribution': followup_contribution,
+                      'type': 'followup'
+                  })
+
+                  # Probability of original speaker responding back vs someone else
+                  if random.random() < 0.4:
+                      # Original speaker responds
+                      responder = participant
+                      responder_name = name
+                  else:
+                      # Sample from others (could be followup person or someone else)
+                      responder = random.choice(other_participants)
+                      responder_name = responder['name']
+
+                  if random.random() < 0.6:  # 60% chance of a counter-response
+                      counter_prompt = f"""You are {responder_name}. {responder['persona']}
+
+      Topic: "{topic}"
+
+      {followup_name} responded: "{followup_contribution}"
+
+      Brief reaction (1-2 sentences). Move the discussion forward.
+      """
+
+                      print(colored(f"\n  [{responder_name}]:", "magenta"))
+
+                      counter_resp = get_llm_response(
+                          counter_prompt,
+                          model=model,
+                          provider=provider,
+                          npc=responder.get('npc') or npc,
+                          temperature=0.7
+                      )
+
+                      counter_contribution = str(counter_resp.get('response', ''))
+                      print(f"  {counter_contribution}")
+
+                      discussion_log.append({
+                          'round': round_num,
+                          'speaker': responder_name,
+                          'contribution': counter_contribution,
+                          'type': 'counter'
+                      })
+
+      # Synthesis
+      print(colored(f"\n{'='*60}", "green"))
+      print(colored("  SYNTHESIS", "green", attrs=["bold"]))
+      print(colored(f"{'='*60}", "green"))
+
+      all_contributions = "\n".join([
+          f"[{e['speaker']} - Round {e['round']}]: {e['contribution']}"
+          for e in discussion_log
+      ])
+
+      synthesis_prompt = f"""As the convener of this discussion on "{topic}", synthesize the key points:
+
+      Full discussion:
+      {all_contributions}
+
+      Provide:
+      1. Key agreements and consensus points
+      2. Areas of disagreement or tension
+      3. Novel ideas that emerged
+      4. Recommended next steps or actions
+      """
+
+      resp = get_llm_response(synthesis_prompt, model=model, provider=provider, npc=npc, temperature=0.4)
+      synthesis = str(resp.get('response', ''))
+      print(synthesis)
+
+      context['output'] = synthesis
+      context['messages'] = messages
+      context['convene_result'] = {
+          'topic': topic,
+          'participants': npc_names,
+          'rounds': rounds,
+          'discussion': discussion_log,
+          'synthesis': synthesis
+      }
