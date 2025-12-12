@@ -1,6 +1,6 @@
 <p align="center">
   <a href= "https://github.com/npc-worldwide/npcsh/blob/main/docs/npcsh.md"> 
-  <img src="https://raw.githubusercontent.com/NPC-Worldwide/npcsh/main/npcsh/npcsh.png" alt="npcsh logo" width=400></a>
+  <img src="https://raw.githubusercontent.com/NPC-Worldwide/npcsh/main/npcsh/npcsh.png" alt="npcsh logo" width=600></a>
 </p> 
 
 # NPC Shell
