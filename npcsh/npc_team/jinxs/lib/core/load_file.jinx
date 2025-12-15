@@ -8,8 +8,7 @@ steps:
     code: |
       import os
       from npcpy.data.load import load_file_contents
-      
-      # Expand user path and get absolute path
+
       file_path = os.path.expanduser("{{ file_path }}")
       
       # Check if file exists

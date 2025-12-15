@@ -1,0 +1,230 @@
+jinx_name: "sync"
+description: "Sync npc_team files from the npcsh repo to ~/.npcsh/npc_team. Detects local modifications before overwriting."
+inputs:
+  - force: "" # Use --force or -f to overwrite all files without prompting
+  - dry_run: "" # Use --dry-run or -d to preview changes without applying them
+  - jinxs: "" # Use --jinxs to sync only .jinx files
+  - npcs: "" # Use --npcs to sync only .npc files
+  - ctx: "" # Use --ctx to sync only .ctx files
+  - images: "" # Use --images to sync only image files (.png, .jpg, .jpeg)
+steps:
+  - name: "sync_npc_team"
+    engine: "python"
+    code: |
+      import os
+      import hashlib
+      import shutil
+      from pathlib import Path
+      from datetime import datetime
+
+      force = context.get('force', False)
+      dry_run = context.get('dry_run', False)
+      sync_jinxs = context.get('jinxs', False)
+      sync_npcs = context.get('npcs', False)
+      sync_ctx = context.get('ctx', False)
+      sync_images = context.get('images', False)
+
+      # Convert string flags to boolean
+      def to_bool(val):
+          if isinstance(val, bool):
+              return val
+          if isinstance(val, str):
+              return val.lower() in ('true', '1', 'yes', 'y')
+          return bool(val)
+
+      force = to_bool(force)
+      dry_run = to_bool(dry_run)
+      sync_jinxs = to_bool(sync_jinxs)
+      sync_npcs = to_bool(sync_npcs)
+      sync_ctx = to_bool(sync_ctx)
+      sync_images = to_bool(sync_images)
+
+      # If none specified, sync all
+      sync_all = not (sync_jinxs or sync_npcs or sync_ctx or sync_images)
+
+      # Find the repo npc_team directory
+      # Check common locations
+      possible_repo_paths = [
+          Path.home() / "npcww" / "npc-core" / "npcsh" / "npcsh" / "npc_team",
+          Path.home() / "npc-core" / "npcsh" / "npcsh" / "npc_team",
+          Path.home() / "repos" / "npcsh" / "npcsh" / "npc_team",
+          Path.home() / "Projects" / "npcsh" / "npcsh" / "npc_team",
+      ]
+
+      # Also check if we can find it via pip show
+      try:
+          import subprocess
+          result = subprocess.run(['pip', 'show', 'npcsh', '-f'], capture_output=True, text=True)
+          if result.returncode == 0:
+              for line in result.stdout.split('\n'):
+                  if line.startswith('Location:'):
+                      pip_path = Path(line.split(':', 1)[1].strip()) / "npcsh" / "npc_team"
+                      if pip_path.exists():
+                          possible_repo_paths.insert(0, pip_path)
+      except:
+          pass
+
+      repo_npc_team = None
+      for path in possible_repo_paths:
+          if path.exists() and path.is_dir():
+              repo_npc_team = path
+              break
+
+      local_npc_team = Path.home() / ".npcsh" / "npc_team"
+
+      if not repo_npc_team:
+          context['output'] = "Error: Could not find npcsh repo npc_team directory.\nSearched:\n" + "\n".join(f"  - {p}" for p in possible_repo_paths)
+          exit()
+
+      if not local_npc_team.exists():
+          context['output'] = f"Error: Local npc_team directory not found at {local_npc_team}"
+          exit()
+
+      def get_file_hash(filepath):
+          """Get MD5 hash of file contents."""
+          try:
+              with open(filepath, 'rb') as f:
+                  return hashlib.md5(f.read()).hexdigest()
+          except:
+              return None
+
+      def get_files_recursive(base_path, extensions=None):
+          """Get all files recursively, optionally filtered by extensions."""
+          files = []
+          for root, dirs, filenames in os.walk(base_path):
+              # Skip .git directories
+              dirs[:] = [d for d in dirs if d != '.git']
+              for filename in filenames:
+                  if filename.startswith('.'):
+                      continue
+                  if extensions and not any(filename.endswith(ext) for ext in extensions):
+                      continue
+                  full_path = Path(root) / filename
+                  rel_path = full_path.relative_to(base_path)
+                  files.append(rel_path)
+          return files
+
+      # Build list of extensions to sync based on flags
+      sync_extensions = []
+      if sync_all or sync_npcs:
+          sync_extensions.append('.npc')
+      if sync_all or sync_ctx:
+          sync_extensions.append('.ctx')
+      if sync_all or sync_jinxs:
+          sync_extensions.append('.jinx')
+      if sync_all or sync_images:
+          sync_extensions.extend(['.png', '.jpg', '.jpeg'])
+
+      # Get files from repo
+      repo_files = get_files_recursive(repo_npc_team, sync_extensions)
+
+      output_lines = []
+      output_lines.append(f"Syncing from: {repo_npc_team}")
+      output_lines.append(f"Syncing to:   {local_npc_team}")
+
+      # Show what's being synced
+      sync_types = []
+      if sync_all:
+          sync_types.append("all")
+      else:
+          if sync_npcs: sync_types.append("npcs")
+          if sync_ctx: sync_types.append("ctx")
+          if sync_jinxs: sync_types.append("jinxs")
+          if sync_images: sync_types.append("images")
+      output_lines.append(f"Syncing: {', '.join(sync_types)}")
+
+      if dry_run:
+          output_lines.append("\n[DRY RUN - No changes will be made]\n")
+      output_lines.append("")
+
+      new_files = []
+      updated_files = []
+      modified_locally = []
+      unchanged_files = []
+
+      for rel_path in repo_files:
+          repo_file = repo_npc_team / rel_path
+          local_file = local_npc_team / rel_path
+
+          if not local_file.exists():
+              new_files.append(rel_path)
+          else:
+              repo_hash = get_file_hash(repo_file)
+              local_hash = get_file_hash(local_file)
+
+              if repo_hash == local_hash:
+                  unchanged_files.append(rel_path)
+              else:
+                  # Check if local file is newer (possibly modified by user)
+                  repo_mtime = repo_file.stat().st_mtime
+                  local_mtime = local_file.stat().st_mtime
+
+                  if local_mtime > repo_mtime:
+                      modified_locally.append((rel_path, local_mtime, repo_mtime))
+                  else:
+                      updated_files.append(rel_path)
+
+      # Report findings
+      if new_files:
+          output_lines.append(f"New files to add ({len(new_files)}):")
+          for f in new_files:
+              output_lines.append(f"  + {f}")
+          output_lines.append("")
+
+      if updated_files:
+          output_lines.append(f"Files to update ({len(updated_files)}):")
+          for f in updated_files:
+              output_lines.append(f"  ~ {f}")
+          output_lines.append("")
+
+      if modified_locally:
+          output_lines.append(f"Locally modified files ({len(modified_locally)}):")
+          for f, local_t, repo_t in modified_locally:
+              local_dt = datetime.fromtimestamp(local_t).strftime('%Y-%m-%d %H:%M')
+              repo_dt = datetime.fromtimestamp(repo_t).strftime('%Y-%m-%d %H:%M')
+              output_lines.append(f"  ! {f}")
+              output_lines.append(f"      local: {local_dt}  repo: {repo_dt}")
+          if not force:
+              output_lines.append("  (use --force to overwrite these)")
+          output_lines.append("")
+
+      if unchanged_files:
+          output_lines.append(f"Already up to date: {len(unchanged_files)} files")
+          output_lines.append("")
+
+      # Perform sync if not dry run
+      if not dry_run:
+          synced = 0
+          skipped = 0
+
+          # Sync new files
+          for rel_path in new_files:
+              src = repo_npc_team / rel_path
+              dst = local_npc_team / rel_path
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, dst)
+              synced += 1
+
+          # Sync updated files
+          for rel_path in updated_files:
+              src = repo_npc_team / rel_path
+              dst = local_npc_team / rel_path
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, dst)
+              synced += 1
+
+          # Handle locally modified files
+          for rel_path, _, _ in modified_locally:
+              if force:
+                  src = repo_npc_team / rel_path
+                  dst = local_npc_team / rel_path
+                  shutil.copy2(src, dst)
+                  synced += 1
+              else:
+                  skipped += 1
+
+          output_lines.append(f"Synced: {synced} files")
+          if skipped:
+              output_lines.append(f"Skipped: {skipped} locally modified files")
+
+      context['output'] = "\n".join(output_lines)
