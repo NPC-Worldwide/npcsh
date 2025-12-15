@@ -9,7 +9,7 @@ steps:
       import subprocess
       import os
 
-      cmd = '{{ bash_command }}'
+      cmd = """{{ bash_command }}"""
       output = ""
 
       process = subprocess.Popen(
