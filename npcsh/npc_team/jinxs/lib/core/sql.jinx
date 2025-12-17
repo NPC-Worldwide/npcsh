@@ -8,7 +8,7 @@ steps:
   - engine: python
     code: |
       import pandas as pd
-      query = "{{ sql_query }}"
+      query = {{ sql_query | tojson }}
       try:
         df = pd.read_sql_query(query, npc.db_conn)
       except Exception as e:
