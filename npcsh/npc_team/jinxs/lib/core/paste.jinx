@@ -13,7 +13,7 @@ steps:
       from datetime import datetime
       import io
 
-      output_path = "{{ output_path }}".strip()
+      output_path = ({{ output_path | default("") | tojson }} or "").strip()
       image_saved = False
       text_content = None
 

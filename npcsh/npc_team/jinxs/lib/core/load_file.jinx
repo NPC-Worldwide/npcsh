@@ -10,7 +10,7 @@ steps:
       from npcpy.data.load import load_file_contents
       
       # Expand user path and get absolute path
-      file_path = os.path.expanduser("{{ file_path }}")
+      file_path = os.path.expanduser({{ file_path | tojson }})
       
       # Check if file exists
       if not os.path.exists(file_path):
