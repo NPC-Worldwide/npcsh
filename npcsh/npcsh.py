@@ -143,7 +143,31 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
         render_markdown(f'- Using {state.current_mode} mode. Use /agent, /cmd, or /chat to switch to other modes')
     render_markdown(f'- To switch to a different NPC, type /npc <npc_name> or /n <npc_name> to switch to that NPC.')
     render_markdown('\n- Here are the current NPCs available in your team: ' + ', '.join([npc_name for npc_name in state.team.npcs.keys()]))
-    render_markdown('\n- Here are the currently available Jinxs: ' + ', '.join([jinx_name for jinx_name in state.team.jinxs_dict.keys()]))
+    # Show jinxs organized by folder using _source_path from jinx objects
+    jinxs_by_folder = {}
+    if hasattr(state.team, 'jinxs_dict'):
+        for jinx_name, jinx_obj in state.team.jinxs_dict.items():
+            folder = 'other'
+            if hasattr(jinx_obj, '_source_path') and jinx_obj._source_path:
+                parts = jinx_obj._source_path.split(os.sep)
+                if 'jinxs' in parts:
+                    idx = parts.index('jinxs')
+                    if idx + 1 < len(parts) - 1:
+                        folder = parts[idx + 1]
+                    else:
+                        folder = 'root'
+            if folder not in jinxs_by_folder:
+                jinxs_by_folder[folder] = []
+            jinxs_by_folder[folder].append(jinx_name)
+
+    if jinxs_by_folder:
+        folder_order = ['bin', 'lib', 'npc_studio', 'root', 'other']
+        sorted_folders = sorted(jinxs_by_folder.keys(), key=lambda x: (folder_order.index(x) if x in folder_order else 99, x))
+        jinx_summary = []
+        for folder in sorted_folders:
+            count = len(jinxs_by_folder[folder])
+            jinx_summary.append(f"{folder}/ ({count})")
+        render_markdown('\n- Available Jinxs: ' + ', '.join(jinx_summary) + ' — use `/jinxs` for details')
     
     is_windows = platform.system().lower().startswith("win")
     try:

@@ -1,32 +1,176 @@
 jinx_name: jinxs
-description: Show available jinxs for the current NPC/Team
-inputs: []
+description: "Show available jinxs organized by folder. Use /jinxs <path> for details on a specific folder."
+inputs:
+  - path: "" # Optional path to show details for (e.g., "lib/core", "bin")
 steps:
   - name: list_jinxs
     engine: python
     code: |
-      output_lines = ["Available Jinxs:\n"]
-      jinxs_listed = set()
-      
+      import os
+      from pathlib import Path
+      import yaml
+
+      filter_path = context.get('path', '').strip()
+
+      # Find jinxs directory from team or fallback
+      jinxs_dir = None
       if hasattr(npc, 'team') and npc.team:
-          team = npc.team
-          
-          if hasattr(team, 'jinxs_dict') and team.jinxs_dict:
-              output_lines.append(f"\n--- Team Jinxs ---\n")
-              for name, jinx_obj in sorted(team.jinxs_dict.items()):
-                  desc = getattr(jinx_obj, 'description', 'No description available.')
-                  output_lines.append(f"- /{name}: {desc}\n")
-                  jinxs_listed.add(name)
-      
-      if hasattr(npc, 'jinxs_dict') and npc.jinxs_dict:
-          output_lines.append(f"\n--- NPC Jinxs for {npc.name} ---\n")
-          for name, jinx_obj in sorted(npc.jinxs_dict.items()):
-              if name not in jinxs_listed:
-                  desc = getattr(jinx_obj, 'description', 'No description available.')
-                  output_lines.append(f"- /{name}: {desc}\n")
-                  jinxs_listed.add(name)
-      
-      if not jinxs_listed:
-          output = "No jinxs available for the current context."
+          if hasattr(npc.team, 'jinxs_dir') and npc.team.jinxs_dir:
+              jinxs_dir = Path(npc.team.jinxs_dir)
+          elif hasattr(npc.team, 'team_path') and npc.team.team_path:
+              candidate = Path(npc.team.team_path) / "jinxs"
+              if candidate.exists():
+                  jinxs_dir = candidate
+
+      if not jinxs_dir:
+          # Fallback to global jinxs
+          global_jinxs = Path.home() / ".npcsh" / "npc_team" / "jinxs"
+          if global_jinxs.exists():
+              jinxs_dir = global_jinxs
+
+      if not jinxs_dir or not jinxs_dir.exists():
+          output = "Error: Could not find jinxs directory"
+          exit()
+
+      def get_jinx_info(jinx_path):
+          """Extract name and description from a jinx file."""
+          try:
+              with open(jinx_path, 'r') as f:
+                  content = f.read()
+                  # Parse just the header (before steps:)
+                  header = content.split('steps:')[0] if 'steps:' in content else content
+                  data = yaml.safe_load(header)
+                  name = data.get('jinx_name', jinx_path.stem)
+                  desc = data.get('description', 'No description')
+                  return name, desc
+          except:
+              return jinx_path.stem, 'No description'
+
+      def get_folder_structure(base_path):
+          """Get jinxs organized by folder."""
+          structure = {}
+          for root, dirs, files in os.walk(base_path):
+              # Skip hidden directories
+              dirs[:] = [d for d in dirs if not d.startswith('.')]
+
+              jinx_files = [f for f in files if f.endswith('.jinx')]
+              if jinx_files:
+                  rel_path = Path(root).relative_to(base_path)
+                  rel_str = str(rel_path) if str(rel_path) != '.' else 'root'
+                  structure[rel_str] = []
+                  for jf in sorted(jinx_files):
+                      jinx_path = Path(root) / jf
+                      name, desc = get_jinx_info(jinx_path)
+                      structure[rel_str].append((name, desc, jf))
+          return structure
+
+      output_lines = []
+
+      if filter_path:
+          # Show details for a specific path
+          target_path = jinxs_dir / filter_path
+          if not target_path.exists():
+              # Try to find a matching folder
+              matches = []
+              for root, dirs, files in os.walk(jinxs_dir):
+                  rel = Path(root).relative_to(jinxs_dir)
+                  if filter_path in str(rel) or filter_path in Path(root).name:
+                      matches.append(rel)
+
+              if matches:
+                  output_lines.append(f"No exact match for '{filter_path}'. Did you mean:\n")
+                  for m in matches[:5]:
+                      output_lines.append(f"  /jinxs {m}\n")
+                  output = "".join(output_lines)
+                  exit()
+              else:
+                  output = f"No jinxs found at path: {filter_path}"
+                  exit()
+
+          # Get jinxs in this path
+          structure = get_folder_structure(target_path)
+          if not structure:
+              # Check if it's a single folder with jinxs
+              jinx_files = list(target_path.glob("*.jinx"))
+              if jinx_files:
+                  output_lines.append(f"Jinxs in {filter_path}:\n\n")
+                  for jf in sorted(jinx_files):
+                      name, desc = get_jinx_info(jf)
+                      output_lines.append(f"  /{name}\n")
+                      output_lines.append(f"    {desc}\n\n")
+              else:
+                  output = f"No jinxs found at path: {filter_path}"
+                  exit()
+          else:
+              output_lines.append(f"Jinxs in {filter_path}:\n\n")
+              for folder, jinxs in sorted(structure.items()):
+                  if folder != 'root':
+                      output_lines.append(f"  {folder}/\n")
+                  for name, desc, filename in jinxs:
+                      prefix = "    " if folder != 'root' else "  "
+                      output_lines.append(f"{prefix}/{name} - {desc}\n")
+                  output_lines.append("\n")
+
       else:
-          output = "".join(output_lines)
+          # Show overview organized by folder
+          structure = get_folder_structure(jinxs_dir)
+
+          output_lines.append("Available Jinxs\n")
+          output_lines.append("=" * 40 + "\n\n")
+
+          # Group by top-level folder
+          top_level = {}
+          for folder, jinxs in structure.items():
+              if folder == 'root':
+                  top = 'root'
+              else:
+                  top = folder.split('/')[0] if '/' in folder else folder
+
+              if top not in top_level:
+                  top_level[top] = {'subfolders': {}, 'jinxs': []}
+
+              if folder == top or folder == 'root':
+                  top_level[top]['jinxs'].extend(jinxs)
+              else:
+                  subfolder = '/'.join(folder.split('/')[1:])
+                  if subfolder not in top_level[top]['subfolders']:
+                      top_level[top]['subfolders'][subfolder] = []
+                  top_level[top]['subfolders'][subfolder].extend(jinxs)
+
+          # Display
+          folder_order = ['bin', 'lib', 'npc_studio', 'root']
+          sorted_folders = sorted(top_level.keys(), key=lambda x: (folder_order.index(x) if x in folder_order else 99, x))
+
+          for top in sorted_folders:
+              data = top_level[top]
+
+              if top == 'root':
+                  if data['jinxs']:
+                      output_lines.append("Root Jinxs:\n")
+                      for name, desc, _ in data['jinxs']:
+                          output_lines.append(f"  /{name} - {desc}\n")
+                      output_lines.append("\n")
+              else:
+                  total = len(data['jinxs'])
+                  for sf_jinxs in data['subfolders'].values():
+                      total += len(sf_jinxs)
+
+                  output_lines.append(f"{top}/ ({total} jinxs)\n")
+
+                  # Show direct jinxs
+                  if data['jinxs']:
+                      for name, desc, _ in data['jinxs'][:3]:
+                          output_lines.append(f"  /{name} - {desc}\n")
+                      if len(data['jinxs']) > 3:
+                          output_lines.append(f"  ... and {len(data['jinxs']) - 3} more\n")
+
+                  # Show subfolders summary
+                  if data['subfolders']:
+                      for subfolder, jinxs in sorted(data['subfolders'].items()):
+                          output_lines.append(f"  {subfolder}/ ({len(jinxs)} jinxs)\n")
+
+                  output_lines.append(f"  → /jinxs {top} for details\n\n")
+
+          output_lines.append("Use /jinxs <path> for details (e.g., /jinxs lib/core)\n")
+
+      output = "".join(output_lines)
