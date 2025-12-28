@@ -92,16 +92,28 @@ voice_requirements = [
 
 extra_files = package_files("npcsh/npc_team/")
 
+# Build package_data dict for npc_team files
+def get_package_data_patterns():
+    """Get patterns for all files in npc_team directory."""
+    patterns = []
+    npc_team_path = Path(__file__).parent / "npcsh" / "npc_team"
+    if npc_team_path.exists():
+        for root, dirs, files in os.walk(npc_team_path):
+            rel_root = os.path.relpath(root, Path(__file__).parent / "npcsh")
+            for f in files:
+                patterns.append(os.path.join(rel_root, f))
+    return patterns
+
 setup(
     name="npcsh",
-    version="1.1.15",
+    version="1.1.16",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
         "lite": api_requirements,
         "local": local_requirements,
         "yap": voice_requirements,
-        "all": api_requirements + local_requirements + voice_requirements ,  
+        "all": api_requirements + local_requirements + voice_requirements ,
     },
     entry_points={
         "console_scripts": [
@@ -122,6 +134,15 @@ setup(
         "License :: OSI Approved :: MIT License",
     ],
     include_package_data=True,
+    package_data={
+        "npcsh": [
+            "npc_team/*.npc",
+            "npc_team/*.ctx",
+            "npc_team/jinxs/**/*.jinx",
+            "npc_team/jinxs/**/*",
+            "npc_team/templates/*",
+        ],
+    },
     data_files=[("npcsh/npc_team", extra_files)],
     python_requires=">=3.10",
 )

@@ -368,9 +368,26 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
         """
     )
 
-    # Package directories
-    package_dir = os.path.dirname(__file__)
+    # Package directories - use helper that handles PyInstaller bundles
+    package_dir = get_package_dir()
     package_npc_team_dir = os.path.join(package_dir, "npc_team")
+
+    # Debug logging for package path resolution
+    if os.environ.get("NPCSH_DEBUG", "0") == "1":
+        print(f"[DEBUG] Package dir: {package_dir}")
+        print(f"[DEBUG] Package npc_team dir: {package_npc_team_dir}")
+        print(f"[DEBUG] npc_team exists: {os.path.exists(package_npc_team_dir)}")
+        if os.path.exists(package_npc_team_dir):
+            print(f"[DEBUG] npc_team contents: {os.listdir(package_npc_team_dir)}")
+
+    if not os.path.exists(package_npc_team_dir):
+        print(f"Warning: Package npc_team directory not found at {package_npc_team_dir}")
+        # For bundled executables, try to find it
+        if getattr(sys, 'frozen', False):
+            print(f"Running as frozen executable, _MEIPASS: {getattr(sys, '_MEIPASS', 'N/A')}")
+            if hasattr(sys, '_MEIPASS'):
+                print(f"Contents of _MEIPASS: {os.listdir(sys._MEIPASS)}")
+        return
 
     user_npc_team_dir = os.path.expanduser("~/.npcsh/npc_team")
 
@@ -1121,6 +1138,31 @@ def set_npcsh_initialized() -> None:
 
 
 
+def get_package_dir() -> str:
+    """
+    Get the package directory, handling both normal Python and PyInstaller executables.
+
+    For normal Python: returns os.path.dirname(__file__)
+    For PyInstaller: returns the bundled data directory (sys._MEIPASS/npcsh)
+    """
+    # Check if running as a PyInstaller bundle
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # Running as PyInstaller bundle - look for npcsh folder in _MEIPASS
+        meipass = sys._MEIPASS
+        # The package data should be at _MEIPASS/npcsh (based on PyInstaller config)
+        bundled_path = os.path.join(meipass, 'npcsh')
+        if os.path.exists(bundled_path):
+            return bundled_path
+        # Fallback: check if npc_team is directly in _MEIPASS
+        if os.path.exists(os.path.join(meipass, 'npc_team')):
+            return meipass
+        # Last resort: return meipass and let caller handle
+        return meipass
+    else:
+        # Normal Python execution
+        return os.path.dirname(__file__)
+
+
 def file_has_changed(source_path: str, destination_path: str) -> bool:
     """
     Function Description:
@@ -1134,7 +1176,7 @@ def file_has_changed(source_path: str, destination_path: str) -> bool:
         A boolean indicating whether the files are different
     """
 
-  
+
     return not filecmp.cmp(source_path, destination_path, shallow=False)
 
 
