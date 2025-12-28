@@ -20,9 +20,9 @@ steps:
       except:
           spinner = None
 
-      target_name = "{{ npc_name }}".lower().strip()
-      task_request = """{{ task }}"""
-      max_iters = int("{{ max_iterations }}" or "10")
+      target_name = {{ npc_name | default("") | tojson }}.lower().strip()
+      task_request = {{ task | default("") | tojson }}
+      max_iters = int({{ max_iterations | default("10") | tojson }} or "10")
 
       team_obj = context.get('team') or getattr(npc, 'team', None)
       orchestrator = context.get('npc') or npc
