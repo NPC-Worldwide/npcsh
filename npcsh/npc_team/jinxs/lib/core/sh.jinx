@@ -20,12 +20,6 @@ steps:
       )
       stdout, stderr = process.communicate()
 
-      # Only show debug output if NPCSH_DEBUG is set
-      if os.environ.get("NPCSH_DEBUG") == "1":
-          import sys
-          print(f"[sh] cmd: {cmd}", file=sys.stderr)
-          print(f"[sh] stdout: {stdout.decode('utf-8', errors='ignore')[:200]}", file=sys.stderr)
-
       if stderr:
           output = f"Error: {stderr.decode('utf-8')}"
       else:
