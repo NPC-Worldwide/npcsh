@@ -1,57 +1,26 @@
 jinx_name: wander
-description: Experimental wandering mode - creative exploration with varied temperatures and random events
+description: Creative daydreaming with probabilistic temperature shifts mid-stream
 inputs:
-  - problem: null
-  - environment: null
-  - low_temp: 0.5
-  - high_temp: 1.9
-  - interruption_likelihood: 1.0
-  - sample_rate: 0.4
-  - n_streams: 5
-  - include_events: false
-  - num_events: 3
-  - model: null
-  - provider: null
-
+  - problem
 steps:
   - name: wander_explore
     engine: python
     code: |
-      import os
       import random
       from termcolor import colored
-
       from npcpy.llm_funcs import get_llm_response
 
-      npc = context.get('npc')
-      messages = context.get('messages', [])
-
-      problem = context.get('problem')
-      environment = context.get('environment')
-      low_temp = float(context.get('low_temp', 0.5))
-      high_temp = float(context.get('high_temp', 1.9))
-      interruption_likelihood = float(context.get('interruption_likelihood', 1.0))
-      sample_rate = float(context.get('sample_rate', 0.4))
-      n_streams = int(context.get('n_streams', 5))
-      include_events = context.get('include_events', False)
-      num_events = int(context.get('num_events', 3))
-
-      model = context.get('model') or (npc.model if npc else 'gemini-1.5-pro')
-      provider = context.get('provider') or (npc.provider if npc else 'gemini')
-
+      problem = context.get('problem', '')
       if not problem:
-          context['output'] = """Usage: /wander <problem to explore>
-
-      Options:
-        --environment DESC   Metaphorical environment for wandering
-        --low-temp F        Low temperature (default: 0.5)
-        --high-temp F       High temperature (default: 1.9)
-        --n-streams N       Number of exploration streams (default: 5)
-        --include-events    Add random events during wandering
-
-      Example: /wander How might we reimagine urban transportation?"""
-          context['messages'] = messages
+          context['output'] = "Need a topic to wander about."
           exit()
+
+      model = 'gpt-4.1-nano'
+      provider = 'openai'
+      low_temp = 0.5
+      high_temp = 1.9
+      sample_rate = 0.4
+      interrupt_prob = 0.02
 
       print(f"""
       ██╗    ██╗ █████╗ ███╗   ██╗██████╗ ███████╗██████╗
@@ -61,126 +30,123 @@ steps:
       ╚███╔███╔╝██║  ██║██║ ╚████║██████╔╝███████╗██║  ██║
        ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚══════╝╚═╝  ╚═╝
 
-      Experimental Wandering Mode
-      Problem: {problem}
-      Temperature range: {low_temp} - {high_temp}
-      Streams: {n_streams}
+      Wandering: {problem}
       """)
 
-      # Generate environment if not provided
-      if not environment:
-          env_prompt = f"""Create a rich, metaphorical environment for wandering through while thinking about:
-          "{problem}"
+      print(colored(f"--- Low temp stream ({low_temp}) ---", "cyan"))
 
-          The environment should:
-          1. Have distinct regions or areas
-          2. Include various elements and features
-          3. Be metaphorically related to the problem
-          4. Be described in 3-5 sentences
+      low_prompt = f"Think about: {problem}"
+      resp = get_llm_response(low_prompt, model=model, provider=provider, temperature=low_temp, stream=True)
 
-          Provide only the description, no framing."""
+      # Get the actual stream from the response
+      stream = resp.get('response') if isinstance(resp, dict) else resp
 
-          print(colored("Generating wandering environment...", "cyan"))
-          resp = get_llm_response(env_prompt, model=model, provider=provider, temperature=0.7, npc=npc)
-          environment = str(resp.get('response', 'A vast conceptual landscape stretches before you.'))
-          print(f"\n{environment}\n")
+      low_output = ""
+      interrupted = False
 
-      # Event types for random encounters
-      event_types = ["encounter", "discovery", "obstacle", "insight", "shift", "memory"]
-
-      all_insights = []
-      wandering_log = []
-
-      for stream_idx in range(n_streams):
-          # Alternate between low and high temperature
-          if stream_idx % 2 == 0:
-              temp = low_temp
-              mode = "focused"
+      for chunk in stream:
+          if hasattr(chunk, 'choices') and chunk.choices:
+              delta = chunk.choices[0].delta
+              text = getattr(delta, 'content', '') or ''
+          elif isinstance(chunk, dict):
+              text = chunk.get('content', '') or chunk.get('response', '')
           else:
-              temp = high_temp
-              mode = "creative"
+              text = ''
 
-          print(colored(f"\n--- Stream {stream_idx + 1}/{n_streams} ({mode}, temp={temp}) ---", "cyan"))
+          if text:
+              print(text, end='', flush=True)
+              low_output += text
 
-          # Generate random event if enabled
-          event_context = ""
-          if include_events and random.random() < sample_rate:
-              event_type = random.choice(event_types)
-              event_prompt = f"""In the environment: {environment}
+              if random.random() < interrupt_prob:
+                  print(colored("\n[INTERRUPT]", "yellow"))
+                  interrupted = True
+                  break
 
-              While exploring the problem "{problem}", generate a {event_type} event.
-              The event should be metaphorical and relate to the problem.
-              Describe it in 2-3 sentences."""
+      print()
 
-              event_resp = get_llm_response(event_prompt, model=model, provider=provider, temperature=0.9, npc=npc)
-              event = str(event_resp.get('response', ''))
-              event_context = f"\n\nEvent ({event_type}): {event}"
-              print(colored(f"[{event_type.upper()}] {event[:100]}...", "yellow"))
+      print(colored(f"\n--- High temp stream ({high_temp}) ---", "cyan"))
 
-          # Main wandering exploration
-          wander_prompt = f"""You are wandering through: {environment}
+      high_prompt = f"{low_output}\n\nContinue:"
+      resp = get_llm_response(high_prompt, model=model, provider=provider, temperature=high_temp, stream=True)
+      stream = resp.get('response') if isinstance(resp, dict) else resp
 
-          Problem being explored: "{problem}"
-          {event_context}
+      high_output = ""
+      for chunk in stream:
+          if hasattr(chunk, 'choices') and chunk.choices:
+              delta = chunk.choices[0].delta
+              text = getattr(delta, 'content', '') or ''
+          elif isinstance(chunk, dict):
+              text = chunk.get('content', '') or chunk.get('response', '')
+          else:
+              text = ''
 
-          Previous insights: {all_insights[-3:] if all_insights else 'Starting fresh'}
+          if text:
+              print(text, end='', flush=True)
+              high_output += text
 
-          In this {mode} exploration (temperature {temp}):
-          1. Let your mind wander through the conceptual space
-          2. Make unexpected connections
-          3. Notice what emerges from the wandering
-          4. Share any insights, questions, or realizations
+      print()
 
-          Think freely and explore."""
+      lines = [l for l in high_output.split('\n') if l.strip()]
+      sample_size = max(1, int(len(lines) * sample_rate))
+      sampled = random.sample(lines, sample_size) if lines else [high_output]
 
-          resp = get_llm_response(wander_prompt, model=model, provider=provider, temperature=temp, npc=npc)
-          stream_output = str(resp.get('response', ''))
-          print(stream_output)
+      print(colored("\n=== SAMPLED INSIGHTS ===", "yellow"))
+      fragments_text = chr(10).join(sampled)
+      print(fragments_text)
 
-          all_insights.append(stream_output)
-          wandering_log.append({
-              "stream": stream_idx + 1,
-              "mode": mode,
-              "temperature": temp,
-              "event": event_context if include_events else None,
-              "insight": stream_output
-          })
+      print(colored("\n=== SYNTHESIS ===", "green"))
 
-          # Random interruption
-          if random.random() < interruption_likelihood * 0.2:
-              print(colored("\n[Pause for reflection...]", "magenta"))
-              reflect_prompt = f"Briefly reflect on what's emerged so far about: {problem}"
-              reflect_resp = get_llm_response(reflect_prompt, model=model, provider=provider, temperature=0.4, npc=npc)
-              print(colored(str(reflect_resp.get('response', ''))[:200], "magenta"))
+      synthesis_prompt = f"""You are a mad scientist oracle. The gibberish below contains hidden truths.
 
-      # Synthesis
-      print(colored("\n--- Synthesizing Wanderings ---", "cyan"))
+QUESTION: {problem}
 
-      synthesis_prompt = f"""After wandering through "{environment}" exploring "{problem}":
+CHAOS FRAGMENTS:
+{fragments_text}
 
-      All insights gathered:
-      {chr(10).join(all_insights)}
+RULES:
+1. You MUST use AT LEAST HALF of the fragments above - quote them directly
+2. Make WILD CREATIVE LEAPS - not academic, not safe, not obvious
+3. Find patterns in the noise like reading entrails or tea leaves
+4. Foreign text, Unicode garbage, code snippets - ALL are omens with meaning
+5. Puns, wordplay, phonetic similarities - all valid connections
+6. The weirder the connection, the better
+7. NO HEDGING. No "this suggests" or "perhaps". Be BOLD. Be CERTAIN.
 
-      Synthesize what emerged from this wandering:
-      1. Key themes that appeared
-      2. Unexpected connections made
-      3. New questions raised
-      4. Potential directions to explore further"""
+OUTPUT 3 WILD HYPOTHESES:
+For each: Quote the fragments you're using -> Make your creative leap -> State the bold claim
 
-      resp = get_llm_response(synthesis_prompt, model=model, provider=provider, temperature=0.5, npc=npc)
-      synthesis = str(resp.get('response', ''))
+These must be ideas that COULD NOT exist without this specific chaos. Surprise us. Make us see {problem} in a way nobody has before."""
 
-      print("\n" + "="*50)
-      print(colored("WANDERING SYNTHESIS", "green", attrs=['bold']))
-      print("="*50)
-      print(synthesis)
+      resp = get_llm_response(synthesis_prompt, model=model, provider=provider, temperature=0.5, stream=True)
+      stream = resp.get('response') if isinstance(resp, dict) else resp
 
-      context['output'] = synthesis
-      context['messages'] = messages
-      context['wander_result'] = {
-          'problem': problem,
-          'environment': environment,
-          'log': wandering_log,
-          'insights': all_insights,
-          'synthesis': synthesis
-      }
+      synthesis = ""
+      for chunk in stream:
+          if hasattr(chunk, 'choices') and chunk.choices:
+              delta = chunk.choices[0].delta
+              text = getattr(delta, 'content', '') or ''
+          elif isinstance(chunk, dict):
+              text = chunk.get('content', '') or chunk.get('response', '')
+          else:
+              text = ''
+
+          if text:
+              print(text, end='', flush=True)
+              synthesis += text
+
+      print()
+
+      full_output = f"""Wandering: {problem}
+
+        --- Low temp stream ({low_temp}) ---
+        {low_output}
+
+        --- High temp stream ({high_temp}) ---
+        {high_output}
+
+        === SAMPLED INSIGHTS ===
+        {fragments_text}
+
+        === SYNTHESIS ===
+        {synthesis}"""
+      context['output'] = full_output

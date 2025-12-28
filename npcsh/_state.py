@@ -399,31 +399,76 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                 shutil.copy2(source_path, destination_path)
                 print(f"Copied ctx {filename} to {destination_path}")
 
-    # Copy jinxs directory RECURSIVELY
+    # Copy jinxs directory RECURSIVELY with manifest tracking
+    # This ensures we only sync package jinxs and can clean up old ones
     package_jinxs_dir = os.path.join(package_npc_team_dir, "jinxs")
+    manifest_path = os.path.join(user_jinxs_dir, ".package_manifest.json")
+
+    # Load existing manifest of package-synced jinxs
+    old_package_jinxs = set()
+    if os.path.exists(manifest_path):
+        try:
+            import json
+            with open(manifest_path, 'r') as f:
+                old_package_jinxs = set(json.load(f).get('jinxs', []))
+        except:
+            pass
+
+    # Track current package jinxs
+    current_package_jinxs = set()
+
     if os.path.exists(package_jinxs_dir):
         for root, dirs, files in os.walk(package_jinxs_dir):
             # Calculate relative path from package_jinxs_dir
             rel_path = os.path.relpath(root, package_jinxs_dir)
-            
+
             # Create corresponding directory in user jinxs
             if rel_path == '.':
                 dest_dir = user_jinxs_dir
             else:
                 dest_dir = os.path.join(user_jinxs_dir, rel_path)
             os.makedirs(dest_dir, exist_ok=True)
-            
+
             # Copy all .jinx files in this directory
             for filename in files:
                 if filename.endswith(".jinx"):
                     source_jinx_path = os.path.join(root, filename)
                     destination_jinx_path = os.path.join(dest_dir, filename)
-                    
+                    jinx_rel_path = os.path.join(rel_path, filename) if rel_path != '.' else filename
+                    current_package_jinxs.add(jinx_rel_path)
+
                     if not os.path.exists(destination_jinx_path) or file_has_changed(
                         source_jinx_path, destination_jinx_path
                     ):
                         shutil.copy2(source_jinx_path, destination_jinx_path)
-                        print(f"Copied jinx {os.path.join(rel_path, filename)} to {destination_jinx_path}")
+                        print(f"Copied jinx {jinx_rel_path} to {destination_jinx_path}")
+
+    # Clean up old package jinxs that are no longer in the package
+    # (but preserve user-created jinxs that were never in the manifest)
+    stale_jinxs = old_package_jinxs - current_package_jinxs
+    for stale_jinx in stale_jinxs:
+        stale_path = os.path.join(user_jinxs_dir, stale_jinx)
+        if os.path.exists(stale_path):
+            try:
+                os.remove(stale_path)
+                print(f"Removed stale package jinx: {stale_jinx}")
+                # Remove empty parent directories
+                parent_dir = os.path.dirname(stale_path)
+                while parent_dir != user_jinxs_dir:
+                    if os.path.isdir(parent_dir) and not os.listdir(parent_dir):
+                        os.rmdir(parent_dir)
+                        print(f"Removed empty directory: {parent_dir}")
+                    parent_dir = os.path.dirname(parent_dir)
+            except Exception as e:
+                print(f"Could not remove stale jinx {stale_jinx}: {e}")
+
+    # Save updated manifest
+    try:
+        import json
+        with open(manifest_path, 'w') as f:
+            json.dump({'jinxs': list(current_package_jinxs), 'updated': str(__import__('datetime').datetime.now())}, f, indent=2)
+    except Exception as e:
+        print(f"Could not save jinx manifest: {e}")
 
     # Copy templates directory
     templates = os.path.join(package_npc_team_dir, "templates")
@@ -1768,7 +1813,18 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                 # If we have pasted content, replace placeholder with actual content
                 if pasted_content is not None:
                     import re
-                    result = re.sub(r'\[pasted: \d+ lines?, \d+ chars?\]', pasted_content, buf)
+                    # Escape pipe characters in pasted content so they aren't parsed as pipeline operators
+                    escaped_content = pasted_content.replace('|', '\\|')
+                    # If pasted content is at the start of command, escape @ and / to prevent
+                    # them being interpreted as delegation or slash commands
+                    placeholder_pattern = r'\[pasted: \d+ lines?, \d+ chars?\]'
+                    if re.match(placeholder_pattern, buf.lstrip()):
+                        if escaped_content.startswith('@'):
+                            escaped_content = '\\@' + escaped_content[1:]
+                        elif escaped_content.startswith('/'):
+                            escaped_content = '\\/' + escaped_content[1:]
+                    # Use lambda to avoid backreference issues in replacement string
+                    result = re.sub(placeholder_pattern, lambda m: escaped_content, buf)
                     if result.strip():
                         readline.add_history(result)
                     return result
@@ -3112,6 +3168,11 @@ def execute_command(
     if not command.strip():
         return state, ""
 
+    # Unescape @ and / at start of command that were escaped to prevent misinterpretation
+    # (e.g., from pasted content that starts with @ or /)
+    if command.startswith('\\@') or command.startswith('\\/'):
+        command = command[1:]  # Remove the escape backslash
+
     # Check for mode switch commands
     mode_change, state = check_mode_switch(command, state)
     if mode_change:
@@ -3133,6 +3194,8 @@ def execute_command(
 
     original_command_for_embedding = command
     commands = split_by_pipes(command)
+    # Unescape pipe characters that were escaped to prevent splitting (e.g., from pasted content)
+    commands = [cmd.replace('\\|', '|') for cmd in commands]
 
     stdin_for_next = None
     final_output = None

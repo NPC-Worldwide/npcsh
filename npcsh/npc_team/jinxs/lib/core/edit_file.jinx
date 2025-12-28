@@ -11,10 +11,11 @@ steps:
     code: |
       import os
       from npcpy.llm_funcs import get_llm_response
-
+      
+    
       file_path = os.path.expanduser({{ file_path | tojson }})
-      edit_instructions = {{ edit_instructions | tojson }}
-      backup_str = {{ backup | tojson }}
+      edit_instructions = {{ edit_instructions | string | tojson }}
+      backup_str = {{ backup | default("true") | string | tojson }}
       create_backup = backup_str.lower() not in ('false', 'no', '0', '')
       
     
