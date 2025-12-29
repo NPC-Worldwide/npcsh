@@ -1,4 +1,4 @@
-jinx_name: "npc-studio"
+jinx_name: "incognide"
 description: "Start npc studio"
 inputs:
   - user_command: ""
