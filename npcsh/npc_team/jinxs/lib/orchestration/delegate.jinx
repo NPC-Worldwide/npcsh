@@ -127,8 +127,8 @@ steps:
 
               review_result = get_llm_response(
                   review_prompt,
-                  model=getattr(orchestrator, 'model', 'gemini-2.5-flash'),
-                  provider=getattr(orchestrator, 'provider', 'gemini'),
+                  model=getattr(orchestrator, 'model', None) or (state.chat_model if state else 'llama3.2'),
+                  provider=getattr(orchestrator, 'provider', None) or (state.chat_provider if state else 'ollama'),
                   npc=orchestrator,
                   temperature=0.3
               )

@@ -1,0 +1,10 @@
+jinx_name: studio.navigate
+description: Navigate a browser pane to a specific URL.
+inputs:
+  - paneId: "active"
+  - url: ""
+steps:
+  - name: frontend_action
+    engine: python
+    code: |
+      context['output'] = "Action executed by frontend"

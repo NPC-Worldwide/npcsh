@@ -33,9 +33,9 @@ steps:
       if not llm_provider and current_npc and current_npc.provider:
           llm_provider = current_npc.provider
       
-      # Final fallbacks (these would ideally come from npcsh._state config)
-      if not llm_model: llm_model = "gemini-1.5-pro" # Example default
-      if not llm_provider: llm_provider = "gemini" # Example default
+      # Final fallbacks from state
+      if not llm_model: llm_model = state.chat_model if state else "llama3.2"
+      if not llm_provider: llm_provider = state.chat_provider if state else "ollama"
 
       team_name = current_team.name if current_team else "__none__"
       npc_name = current_npc.name if isinstance(current_npc, type(None).__class__) else "__none__"
