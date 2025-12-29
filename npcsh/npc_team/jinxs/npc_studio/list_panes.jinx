@@ -1,0 +1,8 @@
+jinx_name: studio.list_panes
+description: List all open panes in NPC Studio. Returns pane IDs, types, titles, and which is active.
+inputs: []
+steps:
+  - name: frontend_action
+    engine: python
+    code: |
+      context['output'] = "Action executed by frontend"

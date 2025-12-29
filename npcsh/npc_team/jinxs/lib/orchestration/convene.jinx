@@ -21,8 +21,8 @@ steps:
       team = context.get('team')
       messages = context.get('messages', [])
 
-      model = context.get('model') or (npc.model if npc else 'gemini-1.5-flash')
-      provider = context.get('provider') or (npc.provider if npc else 'gemini')
+      model = context.get('model') or (npc.model if npc else (state.chat_model if state else 'llama3.2'))
+      provider = context.get('provider') or (npc.provider if npc else (state.chat_provider if state else 'ollama'))
 
       if not topic:
           context['output'] = """Usage: /convene <topic>

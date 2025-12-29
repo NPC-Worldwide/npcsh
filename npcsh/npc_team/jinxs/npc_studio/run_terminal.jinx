@@ -1,0 +1,10 @@
+jinx_name: studio.run_terminal
+description: Execute a command in a terminal pane.
+inputs:
+  - paneId: "active"
+  - command: ""
+steps:
+  - name: frontend_action
+    engine: python
+    code: |
+      context['output'] = "Action executed by frontend"
