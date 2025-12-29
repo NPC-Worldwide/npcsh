@@ -53,8 +53,8 @@ steps:
           operations_config = [op.strip() for op in operations_str.split(',')] if operations_str else None
           if not llm_model and current_npc: llm_model = current_npc.model
           if not llm_provider and current_npc: llm_provider = current_npc.provider
-          if not llm_model: llm_model = "gemini-1.5-pro"
-          if not llm_provider: llm_provider = "gemini"
+          if not llm_model: llm_model = state.chat_model if state else "llama3.2"
+          if not llm_provider: llm_provider = state.chat_provider if state else "ollama"
 
           team_name = current_team.name if current_team else "__none__"
           npc_name = current_npc.name if current_npc else "__none__"

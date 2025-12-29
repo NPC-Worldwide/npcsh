@@ -1,0 +1,12 @@
+jinx_name: studio.split_pane
+description: Split an existing pane to create a new pane alongside it.
+inputs:
+  - paneId: "active"
+  - direction: "right"
+  - type: ""
+  - path: ""
+steps:
+  - name: frontend_action
+    engine: python
+    code: |
+      context['output'] = "Action executed by frontend"

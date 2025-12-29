@@ -1,0 +1,10 @@
+jinx_name: studio.send_message
+description: Send a message in a chat pane.
+inputs:
+  - paneId: "active"
+  - message: ""
+steps:
+  - name: frontend_action
+    engine: python
+    code: |
+      context['output'] = "Action executed by frontend"

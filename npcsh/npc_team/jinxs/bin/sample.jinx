@@ -28,9 +28,9 @@ steps:
       if not llm_provider and current_npc and current_npc.provider:
           llm_provider = current_npc.provider
       
-      # Final fallbacks (these would ideally come from npcsh._state config)
-      if not llm_model: llm_model = "gemini-1.5-pro" # Example default
-      if not llm_provider: llm_provider = "gemini" # Example default
+      # Final fallbacks from state
+      if not llm_model: llm_model = state.chat_model if state else "llama3.2"
+      if not llm_provider: llm_provider = state.chat_provider if state else "ollama"
 
       try:
           result = get_llm_response(
@@ -38,7 +38,6 @@ steps:
               model=llm_model,
               provider=llm_provider,
               npc=current_npc,
-              **{k:v for k,v in context.items() if k not in ['messages', 'prompt', 'model', 'provider']} # Pass other context
           )
           
           if isinstance(result, dict):

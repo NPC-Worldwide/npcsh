@@ -1,0 +1,10 @@
+jinx_name: studio.switch_tab
+description: Switch to a specific tab in a pane.
+inputs:
+  - paneId: "active"
+  - tabIndex: 0
+steps:
+  - name: frontend_action
+    engine: python
+    code: |
+      context['output'] = "Action executed by frontend"

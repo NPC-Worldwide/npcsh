@@ -38,10 +38,10 @@ steps:
               print(f"📸 Screenshot captured: {screenshot_info.get('filename', os.path.basename(screenshot_info['file_path']))}")
 
       if not vision_model:
-          vision_model = getattr(current_npc, 'model', 'gemma3:4b')
-      
+          vision_model = getattr(current_npc, 'model', None) or (state.vision_model if state else 'llama3.2')
+
       if not vision_provider:
-          vision_provider = getattr(current_npc, 'provider', 'ollama')
+          vision_provider = getattr(current_npc, 'provider', None) or (state.vision_provider if state else 'ollama')
 
       response_data = get_llm_response(
           prompt=user_prompt,

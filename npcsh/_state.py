@@ -351,8 +351,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
         None
     """
 
-    if is_npcsh_initialized():
-        return
+    already_initialized = is_npcsh_initialized()
 
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -508,8 +507,10 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                         print(f"Copied template {file} to {destination_template_path}")
     conn.commit()
     conn.close()
-    set_npcsh_initialized()
-    add_npcshrc_to_shell_config()
+
+    if not already_initialized:
+        set_npcsh_initialized()
+        add_npcshrc_to_shell_config()
 
 
 def get_shell_config_file() -> str:
