@@ -43,8 +43,7 @@ steps:
       sep = '-' * 60
       print(colored("\n" + sep, "cyan"))
       print(colored("  Delegating to @" + target_name, "yellow", attrs=["bold"]))
-      task_preview = task_request[:100] + ('...' if len(task_request) > 100 else '')
-      print(colored("  Task: " + task_preview, "white", attrs=["dark"]))
+      print(colored("  Task: " + task_request, "white", attrs=["dark"]))
       print(colored(sep + "\n", "cyan"))
       print(colored("  [{}] Model: {}".format(target_name, target_npc.model), "white", attrs=["dark"]))
       jinx_list = ', '.join(list(target_jinxs.keys())[:8])
@@ -150,12 +149,12 @@ steps:
                   task_complete = True
                   print(colored("\n  Task completed successfully", "green", attrs=["bold"]))
                   if summary:
-                      print(colored("  Summary: " + summary[:200], "white", attrs=["dark"]))
+                      print(colored("  Summary: " + summary, "white", attrs=["dark"]))
                   final_output = "[{}] Task completed.\n{}".format(target_name, summary)
               else:
                   print(colored("\n  Task incomplete - providing feedback", "yellow"))
                   if feedback:
-                      print(colored("  Feedback: " + feedback[:200] + "...", "white", attrs=["dark"]))
+                      print(colored("  Feedback: " + feedback, "white", attrs=["dark"]))
 
                   followup_lines = [
                       "Continue the previous task. Feedback from orchestrator:",
