@@ -1,0 +1,94 @@
+jinx_name: file_search
+description: Search file contents using RAG (Retrieval Augmented Generation)
+inputs:
+- query: ""
+- file_paths: ""
+- emodel: ""
+- eprovider: ""
+- vector_db_path: ""
+- recursive: "false"
+
+steps:
+  - name: search_files
+    engine: python
+    code: |
+      import os
+      import glob as globmod
+
+      query = context.get('query', '').strip()
+      file_paths_str = context.get('file_paths', '').strip()
+
+      if not query or not file_paths_str:
+          lines = [
+              "Usage: /file_search <query> file_paths=<path1,path2,...>",
+              "",
+              "Options:",
+              "  file_paths     - Comma-separated file paths or glob patterns (required)",
+              "  emodel         - Embedding model",
+              "  eprovider      - Embedding provider",
+              "  vector_db_path - Path to vector database",
+              "  recursive      - Use recursive glob for patterns (default false)",
+              "",
+              "Examples:",
+              "  /file_search how does auth work file_paths=src/*.py",
+              "  /file_search database schema file_paths=docs/,README.md",
+          ]
+          context['output'] = "\n".join(lines)
+      else:
+          recursive = context.get('recursive', 'false').lower() == 'true'
+          emodel = context.get('emodel') or None
+          eprovider = context.get('eprovider') or None
+          try:
+              emodel = emodel or (state.embedding_model if 'state' in dir() and state else None)
+              eprovider = eprovider or (state.embedding_provider if 'state' in dir() and state else None)
+          except:
+              pass
+          vector_db_path = context.get('vector_db_path') or os.path.expanduser("~/.npcsh/npcsh_chroma.db")
+
+          try:
+              resolved_paths = []
+              for path_spec in file_paths_str.split(','):
+                  path_spec = path_spec.strip()
+                  if not path_spec:
+                      continue
+                  expanded = os.path.expanduser(path_spec)
+                  if '*' in expanded or '?' in expanded:
+                      if recursive:
+                          matches = globmod.glob(expanded, recursive=True)
+                      else:
+                          matches = globmod.glob(expanded)
+                      resolved_paths.extend(matches)
+                  else:
+                      resolved_paths.append(os.path.abspath(expanded))
+
+              file_contents = []
+              loaded_files = []
+              for path in resolved_paths:
+                  if os.path.isfile(path):
+                      chunks = load_file_contents(path)
+                      basename = os.path.basename(path)
+                      file_contents.extend([basename + ": " + chunk for chunk in chunks])
+                      loaded_files.append(basename)
+                  elif os.path.isdir(path):
+                      for root, dirs, files in os.walk(path):
+                          for f in files:
+                              fpath = os.path.join(root, f)
+                              chunks = load_file_contents(fpath)
+                              file_contents.extend([f + ": " + chunk for chunk in chunks])
+                              loaded_files.append(f)
+
+              if not file_contents:
+                  context['output'] = "No files found or loaded from: " + file_paths_str
+              else:
+                  result = execute_rag_command(
+                      command=query,
+                      vector_db_path=vector_db_path,
+                      embedding_model=emodel,
+                      embedding_provider=eprovider,
+                      file_contents=file_contents
+                  )
+                  response = result.get('response', 'No RAG response.')
+                  context['output'] = "Searched " + str(len(loaded_files)) + " files:\n\n" + response
+          except Exception as e:
+              import traceback
+              context['output'] = "File search error: " + str(e) + "\n" + traceback.format_exc()

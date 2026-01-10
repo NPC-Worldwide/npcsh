@@ -1,7 +1,7 @@
 jinx_name: jinxs
 description: "Show available jinxs organized by folder. Use /jinxs <path> for details on a specific folder."
 inputs:
-  - path: "" # Optional path to show details for (e.g., "lib/core", "bin")
+- path: ""
 steps:
   - name: list_jinxs
     engine: python

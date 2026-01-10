@@ -1,8 +1,8 @@
 jinx_name: "trigger"
 description: "Creates a persistent listener (--listen) or a scheduled task (--cron)."
 inputs:
-  - listen: "" # The description for a persistent, event-driven listener.
-  - cron: ""   # The description for a scheduled, time-based task.
+- listen: ""
+- cron: ""
 steps:
   - name: "execute_command"
     engine: "python"

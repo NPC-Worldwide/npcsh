@@ -1,0 +1,44 @@
+jinx_name: db_search
+description: Search conversation history database using brainblast
+inputs:
+- query: ""
+- db_path: ""
+- limit: "20"
+
+steps:
+  - name: search_db
+    engine: python
+    code: |
+      import os
+
+      query = context.get('query', '').strip()
+      if not query:
+          lines = [
+              "Usage: /db_search <query>",
+              "",
+              "Searches conversation history using brainblast for semantic matching.",
+              "",
+              "Options:",
+              "  db_path - Path to history database",
+              "  limit   - Max results to return (default 20)",
+              "",
+              "Examples:",
+              "  /db_search python debugging",
+              "  /db_search api errors limit=50",
+          ]
+          context['output'] = "\n".join(lines)
+      else:
+          db_path = context.get('db_path') or os.path.expanduser("~/.npcsh/npcsh_history.db")
+          limit = int(context.get('limit') or 20)
+
+          try:
+              cmd_history = CommandHistory(db_path)
+              result = execute_brainblast_command(
+                  command=query,
+                  command_history=cmd_history,
+                  limit=limit
+              )
+              context['output'] = result.get('output', 'Brainblast search completed.')
+          except Exception as e:
+              import traceback
+              context['output'] = "DB search error: " + str(e) + "\n" + traceback.format_exc()

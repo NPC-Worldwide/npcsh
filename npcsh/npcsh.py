@@ -180,51 +180,54 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
     def exit_shell(current_state: ShellState):
         print("\nGoodbye!")
         print(colored("Processing and archiving all session knowledge...", "cyan"))
-        
+
         engine = command_history.engine
 
-        for team_name, npc_name, path in session_scopes:
-            try:
-                print(f"  -> Archiving knowledge for: T='{team_name}', N='{npc_name}', P='{path}'")
-                
-                convo_id = current_state.conversation_id
-                all_messages = command_history.get_conversations_by_id(convo_id)
-                
-                scope_messages = [
-                    m for m in all_messages 
-                    if m.get('directory_path') == path and m.get('team') == team_name and m.get('npc') == npc_name
-                ]
-                
-                full_text = "\n".join([f"{m['role']}: {m['content']}" for m in scope_messages if m.get('content')])
+        try:
+            for team_name, npc_name, path in session_scopes:
+                try:
+                    print(f"  -> Archiving knowledge for: T='{team_name}', N='{npc_name}', P='{path}'")
 
-                if not full_text.strip():
-                    print("     ...No content for this scope, skipping.")
-                    continue
+                    convo_id = current_state.conversation_id
+                    all_messages = command_history.get_conversations_by_id(convo_id)
 
-                current_kg = load_kg_from_db(engine, team_name, npc_name, path)
-                
-                evolved_kg, _ = kg_evolve_incremental(
-                    existing_kg=current_kg,
-                    new_content_text=full_text,
-                    model=current_state.npc.model,
-                    provider=current_state.npc.provider, 
-                    npc= current_state.npc,
-                    get_concepts=True,
-                    link_concepts_facts = True, 
-                    link_concepts_concepts = True, 
-                    link_facts_facts = True, 
-                )
-                
-                save_kg_to_db(engine,
-                              evolved_kg,
-                              team_name, 
-                              npc_name, 
-                              path)
+                    scope_messages = [
+                        m for m in all_messages
+                        if m.get('directory_path') == path and m.get('team') == team_name and m.get('npc') == npc_name
+                    ]
 
-            except Exception as e:
-                import traceback
-                print(colored(f"Failed to process KG for scope ({team_name}, {npc_name}, {path}): {e}", "red"))
-                traceback.print_exc()
+                    full_text = "\n".join([f"{m['role']}: {m['content']}" for m in scope_messages if m.get('content')])
+
+                    if not full_text.strip():
+                        print("     ...No content for this scope, skipping.")
+                        continue
+
+                    current_kg = load_kg_from_db(engine, team_name, npc_name, path)
+
+                    evolved_kg, _ = kg_evolve_incremental(
+                        existing_kg=current_kg,
+                        new_content_text=full_text,
+                        model=current_state.npc.model,
+                        provider=current_state.npc.provider,
+                        npc= current_state.npc,
+                        get_concepts=True,
+                        link_concepts_facts = True,
+                        link_concepts_concepts = True,
+                        link_facts_facts = True,
+                    )
+
+                    save_kg_to_db(engine,
+                                  evolved_kg,
+                                  team_name,
+                                  npc_name,
+                                  path)
+
+                except Exception as e:
+                    import traceback
+                    print(colored(f"Failed to process KG for scope ({team_name}, {npc_name}, {path}): {e}", "red"))
+                    traceback.print_exc()
+        except KeyboardInterrupt:
+            print(colored("\nSkipping knowledge archival.", "yellow"))
 
         sys.exit(0)
 

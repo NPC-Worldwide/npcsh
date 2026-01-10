@@ -1,10 +1,10 @@
 jinx_name: cmd
 description: Command mode - LLM generates and executes shell commands
 inputs:
-  - query: null
-  - model: null
-  - provider: null
-  - stream: true
+- query: null
+- model: null
+- provider: null
+- stream: true
 
 steps:
   - name: cmd_execute

@@ -1,7 +1,7 @@
 jinx_name: help
 description: Show help for commands, NPCs, or Jinxs
 inputs:
-  - topic: null
+- topic: null
 steps:
   - name: show_help
     engine: python

@@ -1,11 +1,11 @@
 jinx_name: "init"
 description: "Initialize NPC project"
 inputs:
-  - directory: "." # The directory where the NPC project should be initialized.
-  - templates: "" # Optional templates to use for initialization.
-  - context: "" # Optional context for project initialization.
-  - model: "" # Optional LLM model to set as default for the project.
-  - provider: "" # Optional LLM provider to set as default for the project.
+- directory: "."
+- templates: ""
+- context: ""
+- model: ""
+- provider: ""
 steps:
   - name: "initialize_project"
     engine: "python"

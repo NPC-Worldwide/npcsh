@@ -1,10 +1,10 @@
 jinx_name: "sleep"
 description: "Evolve knowledge graph. Use --dream to also run creative synthesis."
 inputs:
-  - dream: False # Boolean flag to also run creative synthesis (dream process).
-  - ops: "" # Comma-separated list of operations to configure KG sleep process.
-  - model: "" # LLM model to use for KG evolution. Defaults to NPC's model.
-  - provider: "" # LLM provider to use for KG evolution. Defaults to NPC's provider.
+- dream: False
+- ops: ""
+- model: ""
+- provider: ""
 steps:
   - name: "evolve_knowledge_graph"
     engine: "python"

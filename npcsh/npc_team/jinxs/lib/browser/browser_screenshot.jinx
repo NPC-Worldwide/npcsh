@@ -1,7 +1,7 @@
 jinx_name: browser_screenshot
 description: Take a screenshot of the current browser page.
 inputs:
-  - filename:
+- filename:
       description: "Optional filename for screenshot"
       default: ""
 

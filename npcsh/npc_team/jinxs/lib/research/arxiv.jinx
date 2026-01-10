@@ -1,8 +1,8 @@
 jinx_name: arxiv
 description: Search arXiv for preprints and papers
 inputs:
-  - query: ""
-  - limit: 10
+- query: ""
+- limit: 10
 steps:
   - name: search_arxiv
     engine: python

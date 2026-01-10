@@ -1,11 +1,11 @@
 jinx_name: "build"
 description: "Build deployment artifacts for NPC team"
 inputs:
-  - target: "flask" # The type of deployment target (e.g., flask, docker, cli, static).
-  - outdir: "./build" # The output directory for built artifacts.
-  - team: "./npc_team" # The path to the NPC team directory.
-  - port: 5337 # The port for flask server builds.
-  - cors: "" # Comma-separated CORS origins for flask server builds.
+- target: "flask"
+- outdir: "./build"
+- team: "./npc_team"
+- port: 5337
+- cors: ""
 steps:
   - name: "execute_build"
     engine: "python"

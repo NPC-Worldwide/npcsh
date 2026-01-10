@@ -1,10 +1,10 @@
 jinx_name: spool
 description: Interactive chat mode - simple conversational interface with an NPC
 inputs:
-  - model: null
-  - provider: null
-  - attachments: null
-  - stream: true
+- model: null
+- provider: null
+- attachments: null
+- stream: true
 
 steps:
   - name: spool_repl
