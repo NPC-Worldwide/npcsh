@@ -1,12 +1,12 @@
 jinx_name: "sync"
 description: "Sync npc_team files from the npcsh repo to ~/.npcsh/npc_team. Detects local modifications before overwriting."
 inputs:
-  - force: "" # Use --force or -f to overwrite all files without prompting
-  - dry_run: "" # Use --dry-run or -d to preview changes without applying them
-  - jinxs: "" # Use --jinxs to sync only .jinx files
-  - npcs: "" # Use --npcs to sync only .npc files
-  - ctx: "" # Use --ctx to sync only .ctx files
-  - images: "" # Use --images to sync only image files (.png, .jpg, .jpeg)
+- force: ""
+- dry_run: ""
+- jinxs: ""
+- npcs: ""
+- ctx: ""
+- images: ""
 steps:
   - name: "sync_npc_team"
     engine: "python"

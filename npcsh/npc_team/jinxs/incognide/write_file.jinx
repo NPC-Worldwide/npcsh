@@ -1,9 +1,9 @@
 jinx_name: studio.write_file
 description: Write content to an editor pane. Updates the file content in the pane.
 inputs:
-  - paneId: "active"
-  - content: ""
-  - path: ""
+- paneId: "active"
+- content: ""
+- path: ""
 steps:
   - name: frontend_action
     engine: python

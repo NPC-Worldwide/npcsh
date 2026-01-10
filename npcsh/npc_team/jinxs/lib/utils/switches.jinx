@@ -1,7 +1,7 @@
 jinx_name: switches
 description: List all switches from .ctx files
 inputs:
-  - scope: "all"  # "workspace", "global", or "all"
+- scope: "all"
 
 steps:
   - name: list_switches

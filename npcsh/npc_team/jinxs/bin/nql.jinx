@@ -1,13 +1,13 @@
 jinx_name: nql
 description: "Run NPC-SQL models with AI-powered transformations. Supports cron scheduling."
 inputs:
-  - models_dir: "~/.npcsh/npc_team/models"
-  - db: "~/npcsh_history.db"
-  - model: ""
-  - schema: ""
-  - show: ""
-  - cron: ""
-  - install_cron: ""
+- models_dir: "~/.npcsh/npc_team/models"
+- db: "~/npcsh_history.db"
+- model: ""
+- schema: ""
+- show: ""
+- cron: ""
+- install_cron: ""
 
 steps:
   - name: run_nql

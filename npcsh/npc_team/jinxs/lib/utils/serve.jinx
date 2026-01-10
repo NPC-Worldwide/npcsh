@@ -1,8 +1,8 @@
 jinx_name: "serve"
 description: "Serve an NPC Team"
 inputs:
-  - port: 5337 # The port to run the Flask server on.
-  - cors: "" # Comma-separated CORS origins.
+- port: 5337
+- cors: ""
 steps:
   - name: "start_flask_server"
     engine: "python"

@@ -1,9 +1,9 @@
 jinx_name: studio.add_tab
 description: Add a new tab to a pane.
 inputs:
-  - paneId: "active"
-  - type: ""
-  - path: ""
+- paneId: "active"
+- type: ""
+- path: ""
 steps:
   - name: frontend_action
     engine: python

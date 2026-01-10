@@ -1,7 +1,7 @@
 jinx_name: "incognide"
 description: "Start npc studio"
 inputs:
-  - user_command: ""
+- user_command: ""
 steps:
   - name: "launch_npc_studio"
     engine: "python"

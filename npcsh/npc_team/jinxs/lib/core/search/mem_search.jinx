@@ -1,0 +1,80 @@
+jinx_name: mem_search
+description: Search memories (approved, pending, or all)
+inputs:
+- query: ""
+- status: "all"
+- npc_name: ""
+- team_name: ""
+- max_results: "10"
+- db_path: ""
+
+steps:
+  - name: search_memories
+    engine: python
+    code: |
+      import os
+
+      query = context.get('query', '').strip()
+      if not query:
+          lines = [
+              "Usage: /mem_search <query> [status=all|approved|pending]",
+              "",
+              "Options:",
+              "  status      - Filter by status (all, approved, pending). Default is all",
+              "  npc_name    - Filter by NPC name",
+              "  team_name   - Filter by team name",
+              "  max_results - Max results to return (default 10)",
+              "  db_path     - Path to history database",
+          ]
+          context['output'] = "\n".join(lines)
+      else:
+          status_filter = context.get('status', 'all').lower()
+          npc_name = context.get('npc_name') or (npc.name if npc else None)
+          team_name = context.get('team_name') or None
+          try:
+              team_name = team_name or (state.team.name if 'state' in dir() and state and state.team else None)
+          except:
+              pass
+          max_results = int(context.get('max_results') or 10)
+          db_path = context.get('db_path') or os.path.expanduser("~/.npcsh/npcsh_history.db")
+          current_path = os.getcwd()
+
+          try:
+              cmd_history = CommandHistory(db_path)
+
+              if status_filter == 'approved':
+                  state_obj = state if 'state' in dir() else None
+                  memories = get_relevant_memories(
+                      command_history=cmd_history,
+                      npc_name=npc_name or '__none__',
+                      team_name=team_name or '__none__',
+                      path=current_path,
+                      query=query,
+                      max_memories=max_results,
+                      state=state_obj
+                  )
+              else:
+                  memories = cmd_history.search_memories(
+                      query=query,
+                      npc_name=npc_name,
+                      team_name=team_name,
+                      status=status_filter if status_filter != 'all' else None,
+                      limit=max_results
+                  )
+
+              if not memories:
+                  context['output'] = "No memories found for '" + query + "' (status=" + status_filter + ")"
+              else:
+                  lines = ["Found " + str(len(memories)) + " memories (status=" + status_filter + "):", ""]
+                  for i, mem in enumerate(memories, 1):
+                      if isinstance(mem, dict):
+                          ts = mem.get('timestamp', 'unknown')
+                          content = mem.get('final_memory') or mem.get('initial_memory') or mem.get('content', '')
+                          status = mem.get('status', '')
+                          lines.append(str(i) + ". [" + str(ts) + "] (" + status + ") " + str(content))
+                      else:
+                          lines.append(str(i) + ". " + str(mem))
+                  context['output'] = "\n".join(lines)
+          except Exception as e:
+              import traceback
+              context['output'] = "Memory search error: " + str(e) + "\n" + traceback.format_exc()

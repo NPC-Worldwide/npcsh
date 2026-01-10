@@ -1,7 +1,7 @@
 jinx_name: type_text
 description: Type text using keyboard
 inputs:
-  - text: ""  # Text to type
+- text: ""
 
 steps:
   - name: perform_type

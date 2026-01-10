@@ -1,8 +1,8 @@
 jinx_name: studio.notify
 description: Show a notification toast in NPC Studio.
 inputs:
-  - message: ""
-  - type: "info"
+- message: ""
+- type: "info"
 steps:
   - name: frontend_action
     engine: python

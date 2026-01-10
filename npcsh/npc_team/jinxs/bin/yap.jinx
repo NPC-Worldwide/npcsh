@@ -1,11 +1,11 @@
 jinx_name: yap
 description: Voice chat mode - speech-to-text input, text-to-speech output
 inputs:
-  - model: null
-  - provider: null
-  - tts_model: kokoro
-  - voice: af_heart
-  - files: null
+- model: null
+- provider: null
+- tts_model: kokoro
+- voice: af_heart
+- files: null
 
 steps:
   - name: yap_repl

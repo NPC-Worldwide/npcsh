@@ -1,8 +1,8 @@
 jinx_name: studio.confirm
 description: Show a confirmation dialog and return the user's choice.
 inputs:
-  - message: ""
-  - title: "Confirm"
+- message: ""
+- title: "Confirm"
 steps:
   - name: frontend_action
     engine: python

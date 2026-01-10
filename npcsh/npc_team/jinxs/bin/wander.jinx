@@ -1,7 +1,7 @@
 jinx_name: wander
 description: Creative daydreaming with probabilistic temperature shifts mid-stream
 inputs:
-  - problem
+- problem
 steps:
   - name: wander_explore
     engine: python

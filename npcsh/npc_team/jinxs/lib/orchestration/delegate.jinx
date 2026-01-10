@@ -1,11 +1,11 @@
 jinx_name: delegate
 description: Delegate a task to another NPC with review and feedback loop until completion. Choose the NPC whose directive best matches the task.
 inputs:
-  - npc_name:
+- npc_name:
       description: "Name of the NPC to delegate to"
-  - task:
+- task:
       description: "The task or request to delegate to the NPC"
-  - max_iterations: "10"
+- max_iterations: "10"
 steps:
   - name: delegate_with_review
     engine: python
