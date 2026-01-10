@@ -1,7 +1,7 @@
 jinx_name: studio.read_pane
 description: Read the contents of a pane. For editor panes returns file content, for chat panes returns messages, for browser panes returns URL/title.
 inputs:
-  - paneId: "active"
+- paneId: "active"
 steps:
   - name: frontend_action
     engine: python

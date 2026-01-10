@@ -1,9 +1,9 @@
 jinx_name: paper_search
 description: Search for academic papers across multiple sources (Semantic Scholar, arXiv, local datasets)
 inputs:
-  - query: ""
-  - limit: 10
-  - source: "all"
+- query: ""
+- limit: 10
+- source: "all"
 steps:
   - name: search_papers
     engine: python

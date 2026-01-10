@@ -1,7 +1,7 @@
 jinx_name: sh
 description: Execute bash queries. Should be used to grep for file contents, list directories, explore information to answer user questions more practically. NEVER use ls -R on directories that may contain node_modules, .git, or other large dependency folders - this will exceed token limits. Use targeted ls commands instead.
 inputs:
-  - bash_command
+- bash_command
 steps:
   - name: execute_bash
     engine: python

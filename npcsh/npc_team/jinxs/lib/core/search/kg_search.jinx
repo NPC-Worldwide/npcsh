@@ -1,0 +1,96 @@
+jinx_name: kg_search
+description: Search the knowledge graph for facts and concepts
+inputs:
+- query: ""
+- type: "facts"
+- concept: ""
+- npc_name: ""
+- team_name: ""
+- db_path: ""
+
+steps:
+  - name: search_kg
+    engine: python
+    code: |
+      import os
+      from npcpy.memory.knowledge_graph import kg_search_facts, kg_list_concepts, kg_get_facts_for_concept, kg_get_all_facts
+
+      query = context.get('query', '').strip()
+      search_type = context.get('type', 'facts').lower()
+      concept = context.get('concept', '').strip()
+
+      if not query and search_type == 'facts' and not concept:
+          lines = [
+              "Usage: /kg_search <query> [type=facts|concepts|all]",
+              "",
+              "Options:",
+              "  type      - Search type (facts, concepts, all). Default is facts",
+              "  concept   - Get facts for a specific concept",
+              "  npc_name  - Filter by NPC name",
+              "  team_name - Filter by team name",
+              "  db_path   - Path to history database",
+              "",
+              "Examples:",
+              "  /kg_search python",
+              "  /kg_search type=concepts",
+              "  /kg_search concept=coding",
+              "  /kg_search type=all",
+          ]
+          context['output'] = "\n".join(lines)
+      else:
+          db_path = context.get('db_path') or os.path.expanduser("~/.npcsh/npcsh_history.db")
+
+          try:
+              cmd_history = CommandHistory(db_path)
+              engine = cmd_history.engine
+
+              team_obj = None
+              try:
+                  team_obj = state.team if 'state' in dir() and state else None
+              except:
+                  pass
+              npc_obj = npc if 'npc' in dir() else None
+
+              if concept:
+                  facts = kg_get_facts_for_concept(engine, concept, npc=npc_obj, team=team_obj)
+                  if not facts:
+                      context['output'] = "No facts found for concept '" + concept + "'"
+                  else:
+                      lines = ["Facts for concept '" + concept + "':", ""]
+                      for i, fact in enumerate(facts, 1):
+                          lines.append(str(i) + ". " + str(fact))
+                      context['output'] = "\n".join(lines)
+
+              elif search_type == 'concepts':
+                  concepts = kg_list_concepts(engine, npc=npc_obj, team=team_obj)
+                  if not concepts:
+                      context['output'] = "No concepts found in knowledge graph."
+                  else:
+                      lines = ["Found " + str(len(concepts)) + " concepts:", ""]
+                      for i, c in enumerate(concepts, 1):
+                          lines.append(str(i) + ". " + str(c))
+                      context['output'] = "\n".join(lines)
+
+              elif search_type == 'all':
+                  facts = kg_get_all_facts(engine, npc=npc_obj, team=team_obj)
+                  if not facts:
+                      context['output'] = "No facts in knowledge graph."
+                  else:
+                      lines = ["All facts (" + str(len(facts)) + " total):", ""]
+                      for i, fact in enumerate(facts, 1):
+                          lines.append(str(i) + ". " + str(fact))
+                      context['output'] = "\n".join(lines)
+
+              else:
+                  facts = kg_search_facts(engine, query, npc=npc_obj, team=team_obj)
+                  if not facts:
+                      context['output'] = "No KG facts found for '" + query + "'"
+                  else:
+                      lines = ["Found " + str(len(facts)) + " facts:", ""]
+                      for i, fact in enumerate(facts, 1):
+                          lines.append(str(i) + ". " + str(fact))
+                      context['output'] = "\n".join(lines)
+
+          except Exception as e:
+              import traceback
+              context['output'] = "KG search error: " + str(e) + "\n" + traceback.format_exc()

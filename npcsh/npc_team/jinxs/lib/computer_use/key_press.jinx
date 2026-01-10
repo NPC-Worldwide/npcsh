@@ -6,7 +6,7 @@ description: |
   For combinations use + like: ctrl+a, ctrl+c, ctrl+v, alt+tab, ctrl+shift+t
   For regular letters/numbers, use type_text instead.
 inputs:
-  - key: "enter"
+- key: "enter"
 
 steps:
   - name: perform_key

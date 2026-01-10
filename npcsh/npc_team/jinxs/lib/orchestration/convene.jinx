@@ -1,11 +1,11 @@
 jinx_name: convene
 description: Run a cycle of discussions between NPCs on a topic. The orchestrator convenes agents to discuss and synthesize.
 inputs:
-  - topic: ""
-  - npcs: "alicanto,corca,guac"
-  - rounds: 3
-  - model: null
-  - provider: null
+- topic: ""
+- npcs: "alicanto,corca,guac"
+- rounds: 3
+- model: null
+- provider: null
 steps:
   - name: convene_discussion
     engine: python

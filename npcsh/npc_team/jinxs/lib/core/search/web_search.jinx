@@ -1,0 +1,51 @@
+jinx_name: web_search
+description: Search the web for information
+inputs:
+- query: ""
+- provider: ""
+- num_results: "10"
+
+steps:
+  - name: search_web
+    engine: python
+    code: |
+      from npcpy.data.web import search_web
+
+      query = context.get('query', '').strip()
+      if not query:
+          lines = [
+              "Usage: /web_search <query>",
+              "",
+              "Options:",
+              "  provider    - Search provider (default uses state.search_provider)",
+              "  num_results - Number of results (default 10)",
+              "",
+              "Examples:",
+              "  /web_search python asyncio tutorial",
+              "  /web_search react hooks num_results=20",
+          ]
+          context['output'] = "\n".join(lines)
+      else:
+          provider = context.get('provider') or None
+          try:
+              provider = provider or (state.search_provider if 'state' in dir() and state else None)
+          except:
+              pass
+          num_results = int(context.get('num_results') or 10)
+          try:
+              results = search_web(query, provider=provider, num_results=num_results)
+              if results:
+                  lines = []
+                  for res in results:
+                      if isinstance(res, dict):
+                          title = res.get('title', '')
+                          url = res.get('url', res.get('link', ''))
+                          lines.append("- " + title + " " + url)
+                      else:
+                          lines.append("- " + str(res))
+                  context['output'] = "\n".join(lines)
+              else:
+                  context['output'] = "No web results found."
+          except Exception as e:
+              import traceback
+              context['output'] = "Web search error: " + str(e) + "\n" + traceback.format_exc()

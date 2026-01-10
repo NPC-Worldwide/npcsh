@@ -1,7 +1,7 @@
 jinx_name: launch_app
 description: Launch an application on the system
 inputs:
-  - command: ""  # Command to launch (e.g., "open -a Firefox" on macOS)
+- command: ""
 
 steps:
   - name: perform_launch

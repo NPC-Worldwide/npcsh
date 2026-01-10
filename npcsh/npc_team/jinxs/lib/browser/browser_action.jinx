@@ -12,14 +12,14 @@ description: |
   - get_page: Get page title, URL, and visible text
   - get_elements: Get interactive elements with their selectors
   - press_key: Press a key (enter, tab, escape, etc)
-  Selectors: CSS (#id, .class, input[name="x"]) or xpath://... for XPath
+  Selectors: CSS (
 inputs:
-  - action:
+- action:
       description: "Action: click, type, type_and_enter, set_value, select, wait, scroll, get_text, get_page, get_elements, press_key"
-  - selector:
+- selector:
       description: "CSS selector or XPath (prefix xpath: for XPath)"
       default: ""
-  - value:
+- value:
       description: "Value for type/select, or scroll direction, or key name"
       default: ""
 

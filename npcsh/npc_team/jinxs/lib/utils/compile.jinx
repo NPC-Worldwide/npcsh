@@ -1,8 +1,8 @@
 jinx_name: "compile"
 description: "Compile NPC profiles"
 inputs:
-  - npc_file_path: "" # Optional path to a specific NPC file to compile.
-  - npc_team_dir: "./npc_team" # Directory containing NPC profiles to compile, if no specific file is given.
+- npc_file_path: ""
+- npc_team_dir: "./npc_team"
 steps:
   - name: "compile_npcs"
     engine: "python"

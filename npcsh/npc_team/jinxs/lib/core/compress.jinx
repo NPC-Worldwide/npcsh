@@ -1,12 +1,12 @@
 jinx_name: "compress"
 description: "Manages conversation and knowledge context. Defaults to compacting context. Use flags for other operations."
 inputs:
-  - flush: ""       # The number of recent messages to flush.
-  - sleep: False    # If true, evolves the knowledge graph.
-  - dream: False    # Used with --sleep. Runs creative synthesis.
-  - ops: ""         # Used with --sleep. Comma-separated list of KG operations.
-  - model: ""       # Used with --sleep. LLM model for KG evolution.
-  - provider: ""    # Used with --sleep. LLM provider for KG evolution.
+- flush: ""
+- sleep: False
+- dream: False
+- ops: ""
+- model: ""
+- provider: ""
 steps:
   - name: "manage_context_and_memory"
     engine: "python"

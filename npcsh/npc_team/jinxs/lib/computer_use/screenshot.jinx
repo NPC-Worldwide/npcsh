@@ -1,7 +1,7 @@
 jinx_name: screenshot
 description: Capture a screenshot of the current screen
 inputs:
-  - output_path: null  # Optional path to save screenshot
+- output_path: null
 
 steps:
   - name: capture_screenshot

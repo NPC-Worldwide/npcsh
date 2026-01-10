@@ -1,10 +1,10 @@
 jinx_name: "ots"
 description: "Take screenshot and analyze with vision model. Usage: /ots <prompt>"
 inputs:
-  - prompt
-  - image_paths_args: ""
-  - vmodel: ""
-  - vprovider: ""
+- prompt
+- image_paths_args: ""
+- vmodel: ""
+- vprovider: ""
 steps:
   - name: "analyze_screenshot_or_image"
     engine: "python"

@@ -85,9 +85,15 @@ voice_requirements = [
     "pyaudio",
     "gtts",
     "playsound==1.2.2",
-    "pygame", 
+    "pygame",
     "faster_whisper",
     "pyttsx3",
+]
+
+# Benchmark requirements (Terminal-Bench integration)
+benchmark_requirements = [
+    "harbor",
+    "terminal-bench",
 ]
 
 extra_files = package_files("npcsh/npc_team/")
@@ -113,13 +119,16 @@ setup(
         "lite": api_requirements,
         "local": local_requirements,
         "yap": voice_requirements,
-        "all": api_requirements + local_requirements + voice_requirements ,
+        "bench": benchmark_requirements,
+        "all": api_requirements + local_requirements + voice_requirements,
     },
     entry_points={
         "console_scripts": [
             # Main entry points
             "npcsh=npcsh.npcsh:main",
             "npc=npcsh.npc:main",
+            # Benchmark runner
+            "npcsh-bench=npcsh.benchmark.runner:main",
             # Dynamic entry points from data files (NPCs and bin/ jinxes)
         ] + dynamic_entries,
     },
@@ -141,6 +150,7 @@ setup(
             "npc_team/jinxs/**/*.jinx",
             "npc_team/jinxs/**/*",
             "npc_team/templates/*",
+            "benchmark/templates/*.j2",
         ],
     },
     data_files=[("npcsh/npc_team", extra_files)],

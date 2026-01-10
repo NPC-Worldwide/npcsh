@@ -1,9 +1,9 @@
 jinx_name: "sample"
 description: "Send a prompt directly to the LLM."
 inputs:
-  - prompt: "" # Required text prompt to send to the LLM.
-  - model: "" # LLM model to use. Defaults to NPC's model.
-  - provider: "" # LLM provider to use. Defaults to NPC's provider.
+- prompt: ""
+- model: ""
+- provider: ""
 steps:
   - name: "send_prompt_to_llm"
     engine: "python"

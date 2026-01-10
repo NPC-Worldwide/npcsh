@@ -1,8 +1,8 @@
 jinx_name: click
 description: Click at screen coordinates (0-100 percentage)
 inputs:
-  - x: 50  # X coordinate as percentage (0-100)
-  - y: 50  # Y coordinate as percentage (0-100)
+- x: 50
+- y: 50
 
 steps:
   - name: perform_click

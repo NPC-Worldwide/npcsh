@@ -3,9 +3,9 @@ description: |
   Open a browser and navigate to a URL. The browser stays open for follow-up commands.
   Use this to start browser automation.
 inputs:
-  - url:
+- url:
       description: "URL to navigate to"
-  - browser: "firefox"
+- browser: "firefox"
 
 steps:
   - name: open_browser

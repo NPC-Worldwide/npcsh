@@ -1,8 +1,8 @@
 jinx_name: semantic_scholar
 description: Search Semantic Scholar for academic papers. Requires S2_API_KEY env var.
 inputs:
-  - query: ""
-  - limit: 10
+- query: ""
+- limit: 10
 steps:
   - name: search_s2
     engine: python

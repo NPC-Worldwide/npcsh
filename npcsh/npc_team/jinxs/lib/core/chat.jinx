@@ -1,10 +1,10 @@
 jinx_name: chat
 description: Simple chat mode - LLM conversation without tool execution
 inputs:
-  - query: null
-  - model: null
-  - provider: null
-  - stream: true
+- query: null
+- model: null
+- provider: null
+- stream: true
 
 steps:
   - name: chat_response

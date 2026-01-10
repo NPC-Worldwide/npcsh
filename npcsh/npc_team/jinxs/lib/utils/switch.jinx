@@ -1,9 +1,9 @@
 jinx_name: switch
 description: Get or set a switch in the .ctx file
 inputs:
-  - name: ""  # Switch name
-  - value: null  # Value to set (omit to get current value)
-  - scope: "workspace"  # "workspace" or "global"
+- name: ""
+- value: null
+- scope: "workspace"
 
 steps:
   - name: manage_switch

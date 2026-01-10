@@ -1,14 +1,14 @@
 jinx_name: "vixynt"
 description: "Generates images from text descriptions or edits existing ones."
 inputs:
-  - prompt
-  - model: null
-  - provider: null
-  - output_name: null
-  - attachments: null
-  - n_images: null
-  - height: null
-  - width: null
+- prompt
+- model: null
+- provider: null
+- output_name: null
+- attachments: null
+- n_images: null
+- height: null
+- width: null
 steps:
   - name: "generate_or_edit_image"
     engine: "python"

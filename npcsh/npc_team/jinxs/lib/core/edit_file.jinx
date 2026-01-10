@@ -45,6 +45,9 @@ steps:
         - "replacement": For "replace", the text to replace with
         - "insertion": For "insert_after" and "insert_before", the text to insert
         2. "explanation": Brief explanation of the changes made
+
+        Example response:
+        {"modifications": [{"type": "replace", "original": "old code", "replacement": "new code"}], "explanation": "Updated the code"}
         """
     
       response = get_llm_response(prompt, model=npc.model, provider=npc.provider, npc=npc, format="json")

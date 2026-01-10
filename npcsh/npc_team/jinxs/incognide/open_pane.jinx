@@ -1,9 +1,9 @@
 jinx_name: studio.open_pane
 description: Open a new pane in NPC Studio. Supports editor, terminal, browser, pdf, csv, chat, image, folder, and other content types.
 inputs:
-  - type: ""
-  - path: ""
-  - position: "right"
+- type: ""
+- path: ""
+- position: "right"
 steps:
   - name: frontend_action
     engine: python

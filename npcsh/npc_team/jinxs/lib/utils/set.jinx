@@ -1,8 +1,8 @@
 jinx_name: "set"
 description: "Set configuration values"
 inputs:
-  - key: "" # The configuration key to set.
-  - value: "" # The value to set for the configuration key.
+- key: ""
+- value: ""
 steps:
   - name: "set_config_value"
     engine: "python"

@@ -1,8 +1,8 @@
 jinx_name: teamviz
 description: "Visualize NPC team structure - NPCs, jinxs, and their relationships"
 inputs:
-  - team_path: ""
-  - save: ""
+- team_path: ""
+- save: ""
 
 steps:
   - name: visualize_team
