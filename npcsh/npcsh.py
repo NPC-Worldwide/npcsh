@@ -384,7 +384,42 @@ def main(npc_name: str = None) -> None:
     parser.add_argument(
          "-n", "--npc", type=str, help="Start with a specific NPC active."
     )
+    parser.add_argument(
+         "--refresh", action="store_true", help="Force refresh of NPCs and jinxs from package."
+    )
     args = parser.parse_args()
+
+    # Handle refresh flag - reset initialization and re-copy files
+    if args.refresh:
+        from npcsh._state import initialize_base_npcs_if_needed
+        import shutil
+
+        npcshrc_path = os.path.expanduser("~/.npcshrc")
+        if os.path.exists(npcshrc_path):
+            with open(npcshrc_path, "r") as f:
+                content = f.read()
+            content = content.replace("export NPCSH_INITIALIZED=1", "export NPCSH_INITIALIZED=0")
+            with open(npcshrc_path, "w") as f:
+                f.write(content)
+
+        os.environ["NPCSH_INITIALIZED"] = "0"
+
+        # Remove existing jinxs and NPCs to force fresh copy
+        user_npc_team = os.path.expanduser("~/.npcsh/npc_team")
+        jinxs_dir = os.path.join(user_npc_team, "jinxs")
+        if os.path.exists(jinxs_dir):
+            shutil.rmtree(jinxs_dir)
+            print("Cleared existing jinxs directory")
+
+        for f in os.listdir(user_npc_team) if os.path.exists(user_npc_team) else []:
+            if f.endswith(".npc"):
+                os.remove(os.path.join(user_npc_team, f))
+                print(f"Removed {f}")
+
+        db_path = os.path.expanduser("~/.npcsh/npcsh_history.db")
+        print("Reinitializing NPCs and jinxs...")
+        initialize_base_npcs_if_needed(db_path)
+        print("Refresh complete!")
 
     command_history, team, default_npc = setup_shell()
 
