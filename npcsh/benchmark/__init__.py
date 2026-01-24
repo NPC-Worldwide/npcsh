@@ -16,7 +16,13 @@ Usage:
     run_benchmark(model="claude-sonnet-4-20250514", provider="anthropic")
 """
 
-from .npcsh_agent import NpcshAgent
 from .runner import run_benchmark, BenchmarkRunner
 
-__all__ = ["NpcshAgent", "run_benchmark", "BenchmarkRunner"]
+__all__ = ["run_benchmark", "BenchmarkRunner"]
+
+# NpcshAgent requires harbor to be installed - import lazily
+try:
+    from .npcsh_agent import NpcshAgent
+    __all__.append("NpcshAgent")
+except ImportError:
+    NpcshAgent = None  # Harbor not installed
