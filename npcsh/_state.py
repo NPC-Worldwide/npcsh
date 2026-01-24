@@ -74,6 +74,7 @@ from npcpy.memory.command_history import (
     save_conversation_message,
     load_kg_from_db,
     save_kg_to_db,
+    format_memory_context,
 )
 from npcpy.memory.knowledge_graph import kg_evolve_incremental
 from npcpy.memory.search import execute_rag_command, execute_brainblast_command
@@ -303,6 +304,33 @@ def set_npcsh_config_value(key: str, value: str):
     }
     if env_key in field_map:
         setattr(ShellState, field_map[env_key], parsed_val)
+
+    # Persist to ~/.npcshrc
+    npcshrc_path = os.path.expanduser("~/.npcshrc")
+    try:
+        existing_lines = []
+        if os.path.exists(npcshrc_path):
+            with open(npcshrc_path, 'r') as f:
+                existing_lines = f.readlines()
+
+        # Update or add the export line
+        export_line = f"export {env_key}=\"{value}\"\n"
+        found = False
+        for i, line in enumerate(existing_lines):
+            if line.strip().startswith(f"export {env_key}="):
+                existing_lines[i] = export_line
+                found = True
+                break
+
+        if not found:
+            existing_lines.append(export_line)
+
+        with open(npcshrc_path, 'w') as f:
+            f.writelines(existing_lines)
+    except Exception as e:
+        print(f"Warning: Could not persist config to {npcshrc_path}: {e}")
+
+
 def get_npc_path(npc_name: str, db_path: str) -> str:
     project_npc_team_dir = os.path.abspath("./npc_team")
     project_npc_path = os.path.join(project_npc_team_dir, f"{npc_name}.npc")
