@@ -1,0 +1,7 @@
+[lint]
+# Ignore certain rules that conflict with the codebase structure
+ignore = [
+    "E402",  # Module level import not at top of file (logging setup runs first)
+    "E722",  # Bare except (used for optional imports)
+    "F811",  # Redefinition of unused name (functions imported then redefined)
+]
