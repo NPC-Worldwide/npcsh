@@ -66,29 +66,19 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Install PyYAML
-      run: pip install pyyaml
+    - name: Install npcpy
+      run: pip install npcpy
 
-    - name: Validate jinx YAML syntax
+    - name: Validate jinx files
       run: |
         python -c "
-        import yaml
-        import glob
+        from npcpy.npc_compiler import load_jinxs_from_directory
         import sys
 
-        errors = []
-        for jinx_file in glob.glob('npcsh/npc_team/jinxs/**/*.jinx', recursive=True):
-            try:
-                with open(jinx_file) as f:
-                    yaml.safe_load(f)
-            except Exception as e:
-                errors.append(f'{jinx_file}: {e}')
-
-        if errors:
-            print('Jinx validation errors:')
-            for err in errors:
-                print(f'  - {err}')
+        try:
+            jinxs = load_jinxs_from_directory('npcsh/npc_team/jinxs')
+            print(f'Loaded {len(jinxs)} jinx files successfully')
+        except Exception as e:
+            print(f'Jinx validation error: {e}')
             sys.exit(1)
-        else:
-            print(f'All jinx files valid')
         "
