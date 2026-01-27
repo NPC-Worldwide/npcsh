@@ -99,10 +99,10 @@ from npcpy.npc_sysenv import (
 
 )
 from npcpy.tools import auto_tools
+from npcpy.gen.embeddings import get_embeddings
 
 # Local module imports
 from .config import (
-    VERSION,
     DEFAULT_NPC_TEAM_PATH,
     PROJECT_NPC_TEAM_PATH,
     READLINE_HISTORY_FILE,
@@ -359,7 +359,7 @@ def get_npc_path(npc_name: str, db_path: str) -> str:
             if result:
                 return result[0]
 
-    except Exception as e:
+    except Exception:
         try:
             with sqlite3.connect(db_path) as conn:
                 cursor = conn.cursor()
@@ -469,7 +469,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
 
             with open(manifest_path, 'r') as f:
                 old_package_jinxs = set(json.load(f).get('jinxs', []))
-        except Exception as e:
+        except Exception:
             pass
 
     # Track current package jinxs
@@ -603,9 +603,6 @@ def get_relevant_memories(
     max_memories: int = 10,
     state: Optional[ShellState] = None
 ) -> List[Dict]:
-    
-    engine = command_history.engine
-    
     all_memories = command_history.get_memories_for_scope(
         npc=npc_name,
         team=team_name,
@@ -1470,7 +1467,7 @@ def make_completer(shell_state: ShellState, router: Any):
             else:
                 return None # readline expects None when no more completions
             
-        except Exception as e:
+        except Exception:
             # Using completion_logger for internal debugging, not printing to stdout for user.
             # completion_logger.error(f"Exception in completion: {e}", exc_info=True) 
             return None
@@ -1679,7 +1676,6 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         sys.stdout.write('\r')
         # Move up for each wrapped line we're on
         cursor_total = prompt_visible_len + pos
-        cursor_line = cursor_total // term_width
         # Go up to the first line of input
         for _ in range(num_lines - 1):
             sys.stdout.write('\033[A')
@@ -1814,7 +1810,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                                         f.write(paste_buffer.encode('latin-1'))
                                                 pasted_content = temp_path  # Store path to image
                                                 placeholder = f"[pasted image: {temp_path}]"
-                                            except Exception as e:
+                                            except Exception:
                                                 pasted_content = None
                                                 placeholder = "[pasted image: failed to save]"
                                         else:
@@ -2012,7 +2008,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                         sys.stdout.flush()
                     else:
                         pass  # No tool call to show
-                except Exception as e:
+                except Exception:
                     pass
 
             elif c and ord(c) >= 32:  # Printable
@@ -2041,7 +2037,7 @@ def _get_slash_hints(state, router, prefix='/') -> str:
         try:
             import shutil
             term_width = shutil.get_terminal_size().columns
-        except Exception as e:
+        except Exception:
             term_width = 80
 
         # Build hint string that fits in terminal
@@ -2482,7 +2478,7 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
                     print(colored(f"  ⚡ {tool_name}", "cyan") + colored(f" {args_display}", "white", attrs=["dark"]), end="", flush=True)
                 else:
                     print(colored(f"  ⚡ {tool_name}", "cyan"), end="", flush=True)
-            except Exception as e:
+            except Exception:
                 pass
 
         # Execute tool
@@ -2498,7 +2494,7 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
                             result_preview = result_preview[:200] + "..."
                         if result_preview and result_preview not in ('None', '', '{}', '[]'):
                             print(colored(f"    → {result_preview}", "white", attrs=["dark"]), flush=True)
-                except Exception as e:
+                except Exception:
                     pass
             return result
         except Exception as e:
@@ -2934,9 +2930,6 @@ def process_pipeline_command(
                         "tools": tools_for_llm,
                         "tool_map": tool_exec_map,
                     }
-                    # Only add tool_choice for providers that support it (not gemini)
-                    is_gemini = (exec_provider and "gemini" in exec_provider.lower()) or \
-                                (exec_model and "gemini" in exec_model.lower())
                     llm_kwargs["tool_choice"] = 'auto'
 
                     # Agent loop: keep calling LLM until it stops making tool calls
@@ -3125,7 +3118,7 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
     MAX_DELEGATION_DEPTH = 1  # Only allow one level of delegation
 
     if delegation_depth > MAX_DELEGATION_DEPTH:
-        return state, {'output': f"⚠ Maximum delegation depth reached."}
+        return state, {'output': "⚠ Maximum delegation depth reached."}
 
     if not state.team or not hasattr(state.team, 'npcs') or npc_name not in state.team.npcs:
         return state, {'output': f"⚠ NPC '{npc_name}' not found in team"}
@@ -3331,7 +3324,7 @@ def execute_command(
                                 )
                             )
                             stdin_for_next = full_stream_output
-                    except Exception as e:
+                    except Exception:
                         if output is not None:
                             try:
                                 stdin_for_next = str(output)
@@ -3444,7 +3437,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         print("NPCSH initialization complete. Restart or source ~/.npcshrc.")
 
     try:
-        history_file = setup_readline()
+        setup_readline()
         atexit.register(save_readline_history)
         atexit.register(command_history.close)
     except OSError as e:
@@ -3457,7 +3450,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     default_forenpc_name = None
     global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
     if not os.path.exists(global_team_path):
-        print(f"Global NPC team directory doesn't exist. Initializing...")
+        print("Global NPC team directory doesn't exist. Initializing...")
         initialize_base_npcs_if_needed(db_path)
     if os.path.exists(project_team_path):
         team_dir = project_team_path

@@ -4,7 +4,6 @@ Command execution utilities for npcsh
 import os
 import shutil
 import subprocess
-import sys
 from typing import List, Tuple, Any, Optional
 
 from termcolor import colored
