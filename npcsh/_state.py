@@ -93,7 +93,6 @@ from .config import (
     VERSION,
     DEFAULT_NPC_TEAM_PATH,
     PROJECT_NPC_TEAM_PATH,
-    HISTORY_DB_DEFAULT_PATH,
     READLINE_HISTORY_FILE,
     NPCSH_CHAT_MODEL,
     NPCSH_CHAT_PROVIDER,
@@ -157,6 +156,9 @@ class ShellState:
     video_gen_provider: str = NPCSH_VIDEO_GEN_PROVIDER
     current_mode: str = NPCSH_DEFAULT_MODE
     build_kg: bool = NPCSH_BUILD_KG
+    kg_link_facts: bool = False      # Link facts to concepts (requires LLM calls)
+    kg_link_concepts: bool = False   # Link concepts to concepts (requires LLM calls)
+    kg_link_facts_facts: bool = False  # Link facts to facts (requires LLM calls)
     api_key: Optional[str] = None
     api_url: Optional[str] = NPCSH_API_URL
     current_path: str = field(default_factory=os.getcwd)
@@ -3441,7 +3443,7 @@ def execute_command(
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     setup_npcsh_config()
 
-    db_path = os.getenv("NPCSH_DB_PATH", HISTORY_DB_DEFAULT_PATH)
+    db_path = NPCSH_DB_PATH
     db_path = os.path.expanduser(db_path)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     command_history = CommandHistory(db_path)
@@ -3872,15 +3874,15 @@ def process_result(
                             result_state.current_path
                         )
                         evolved_npc_kg, _ = kg_evolve_incremental(
-                            existing_kg=npc_kg, 
+                            existing_kg=npc_kg,
                             new_facts=approved_facts,
-                            model=active_npc.model, 
-                            provider=active_npc.provider, 
+                            model=active_npc.model,
+                            provider=active_npc.provider,
                             npc=active_npc,
                             get_concepts=True,
-                            link_concepts_facts=False, 
-                            link_concepts_concepts=False, 
-                            link_facts_facts=False,                         
+                            link_concepts_facts=result_state.kg_link_facts,
+                            link_concepts_concepts=result_state.kg_link_concepts,
+                            link_facts_facts=result_state.kg_link_facts_facts,
                         )
                         save_kg_to_db(
                             engine,

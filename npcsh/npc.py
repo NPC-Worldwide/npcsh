@@ -256,8 +256,9 @@ def main():
             print(
                 f"Processing prompt: '{prompt}' with NPC: '{args.npc}'..."
             )
-            
-            shell_state.current_mode = 'chat'
+
+            # Use NPCSH_DEFAULT_MODE environment variable, default to 'agent' for tool execution
+            shell_state.current_mode = os.environ.get('NPCSH_DEFAULT_MODE', 'agent')
             updated_state, result = execute_command(
                 prompt, 
                 shell_state, 

@@ -105,24 +105,33 @@ class NpcshAgent(BaseInstalledAgent):
 
         # Create output directory
         commands.append(ExecInput(
-            cmd=f"mkdir -p {shlex.quote(output_dir)}",
-            timeout=30
+            command=f"mkdir -p {shlex.quote(output_dir)}",
+            timeout_sec=30
+        ))
+
+        # Create .npcsh_global file to use global team and avoid interactive prompts
+        commands.append(ExecInput(
+            command="touch /app/.npcsh_global",
+            timeout_sec=10
         ))
 
         # Run npcsh with the instruction
+        # Using corca NPC which has edit_file tool for writing files
         # Using the npc CLI which supports single-command execution
+        # NPCSH_DEFAULT_MODE=agent enables automatic tool execution
         npcsh_cmd = (
             f'{env_prefix}'
             f'NPCSH_CHAT_MODEL="{model}" '
             f'NPCSH_CHAT_PROVIDER="{npcsh_provider}" '
             f'NPCSH_STREAM_OUTPUT=0 '
-            f'npc {escaped_instruction} '
+            f'NPCSH_DEFAULT_MODE=agent '
+            f'npc --npc corca {escaped_instruction} '
             f'2>&1 | tee {shlex.quote(output_file)}'
         )
 
         commands.append(ExecInput(
-            cmd=npcsh_cmd,
-            timeout=600,  # 10 minute timeout for complex tasks
+            command=npcsh_cmd,
+            timeout_sec=600,  # 10 minute timeout for complex tasks
         ))
 
         return commands
@@ -240,23 +249,31 @@ class NpcshAgentWithNpc(NpcshAgent):
         commands = []
 
         commands.append(ExecInput(
-            cmd=f"mkdir -p {shlex.quote(output_dir)}",
-            timeout=30
+            command=f"mkdir -p {shlex.quote(output_dir)}",
+            timeout_sec=30
+        ))
+
+        # Create .npcsh_global file to use global team and avoid interactive prompts
+        commands.append(ExecInput(
+            command="touch /app/.npcsh_global",
+            timeout_sec=10
         ))
 
         # Use specific NPC with --npc flag
+        # NPCSH_DEFAULT_MODE=agent enables automatic tool execution
         npcsh_cmd = (
             f'{env_prefix}'
             f'NPCSH_CHAT_MODEL="{model}" '
             f'NPCSH_CHAT_PROVIDER="{npcsh_provider}" '
             f'NPCSH_STREAM_OUTPUT=0 '
+            f'NPCSH_DEFAULT_MODE=agent '
             f'npc --npc {self.npc_name} {escaped_instruction} '
             f'2>&1 | tee {shlex.quote(output_file)}'
         )
 
         commands.append(ExecInput(
-            cmd=npcsh_cmd,
-            timeout=600,
+            command=npcsh_cmd,
+            timeout_sec=600,
         ))
 
         return commands
