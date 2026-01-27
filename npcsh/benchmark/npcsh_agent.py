@@ -9,7 +9,6 @@ import json
 import os
 import shlex
 from pathlib import Path
-from typing import Optional
 
 from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
 from harbor.models.agent.context import AgentContext
