@@ -1,69 +1,386 @@
 jinx_name: semantic_scholar
-description: Search Semantic Scholar for academic papers. Requires S2_API_KEY env var.
+description: Search Semantic Scholar with interactive TUI. Requires S2_API_KEY env var.
 inputs:
 - query: ""
-- limit: 10
+- limit: "20"
+- text: "false"
+
 steps:
   - name: search_s2
     engine: python
     code: |
       import os
+      import sys
+      import tty
+      import termios
       import time
       import requests
+      import webbrowser
+      import subprocess
 
       query = context.get('query', '')
-      limit = int(context.get('limit', 10))
+      limit = int(context.get('limit', 20))
+      text_mode = context.get('text', '').lower() in ('true', '1', 'yes')
 
       if not query:
-          context['output'] = "Usage: /semantic_scholar <query> [--limit N]"
-          exit()
+          lines = [
+              "Usage: /semantic_scholar <query>",
+              "",
+              "Options:",
+              "  limit - Max results (default 20)",
+              "  text  - Text-only output, no TUI (true/false)",
+              "",
+              "TUI Controls:",
+              "  j/k or arrows - Navigate",
+              "  1/2/3         - Sort by year/citations/author",
+              "  y             - Filter by year",
+              "  p             - Preview abstract/TL;DR",
+              "  o             - Open in browser",
+              "  i             - Open in incognide",
+              "  d             - Download paper info",
+              "  q/ESC         - Quit",
+              "",
+              "Examples:",
+              "  /semantic_scholar machine learning",
+              "  /semantic_scholar neural networks limit=50",
+          ]
+          context['output'] = "\n".join(lines)
+      else:
+          api_key = os.environ.get('S2_API_KEY')
+          if not api_key:
+              context['output'] = "Error: S2_API_KEY environment variable not set.\nGet one at https://www.semanticscholar.org/product/api"
+          else:
+              url = "https://api.semanticscholar.org/graph/v1/paper/search"
+              headers = {"x-api-key": api_key}
+              params = {
+                  "query": query,
+                  "limit": limit,
+                  "fields": "title,abstract,authors,year,citationCount,url,tldr,venue,openAccessPdf"
+              }
 
-      api_key = os.environ.get('S2_API_KEY')
-      if not api_key:
-          context['output'] = "Error: S2_API_KEY environment variable not set. Get one at https://www.semanticscholar.org/product/api"
-          exit()
+              try:
+                  response = requests.get(url, headers=headers, params=params, timeout=30)
+                  response.raise_for_status()
+                  papers = response.json().get('data', [])
 
-      url = "https://api.semanticscholar.org/graph/v1/paper/search"
-      headers = {"x-api-key": api_key}
-      params = {
-          "query": query,
-          "limit": limit,
-          "fields": "title,abstract,authors,year,citationCount,url,tldr"
-      }
+                  if not papers:
+                      context['output'] = f"No papers found for: {query}"
+                  elif text_mode:
+                      # Text-only output
+                      results = []
+                      for i, paper in enumerate(papers, 1):
+                          title = paper.get('title', 'No title')
+                          year = paper.get('year', '?')
+                          citations = paper.get('citationCount', 0)
+                          authors = ', '.join([a.get('name', '') for a in paper.get('authors', [])[:3]])
+                          if len(paper.get('authors', [])) > 3:
+                              authors += ' et al.'
+                          abstract = paper.get('abstract', '')[:200] + '...' if paper.get('abstract') else 'No abstract'
+                          tldr = paper.get('tldr', {}).get('text', '') if paper.get('tldr') else ''
+                          paper_url = paper.get('url', '')
 
-      try:
-          response = requests.get(url, headers=headers, params=params, timeout=30)
-          response.raise_for_status()
-          data = response.json().get('data', [])
+                          results.append(f"{i}. {title} ({year})")
+                          results.append(f"   Authors: {authors}")
+                          results.append(f"   Citations: {citations}")
+                          if tldr:
+                              results.append(f"   TL;DR: {tldr}")
+                          else:
+                              results.append(f"   Abstract: {abstract}")
+                          results.append(f"   URL: {paper_url}")
+                          results.append("")
 
-          if not data:
-              context['output'] = f"No papers found for: {query}"
-              exit()
+                      context['output'] = f"Found {len(papers)} papers:\n\n" + "\n".join(results)
+                      context['papers'] = papers
+                  else:
+                      # Interactive TUI mode
+                      def get_terminal_size():
+                          try:
+                              size = os.get_terminal_size()
+                              return size.columns, size.lines
+                          except:
+                              return 80, 24
 
-          results = []
-          for i, paper in enumerate(data, 1):
-              title = paper.get('title', 'No title')
-              year = paper.get('year', '?')
-              citations = paper.get('citationCount', 0)
-              authors = ', '.join([a.get('name', '') for a in paper.get('authors', [])[:3]])
-              if len(paper.get('authors', [])) > 3:
-                  authors += ' et al.'
-              abstract = paper.get('abstract', '')[:200] + '...' if paper.get('abstract') else 'No abstract'
-              tldr = paper.get('tldr', {}).get('text', '') if paper.get('tldr') else ''
-              url = paper.get('url', '')
+                      width, height = get_terminal_size()
+                      selected = 0
+                      scroll = 0
+                      list_height = height - 5
+                      mode = 'list'
+                      preview_scroll = 0
+                      sort_mode = 'relevance'  # relevance, year, citations, author
+                      year_filter = None
 
-              results.append(f"{i}. {title} ({year})")
-              results.append(f"   Authors: {authors}")
-              results.append(f"   Citations: {citations}")
-              if tldr:
-                  results.append(f"   TL;DR: {tldr}")
-              else:
-                  results.append(f"   Abstract: {abstract}")
-              results.append(f"   URL: {url}")
-              results.append("")
+                      def sort_papers(papers, sort_mode):
+                          if sort_mode == 'year':
+                              return sorted(papers, key=lambda x: x.get('year') or 0, reverse=True)
+                          elif sort_mode == 'citations':
+                              return sorted(papers, key=lambda x: x.get('citationCount') or 0, reverse=True)
+                          elif sort_mode == 'author':
+                              return sorted(papers, key=lambda x: (x.get('authors', [{}])[0].get('name', '') if x.get('authors') else ''))
+                          return papers  # relevance = original order
 
-          context['output'] = f"Found {len(data)} papers:\n\n" + "\n".join(results)
-          context['papers'] = data
+                      def filter_papers(papers, year_filter):
+                          if not year_filter:
+                              return papers
+                          return [p for p in papers if p.get('year') and p.get('year') >= year_filter]
 
-      except requests.exceptions.RequestException as e:
-          context['output'] = f"Semantic Scholar API error: {e}"
+                      display_papers = filter_papers(sort_papers(papers, sort_mode), year_filter)
+
+                      fd = sys.stdin.fileno()
+                      old_settings = termios.tcgetattr(fd)
+
+                      try:
+                          tty.setcbreak(fd)
+                          sys.stdout.write('\033[?25l')
+                          sys.stdout.write('\033[2J\033[H')
+
+                          while True:
+                              width, height = get_terminal_size()
+                              list_height = height - 5
+
+                              if mode == 'list':
+                                  if selected < scroll:
+                                      scroll = selected
+                                  elif selected >= scroll + list_height:
+                                      scroll = selected - list_height + 1
+
+                              sys.stdout.write('\033[H')
+
+                              # Header
+                              if mode == 'list':
+                                  sort_ind = {'relevance': '0', 'year': '1', 'citations': '2', 'author': '3'}[sort_mode]
+                                  yr = f" year>={year_filter}" if year_filter else ""
+                                  header = f" SEMANTIC SCHOLAR ({len(display_papers)} papers): '{query}' [sort:{sort_mode}({sort_ind}){yr}] "
+                              else:
+                                  header = f" PREVIEW: {display_papers[selected].get('title', '')[:width-12]} "
+                              sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+
+                              # Column headers
+                              if mode == 'list':
+                                  col_header = f' {"YEAR":<6} {"CITE":<6} {"AUTHORS":<25} {"TITLE":<50}'
+                                  sys.stdout.write(f'\033[90m{col_header[:width]}\033[0m\n')
+                              else:
+                                  sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+
+                              if mode == 'list':
+                                  for i in range(list_height):
+                                      idx = scroll + i
+                                      sys.stdout.write(f'\033[{3+i};1H\033[K')
+                                      if idx >= len(display_papers):
+                                          continue
+
+                                      p = display_papers[idx]
+                                      year = str(p.get('year') or '?')[:6]
+                                      citations = str(p.get('citationCount') or 0)[:6]
+                                      authors = ', '.join([a.get('name', '')[:15] for a in p.get('authors', [])[:2]])
+                                      if len(p.get('authors', [])) > 2:
+                                          authors += ' et al.'
+                                      authors = authors[:25]
+                                      title = (p.get('title') or '')[:60].replace('\n', ' ')
+
+                                      line = f" {year:<6} {citations:<6} {authors:<25} {title}"
+                                      line = line[:width-1]
+
+                                      if idx == selected:
+                                          sys.stdout.write(f'\033[47;30;1m>{line}\033[0m')
+                                      else:
+                                          sys.stdout.write(f' {line}')
+
+                                  # Status bar
+                                  sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                                  sel = display_papers[selected] if display_papers else {}
+                                  venue = (sel.get('venue') or '')[:30]
+                                  has_pdf = 'PDF' if sel.get('openAccessPdf') else ''
+                                  sys.stdout.write(f'\033[{height-1};1H\033[K {venue}  {has_pdf}'.ljust(width))
+                                  sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav 0/1/2/3:Sort y:Year p:Preview o:Open i:Incog d:Download q:Quit [{selected+1}/{len(display_papers)}] \033[0m')
+
+                              else:  # preview mode
+                                  sel = display_papers[selected]
+                                  tldr = sel.get('tldr', {}).get('text', '') if sel.get('tldr') else ''
+                                  abstract = sel.get('abstract') or 'No abstract available'
+
+                                  # Build preview lines
+                                  preview_lines = [
+                                      f"Title: {sel.get('title', '')}",
+                                      "",
+                                      f"Year: {sel.get('year', '?')}",
+                                      f"Citations: {sel.get('citationCount', 0)}",
+                                      f"Venue: {sel.get('venue', '')}",
+                                      "",
+                                      "Authors:",
+                                  ]
+                                  for a in sel.get('authors', []):
+                                      preview_lines.append(f"  - {a.get('name', '')}")
+                                  preview_lines.append("")
+
+                                  if tldr:
+                                      preview_lines.append("TL;DR:")
+                                      # Word wrap TL;DR
+                                      words = tldr.split()
+                                      line = ""
+                                      for w in words:
+                                          if len(line) + len(w) + 1 > width - 4:
+                                              preview_lines.append(f"  {line}")
+                                              line = w
+                                          else:
+                                              line = f"{line} {w}" if line else w
+                                      if line:
+                                          preview_lines.append(f"  {line}")
+                                      preview_lines.append("")
+
+                                  preview_lines.append("Abstract:")
+                                  # Word wrap abstract
+                                  words = abstract.split()
+                                  line = ""
+                                  for w in words:
+                                      if len(line) + len(w) + 1 > width - 4:
+                                          preview_lines.append(f"  {line}")
+                                          line = w
+                                      else:
+                                          line = f"{line} {w}" if line else w
+                                  if line:
+                                      preview_lines.append(f"  {line}")
+
+                                  preview_lines.append("")
+                                  preview_lines.append(f"URL: {sel.get('url', '')}")
+                                  if sel.get('openAccessPdf'):
+                                      preview_lines.append(f"PDF: {sel.get('openAccessPdf', {}).get('url', '')}")
+
+                                  for i in range(list_height):
+                                      idx = preview_scroll + i
+                                      sys.stdout.write(f'\033[{3+i};1H\033[K')
+                                      if idx < len(preview_lines):
+                                          sys.stdout.write(preview_lines[idx][:width-1])
+
+                                  sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                                  sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(preview_lines)} lines]')
+                                  sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll b:Back o:Open d:Download q:Quit \033[0m')
+
+                              sys.stdout.flush()
+
+                              c = sys.stdin.read(1)
+
+                              if c == '\x1b':
+                                  c2 = sys.stdin.read(1)
+                                  if c2 == '[':
+                                      c3 = sys.stdin.read(1)
+                                      if c3 == 'A':  # Up
+                                          if mode == 'list' and selected > 0:
+                                              selected -= 1
+                                          elif mode == 'preview' and preview_scroll > 0:
+                                              preview_scroll -= 1
+                                      elif c3 == 'B':  # Down
+                                          if mode == 'list' and selected < len(display_papers) - 1:
+                                              selected += 1
+                                          elif mode == 'preview' and preview_scroll < 100:
+                                              preview_scroll += 1
+                                  else:
+                                      if mode == 'preview':
+                                          mode = 'list'
+                                          sys.stdout.write('\033[2J\033[H')
+                                      else:
+                                          context['output'] = "Cancelled."
+                                          break
+                                  continue
+
+                              if c == 'q' or c == '\x03':
+                                  context['output'] = "Cancelled."
+                                  break
+                              elif c == 'k':
+                                  if mode == 'list' and selected > 0:
+                                      selected -= 1
+                                  elif mode == 'preview' and preview_scroll > 0:
+                                      preview_scroll -= 1
+                              elif c == 'j':
+                                  if mode == 'list' and selected < len(display_papers) - 1:
+                                      selected += 1
+                                  elif mode == 'preview' and preview_scroll < 100:
+                                      preview_scroll += 1
+                              elif c == '0':
+                                  sort_mode = 'relevance'
+                                  display_papers = filter_papers(sort_papers(papers, sort_mode), year_filter)
+                                  selected = 0
+                                  scroll = 0
+                              elif c == '1':
+                                  sort_mode = 'year'
+                                  display_papers = filter_papers(sort_papers(papers, sort_mode), year_filter)
+                                  selected = 0
+                                  scroll = 0
+                              elif c == '2':
+                                  sort_mode = 'citations'
+                                  display_papers = filter_papers(sort_papers(papers, sort_mode), year_filter)
+                                  selected = 0
+                                  scroll = 0
+                              elif c == '3':
+                                  sort_mode = 'author'
+                                  display_papers = filter_papers(sort_papers(papers, sort_mode), year_filter)
+                                  selected = 0
+                                  scroll = 0
+                              elif c == 'y' and mode == 'list':
+                                  # Cycle through year filters
+                                  import datetime
+                                  current_year = datetime.datetime.now().year
+                                  if year_filter is None:
+                                      year_filter = current_year - 1
+                                  elif year_filter == current_year - 1:
+                                      year_filter = current_year - 3
+                                  elif year_filter == current_year - 3:
+                                      year_filter = current_year - 5
+                                  else:
+                                      year_filter = None
+                                  display_papers = filter_papers(sort_papers(papers, sort_mode), year_filter)
+                                  selected = 0
+                                  scroll = 0
+                              elif c == 'p' and mode == 'list' and display_papers:
+                                  mode = 'preview'
+                                  preview_scroll = 0
+                                  sys.stdout.write('\033[2J\033[H')
+                              elif c == 'b' and mode == 'preview':
+                                  mode = 'list'
+                                  sys.stdout.write('\033[2J\033[H')
+                              elif c == 'o' and display_papers:
+                                  sel = display_papers[selected]
+                                  paper_url = sel.get('url', '')
+                                  if paper_url:
+                                      webbrowser.open(paper_url)
+                              elif c == 'i' and display_papers:
+                                  sel = display_papers[selected]
+                                  paper_url = sel.get('url', '')
+                                  if paper_url:
+                                      try:
+                                          subprocess.run(['npcsh', '-c', f'/navigate url={paper_url}'], check=False, capture_output=True)
+                                      except:
+                                          webbrowser.open(paper_url)
+                              elif c == 'd' and display_papers:
+                                  sel = display_papers[selected]
+                                  # Save paper info to file
+                                  title = sel.get('title', 'paper')
+                                  safe_title = "".join(c if c.isalnum() or c in ' -_' else '_' for c in title)[:50]
+                                  filename = f"{safe_title}.txt"
+                                  with open(filename, 'w') as f:
+                                      f.write(f"Title: {sel.get('title', '')}\n")
+                                      f.write(f"Year: {sel.get('year', '')}\n")
+                                      f.write(f"Citations: {sel.get('citationCount', 0)}\n")
+                                      f.write(f"Venue: {sel.get('venue', '')}\n")
+                                      f.write(f"Authors: {', '.join([a.get('name', '') for a in sel.get('authors', [])])}\n")
+                                      f.write(f"URL: {sel.get('url', '')}\n")
+                                      if sel.get('openAccessPdf'):
+                                          f.write(f"PDF: {sel.get('openAccessPdf', {}).get('url', '')}\n")
+                                      f.write(f"\nAbstract:\n{sel.get('abstract', '')}\n")
+                                      if sel.get('tldr'):
+                                          f.write(f"\nTL;DR:\n{sel.get('tldr', {}).get('text', '')}\n")
+                                  context['output'] = f"Saved to: {filename}"
+                                  break
+                              elif c in ('\r', '\n') and display_papers:
+                                  sel = display_papers[selected]
+                                  context['output'] = f"Selected: {sel.get('title', '')}\nURL: {sel.get('url', '')}"
+                                  context['selected_paper'] = sel
+                                  break
+
+                      finally:
+                          termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                          sys.stdout.write('\033[?25h')
+                          sys.stdout.write('\033[2J\033[H')
+                          sys.stdout.flush()
+
+              except requests.exceptions.RequestException as e:
+                  context['output'] = f"Semantic Scholar API error: {e}"

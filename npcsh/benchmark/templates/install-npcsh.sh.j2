@@ -1,0 +1,35 @@
+#!/bin/bash
+# Installation script for npcsh in Terminal-Bench containers
+# This template is rendered by Harbor before execution
+
+set -e
+
+echo "Installing npcsh for Terminal-Bench evaluation..."
+
+# Install Python dependencies if needed
+if ! command -v pip &> /dev/null; then
+    echo "Installing pip..."
+    apt-get update && apt-get install -y python3-pip
+fi
+
+# Install npcsh with lite dependencies (API providers only, no local models)
+# Use --break-system-packages for PEP 668 compliance (Ubuntu 24.04+)
+echo "Installing npcsh[lite]..."
+pip install --quiet --break-system-packages npcsh[lite] || pip install --quiet npcsh[lite]
+
+# Verify installation
+echo "Verifying npcsh installation..."
+npc --help > /dev/null 2>&1 || {
+    echo "ERROR: npcsh installation failed"
+    exit 1
+}
+
+# Set up default configuration
+export NPCSH_STREAM_OUTPUT=0
+export NPCSH_LOG_LEVEL=warning
+
+{% if version %}
+echo "npcsh version: {{ version }}"
+{% endif %}
+
+echo "npcsh installation complete!"

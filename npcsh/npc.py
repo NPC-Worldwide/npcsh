@@ -7,7 +7,6 @@ from typing import Optional
 from npcsh._state import (
     NPCSH_CHAT_MODEL,
     NPCSH_CHAT_PROVIDER,
-    NPCSH_API_URL, 
     NPCSH_DB_PATH, 
     NPCSH_STREAM_OUTPUT,
     initial_state,
@@ -16,9 +15,8 @@ from npcpy.npc_sysenv import (
     print_and_process_stream_with_markdown,
     render_markdown,
 )
-from npcpy.npc_compiler import NPC, Team
+from npcpy.npc_compiler import NPC
 from npcsh.routes import router
-from npcpy.llm_funcs import check_llm_command
 from sqlalchemy import create_engine
 
 from npcsh._state import (
@@ -256,8 +254,9 @@ def main():
             print(
                 f"Processing prompt: '{prompt}' with NPC: '{args.npc}'..."
             )
-            
-            shell_state.current_mode = 'chat'
+
+            # Use NPCSH_DEFAULT_MODE environment variable, default to 'agent' for tool execution
+            shell_state.current_mode = os.environ.get('NPCSH_DEFAULT_MODE', 'agent')
             updated_state, result = execute_command(
                 prompt, 
                 shell_state, 
@@ -274,12 +273,12 @@ def main():
                 )
                 
                 if (
-                    hasattr(output, '__iter__') 
+                    hasattr(output, '__iter__')
                     and not isinstance(output, (str, bytes, dict, list))
                 ):
-                    final_output = print_and_process_stream_with_markdown(
-                        output, 
-                        model_for_stream, 
+                    print_and_process_stream_with_markdown(
+                        output,
+                        model_for_stream,
                         provider_for_stream,
                         show=True
                     )
@@ -289,7 +288,7 @@ def main():
                 hasattr(result, '__iter__') 
                 and not isinstance(result, (str, bytes, dict, list))
             ):
-                final_output = print_and_process_stream_with_markdown(
+                print_and_process_stream_with_markdown(
                     result,
                     effective_model,
                     effective_provider,
@@ -324,7 +323,7 @@ def jinx_main():
         if arg in ['-h', '--help']:
             print(f"Usage: {jinx_name} [key=value ...]")
             print(f"\nRun the '{jinx_name}' jinx with specified parameters.")
-            print(f"\nExamples:")
+            print("\nExamples:")
             print(f"  {jinx_name} show=1")
             print(f"  {jinx_name} model=my_model db=~/mydb.db")
             print(f"\nOr use: npc {jinx_name} [key=value ...]")

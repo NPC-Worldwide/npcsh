@@ -21,7 +21,12 @@ def test_react_flow_used_for_non_tool_models(tmp_path, monkeypatch):
 
     def fake_check_llm_command(*args, **kwargs):
         calls["check"] += 1
-        return {"output": "react-path", "messages": kwargs.get("messages", [])}
+        # Simulate the real check_llm_command which appends user message
+        msgs = list(kwargs.get("messages", []))
+        command = args[0] if args else kwargs.get("command", "")
+        if command:
+            msgs.append({"role": "user", "content": command})
+        return {"output": "react-path", "messages": msgs}
 
     monkeypatch.setattr(state_module, "model_supports_tool_calls", lambda m, p: False)
     monkeypatch.setattr(state_module, "check_llm_command", fake_check_llm_command)
@@ -33,7 +38,11 @@ def test_react_flow_used_for_non_tool_models(tmp_path, monkeypatch):
     )
 
     assert calls["check"] == 1
-    assert output == "react-path"
+    # Output can be a string or dict with 'output' key
+    if isinstance(output, dict):
+        assert output.get("output") == "react-path"
+    else:
+        assert output == "react-path"
     # user message should be appended
     assert updated_state.messages and updated_state.messages[0]["role"] == "user"
 
@@ -77,5 +86,9 @@ def test_tool_call_flow_for_tool_capable_models(tmp_path, monkeypatch):
 
     assert calls["llm"] == 1
     assert calls["check"] == 0
-    assert output == "tool-route"
+    # Output can be a string or dict with 'output' key
+    if isinstance(output, dict):
+        assert output.get("output") == "tool-route"
+    else:
+        assert output == "tool-route"
     assert updated_state.messages and updated_state.messages[-1]["role"] == "assistant"

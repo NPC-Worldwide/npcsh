@@ -60,6 +60,20 @@ npc search 'when is the moon gonna go away from the earth'
 npc search --sprovider perplexity 'cal bears football schedule'
 npc search --sprovider duckduckgo 'beef tongue'
 
+# Knowledge graph search (in npcsh shell)
+# /kg_search python                       # Keyword search
+# /kg_search python mode=embedding        # Semantic similarity search
+# /kg_search python mode=link depth=3     # Traverse graph links
+# /kg_search python mode=all              # All methods combined
+# /kg_search type=concepts                # List all concepts
+# /kg_search concept="Mao Biography"      # Explore a specific concept
+
+# Memory search and review (in npcsh shell)
+# /mem_search python                      # Search all memories
+# /mem_search python status=approved      # Search approved only
+# /mem_review                             # Review pending memories
+# /mem_review limit=50                    # Review more at once
+
 # Serve an NPC team as a web service
 npc serve
 npc serve --port 5337 --cors 'http://localhost:5137/'
@@ -72,7 +86,9 @@ npc set --api_url https://localhost:1937
 # Evolve knowledge graph with dreaming options
 npc sleep
 npc sleep --dream
-npc sleep --ops link_facts,deepen
+npc sleep --backfill                     # Import approved memories into KG first
+npc sleep --backfill --dream             # Backfill then dream
+npc sleep --ops prune,deepen,abstract    # Specific operations
 
 # Enter isolated chat with attachments and specified models
 npc spool -n alicanto

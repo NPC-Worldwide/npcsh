@@ -1,11 +1,11 @@
 jinx_name: yap
 description: Voice chat mode - speech-to-text input, text-to-speech output
 inputs:
-- model: null
-- provider: null
-- tts_model: kokoro
-- voice: af_heart
-- files: null
+  - model: null
+  - provider: null
+  - tts_model: kokoro
+  - voice: af_heart
+  - files: null
 
 steps:
   - name: yap_repl
@@ -49,8 +49,14 @@ steps:
       tts_model = context.get('tts_model', 'kokoro')
       voice = context.get('voice', 'af_heart')
 
-      model = context.get('model') or (npc.model if npc else None)
-      provider = context.get('provider') or (npc.provider if npc else None)
+      # Resolve npc if it's a string (npc name) rather than NPC object
+      if isinstance(npc, str) and team:
+          npc = team.get(npc) if hasattr(team, 'get') else None
+      elif isinstance(npc, str):
+          npc = None
+
+      model = context.get('model') or (npc.model if npc and hasattr(npc, 'model') else None)
+      provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') else None)
 
       print("""
       ██╗   ██╗ █████╗ ██████╗

@@ -4,7 +4,6 @@ corca - MCP-powered agentic shell CLI entry point
 This is a thin wrapper that executes the corca.jinx through the jinx mechanism.
 """
 import argparse
-import os
 import sys
 
 from npcsh._state import setup_shell

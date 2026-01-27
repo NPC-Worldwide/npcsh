@@ -3,7 +3,6 @@ npcsh configuration management
 """
 import os
 import importlib.metadata
-from typing import Optional, Dict, Any
 
 # Version
 try:
@@ -14,7 +13,6 @@ except importlib.metadata.PackageNotFoundError:
 # Default paths
 DEFAULT_NPC_TEAM_PATH = "~/.npcsh/npc_team"
 PROJECT_NPC_TEAM_PATH = "./npc_team"
-HISTORY_DB_DEFAULT_PATH = "~/.npcsh_history.db"
 READLINE_HISTORY_FILE = os.path.expanduser("~/.npcsh_history")
 
 # Environment defaults
@@ -44,7 +42,7 @@ NPCSH_REASONING_PROVIDER = os.environ.get("NPCSH_REASONING_PROVIDER", "ollama")
 NPCSH_STREAM_OUTPUT = os.environ.get("NPCSH_STREAM_OUTPUT", "0") == "1"
 NPCSH_API_URL = os.environ.get("NPCSH_API_URL", None)
 NPCSH_SEARCH_PROVIDER = os.environ.get("NPCSH_SEARCH_PROVIDER", "duckduckgo")
-NPCSH_BUILD_KG = os.environ.get("NPCSH_BUILD_KG") == "1"
+NPCSH_BUILD_KG = os.environ.get("NPCSH_BUILD_KG", "1") != "0"
 
 
 def get_shell_config_file() -> str:

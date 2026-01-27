@@ -9,7 +9,6 @@ import json
 import os
 import shlex
 from pathlib import Path
-from typing import Optional
 
 from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
 from harbor.models.agent.context import AgentContext
@@ -54,7 +53,16 @@ class NpcshAgent(BaseInstalledAgent):
         Returns:
             List of ExecInput commands to execute
         """
-        escaped_instruction = shlex.quote(instruction)
+        # Wrap the instruction with explicit jinx usage directions
+        tool_instruction = f"""You have access to jinxs including edit_file (for writing/creating files), sh (for running shell commands), and python (for running Python code).
+
+IMPORTANT: You MUST use these jinxs to complete the task. Do NOT just output code as text - use the edit_file jinx to actually write files to disk.
+
+Task: {instruction}
+
+Remember: Use edit_file to write any code files. Use sh to run shell commands like gcc, make, etc."""
+
+        escaped_instruction = shlex.quote(tool_instruction)
         model_name = self.model_name
 
         if model_name and "/" in model_name:
@@ -105,24 +113,33 @@ class NpcshAgent(BaseInstalledAgent):
 
         # Create output directory
         commands.append(ExecInput(
-            cmd=f"mkdir -p {shlex.quote(output_dir)}",
-            timeout=30
+            command=f"mkdir -p {shlex.quote(output_dir)}",
+            timeout_sec=30
+        ))
+
+        # Create .npcsh_global file to use global team and avoid interactive prompts
+        commands.append(ExecInput(
+            command="touch /app/.npcsh_global",
+            timeout_sec=10
         ))
 
         # Run npcsh with the instruction
+        # Using corca NPC which has edit_file tool for writing files
         # Using the npc CLI which supports single-command execution
+        # NPCSH_DEFAULT_MODE=agent enables automatic tool execution
         npcsh_cmd = (
             f'{env_prefix}'
             f'NPCSH_CHAT_MODEL="{model}" '
             f'NPCSH_CHAT_PROVIDER="{npcsh_provider}" '
             f'NPCSH_STREAM_OUTPUT=0 '
-            f'npc {escaped_instruction} '
+            f'NPCSH_DEFAULT_MODE=agent '
+            f'npc --npc corca {escaped_instruction} '
             f'2>&1 | tee {shlex.quote(output_file)}'
         )
 
         commands.append(ExecInput(
-            cmd=npcsh_cmd,
-            timeout=600,  # 10 minute timeout for complex tasks
+            command=npcsh_cmd,
+            timeout_sec=600,  # 10 minute timeout for complex tasks
         ))
 
         return commands
@@ -198,7 +215,16 @@ class NpcshAgentWithNpc(NpcshAgent):
 
     def create_run_agent_commands(self, instruction: str) -> list:
         """Create commands using a specific NPC."""
-        escaped_instruction = shlex.quote(instruction)
+        # Wrap the instruction with explicit jinx usage directions
+        tool_instruction = f"""You have access to jinxs including edit_file (for writing/creating files), sh (for running shell commands), and python (for running Python code).
+
+IMPORTANT: You MUST use these jinxs to complete the task. Do NOT just output code as text - use the edit_file jinx to actually write files to disk.
+
+Task: {instruction}
+
+Remember: Use edit_file to write any code files. Use sh to run shell commands like gcc, make, etc."""
+
+        escaped_instruction = shlex.quote(tool_instruction)
         model_name = self.model_name
 
         if model_name and "/" in model_name:
@@ -240,23 +266,31 @@ class NpcshAgentWithNpc(NpcshAgent):
         commands = []
 
         commands.append(ExecInput(
-            cmd=f"mkdir -p {shlex.quote(output_dir)}",
-            timeout=30
+            command=f"mkdir -p {shlex.quote(output_dir)}",
+            timeout_sec=30
+        ))
+
+        # Create .npcsh_global file to use global team and avoid interactive prompts
+        commands.append(ExecInput(
+            command="touch /app/.npcsh_global",
+            timeout_sec=10
         ))
 
         # Use specific NPC with --npc flag
+        # NPCSH_DEFAULT_MODE=agent enables automatic tool execution
         npcsh_cmd = (
             f'{env_prefix}'
             f'NPCSH_CHAT_MODEL="{model}" '
             f'NPCSH_CHAT_PROVIDER="{npcsh_provider}" '
             f'NPCSH_STREAM_OUTPUT=0 '
+            f'NPCSH_DEFAULT_MODE=agent '
             f'npc --npc {self.npc_name} {escaped_instruction} '
             f'2>&1 | tee {shlex.quote(output_file)}'
         )
 
         commands.append(ExecInput(
-            cmd=npcsh_cmd,
-            timeout=600,
+            command=npcsh_cmd,
+            timeout_sec=600,
         ))
 
         return commands

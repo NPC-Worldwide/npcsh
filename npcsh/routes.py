@@ -2,11 +2,9 @@ from typing import Callable, Dict, Any, List, Optional
 import functools
 import os
 import traceback
-import sys
 import inspect
-from pathlib import Path
 
-from npcpy.npc_compiler import Jinx, load_jinxs_from_directory, extract_jinx_inputs
+from npcpy.npc_compiler import Jinx, extract_jinx_inputs
 
 
 class CommandRouter:

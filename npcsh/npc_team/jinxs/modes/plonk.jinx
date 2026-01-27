@@ -1,0 +1,379 @@
+jinx_name: plonk
+description: Vision-based GUI automation - use vision model to interact with screen elements
+inputs:
+  - task: null
+  - vmodel: null
+  - vprovider: null
+  - max_iterations: 10
+  - debug: true
+  - browse: false
+
+steps:
+  - name: plonk_execute
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import time
+      import platform
+      from termcolor import colored
+
+      from npcpy.llm_funcs import get_llm_response
+      from npcpy.data.image import capture_screenshot
+      from npcpy.work.desktop import perform_action
+
+      npc = context.get('npc')
+      team = context.get('team')
+      messages = context.get('messages', [])
+
+      # Resolve npc if it's a string (npc name) rather than NPC object
+      if isinstance(npc, str) and team:
+          npc = team.get(npc) if hasattr(team, 'get') else None
+      elif isinstance(npc, str):
+          npc = None
+
+      # ========== TUI Helper Functions ==========
+      def get_terminal_size():
+          try:
+              size = os.get_terminal_size()
+              return size.columns, size.lines
+          except:
+              return 80, 24
+
+      def plonk_tui_browser(summary, click_history):
+          """Interactive TUI browser for plonk action history"""
+          if not summary and not click_history:
+              print(colored("No actions recorded.", "yellow"))
+              return
+
+          width, height = get_terminal_size()
+          selected = 0
+          scroll = 0
+          list_height = height - 5
+          mode = 'summary'  # summary or history
+
+          fd = sys.stdin.fileno()
+          old_settings = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              sys.stdout.write('\033[2J\033[H')
+
+              while True:
+                  width, height = get_terminal_size()
+                  list_height = height - 5
+
+                  items = summary if mode == 'summary' else click_history
+
+                  if not items:
+                      items = [{'action': 'none', 'reason': 'No actions'}]
+
+                  if selected >= len(items):
+                      selected = max(0, len(items) - 1)
+
+                  if selected < scroll:
+                      scroll = selected
+                  elif selected >= scroll + list_height:
+                      scroll = selected - list_height + 1
+
+                  sys.stdout.write('\033[H')
+
+                  # Tab bar
+                  summary_tab = '\033[44;37;1m Summary \033[0m' if mode == 'summary' else '\033[90m Summary \033[0m'
+                  history_tab = '\033[44;37;1m History \033[0m' if mode == 'history' else '\033[90m History \033[0m'
+                  header = f" PLONK ACTION BROWSER  {summary_tab} {history_tab} "
+                  sys.stdout.write(f'\033[44;37;1m{" PLONK ACTION BROWSER".ljust(width)}\033[0m\n')
+
+                  if mode == 'summary':
+                      col_header = f' {"STEP":<6} {"ACTION":<12} {"COORDS":<15} {"REASON":<40}'
+                  else:
+                      col_header = f' {"#":<4} {"ACTION":<10} {"X":<6} {"Y":<6} {"DETAILS":<40}'
+                  sys.stdout.write(f'\033[90m{col_header[:width]}\033[0m\n')
+
+                  for i in range(list_height):
+                      idx = scroll + i
+                      sys.stdout.write(f'\033[{3+i};1H\033[K')
+                      if idx >= len(items):
+                          continue
+
+                      item = items[idx]
+
+                      if mode == 'summary':
+                          step = item.get('iteration', idx + 1)
+                          action = item.get('action', '?')[:12]
+                          coords = item.get('last_click_coords', 'N/A')[:15]
+                          reason = item.get('reason', item.get('error', ''))[:40]
+                          line = f" {step:<6} {action:<12} {coords:<15} {reason}"
+                      else:
+                          action = item.get('action', '?')[:10]
+                          x = str(item.get('x', '-'))[:6]
+                          y = str(item.get('y', '-'))[:6]
+                          details = item.get('reason', item.get('text', item.get('key', item.get('command', ''))))[:40]
+                          line = f" {idx+1:<4} {action:<10} {x:<6} {y:<6} {details}"
+
+                      line = line[:width-1]
+
+                      # Color by action type
+                      action_type = item.get('action', '')
+                      if action_type == 'done':
+                          color = '\033[32m'  # green
+                      elif action_type == 'fail':
+                          color = '\033[31m'  # red
+                      elif action_type == 'click':
+                          color = '\033[33m'  # yellow
+                      elif action_type == 'type':
+                          color = '\033[36m'  # cyan
+                      else:
+                          color = ''
+
+                      if idx == selected:
+                          sys.stdout.write(f'\033[47;30;1m>{line.ljust(width-2)}\033[0m')
+                      elif color:
+                          sys.stdout.write(f'{color}{line}\033[0m')
+                      else:
+                          sys.stdout.write(f' {line}')
+
+                  # Status bar
+                  sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                  stats = f"Actions: {len(summary)} | Clicks: {len([h for h in click_history if h.get('action') == 'click'])}"
+                  sys.stdout.write(f'\033[{height-1};1H\033[K {stats}'.ljust(width)[:width])
+                  sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav Tab:Toggle Enter:Details q:Quit [{selected+1}/{len(items)}] \033[0m')
+
+                  sys.stdout.flush()
+
+                  c = sys.stdin.read(1)
+
+                  if c == '\x1b':
+                      c2 = sys.stdin.read(1)
+                      if c2 == '[':
+                          c3 = sys.stdin.read(1)
+                          if c3 == 'A' and selected > 0:
+                              selected -= 1
+                          elif c3 == 'B' and selected < len(items) - 1:
+                              selected += 1
+                      else:
+                          return
+                      continue
+
+                  if c == 'q' or c == '\x03':
+                      return
+                  elif c == 'k' and selected > 0:
+                      selected -= 1
+                  elif c == 'j' and selected < len(items) - 1:
+                      selected += 1
+                  elif c == '\t':  # Tab to toggle
+                      mode = 'history' if mode == 'summary' else 'summary'
+                      selected = 0
+                      scroll = 0
+                  elif c in ('\r', '\n'):
+                      # Show full details
+                      item = items[selected]
+                      details = "\n".join(f"{k}: {v}" for k, v in item.items())
+                      print(f'\033[2J\033[H{details}\n\nPress any key to continue...')
+                      sys.stdout.flush()
+                      sys.stdin.read(1)
+                      sys.stdout.write('\033[2J\033[H')
+
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+              sys.stdout.write('\033[?25h')
+              sys.stdout.write('\033[2J\033[H')
+              sys.stdout.flush()
+
+      task = context.get('task')
+      vision_model = context.get('vmodel') or (npc.model if npc and hasattr(npc, 'model') else 'gpt-4o')
+      vision_provider = context.get('vprovider') or (npc.provider if npc and hasattr(npc, 'provider') else 'openai')
+      max_iterations = int(context.get('max_iterations', 10))
+      debug = context.get('debug', True)
+
+      if not task:
+          context['output'] = """Usage: /plonk <task description>
+
+      Options:
+        --vmodel MODEL      Vision model to use (default: gpt-4o)
+        --vprovider PROV    Vision provider (default: openai)
+        --max-iterations N  Max steps (default: 10)
+
+      Example: /plonk Open Firefox and navigate to google.com"""
+          context['messages'] = messages
+          exit()
+
+      print(f"""
+      ██████╗ ██╗      ██████╗ ███╗   ██╗██╗  ██╗
+      ██╔══██╗██║     ██╔═══██╗████╗  ██║██║ ██╔╝
+      ██████╔╝██║     ██║   ██║██╔██╗ ██║█████╔╝
+      ██╔═══╝ ██║     ██║   ██║██║╚██╗██║██╔═██╗
+      ██║     ███████╗╚██████╔╝██║ ╚████║██║  ██╗
+      ╚═╝     ╚══════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝
+
+      Vision GUI Automation
+      Task: {task}
+      Model: {vision_model} | Max iterations: {max_iterations}
+      """)
+
+      # System-specific examples
+      system = platform.system()
+      if system == "Windows":
+          app_examples = "start firefox, notepad, calc"
+      elif system == "Darwin":
+          app_examples = "open -a Firefox, open -a TextEdit"
+      else:
+          app_examples = "firefox &, gedit &, gnome-calculator &"
+
+      # Action types
+      ACTION_SCHEMA = {
+          "type": "object",
+          "properties": {
+              "action": {
+                  "type": "string",
+                  "enum": ["click", "type", "key", "launch", "wait", "done", "fail"],
+                  "description": "Action to perform"
+              },
+              "x": {"type": "number", "description": "X coordinate (0-100 percentage)"},
+              "y": {"type": "number", "description": "Y coordinate (0-100 percentage)"},
+              "text": {"type": "string", "description": "Text to type or key to press"},
+              "command": {"type": "string", "description": "Command to launch"},
+              "duration": {"type": "number", "description": "Wait duration in seconds"},
+              "reason": {"type": "string", "description": "Explanation of action"}
+          },
+          "required": ["action", "reason"]
+      }
+
+      click_history = []
+      summary = []
+
+      for iteration in range(max_iterations):
+          print(colored(f"\n--- Iteration {iteration + 1}/{max_iterations} ---", "cyan"))
+
+          # Capture screenshot
+          ss = capture_screenshot()
+          if not ss or 'file_path' not in ss:
+              print(colored("Failed to capture screenshot", "red"))
+              break
+
+          screenshot_path = ss['file_path']
+          if debug:
+              print(colored(f"Screenshot: {screenshot_path}", "gray"))
+
+          # Build context from history
+          history_context = ""
+          if click_history:
+              history_context = f"\nPrevious actions ({len(click_history)}):\n"
+              for i, click in enumerate(click_history[-5:], 1):
+                  history_context += f"  {i}. {click.get('action', 'unknown')} at ({click.get('x', '?')}, {click.get('y', '?')}) - {click.get('reason', '')}\n"
+
+          prompt = f"""You are a GUI automation assistant. Analyze this screenshot and determine the next action to complete the task.
+
+      TASK: {task}
+
+      {history_context}
+
+      Available actions:
+      - click: Click at x,y coordinates (0-100 percentage of screen)
+      - type: Type text
+      - key: Press key (enter, tab, escape, etc.)
+      - launch: Launch application ({app_examples})
+      - wait: Wait for duration seconds
+      - done: Task completed successfully
+      - fail: Task cannot be completed
+
+      Respond with JSON: {{"action": "...", "x": N, "y": N, "text": "...", "command": "...", "duration": N, "reason": "..."}}"""
+
+          try:
+              resp = get_llm_response(
+                  prompt,
+                  model=vision_model,
+                  provider=vision_provider,
+                  images=[screenshot_path],
+                  format="json",
+                  npc=npc
+              )
+
+              action_response = resp.get('response', {})
+              if isinstance(action_response, str):
+                  import json
+                  try:
+                      action_response = json.loads(action_response)
+                  except:
+                      print(colored(f"Invalid JSON response: {action_response[:100]}", "red"))
+                      continue
+
+              action = action_response.get('action', 'fail')
+              reason = action_response.get('reason', 'No reason provided')
+
+              print(colored(f"Action: {action} - {reason}", "yellow"))
+
+              if action == 'done':
+                  print(colored("Task completed successfully!", "green"))
+                  summary.append({"iteration": iteration + 1, "action": "done", "reason": reason})
+                  break
+
+              if action == 'fail':
+                  print(colored(f"Task failed: {reason}", "red"))
+                  summary.append({"iteration": iteration + 1, "action": "fail", "reason": reason})
+                  break
+
+              # Execute action
+              if action == 'click':
+                  x, y = action_response.get('x', 50), action_response.get('y', 50)
+                  perform_action('click', x=x, y=y)
+                  click_history.append({"action": "click", "x": x, "y": y, "reason": reason})
+                  print(colored(f"Clicked at ({x}, {y})", "green"))
+
+              elif action == 'type':
+                  text = action_response.get('text', '')
+                  perform_action('type', text=text)
+                  click_history.append({"action": "type", "text": text[:20], "reason": reason})
+                  print(colored(f"Typed: {text[:30]}...", "green"))
+
+              elif action == 'key':
+                  key = action_response.get('text', 'enter')
+                  perform_action('key', key=key)
+                  click_history.append({"action": "key", "key": key, "reason": reason})
+                  print(colored(f"Pressed key: {key}", "green"))
+
+              elif action == 'launch':
+                  cmd = action_response.get('command', '')
+                  perform_action('launch', command=cmd)
+                  click_history.append({"action": "launch", "command": cmd, "reason": reason})
+                  print(colored(f"Launched: {cmd}", "green"))
+                  time.sleep(2)  # Wait for app to open
+
+              elif action == 'wait':
+                  duration = action_response.get('duration', 1)
+                  time.sleep(duration)
+                  click_history.append({"action": "wait", "duration": duration, "reason": reason})
+                  print(colored(f"Waited {duration}s", "green"))
+
+              summary.append({
+                  "iteration": iteration + 1,
+                  "action": action,
+                  "last_click_coords": f"({click_history[-1].get('x', 'N/A')}, {click_history[-1].get('y', 'N/A')})" if click_history else "N/A",
+                  "reason": reason
+              })
+
+              time.sleep(0.5)  # Brief pause between actions
+
+          except Exception as e:
+              print(colored(f"Error in iteration {iteration + 1}: {e}", "red"))
+              summary.append({"iteration": iteration + 1, "error": str(e)})
+
+      # Generate summary
+      print("\n" + "="*50)
+      print(colored("PLONK SESSION SUMMARY", "cyan", attrs=['bold']))
+      print("="*50)
+      for s in summary:
+          print(f"  Step {s.get('iteration', '?')}: {s.get('action', 'unknown')} - {s.get('reason', s.get('error', ''))[:60]}")
+
+      context['output'] = f"Plonk completed with {len(summary)} actions"
+      context['messages'] = messages
+      context['plonk_summary'] = summary
+      context['click_history'] = click_history
+
+      # Launch interactive browser automatically
+      if summary:
+          print(colored("\nLaunching action browser...", "cyan"))
+          plonk_tui_browser(summary, click_history)

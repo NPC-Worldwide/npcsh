@@ -1,16 +1,22 @@
 jinx_name: jinxs
-description: "Show available jinxs organized by folder. Use /jinxs <path> for details on a specific folder."
+description: Interactive browser for available jinxs
 inputs:
 - path: ""
+- text: "false"
+
 steps:
   - name: list_jinxs
     engine: python
     code: |
       import os
+      import sys
+      import tty
+      import termios
       from pathlib import Path
       import yaml
 
       filter_path = context.get('path', '').strip()
+      text_mode = context.get('text', '').lower() in ('true', '1', 'yes')
 
       # Find jinxs directory from team or fallback
       jinxs_dir = None
@@ -23,154 +29,303 @@ steps:
                   jinxs_dir = candidate
 
       if not jinxs_dir:
-          # Fallback to global jinxs
           global_jinxs = Path.home() / ".npcsh" / "npc_team" / "jinxs"
           if global_jinxs.exists():
               jinxs_dir = global_jinxs
 
       if not jinxs_dir or not jinxs_dir.exists():
-          output = "Error: Could not find jinxs directory"
-          exit()
-
-      def get_jinx_info(jinx_path):
-          """Extract name and description from a jinx file."""
-          try:
-              with open(jinx_path, 'r') as f:
-                  content = f.read()
-                  # Parse just the header (before steps:)
-                  header = content.split('steps:')[0] if 'steps:' in content else content
-                  data = yaml.safe_load(header)
-                  name = data.get('jinx_name', jinx_path.stem)
-                  desc = data.get('description', 'No description')
-                  return name, desc
-          except:
-              return jinx_path.stem, 'No description'
-
-      def get_folder_structure(base_path):
-          """Get jinxs organized by folder."""
-          structure = {}
-          for root, dirs, files in os.walk(base_path):
-              # Skip hidden directories
-              dirs[:] = [d for d in dirs if not d.startswith('.')]
-
-              jinx_files = [f for f in files if f.endswith('.jinx')]
-              if jinx_files:
-                  rel_path = Path(root).relative_to(base_path)
-                  rel_str = str(rel_path) if str(rel_path) != '.' else 'root'
-                  structure[rel_str] = []
-                  for jf in sorted(jinx_files):
-                      jinx_path = Path(root) / jf
-                      name, desc = get_jinx_info(jinx_path)
-                      structure[rel_str].append((name, desc, jf))
-          return structure
-
-      output_lines = []
-
-      if filter_path:
-          # Show details for a specific path
-          target_path = jinxs_dir / filter_path
-          if not target_path.exists():
-              # Try to find a matching folder
-              matches = []
-              for root, dirs, files in os.walk(jinxs_dir):
-                  rel = Path(root).relative_to(jinxs_dir)
-                  if filter_path in str(rel) or filter_path in Path(root).name:
-                      matches.append(rel)
-
-              if matches:
-                  output_lines.append(f"No exact match for '{filter_path}'. Did you mean:\n")
-                  for m in matches[:5]:
-                      output_lines.append(f"  /jinxs {m}\n")
-                  output = "".join(output_lines)
-                  exit()
-              else:
-                  output = f"No jinxs found at path: {filter_path}"
-                  exit()
-
-          # Get jinxs in this path
-          structure = get_folder_structure(target_path)
-          if not structure:
-              # Check if it's a single folder with jinxs
-              jinx_files = list(target_path.glob("*.jinx"))
-              if jinx_files:
-                  output_lines.append(f"Jinxs in {filter_path}:\n\n")
-                  for jf in sorted(jinx_files):
-                      name, desc = get_jinx_info(jf)
-                      output_lines.append(f"  /{name}\n")
-                      output_lines.append(f"    {desc}\n\n")
-              else:
-                  output = f"No jinxs found at path: {filter_path}"
-                  exit()
-          else:
-              output_lines.append(f"Jinxs in {filter_path}:\n\n")
-              for folder, jinxs in sorted(structure.items()):
-                  if folder != 'root':
-                      output_lines.append(f"  {folder}/\n")
-                  for name, desc, filename in jinxs:
-                      prefix = "    " if folder != 'root' else "  "
-                      output_lines.append(f"{prefix}/{name} - {desc}\n")
-                  output_lines.append("\n")
-
+          context['output'] = "Error: Could not find jinxs directory"
       else:
-          # Show overview organized by folder
-          structure = get_folder_structure(jinxs_dir)
+          def get_jinx_info(jinx_path):
+              try:
+                  with open(jinx_path, 'r') as f:
+                      content = f.read()
+                      header = content.split('steps:')[0] if 'steps:' in content else content
+                      data = yaml.safe_load(header)
+                      name = data.get('jinx_name', jinx_path.stem)
+                      desc = data.get('description', 'No description')
+                      inputs = data.get('inputs', [])
+                      return name, desc, inputs
+              except:
+                  return jinx_path.stem, 'No description', []
 
-          output_lines.append("Available Jinxs\n")
-          output_lines.append("=" * 40 + "\n\n")
+          def get_all_jinxs(base_path):
+              jinxs = []
+              folders = set()
+              for root, dirs, files in os.walk(base_path):
+                  dirs[:] = [d for d in dirs if not d.startswith('.')]
+                  rel_path = Path(root).relative_to(base_path)
+                  folder = str(rel_path) if str(rel_path) != '.' else 'root'
+                  if folder != 'root':
+                      folders.add(folder.split('/')[0])
+                  for jf in files:
+                      if jf.endswith('.jinx'):
+                          jinx_path = Path(root) / jf
+                          name, desc, inputs = get_jinx_info(jinx_path)
+                          jinxs.append({
+                              'name': name,
+                              'description': desc,
+                              'inputs': inputs,
+                              'folder': folder,
+                              'path': str(jinx_path)
+                          })
+              return jinxs, sorted(folders)
 
-          # Group by top-level folder
-          top_level = {}
-          for folder, jinxs in structure.items():
-              if folder == 'root':
-                  top = 'root'
-              else:
-                  top = folder.split('/')[0] if '/' in folder else folder
+          all_jinxs, folders = get_all_jinxs(jinxs_dir)
+          folders = ['root'] + list(folders)
 
-              if top not in top_level:
-                  top_level[top] = {'subfolders': {}, 'jinxs': []}
+          if text_mode or not all_jinxs:
+              # Text-only output
+              output_lines = ["Available Jinxs", "=" * 40, ""]
+              by_folder = {}
+              for j in all_jinxs:
+                  f = j['folder']
+                  if f not in by_folder:
+                      by_folder[f] = []
+                  by_folder[f].append(j)
 
-              if folder == top or folder == 'root':
-                  top_level[top]['jinxs'].extend(jinxs)
-              else:
-                  subfolder = '/'.join(folder.split('/')[1:])
-                  if subfolder not in top_level[top]['subfolders']:
-                      top_level[top]['subfolders'][subfolder] = []
-                  top_level[top]['subfolders'][subfolder].extend(jinxs)
+              for folder in sorted(by_folder.keys()):
+                  if folder == 'root':
+                      output_lines.append("Root:")
+                  else:
+                      output_lines.append(f"{folder}/:")
+                  for j in by_folder[folder]:
+                      output_lines.append(f"  /{j['name']} - {j['description'][:50]}")
+                  output_lines.append("")
 
-          # Display
-          folder_order = ['bin', 'lib', 'npc_studio', 'root']
-          sorted_folders = sorted(top_level.keys(), key=lambda x: (folder_order.index(x) if x in folder_order else 99, x))
+              output_lines.append("Use /jinxs path=<folder> for details")
+              output_lines.append("Use text=false for interactive TUI")
+              context['output'] = "\n".join(output_lines)
+          else:
+              # Interactive TUI mode
+              def get_terminal_size():
+                  try:
+                      size = os.get_terminal_size()
+                      return size.columns, size.lines
+                  except:
+                      return 80, 24
 
-          for top in sorted_folders:
-              data = top_level[top]
+              width, height = get_terminal_size()
+              selected_folder = 0
+              selected_jinx = 0
+              jinx_scroll = 0
+              list_height = height - 5
+              mode = 'list'  # list or preview
+              preview_scroll = 0
+              filter_text = ''
 
-              if top == 'root':
-                  if data['jinxs']:
-                      output_lines.append("Root Jinxs:\n")
-                      for name, desc, _ in data['jinxs']:
-                          output_lines.append(f"  /{name} - {desc}\n")
-                      output_lines.append("\n")
-              else:
-                  total = len(data['jinxs'])
-                  for sf_jinxs in data['subfolders'].values():
-                      total += len(sf_jinxs)
+              def get_jinxs_in_folder(folder):
+                  if folder == 'root':
+                      return [j for j in all_jinxs if j['folder'] == 'root']
+                  return [j for j in all_jinxs if j['folder'].startswith(folder)]
 
-                  output_lines.append(f"{top}/ ({total} jinxs)\n")
+              def filter_jinxs(jinxs, text):
+                  if not text:
+                      return jinxs
+                  text = text.lower()
+                  return [j for j in jinxs if text in j['name'].lower() or text in j['description'].lower()]
 
-                  # Show direct jinxs
-                  if data['jinxs']:
-                      for name, desc, _ in data['jinxs'][:3]:
-                          output_lines.append(f"  /{name} - {desc}\n")
-                      if len(data['jinxs']) > 3:
-                          output_lines.append(f"  ... and {len(data['jinxs']) - 3} more\n")
+              current_jinxs = filter_jinxs(get_jinxs_in_folder(folders[selected_folder]), filter_text)
 
-                  # Show subfolders summary
-                  if data['subfolders']:
-                      for subfolder, jinxs in sorted(data['subfolders'].items()):
-                          output_lines.append(f"  {subfolder}/ ({len(jinxs)} jinxs)\n")
+              fd = sys.stdin.fileno()
+              old_settings = termios.tcgetattr(fd)
 
-                  output_lines.append(f"  → /jinxs {top} for details\n\n")
+              try:
+                  tty.setcbreak(fd)
+                  sys.stdout.write('\033[?25l')
+                  sys.stdout.write('\033[2J\033[H')
 
-          output_lines.append("Use /jinxs <path> for details (e.g., /jinxs lib/core)\n")
+                  while True:
+                      width, height = get_terminal_size()
+                      list_height = height - 5
 
-      output = "".join(output_lines)
+                      if mode == 'list':
+                          if selected_jinx < jinx_scroll:
+                              jinx_scroll = selected_jinx
+                          elif selected_jinx >= jinx_scroll + list_height:
+                              jinx_scroll = selected_jinx - list_height + 1
+
+                      sys.stdout.write('\033[H')
+
+                      # Header
+                      if mode == 'list':
+                          f = folders[selected_folder] if folders else 'none'
+                          flt = f" filter:'{filter_text}'" if filter_text else ""
+                          header = f" JINXS ({len(current_jinxs)}): {f}{flt} "
+                      else:
+                          j = current_jinxs[selected_jinx] if current_jinxs else {}
+                          header = f" PREVIEW: /{j.get('name', '')} "
+                      sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+
+                      # Folder bar
+                      folder_bar = ""
+                      for i, f in enumerate(folders[:8]):
+                          if i == selected_folder:
+                              folder_bar += f'\033[47;30m [{f[:8]}] \033[0m'
+                          else:
+                              folder_bar += f' {f[:8]} '
+                      if len(folders) > 8:
+                          folder_bar += f'...+{len(folders)-8}'
+                      sys.stdout.write(f'{folder_bar[:width]}\n')
+
+                      if mode == 'list':
+                          for i in range(list_height):
+                              idx = jinx_scroll + i
+                              sys.stdout.write(f'\033[{3+i};1H\033[K')
+                              if idx >= len(current_jinxs):
+                                  continue
+
+                              j = current_jinxs[idx]
+                              name = j['name'][:20]
+                              desc = j['description'][:width-25]
+
+                              if idx == selected_jinx:
+                                  sys.stdout.write(f'\033[47;30;1m>/{name:<20} {desc}\033[0m')
+                              else:
+                                  sys.stdout.write(f' /{name:<20} {desc}')
+
+                          # Status bar
+                          sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                          j = current_jinxs[selected_jinx] if current_jinxs else {}
+                          path = j.get('path', '')[-50:] if j else ''
+                          sys.stdout.write(f'\033[{height-1};1H\033[K {path}'.ljust(width))
+                          sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m h/l:Folder j/k:Jinx p:Preview Enter:Run f:Filter q:Quit [{selected_jinx+1}/{len(current_jinxs)}] \033[0m')
+
+                      else:  # preview mode
+                          j = current_jinxs[selected_jinx]
+                          preview_lines = [
+                              f"Name: /{j['name']}",
+                              "",
+                              f"Description:",
+                              f"  {j['description']}",
+                              "",
+                              f"Path: {j['path']}",
+                              f"Folder: {j['folder']}",
+                              "",
+                          ]
+
+                          if j.get('inputs'):
+                              preview_lines.append("Inputs:")
+                              for inp in j['inputs']:
+                                  if isinstance(inp, dict):
+                                      for k, v in inp.items():
+                                          default = f" (default: {v})" if v else ""
+                                          preview_lines.append(f"  - {k}{default}")
+                                  else:
+                                      preview_lines.append(f"  - {inp}")
+                              preview_lines.append("")
+
+                          preview_lines.append("Usage:")
+                          usage = f"  /{j['name']}"
+                          if j.get('inputs'):
+                              for inp in j['inputs'][:3]:
+                                  if isinstance(inp, dict):
+                                      for k, v in inp.items():
+                                          usage += f" {k}=<value>"
+                          preview_lines.append(usage)
+
+                          for i in range(list_height):
+                              idx = preview_scroll + i
+                              sys.stdout.write(f'\033[{3+i};1H\033[K')
+                              if idx < len(preview_lines):
+                                  sys.stdout.write(preview_lines[idx][:width-1])
+
+                          sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                          sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(preview_lines)} lines]')
+                          sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll b:Back Enter:Run q:Quit \033[0m')
+
+                      sys.stdout.flush()
+
+                      c = sys.stdin.read(1)
+
+                      if c == '\x1b':
+                          c2 = sys.stdin.read(1)
+                          if c2 == '[':
+                              c3 = sys.stdin.read(1)
+                              if c3 == 'A':  # Up
+                                  if mode == 'list' and selected_jinx > 0:
+                                      selected_jinx -= 1
+                                  elif mode == 'preview' and preview_scroll > 0:
+                                      preview_scroll -= 1
+                              elif c3 == 'B':  # Down
+                                  if mode == 'list' and selected_jinx < len(current_jinxs) - 1:
+                                      selected_jinx += 1
+                                  elif mode == 'preview' and preview_scroll < 50:
+                                      preview_scroll += 1
+                              elif c3 == 'C':  # Right
+                                  if mode == 'list' and selected_folder < len(folders) - 1:
+                                      selected_folder += 1
+                                      current_jinxs = filter_jinxs(get_jinxs_in_folder(folders[selected_folder]), filter_text)
+                                      selected_jinx = 0
+                                      jinx_scroll = 0
+                              elif c3 == 'D':  # Left
+                                  if mode == 'list' and selected_folder > 0:
+                                      selected_folder -= 1
+                                      current_jinxs = filter_jinxs(get_jinxs_in_folder(folders[selected_folder]), filter_text)
+                                      selected_jinx = 0
+                                      jinx_scroll = 0
+                          else:
+                              if mode == 'preview':
+                                  mode = 'list'
+                                  sys.stdout.write('\033[2J\033[H')
+                              else:
+                                  context['output'] = "Cancelled."
+                                  break
+                          continue
+
+                      if c == 'q' or c == '\x03':
+                          context['output'] = "Cancelled."
+                          break
+                      elif c == 'k':
+                          if mode == 'list' and selected_jinx > 0:
+                              selected_jinx -= 1
+                          elif mode == 'preview' and preview_scroll > 0:
+                              preview_scroll -= 1
+                      elif c == 'j':
+                          if mode == 'list' and selected_jinx < len(current_jinxs) - 1:
+                              selected_jinx += 1
+                          elif mode == 'preview' and preview_scroll < 50:
+                              preview_scroll += 1
+                      elif c == 'h' and mode == 'list':
+                          if selected_folder > 0:
+                              selected_folder -= 1
+                              current_jinxs = filter_jinxs(get_jinxs_in_folder(folders[selected_folder]), filter_text)
+                              selected_jinx = 0
+                              jinx_scroll = 0
+                      elif c == 'l' and mode == 'list':
+                          if selected_folder < len(folders) - 1:
+                              selected_folder += 1
+                              current_jinxs = filter_jinxs(get_jinxs_in_folder(folders[selected_folder]), filter_text)
+                              selected_jinx = 0
+                              jinx_scroll = 0
+                      elif c == 'f' and mode == 'list':
+                          # Toggle filter - cycle through common filters or clear
+                          if not filter_text:
+                              filter_text = 'search'
+                          elif filter_text == 'search':
+                              filter_text = 'core'
+                          elif filter_text == 'core':
+                              filter_text = 'browser'
+                          else:
+                              filter_text = ''
+                          current_jinxs = filter_jinxs(get_jinxs_in_folder(folders[selected_folder]), filter_text)
+                          selected_jinx = 0
+                          jinx_scroll = 0
+                      elif c == 'p' and mode == 'list' and current_jinxs:
+                          mode = 'preview'
+                          preview_scroll = 0
+                          sys.stdout.write('\033[2J\033[H')
+                      elif c == 'b' and mode == 'preview':
+                          mode = 'list'
+                          sys.stdout.write('\033[2J\033[H')
+                      elif c in ('\r', '\n') and current_jinxs:
+                          j = current_jinxs[selected_jinx]
+                          context['output'] = f"Run: /{j['name']}\n\nDescription: {j['description']}"
+                          context['selected_jinx'] = j
+                          break
+
+              finally:
+                  termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                  sys.stdout.write('\033[?25h')
+                  sys.stdout.write('\033[2J\033[H')
+                  sys.stdout.flush()
