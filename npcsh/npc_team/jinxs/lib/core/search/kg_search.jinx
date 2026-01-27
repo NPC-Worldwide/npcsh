@@ -1,9 +1,14 @@
 jinx_name: kg_search
-description: Search the knowledge graph for facts and concepts
+description: Search the knowledge graph for facts and concepts with multiple modes
 inputs:
 - query: ""
 - type: "facts"
+- mode: "keyword"
 - concept: ""
+- depth: "2"
+- breadth: "5"
+- max_results: "20"
+- threshold: "0.6"
 - npc_name: ""
 - team_name: ""
 - db_path: ""
@@ -13,32 +18,52 @@ steps:
     engine: python
     code: |
       import os
-      from npcpy.memory.knowledge_graph import kg_search_facts, kg_list_concepts, kg_get_facts_for_concept, kg_get_all_facts
+      from npcpy.memory.command_history import CommandHistory
+      from npcpy.memory.knowledge_graph import (
+          kg_search_facts, kg_list_concepts, kg_get_facts_for_concept,
+          kg_get_all_facts, kg_link_search, kg_embedding_search,
+          kg_hybrid_search, kg_explore_concept
+      )
 
       query = context.get('query', '').strip()
       search_type = context.get('type', 'facts').lower()
+      search_mode = context.get('mode', 'keyword').lower()
       concept = context.get('concept', '').strip()
+      max_depth = int(context.get('depth') or 2)
+      breadth = int(context.get('breadth') or 5)
+      max_results = int(context.get('max_results') or 20)
+      threshold = float(context.get('threshold') or 0.6)
 
       if not query and search_type == 'facts' and not concept:
           lines = [
-              "Usage: /kg_search <query> [type=facts|concepts|all]",
+              "Usage: /kg_search <query> [mode=keyword|embedding|link|hybrid|all]",
+              "",
+              "Search Modes:",
+              "  keyword   - Simple keyword matching (default, fast)",
+              "  embedding - Semantic similarity using embeddings",
+              "  link      - Traverse graph links from keyword matches",
+              "  hybrid    - Combine keyword + link traversal",
+              "  all       - Combine all methods (slowest, most thorough)",
               "",
               "Options:",
-              "  type      - Search type (facts, concepts, all). Default is facts",
-              "  concept   - Get facts for a specific concept",
-              "  npc_name  - Filter by NPC name",
-              "  team_name - Filter by team name",
-              "  db_path   - Path to history database",
+              "  type       - Result type: facts, concepts, all",
+              "  concept    - Explore a specific concept",
+              "  depth      - Link traversal depth (default: 2)",
+              "  breadth    - Results per traversal hop (default: 5)",
+              "  max_results- Max total results (default: 20)",
+              "  threshold  - Embedding similarity threshold (default: 0.6)",
               "",
               "Examples:",
-              "  /kg_search python",
-              "  /kg_search type=concepts",
-              "  /kg_search concept=coding",
-              "  /kg_search type=all",
+              "  /kg_search python                    # keyword search",
+              "  /kg_search python mode=embedding     # semantic search",
+              "  /kg_search python mode=link depth=3  # traverse links",
+              "  /kg_search python mode=all           # all methods",
+              "  /kg_search type=concepts             # list all concepts",
+              "  /kg_search concept=coding            # explore concept",
           ]
           context['output'] = "\n".join(lines)
       else:
-          db_path = context.get('db_path') or os.path.expanduser("~/.npcsh/npcsh_history.db")
+          db_path = context.get('db_path') or os.path.expanduser("~/npcsh_history.db")
 
           try:
               cmd_history = CommandHistory(db_path)
@@ -51,18 +76,34 @@ steps:
                   pass
               npc_obj = npc if 'npc' in dir() else None
 
+              # Get embedding settings from state if available
+              emodel = None
+              eprovider = None
+              try:
+                  if 'state' in dir() and state:
+                      emodel = getattr(state, 'embedding_model', None)
+                      eprovider = getattr(state, 'embedding_provider', None)
+              except:
+                  pass
+
               if concept:
-                  facts = kg_get_facts_for_concept(engine, concept, npc=npc_obj, team=team_obj)
-                  if not facts:
-                      context['output'] = "No facts found for concept '" + concept + "'"
-                  else:
-                      lines = ["Facts for concept '" + concept + "':", ""]
-                      for i, fact in enumerate(facts, 1):
-                          lines.append(str(i) + ". " + str(fact))
-                      context['output'] = "\n".join(lines)
+                  # Explore a specific concept
+                  result = kg_explore_concept(engine, concept, max_depth=max_depth, breadth_per_step=breadth)
+                  lines = ["Concept: " + concept, ""]
+                  lines.append("Direct Facts (" + str(len(result['direct_facts'])) + "):")
+                  for i, f in enumerate(result['direct_facts'][:10], 1):
+                      lines.append("  " + str(i) + ". " + str(f)[:80])
+                  lines.append("")
+                  lines.append("Related Concepts: " + ", ".join(result['related_concepts'][:10]))
+                  if result['extended_facts']:
+                      lines.append("")
+                      lines.append("Extended Facts (" + str(len(result['extended_facts'])) + "):")
+                      for i, f in enumerate(result['extended_facts'][:5], 1):
+                          lines.append("  " + str(i) + ". " + str(f)[:80])
+                  context['output'] = "\n".join(lines)
 
               elif search_type == 'concepts':
-                  concepts = kg_list_concepts(engine, npc=npc_obj, team=team_obj)
+                  concepts = kg_list_concepts(engine, search_all_scopes=True)
                   if not concepts:
                       context['output'] = "No concepts found in knowledge graph."
                   else:
@@ -71,23 +112,75 @@ steps:
                           lines.append(str(i) + ". " + str(c))
                       context['output'] = "\n".join(lines)
 
-              elif search_type == 'all':
-                  facts = kg_get_all_facts(engine, npc=npc_obj, team=team_obj)
+              elif search_type == 'all' and not query:
+                  facts = kg_get_all_facts(engine, search_all_scopes=True)
                   if not facts:
                       context['output'] = "No facts in knowledge graph."
                   else:
                       lines = ["All facts (" + str(len(facts)) + " total):", ""]
-                      for i, fact in enumerate(facts, 1):
+                      for i, fact in enumerate(facts[:max_results], 1):
                           lines.append(str(i) + ". " + str(fact))
                       context['output'] = "\n".join(lines)
 
+              elif search_mode == 'embedding':
+                  results = kg_embedding_search(
+                      engine, query,
+                      embedding_model=emodel, embedding_provider=eprovider,
+                      similarity_threshold=threshold, max_results=max_results,
+                      search_all_scopes=True
+                  )
+                  if not results:
+                      context['output'] = "No semantic matches found for '" + query + "'"
+                  else:
+                      lines = ["Semantic search results (" + str(len(results)) + "):", ""]
+                      for i, r in enumerate(results, 1):
+                          score = "{:.2f}".format(r['score'])
+                          lines.append(str(i) + ". [" + r['type'] + " " + score + "] " + str(r['content'])[:70])
+                      context['output'] = "\n".join(lines)
+
+              elif search_mode == 'link':
+                  results = kg_link_search(
+                      engine, query,
+                      max_depth=max_depth, breadth_per_step=breadth, max_results=max_results,
+                      search_all_scopes=True
+                  )
+                  if not results:
+                      context['output'] = "No linked results found for '" + query + "'"
+                  else:
+                      lines = ["Link traversal results (" + str(len(results)) + "):", ""]
+                      for i, r in enumerate(results, 1):
+                          depth_str = "d" + str(r.get('depth', 0))
+                          score = "{:.2f}".format(r['score'])
+                          lines.append(str(i) + ". [" + r['type'] + " " + depth_str + " " + score + "] " + str(r['content'])[:60])
+                      context['output'] = "\n".join(lines)
+
+              elif search_mode in ['hybrid', 'all', 'keyword+link', 'keyword+embedding']:
+                  results = kg_hybrid_search(
+                      engine, query,
+                      mode=search_mode if search_mode != 'hybrid' else 'keyword+link',
+                      max_depth=max_depth, breadth_per_step=breadth, max_results=max_results,
+                      embedding_model=emodel, embedding_provider=eprovider,
+                      similarity_threshold=threshold,
+                      search_all_scopes=True
+                  )
+                  if not results:
+                      context['output'] = "No results found for '" + query + "'"
+                  else:
+                      lines = ["Hybrid search results (" + str(len(results)) + "):", ""]
+                      for i, r in enumerate(results, 1):
+                          score = "{:.2f}".format(r['score'])
+                          src = r.get('source', 'unknown')[:15]
+                          lines.append(str(i) + ". [" + r['type'] + " " + score + " " + src + "] " + str(r['content'])[:55])
+                      context['output'] = "\n".join(lines)
+
               else:
-                  facts = kg_search_facts(engine, query, npc=npc_obj, team=team_obj)
+                  # Default keyword search - always search all scopes
+                  facts = kg_search_facts(engine, query, search_all_scopes=True)
                   if not facts:
                       context['output'] = "No KG facts found for '" + query + "'"
                   else:
                       lines = ["Found " + str(len(facts)) + " facts:", ""]
-                      for i, fact in enumerate(facts, 1):
+                      for i, fact in enumerate(facts[:max_results], 1):
                           lines.append(str(i) + ". " + str(fact))
                       context['output'] = "\n".join(lines)
 

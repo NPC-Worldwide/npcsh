@@ -21,7 +21,7 @@ steps:
       npc_name_input = {{ npc_name | default("") | tojson }}.strip() or None
 
       if not model:
-          model = npc.model if npc and npc.model 
+          model = npc.model if npc and npc.model else ""
       if not provider:
           provider = npc.provider if npc and npc.provider else "anthropic"
 
