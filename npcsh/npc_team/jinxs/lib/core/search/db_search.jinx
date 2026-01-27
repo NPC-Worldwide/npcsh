@@ -1,47 +1,87 @@
 jinx_name: db_search
-description: Search conversation history database using brainblast
+description: Search conversation history database
 inputs:
 - query: ""
-- db_path: ""
-- limit: "20"
+- path: ""
+- limit: "100"
 
 steps:
   - name: search_db
     engine: python
     code: |
       import os
-
-      from npcpy.memory.command_history import CommandHistory
-      from npcsh.commands import execute_brainblast_command
+      from sqlalchemy import create_engine, text
 
       query = context.get('query', '').strip()
       if not query:
           lines = [
               "Usage: /db_search <query>",
               "",
-              "Searches conversation history using brainblast for semantic matching.",
+              "Searches conversation history for matching content.",
               "",
               "Options:",
-              "  db_path - Path to history database",
-              "  limit   - Max results to return (default 20)",
+              "  path  - Filter by directory path",
+              "  limit - Max results (default 100)",
               "",
               "Examples:",
               "  /db_search python debugging",
-              "  /db_search api errors limit=50",
+              "  /db_search api errors path=/home/user/project",
           ]
           context['output'] = "\n".join(lines)
       else:
-          db_path = context.get('db_path') or os.path.expanduser("~/npcsh_history.db")
-          limit = int(context.get('limit') or 20)
+          db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
+          limit = int(context.get('limit') or 100)
+          filter_path = context.get('path', '').strip()
+
+          engine = create_engine(f'sqlite:///{db_path}')
 
           try:
-              cmd_history = CommandHistory(db_path)
-              result = execute_brainblast_command(
-                  command=query,
-                  command_history=cmd_history,
-                  limit=limit
-              )
-              context['output'] = result.get('output', 'Brainblast search completed.')
+              with engine.connect() as conn:
+                  if filter_path:
+                      result = conn.execute(text("""
+                          SELECT conversation_id, timestamp, role, content, npc, directory_path
+                          FROM conversation_history
+                          WHERE LOWER(content) LIKE LOWER(:query)
+                            AND (directory_path = :path OR directory_path LIKE :path_pattern)
+                          ORDER BY timestamp DESC
+                          LIMIT :limit
+                      """), {
+                          "query": f"%{query}%",
+                          "path": filter_path,
+                          "path_pattern": filter_path + "/%",
+                          "limit": limit
+                      })
+                  else:
+                      result = conn.execute(text("""
+                          SELECT conversation_id, timestamp, role, content, npc, directory_path
+                          FROM conversation_history
+                          WHERE LOWER(content) LIKE LOWER(:query)
+                          ORDER BY timestamp DESC
+                          LIMIT :limit
+                      """), {"query": f"%{query}%", "limit": limit})
+
+                  rows = result.fetchall()
+
+              if not rows:
+                  context['output'] = f"No results found for '{query}'"
+              else:
+                  lines = [f"Found {len(rows)} results for '{query}':", ""]
+                  for row in rows:
+                      cid = row[0][:8] if row[0] else '?'
+                      ts = str(row[1])[:16] if row[1] else '?'
+                      role = row[2] or '?'
+                      content = (row[3] or '')[:100].replace('\n', ' ')
+                      npc = row[4] or 'default'
+                      path = row[5] or ''
+
+                      lines.append(f"[{cid}] {ts} ({role}/{npc})")
+                      lines.append(f"  {content}")
+                      if path:
+                          lines.append(f"  @ {path}")
+                      lines.append("")
+
+                  context['output'] = "\n".join(lines)
+
           except Exception as e:
               import traceback
-              context['output'] = "DB search error: " + str(e) + "\n" + traceback.format_exc()
+              context['output'] = f"Search error: {e}\n{traceback.format_exc()}"
