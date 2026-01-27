@@ -66,6 +66,9 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: Install PyYAML
+      run: pip install pyyaml
+
     - name: Validate jinx YAML syntax
       run: |
         python -c "
