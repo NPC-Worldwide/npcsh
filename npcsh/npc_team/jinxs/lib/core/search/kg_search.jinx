@@ -1,5 +1,5 @@
 jinx_name: kg_search
-description: Search the knowledge graph for facts and concepts with multiple modes
+description: Search the knowledge graph with interactive TUI
 inputs:
 - query: ""
 - type: "facts"
@@ -12,12 +12,16 @@ inputs:
 - npc_name: ""
 - team_name: ""
 - db_path: ""
+- text: "false"
 
 steps:
   - name: search_kg
     engine: python
     code: |
       import os
+      import sys
+      import tty
+      import termios
       from npcpy.memory.command_history import CommandHistory
       from npcpy.memory.knowledge_graph import (
           kg_search_facts, kg_list_concepts, kg_get_facts_for_concept,
@@ -33,6 +37,7 @@ steps:
       breadth = int(context.get('breadth') or 5)
       max_results = int(context.get('max_results') or 20)
       threshold = float(context.get('threshold') or 0.6)
+      text_mode = context.get('text', '').lower() in ('true', '1', 'yes')
 
       if not query and search_type == 'facts' and not concept:
           lines = [
@@ -46,20 +51,28 @@ steps:
               "  all       - Combine all methods (slowest, most thorough)",
               "",
               "Options:",
-              "  type       - Result type: facts, concepts, all",
-              "  concept    - Explore a specific concept",
-              "  depth      - Link traversal depth (default: 2)",
-              "  breadth    - Results per traversal hop (default: 5)",
-              "  max_results- Max total results (default: 20)",
-              "  threshold  - Embedding similarity threshold (default: 0.6)",
+              "  type        - Result type: facts, concepts, all",
+              "  concept     - Explore a specific concept",
+              "  depth       - Link traversal depth (default: 2)",
+              "  breadth     - Results per traversal hop (default: 5)",
+              "  max_results - Max total results (default: 20)",
+              "  threshold   - Embedding similarity threshold (default: 0.6)",
+              "  text        - Text-only output, no TUI (true/false)",
+              "",
+              "TUI Controls:",
+              "  j/k or arrows - Navigate",
+              "  1/2/3         - Sort by score/concept/type",
+              "  c             - Toggle concepts view",
+              "  e             - Explore selected concept",
+              "  p             - Preview full fact/concept",
+              "  q/ESC         - Quit",
               "",
               "Examples:",
-              "  /kg_search python                    # keyword search",
-              "  /kg_search python mode=embedding     # semantic search",
-              "  /kg_search python mode=link depth=3  # traverse links",
-              "  /kg_search python mode=all           # all methods",
-              "  /kg_search type=concepts             # list all concepts",
-              "  /kg_search concept=coding            # explore concept",
+              "  /kg_search python",
+              "  /kg_search python mode=embedding",
+              "  /kg_search python mode=link depth=3",
+              "  /kg_search type=concepts",
+              "  /kg_search concept=coding",
           ]
           context['output'] = "\n".join(lines)
       else:
@@ -76,7 +89,6 @@ steps:
                   pass
               npc_obj = npc if 'npc' in dir() else None
 
-              # Get embedding settings from state if available
               emodel = None
               eprovider = None
               try:
@@ -86,76 +98,61 @@ steps:
               except:
                   pass
 
+              # Collect results
+              results = []
+
               if concept:
-                  # Explore a specific concept
                   result = kg_explore_concept(engine, concept, max_depth=max_depth, breadth_per_step=breadth)
-                  lines = ["Concept: " + concept, ""]
-                  lines.append("Direct Facts (" + str(len(result['direct_facts'])) + "):")
-                  for i, f in enumerate(result['direct_facts'][:10], 1):
-                      lines.append("  " + str(i) + ". " + str(f)[:80])
-                  lines.append("")
-                  lines.append("Related Concepts: " + ", ".join(result['related_concepts'][:10]))
-                  if result['extended_facts']:
-                      lines.append("")
-                      lines.append("Extended Facts (" + str(len(result['extended_facts'])) + "):")
-                      for i, f in enumerate(result['extended_facts'][:5], 1):
-                          lines.append("  " + str(i) + ". " + str(f)[:80])
-                  context['output'] = "\n".join(lines)
+                  for i, f in enumerate(result.get('direct_facts', [])):
+                      results.append({'type': 'fact', 'content': str(f), 'score': 1.0, 'concept': concept, 'source': 'direct'})
+                  for i, f in enumerate(result.get('extended_facts', [])):
+                      results.append({'type': 'fact', 'content': str(f), 'score': 0.5, 'concept': concept, 'source': 'extended'})
+                  for c in result.get('related_concepts', []):
+                      results.append({'type': 'concept', 'content': str(c), 'score': 0.8, 'concept': concept, 'source': 'related'})
 
               elif search_type == 'concepts':
                   concepts = kg_list_concepts(engine, search_all_scopes=True)
-                  if not concepts:
-                      context['output'] = "No concepts found in knowledge graph."
-                  else:
-                      lines = ["Found " + str(len(concepts)) + " concepts:", ""]
-                      for i, c in enumerate(concepts, 1):
-                          lines.append(str(i) + ". " + str(c))
-                      context['output'] = "\n".join(lines)
+                  for c in concepts:
+                      results.append({'type': 'concept', 'content': str(c), 'score': 1.0, 'concept': str(c), 'source': 'list'})
 
               elif search_type == 'all' and not query:
                   facts = kg_get_all_facts(engine, search_all_scopes=True)
-                  if not facts:
-                      context['output'] = "No facts in knowledge graph."
-                  else:
-                      lines = ["All facts (" + str(len(facts)) + " total):", ""]
-                      for i, fact in enumerate(facts[:max_results], 1):
-                          lines.append(str(i) + ". " + str(fact))
-                      context['output'] = "\n".join(lines)
+                  for f in facts[:max_results]:
+                      results.append({'type': 'fact', 'content': str(f), 'score': 1.0, 'concept': '', 'source': 'all'})
 
               elif search_mode == 'embedding':
-                  results = kg_embedding_search(
+                  raw_results = kg_embedding_search(
                       engine, query,
                       embedding_model=emodel, embedding_provider=eprovider,
                       similarity_threshold=threshold, max_results=max_results,
                       search_all_scopes=True
                   )
-                  if not results:
-                      context['output'] = "No semantic matches found for '" + query + "'"
-                  else:
-                      lines = ["Semantic search results (" + str(len(results)) + "):", ""]
-                      for i, r in enumerate(results, 1):
-                          score = "{:.2f}".format(r['score'])
-                          lines.append(str(i) + ". [" + r['type'] + " " + score + "] " + str(r['content'])[:70])
-                      context['output'] = "\n".join(lines)
+                  for r in raw_results:
+                      results.append({
+                          'type': r.get('type', 'fact'),
+                          'content': str(r.get('content', '')),
+                          'score': r.get('score', 0),
+                          'concept': r.get('concept', ''),
+                          'source': 'embedding'
+                      })
 
               elif search_mode == 'link':
-                  results = kg_link_search(
+                  raw_results = kg_link_search(
                       engine, query,
                       max_depth=max_depth, breadth_per_step=breadth, max_results=max_results,
                       search_all_scopes=True
                   )
-                  if not results:
-                      context['output'] = "No linked results found for '" + query + "'"
-                  else:
-                      lines = ["Link traversal results (" + str(len(results)) + "):", ""]
-                      for i, r in enumerate(results, 1):
-                          depth_str = "d" + str(r.get('depth', 0))
-                          score = "{:.2f}".format(r['score'])
-                          lines.append(str(i) + ". [" + r['type'] + " " + depth_str + " " + score + "] " + str(r['content'])[:60])
-                      context['output'] = "\n".join(lines)
+                  for r in raw_results:
+                      results.append({
+                          'type': r.get('type', 'fact'),
+                          'content': str(r.get('content', '')),
+                          'score': r.get('score', 0),
+                          'concept': r.get('concept', ''),
+                          'source': f"link-d{r.get('depth', 0)}"
+                      })
 
               elif search_mode in ['hybrid', 'all', 'keyword+link', 'keyword+embedding']:
-                  results = kg_hybrid_search(
+                  raw_results = kg_hybrid_search(
                       engine, query,
                       mode=search_mode if search_mode != 'hybrid' else 'keyword+link',
                       max_depth=max_depth, breadth_per_step=breadth, max_results=max_results,
@@ -163,26 +160,258 @@ steps:
                       similarity_threshold=threshold,
                       search_all_scopes=True
                   )
-                  if not results:
-                      context['output'] = "No results found for '" + query + "'"
-                  else:
-                      lines = ["Hybrid search results (" + str(len(results)) + "):", ""]
-                      for i, r in enumerate(results, 1):
-                          score = "{:.2f}".format(r['score'])
-                          src = r.get('source', 'unknown')[:15]
-                          lines.append(str(i) + ". [" + r['type'] + " " + score + " " + src + "] " + str(r['content'])[:55])
-                      context['output'] = "\n".join(lines)
+                  for r in raw_results:
+                      results.append({
+                          'type': r.get('type', 'fact'),
+                          'content': str(r.get('content', '')),
+                          'score': r.get('score', 0),
+                          'concept': r.get('concept', ''),
+                          'source': r.get('source', 'hybrid')
+                      })
 
               else:
-                  # Default keyword search - always search all scopes
+                  # Default keyword search
                   facts = kg_search_facts(engine, query, search_all_scopes=True)
-                  if not facts:
-                      context['output'] = "No KG facts found for '" + query + "'"
-                  else:
-                      lines = ["Found " + str(len(facts)) + " facts:", ""]
-                      for i, fact in enumerate(facts[:max_results], 1):
-                          lines.append(str(i) + ". " + str(fact))
-                      context['output'] = "\n".join(lines)
+                  for f in facts[:max_results]:
+                      results.append({'type': 'fact', 'content': str(f), 'score': 1.0, 'concept': '', 'source': 'keyword'})
+
+              if not results:
+                  context['output'] = f"No KG results found for '{query}'"
+              elif text_mode:
+                  # Text-only output
+                  lines = [f"Found {len(results)} KG results:", ""]
+                  for i, r in enumerate(results, 1):
+                      score = f"{r['score']:.2f}" if isinstance(r['score'], float) else str(r['score'])
+                      lines.append(f"{i}. [{r['type']} {score}] {r['content'][:80]}")
+                  context['output'] = "\n".join(lines)
+              else:
+                  # Interactive TUI mode
+                  def get_terminal_size():
+                      try:
+                          size = os.get_terminal_size()
+                          return size.columns, size.lines
+                      except:
+                          return 80, 24
+
+                  width, height = get_terminal_size()
+                  selected = 0
+                  scroll = 0
+                  list_height = height - 5
+                  mode = 'list'
+                  preview_scroll = 0
+                  sort_mode = 'score'  # score, concept, type
+                  type_filter = 'all'  # all, fact, concept
+
+                  def sort_results(results, sort_mode):
+                      if sort_mode == 'score':
+                          return sorted(results, key=lambda x: x.get('score', 0), reverse=True)
+                      elif sort_mode == 'concept':
+                          return sorted(results, key=lambda x: (x.get('concept', ''), -x.get('score', 0)))
+                      elif sort_mode == 'type':
+                          return sorted(results, key=lambda x: (x.get('type', ''), -x.get('score', 0)))
+                      return results
+
+                  def filter_results(results, type_filter):
+                      if type_filter == 'all':
+                          return results
+                      return [r for r in results if r.get('type') == type_filter]
+
+                  display_results = filter_results(sort_results(results, sort_mode), type_filter)
+
+                  fd = sys.stdin.fileno()
+                  old_settings = termios.tcgetattr(fd)
+
+                  try:
+                      tty.setcbreak(fd)
+                      sys.stdout.write('\033[?25l')
+                      sys.stdout.write('\033[2J\033[H')
+
+                      while True:
+                          width, height = get_terminal_size()
+                          list_height = height - 5
+
+                          if mode == 'list':
+                              if selected < scroll:
+                                  scroll = selected
+                              elif selected >= scroll + list_height:
+                                  scroll = selected - list_height + 1
+
+                          sys.stdout.write('\033[H')
+
+                          # Header
+                          if mode == 'list':
+                              sort_ind = {'score': '1', 'concept': '2', 'type': '3'}[sort_mode]
+                              q = query or concept or search_type
+                              header = f" KG SEARCH ({len(display_results)} results): '{q}' [sort:{sort_mode}({sort_ind}) filter:{type_filter}] "
+                          else:
+                              header = f" PREVIEW: {display_results[selected]['type']} "
+                          sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+
+                          # Column headers
+                          if mode == 'list':
+                              col_header = f' {"TYPE":<8} {"SCORE":<6} {"CONCEPT":<15} {"CONTENT":<50}'
+                              sys.stdout.write(f'\033[90m{col_header[:width]}\033[0m\n')
+                          else:
+                              sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+
+                          if mode == 'list':
+                              for i in range(list_height):
+                                  idx = scroll + i
+                                  sys.stdout.write(f'\033[{3+i};1H\033[K')
+                                  if idx >= len(display_results):
+                                      continue
+
+                                  r = display_results[idx]
+                                  rtype = r.get('type', '?')[:8]
+                                  score = f"{r.get('score', 0):.2f}" if isinstance(r.get('score'), float) else str(r.get('score', ''))[:6]
+                                  concept_str = (r.get('concept', '') or '')[:15]
+                                  content = (r.get('content', '') or '')[:60].replace('\n', ' ')
+
+                                  # Color by type
+                                  if r.get('type') == 'concept':
+                                      type_color = '\033[35m'  # magenta
+                                  else:
+                                      type_color = '\033[36m'  # cyan
+
+                                  line = f" {type_color}{rtype:<8}\033[0m {score:<6} {concept_str:<15} {content}"
+                                  line = line[:width+15]
+
+                                  if idx == selected:
+                                      sys.stdout.write(f'\033[47;30;1m>{line}\033[0m')
+                                  else:
+                                      sys.stdout.write(f' {line}')
+
+                              # Status bar
+                              sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                              sel = display_results[selected] if display_results else {}
+                              source = sel.get('source', '')
+                              sys.stdout.write(f'\033[{height-1};1H\033[K Source: {source}'.ljust(width))
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav 1/2/3:Sort c:Concepts e:Explore p:Preview q:Quit [{selected+1}/{len(display_results)}] \033[0m')
+
+                          else:  # preview mode
+                              sel = display_results[selected]
+                              content = sel.get('content', '')
+                              lines = content.split('\n')
+
+                              # Add metadata at top
+                              meta_lines = [
+                                  f"Type: {sel.get('type', '')}",
+                                  f"Score: {sel.get('score', '')}",
+                                  f"Concept: {sel.get('concept', '')}",
+                                  f"Source: {sel.get('source', '')}",
+                                  "─" * 40,
+                              ]
+                              all_lines = meta_lines + lines
+
+                              for i in range(list_height):
+                                  idx = preview_scroll + i
+                                  sys.stdout.write(f'\033[{3+i};1H\033[K')
+                                  if idx < len(all_lines):
+                                      sys.stdout.write(all_lines[idx][:width-1])
+
+                              sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                              sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(all_lines)} lines]')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll b:Back e:Explore q:Quit \033[0m')
+
+                          sys.stdout.flush()
+
+                          c = sys.stdin.read(1)
+
+                          if c == '\x1b':
+                              c2 = sys.stdin.read(1)
+                              if c2 == '[':
+                                  c3 = sys.stdin.read(1)
+                                  if c3 == 'A':  # Up
+                                      if mode == 'list' and selected > 0:
+                                          selected -= 1
+                                      elif mode == 'preview' and preview_scroll > 0:
+                                          preview_scroll -= 1
+                                  elif c3 == 'B':  # Down
+                                      if mode == 'list' and selected < len(display_results) - 1:
+                                          selected += 1
+                                      elif mode == 'preview':
+                                          sel = display_results[selected]
+                                          content = sel.get('content', '')
+                                          all_lines = content.split('\n')
+                                          if preview_scroll < max(0, len(all_lines) + 5 - list_height):
+                                              preview_scroll += 1
+                              else:
+                                  if mode == 'preview':
+                                      mode = 'list'
+                                      sys.stdout.write('\033[2J\033[H')
+                                  else:
+                                      context['output'] = "Cancelled."
+                                      break
+                              continue
+
+                          if c == 'q' or c == '\x03':
+                              context['output'] = "Cancelled."
+                              break
+                          elif c == 'k':
+                              if mode == 'list' and selected > 0:
+                                  selected -= 1
+                              elif mode == 'preview' and preview_scroll > 0:
+                                  preview_scroll -= 1
+                          elif c == 'j':
+                              if mode == 'list' and selected < len(display_results) - 1:
+                                  selected += 1
+                              elif mode == 'preview':
+                                  sel = display_results[selected]
+                                  content = sel.get('content', '')
+                                  all_lines = content.split('\n')
+                                  if preview_scroll < max(0, len(all_lines) + 5 - list_height):
+                                      preview_scroll += 1
+                          elif c == '1':
+                              sort_mode = 'score'
+                              display_results = filter_results(sort_results(results, sort_mode), type_filter)
+                              selected = 0
+                              scroll = 0
+                          elif c == '2':
+                              sort_mode = 'concept'
+                              display_results = filter_results(sort_results(results, sort_mode), type_filter)
+                              selected = 0
+                              scroll = 0
+                          elif c == '3':
+                              sort_mode = 'type'
+                              display_results = filter_results(sort_results(results, sort_mode), type_filter)
+                              selected = 0
+                              scroll = 0
+                          elif c == 'c' and mode == 'list':
+                              # Toggle type filter
+                              if type_filter == 'all':
+                                  type_filter = 'concept'
+                              elif type_filter == 'concept':
+                                  type_filter = 'fact'
+                              else:
+                                  type_filter = 'all'
+                              display_results = filter_results(sort_results(results, sort_mode), type_filter)
+                              selected = 0
+                              scroll = 0
+                          elif c == 'e' and display_results:
+                              # Explore the selected concept
+                              sel = display_results[selected]
+                              explore_concept = sel.get('concept') or sel.get('content', '')
+                              if sel.get('type') == 'concept':
+                                  explore_concept = sel.get('content', '')
+                              context['output'] = f"Explore concept: {explore_concept}\n\nRun: /kg_search concept={explore_concept}"
+                              break
+                          elif c == 'p' and mode == 'list' and display_results:
+                              mode = 'preview'
+                              preview_scroll = 0
+                              sys.stdout.write('\033[2J\033[H')
+                          elif c == 'b' and mode == 'preview':
+                              mode = 'list'
+                              sys.stdout.write('\033[2J\033[H')
+                          elif c in ('\r', '\n') and display_results:
+                              sel = display_results[selected]
+                              context['output'] = f"Selected: {sel.get('content', '')[:100]}"
+                              break
+
+                  finally:
+                      termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                      sys.stdout.write('\033[?25h')
+                      sys.stdout.write('\033[2J\033[H')
+                      sys.stdout.flush()
 
           except Exception as e:
               import traceback

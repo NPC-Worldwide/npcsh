@@ -1,0 +1,544 @@
+jinx_name: guac
+description: Interactive Python data analysis TUI - live variable inspector, DataFrame viewer, code execution
+inputs:
+  - model: null
+  - provider: null
+  - plots_dir: null
+
+steps:
+  - name: guac_tui
+    engine: python
+    code: |
+      import os
+      import sys
+      import io
+      import re
+      import tty
+      import termios
+      import traceback
+      import textwrap
+      import select
+      from pathlib import Path
+      from datetime import datetime
+      from termcolor import colored
+
+      import numpy as np
+      import pandas as pd
+      import matplotlib
+      matplotlib.use('Agg')  # Non-interactive backend for TUI
+      import matplotlib.pyplot as plt
+
+      from npcpy.llm_funcs import get_llm_response
+      from npcpy.npc_sysenv import render_markdown, get_system_message
+
+      npc = context.get('npc')
+      team = context.get('team')
+      messages = context.get('messages', [])
+      plots_dir = context.get('plots_dir') or os.path.expanduser("~/.npcsh/plots")
+
+      # Resolve npc if it's a string (npc name) rather than NPC object
+      if isinstance(npc, str) and team:
+          npc = team.get(npc) if hasattr(team, 'get') else None
+      elif isinstance(npc, str):
+          npc = None
+
+      model = context.get('model') or (npc.model if npc and hasattr(npc, 'model') else None)
+      provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') else None)
+
+      os.makedirs(plots_dir, exist_ok=True)
+
+      # ========== State ==========
+      class GuacState:
+          def __init__(self):
+              self.locals = {
+                  'np': np, 'pd': pd, 'plt': plt,
+                  'Path': Path, 'os': os
+              }
+              self.history = []  # Code history
+              self.output_lines = []  # Current output
+              self.plots = []  # Saved plot paths
+              self.current_input = ""
+              self.cursor_pos = 0
+              self.history_idx = -1
+              self.scroll_offset = 0
+              self.panel = 0  # 0=output, 1=variables, 2=dataframes, 3=plots
+              self.selected_var = 0
+              self.var_scroll = 0
+              self.status = "Ready"
+              self.mode = "code"  # code, natural, inspect
+              self.inspecting = None  # Variable being inspected
+              self.df_row_offset = 0
+              self.df_col_offset = 0
+
+      state = GuacState()
+
+      # ========== Helpers ==========
+      def get_size():
+          try:
+              s = os.get_terminal_size()
+              return s.columns, s.lines
+          except:
+              return 80, 24
+
+      def wrap_text(text, width):
+          lines = []
+          for line in str(text).split('\n'):
+              if len(line) <= width:
+                  lines.append(line)
+              else:
+                  lines.extend(textwrap.wrap(line, width) or [''])
+          return lines
+
+      def get_user_vars():
+          """Get user-defined variables (not builtins)"""
+          skip = {'np', 'pd', 'plt', 'Path', 'os', '__builtins__'}
+          return {k: v for k, v in state.locals.items()
+                  if not k.startswith('_') and k not in skip}
+
+      def var_info(name, value):
+          """Get info string for a variable"""
+          if isinstance(value, pd.DataFrame):
+              return f"DataFrame {value.shape}"
+          elif isinstance(value, pd.Series):
+              return f"Series ({len(value)})"
+          elif isinstance(value, np.ndarray):
+              return f"ndarray {value.shape} {value.dtype}"
+          elif isinstance(value, (list, tuple)):
+              return f"{type(value).__name__} ({len(value)})"
+          elif isinstance(value, dict):
+              return f"dict ({len(value)} keys)"
+          elif isinstance(value, str):
+              return f"str ({len(value)} chars)"
+          elif isinstance(value, (int, float)):
+              return f"{type(value).__name__}: {value}"
+          else:
+              return type(value).__name__
+
+      def execute_code(code):
+          """Execute Python code and capture output"""
+          output = io.StringIO()
+          old_stdout, old_stderr = sys.stdout, sys.stderr
+
+          try:
+              sys.stdout = output
+              sys.stderr = output
+
+              # Try as expression first
+              if '\n' not in code.strip():
+                  try:
+                      result = eval(compile(code, "<input>", "eval"), state.locals)
+                      if result is not None:
+                          print(repr(result))
+                      return output.getvalue(), None
+                  except SyntaxError:
+                      pass
+
+              # Execute as statements
+              exec(compile(code, "<input>", "exec"), state.locals)
+              return output.getvalue(), None
+
+          except Exception as e:
+              return output.getvalue(), traceback.format_exc()
+          finally:
+              sys.stdout, sys.stderr = old_stdout, old_stderr
+
+      def save_plot():
+          """Save current matplotlib figure"""
+          if plt.get_fignums():
+              timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+              path = os.path.join(plots_dir, f"plot_{timestamp}.png")
+              plt.savefig(path, dpi=150, bbox_inches='tight')
+              plt.close()
+              state.plots.append(path)
+              return path
+          return None
+
+      def load_file(path):
+          """Auto-load file based on extension"""
+          path = Path(path).expanduser()
+          if not path.exists():
+              return None, f"File not found: {path}"
+
+          ext = path.suffix.lower()
+          var_name = path.stem.replace(' ', '_').replace('-', '_')[:20]
+
+          try:
+              if ext == '.csv':
+                  df = pd.read_csv(path)
+                  state.locals[var_name] = df
+                  return var_name, f"Loaded CSV as '{var_name}': {df.shape}"
+              elif ext in ['.xlsx', '.xls']:
+                  df = pd.read_excel(path)
+                  state.locals[var_name] = df
+                  return var_name, f"Loaded Excel as '{var_name}': {df.shape}"
+              elif ext == '.json':
+                  import json
+                  with open(path) as f:
+                      data = json.load(f)
+                  state.locals[var_name] = data
+                  return var_name, f"Loaded JSON as '{var_name}'"
+              elif ext == '.npy':
+                  arr = np.load(path)
+                  state.locals[var_name] = arr
+                  return var_name, f"Loaded numpy as '{var_name}': {arr.shape}"
+              elif ext in ['.txt', '.md']:
+                  with open(path) as f:
+                      text = f.read()
+                  state.locals[var_name] = text
+                  return var_name, f"Loaded text as '{var_name}': {len(text)} chars"
+              else:
+                  with open(path, 'rb') as f:
+                      data = f.read()
+                  state.locals[var_name] = data
+                  return var_name, f"Loaded binary as '{var_name}': {len(data)} bytes"
+          except Exception as e:
+              return None, f"Error: {e}"
+
+      # ========== Rendering ==========
+      def render_screen():
+          width, height = get_size()
+          out = []
+
+          out.append("\033[2J\033[H")
+
+          # ===== HEADER =====
+          mode_colors = {"code": "\033[32m", "natural": "\033[35m", "inspect": "\033[33m"}
+          mode_str = f"{mode_colors[state.mode]}[{state.mode}]\033[0m"
+          header = f" GUAC - Python Data Analysis {mode_str} "
+          status_color = "\033[33m" if "..." in state.status else "\033[32m"
+          out.append(f"\033[1;1H\033[42;30;1m{header.ljust(width)}\033[0m")
+          out.append(f"\033[1;{width-len(state.status)-3}H{status_color}[{state.status}]\033[0m")
+
+          # ===== LAYOUT =====
+          # Left: Output (80%)
+          # Right: Variables/DataFrames/Plots (20%)
+          left_w = int(width * 0.8)
+          right_w = width - left_w
+          panel_h = height - 6  # Leave room for input
+
+          user_vars = get_user_vars()
+          var_names = list(user_vars.keys())
+
+          # ===== LEFT PANEL: Output =====
+          out.append(f"\033[3;1H\033[32m Output \033[90m{'─' * (left_w-9)}┬\033[0m")
+          for i in range(panel_h - 1):
+              out.append(f"\033[{4+i};{left_w}H\033[90m│\033[0m")
+          out.append(f"\033[{3+panel_h};1H\033[90m{'─' * (left_w-1)}┴\033[0m")
+
+          output_w = left_w - 3
+          output_h = panel_h - 2
+
+          if state.inspecting and state.inspecting in user_vars:
+              # Inspection mode - show in output panel
+              val = user_vars[state.inspecting]
+              out.append(f"\033[4;2H\033[33mInspecting: {state.inspecting}\033[0m")
+
+              if isinstance(val, pd.DataFrame):
+                  cols = list(val.columns)[state.df_col_offset:state.df_col_offset + 5]
+                  col_w = (output_w - 6) // max(len(cols), 1)
+                  header = "     " + "".join(f"{str(c)[:col_w]:<{col_w}}" for c in cols)
+                  out.append(f"\033[5;2H\033[1m{header[:output_w]}\033[0m")
+                  for i, (idx, row) in enumerate(val.iloc[state.df_row_offset:state.df_row_offset + output_h - 3].iterrows()):
+                      row_str = f"{idx:<4} " + "".join(f"{str(row[c])[:col_w]:<{col_w}}" for c in cols)
+                      out.append(f"\033[{6+i};2H{row_str[:output_w]}")
+                  out.append(f"\033[{3+panel_h-1};2H\033[90mArrows:scroll  ESC:exit inspect\033[0m")
+              elif isinstance(val, np.ndarray):
+                  out.append(f"\033[5;2H\033[90mShape: {val.shape}  dtype: {val.dtype}\033[0m")
+                  for i, line in enumerate(wrap_text(repr(val), output_w)[:output_h-2]):
+                      out.append(f"\033[{6+i};2H{line}")
+              else:
+                  for i, line in enumerate(wrap_text(repr(val), output_w)[:output_h]):
+                      out.append(f"\033[{5+i};2H{line}")
+          else:
+              # Normal output
+              visible = state.output_lines[state.scroll_offset:state.scroll_offset + output_h]
+              for i, line in enumerate(visible):
+                  if 'Error' in line or 'Traceback' in line:
+                      out.append(f"\033[{4+i};2H\033[31m{line[:output_w]}\033[0m")
+                  elif line.startswith('>>>'):
+                      out.append(f"\033[{4+i};2H\033[32m{line[:output_w]}\033[0m")
+                  else:
+                      out.append(f"\033[{4+i};2H{line[:output_w]}")
+
+              if not state.output_lines:
+                  hints = [
+                      "\033[90mWelcome to GUAC!\033[0m",
+                      "", "Type Python code and press Enter",
+                      "Drop file paths to auto-load", "",
+                      "\033[33mKeys:\033[0m Tab:panels  Arrows:nav",
+                      "Ctrl+N:NL  Ctrl+S:save  Ctrl+Q:quit",
+                  ]
+                  for i, hint in enumerate(hints[:output_h]):
+                      out.append(f"\033[{4+i};2H{hint}")
+
+          # ===== RIGHT PANEL: Variables/Plots =====
+          right_x = left_w + 1
+          panel_names = ["Vars", "DFs", "Plots"]
+          tabs = ""
+          for i, name in enumerate(panel_names):
+              if i == state.panel:
+                  tabs += f"\033[47;30m {name} \033[0m"
+              else:
+                  tabs += f"\033[90m {name} \033[0m"
+          out.append(f"\033[3;{right_x}H{tabs}")
+
+          # Right panel content
+          rpanel_w = right_w - 2
+          rpanel_h = panel_h - 2
+
+          if state.panel == 0:  # Variables
+              for i, name in enumerate(var_names[state.var_scroll:state.var_scroll + rpanel_h]):
+                  idx = i + state.var_scroll
+                  value = user_vars[name]
+                  info = var_info(name, value)
+                  display = f"{name[:10]:<10} {info[:rpanel_w-12]}"
+                  if idx == state.selected_var:
+                      out.append(f"\033[{4+i};{right_x}H\033[47;30m>{display[:rpanel_w]}\033[0m")
+                  elif isinstance(value, pd.DataFrame):
+                      out.append(f"\033[{4+i};{right_x}H\033[34m {display[:rpanel_w]}\033[0m")
+                  elif isinstance(value, np.ndarray):
+                      out.append(f"\033[{4+i};{right_x}H\033[35m {display[:rpanel_w]}\033[0m")
+                  else:
+                      out.append(f"\033[{4+i};{right_x}H {display[:rpanel_w]}")
+              if not var_names:
+                  out.append(f"\033[5;{right_x}H\033[90mNo vars\033[0m")
+
+          elif state.panel == 1:  # DataFrames
+              dfs = {k: v for k, v in user_vars.items() if isinstance(v, pd.DataFrame)}
+              df_names = list(dfs.keys())
+              for i, name in enumerate(df_names[:rpanel_h]):
+                  df = dfs[name]
+                  info = f"{df.shape[0]}x{df.shape[1]}"
+                  out.append(f"\033[{4+i};{right_x}H\033[34m {name[:10]:<10} {info}\033[0m")
+              if not df_names:
+                  out.append(f"\033[5;{right_x}H\033[90mNo DFs\033[0m")
+
+          elif state.panel == 2:  # Plots
+              if state.plots:
+                  for i, path in enumerate(state.plots[-(rpanel_h):]):
+                      name = os.path.basename(path)[:rpanel_w]
+                      out.append(f"\033[{4+i};{right_x}H {name}")
+              else:
+                  out.append(f"\033[5;{right_x}H\033[90mNo plots\033[0m")
+                  out.append(f"\033[6;{right_x}H\033[90mCtrl+S save\033[0m")
+
+          # ===== INPUT LINE =====
+          input_y = height - 2
+          visible_prompt = "NL> " if state.mode == "natural" else ">>> "
+          out.append(f"\033[{input_y};1H\033[90m{'─' * width}\033[0m")
+          # Clear the input line first, then write prompt and input
+          out.append(f"\033[{height-1};1H\033[K")  # Clear line
+          out.append(f"\033[{height-1};1H\033[32m{visible_prompt}\033[0m{state.current_input}")
+
+          # Position cursor after prompt + cursor_pos characters
+          cursor_col = len(visible_prompt) + state.cursor_pos + 1  # +1 for 1-indexed columns
+          out.append(f"\033[{height-1};{cursor_col}H")
+
+          # ===== FOOTER =====
+          hints = "Tab:panels  Arrows:nav  Ctrl+N:NL  Ctrl+S:save  Ctrl+D:del  Ctrl+Q:quit"
+          out.append(f"\033[{height};1H\033[90m{hints[:width]}\033[0m")
+
+          sys.stdout.write(''.join(out))
+          sys.stdout.flush()
+
+      # ========== Input Handling ==========
+      def handle_input(c):
+          if c == '\x11':  # Ctrl+Q - quit
+              return False
+
+          elif c == '\t':  # Tab - cycle panels
+              state.panel = (state.panel + 1) % 3
+              state.selected_var = 0
+              state.var_scroll = 0
+
+          elif c == '\x0e':  # Ctrl+N - toggle natural language
+              state.mode = "natural" if state.mode == "code" else "code"
+              state.status = f"{state.mode} mode"
+
+          elif c == '\x13':  # Ctrl+S - save plot
+              path = save_plot()
+              if path:
+                  state.output_lines.append(f"Plot saved: {path}")
+                  state.status = "Plot saved"
+              else:
+                  state.status = "No plot to save"
+
+          elif c == '\x04':  # Ctrl+D - delete variable
+              user_vars = get_user_vars()
+              var_names = list(user_vars.keys())
+              if var_names and state.selected_var < len(var_names):
+                  name = var_names[state.selected_var]
+                  del state.locals[name]
+                  state.output_lines.append(f"Deleted: {name}")
+                  state.selected_var = max(0, state.selected_var - 1)
+
+          elif c == '\x1b':  # Escape sequences
+              # Check if more input is available (escape sequence) or standalone ESC
+              if select.select([sys.stdin], [], [], 0.05)[0]:
+                  c2 = sys.stdin.read(1)
+                  if c2 == '[':
+                      c3 = sys.stdin.read(1)
+                      if c3 == 'A':  # Up
+                          if state.current_input == "" and state.history:
+                              state.history_idx = max(0, state.history_idx - 1) if state.history_idx >= 0 else len(state.history) - 1
+                              state.current_input = state.history[state.history_idx]
+                              state.cursor_pos = len(state.current_input)
+                          elif not state.current_input:
+                              if state.inspecting:
+                                  state.df_row_offset = max(0, state.df_row_offset - 1)
+                              elif state.panel > 0:
+                                  state.selected_var = max(0, state.selected_var - 1)
+                              else:
+                                  state.scroll_offset = max(0, state.scroll_offset - 1)
+                      elif c3 == 'B':  # Down
+                          if state.current_input == "" and state.history and state.history_idx >= 0:
+                              state.history_idx = min(len(state.history) - 1, state.history_idx + 1)
+                              state.current_input = state.history[state.history_idx]
+                              state.cursor_pos = len(state.current_input)
+                          elif not state.current_input:
+                              if state.inspecting:
+                                  state.df_row_offset += 1
+                              elif state.panel > 0:
+                                  user_vars = get_user_vars()
+                                  state.selected_var = min(state.selected_var + 1, len(user_vars) - 1)
+                              else:
+                                  state.scroll_offset += 1
+                      elif c3 == 'C':  # Right
+                          state.cursor_pos = min(len(state.current_input), state.cursor_pos + 1)
+                      elif c3 == 'D':  # Left
+                          state.cursor_pos = max(0, state.cursor_pos - 1)
+              else:
+                  # Standalone ESC - exit inspect mode or clear input
+                  if state.inspecting:
+                      state.inspecting = None
+                      state.mode = "code"
+                  elif state.current_input:
+                      state.current_input = ""
+                      state.cursor_pos = 0
+
+          elif c == '\r' or c == '\n':  # Enter
+              if state.current_input.strip():
+                  code = state.current_input.strip()
+
+                  # Check for file path (drag & drop)
+                  if os.path.exists(os.path.expanduser(code.strip("'\""))):
+                      name, msg = load_file(code.strip("'\""))
+                      state.output_lines.append(msg)
+                      state.status = "File loaded" if name else "Load failed"
+
+                  elif state.mode == "natural":
+                      # Natural language -> code generation
+                      state.status = "Generating code..."
+                      render_screen()
+
+                      var_context = "Variables: " + ", ".join(f"{k}({var_info(k,v)})" for k,v in get_user_vars().items())
+                      prompt = f"{var_context}\n\nRequest: {code}\n\nGenerate Python code. Return ONLY code, no explanation."
+
+                      resp = get_llm_response(prompt, model=model, provider=provider, npc=npc)
+                      gen_code = str(resp.get('response', ''))
+
+                      # Extract code from markdown
+                      if '```python' in gen_code:
+                          gen_code = gen_code.split('```python')[1].split('```')[0]
+                      elif '```' in gen_code:
+                          gen_code = gen_code.split('```')[1].split('```')[0]
+                      gen_code = gen_code.strip()
+
+                      state.output_lines.append(f">>> # Generated from: {code[:40]}...")
+                      state.output_lines.append(gen_code)
+                      state.output_lines.append("Execute? (y to run)")
+                      state.history.append(code)
+                      state.status = "Confirm execution"
+                      # Store for potential execution
+                      state.locals['__pending_code__'] = gen_code
+
+                  elif code == 'y' and '__pending_code__' in state.locals:
+                      # Execute pending generated code
+                      gen_code = state.locals.pop('__pending_code__')
+                      output, error = execute_code(gen_code)
+                      if output:
+                          state.output_lines.extend(output.split('\n'))
+                      if error:
+                          state.output_lines.extend(error.split('\n'))
+                      state.status = "Executed"
+
+                  else:
+                      # Direct code execution
+                      state.output_lines.append(f">>> {code}")
+                      state.history.append(code)
+
+                      output, error = execute_code(code)
+                      if output:
+                          state.output_lines.extend(output.split('\n'))
+                      if error:
+                          state.output_lines.extend(error.split('\n'))
+                          state.status = "Error"
+                      else:
+                          state.status = "OK"
+
+                  state.current_input = ""
+                  state.cursor_pos = 0
+                  state.history_idx = -1
+                  state.scroll_offset = max(0, len(state.output_lines) - 10)
+
+          elif c == '\x7f' or c == '\x08':  # Backspace
+              if state.cursor_pos > 0:
+                  state.current_input = state.current_input[:state.cursor_pos-1] + state.current_input[state.cursor_pos:]
+                  state.cursor_pos -= 1
+
+          elif c == '\x15':  # Ctrl+U - clear line
+              state.current_input = ""
+              state.cursor_pos = 0
+
+          elif c == '\x01':  # Ctrl+A - start of line
+              state.cursor_pos = 0
+
+          elif c == '\x05':  # Ctrl+E - end of line
+              state.cursor_pos = len(state.current_input)
+
+          elif c == '\x0c':  # Ctrl+L - clear output
+              state.output_lines = []
+              state.scroll_offset = 0
+
+          elif c >= ' ' and c <= '~':  # Printable
+              state.current_input = state.current_input[:state.cursor_pos] + c + state.current_input[state.cursor_pos:]
+              state.cursor_pos += 1
+
+          return True
+
+      # ========== Main Loop ==========
+      fd = sys.stdin.fileno()
+      old_settings = termios.tcgetattr(fd)
+
+      try:
+          tty.setcbreak(fd)
+          sys.stdout.write('\033[?25h')  # Show cursor
+
+          render_screen()
+
+          while True:
+              c = sys.stdin.read(1)
+              if not handle_input(c):
+                  break
+              render_screen()
+
+      finally:
+          termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+          sys.stdout.write('\033[2J\033[H')
+          sys.stdout.flush()
+
+          # Final summary
+          user_vars = get_user_vars()
+          if user_vars:
+              print(colored("=== GUAC SESSION ===\n", "green"))
+              print("Variables:")
+              for name, val in user_vars.items():
+                  print(f"  {name}: {var_info(name, val)}")
+              if state.plots:
+                  print(f"\nPlots saved: {len(state.plots)}")
+                  for p in state.plots[-5:]:
+                      print(f"  {p}")
+
+      context['output'] = "Exited guac mode."
+      context['messages'] = messages
+      context['guac_locals'] = state.locals
