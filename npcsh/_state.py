@@ -846,7 +846,6 @@ BASH_COMMANDS = [
     "command",
     "compgen",
     "complete",
-    "continue",
     "declare",
     "dirs",
     "disown",
@@ -2672,10 +2671,10 @@ def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
     
     return False
 
-def execute_slash_command(command: str, 
-                          stdin_input: Optional[str], 
-                          state: ShellState, 
-                          stream: bool, 
+def execute_slash_command(command: str,
+                          stdin_input: Optional[str],
+                          state: ShellState,
+                          stream: bool,
                           router) -> Tuple[ShellState, Any]:
     """Executes slash commands using the router."""
     try:
@@ -2683,7 +2682,13 @@ def execute_slash_command(command: str,
     except ValueError:
         all_command_parts = command.split()
     command_name = all_command_parts[0].lstrip('/')
-    
+
+    # --- QUIT/EXIT HANDLING ---
+    if command_name in ['quit', 'exit', 'q']:
+        import sys
+        print("Goodbye!")
+        sys.exit(0)
+
     # --- NPC SWITCHING LOGIC ---
     if command_name in ['n', 'npc']:
         npc_to_switch_to = all_command_parts[1] if len(all_command_parts) > 1 else None
@@ -3687,6 +3692,10 @@ def process_result(
     final_output_str = None
 
     # FIX: Handle dict output properly
+    msg_input_tokens = None
+    msg_output_tokens = None
+    msg_cost = None
+
     if isinstance(output, dict):
         # Use None-safe check to not skip empty strings
         output_content = output.get('output') if 'output' in output else output.get('response')
@@ -3696,15 +3705,18 @@ def process_result(
         # Accumulate token usage if available
         if 'usage' in output:
             usage = output['usage']
-            result_state.session_input_tokens += usage.get('input_tokens', 0)
-            result_state.session_output_tokens += usage.get('output_tokens', 0)
+            msg_input_tokens = usage.get('input_tokens', 0)
+            msg_output_tokens = usage.get('output_tokens', 0)
+            result_state.session_input_tokens += msg_input_tokens
+            result_state.session_output_tokens += msg_output_tokens
             # Calculate cost
             from npcpy.gen.response import calculate_cost
-            result_state.session_cost_usd += calculate_cost(
+            msg_cost = calculate_cost(
                 model_for_stream,
-                usage.get('input_tokens', 0),
-                usage.get('output_tokens', 0)
+                msg_input_tokens,
+                msg_output_tokens
             )
+            result_state.session_cost_usd += msg_cost
 
         # If output_content is still a dict, convert to string
         if isinstance(output_content, dict):
@@ -3766,6 +3778,9 @@ def process_result(
             provider=active_npc.provider,
             npc=npc_name,
             team=team_name,
+            input_tokens=msg_input_tokens,
+            output_tokens=msg_output_tokens,
+            cost=msg_cost,
         )
 
         result_state.turn_count += 1

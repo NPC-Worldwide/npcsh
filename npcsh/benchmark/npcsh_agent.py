@@ -54,7 +54,16 @@ class NpcshAgent(BaseInstalledAgent):
         Returns:
             List of ExecInput commands to execute
         """
-        escaped_instruction = shlex.quote(instruction)
+        # Wrap the instruction with explicit jinx usage directions
+        tool_instruction = f"""You have access to jinxs including edit_file (for writing/creating files), sh (for running shell commands), and python (for running Python code).
+
+IMPORTANT: You MUST use these jinxs to complete the task. Do NOT just output code as text - use the edit_file jinx to actually write files to disk.
+
+Task: {instruction}
+
+Remember: Use edit_file to write any code files. Use sh to run shell commands like gcc, make, etc."""
+
+        escaped_instruction = shlex.quote(tool_instruction)
         model_name = self.model_name
 
         if model_name and "/" in model_name:
@@ -207,7 +216,16 @@ class NpcshAgentWithNpc(NpcshAgent):
 
     def create_run_agent_commands(self, instruction: str) -> list:
         """Create commands using a specific NPC."""
-        escaped_instruction = shlex.quote(instruction)
+        # Wrap the instruction with explicit jinx usage directions
+        tool_instruction = f"""You have access to jinxs including edit_file (for writing/creating files), sh (for running shell commands), and python (for running Python code).
+
+IMPORTANT: You MUST use these jinxs to complete the task. Do NOT just output code as text - use the edit_file jinx to actually write files to disk.
+
+Task: {instruction}
+
+Remember: Use edit_file to write any code files. Use sh to run shell commands like gcc, make, etc."""
+
+        escaped_instruction = shlex.quote(tool_instruction)
         model_name = self.model_name
 
         if model_name and "/" in model_name:
