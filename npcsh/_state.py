@@ -21,7 +21,8 @@ import sys
 import tempfile
 import time
 import textwrap
-import readlineimport json
+import readline
+import json
 from typing import Dict, List, Any, Tuple, Union, Optional, Callable
 import yaml
 
