@@ -42,7 +42,6 @@ from npcsh._state import (
     execute_command,
     make_completer,
     process_result,
-    readline_safe_prompt,
     setup_shell,
     get_multiline_input,
 )
@@ -141,7 +140,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
         process_result(f"/{launched_jinx}", state, output, command_history)
     else:
         render_markdown(f'- Using {state.current_mode} mode. Use /agent, /cmd, or /chat to switch to other modes')
-    render_markdown(f'- To switch to a different NPC, type /npc <npc_name> or /n <npc_name> to switch to that NPC.')
+    render_markdown('- To switch to a different NPC, type /npc <npc_name> or /n <npc_name> to switch to that NPC.')
     render_markdown('\n- Here are the current NPCs available in your team: ' + ', '.join([npc_name for npc_name in state.team.npcs.keys()]))
     # Show jinxs organized by folder using _source_path from jinx objects
     jinxs_by_folder = {}
@@ -416,7 +415,7 @@ def main(npc_name: str = None) -> None:
                 os.remove(os.path.join(user_npc_team, f))
                 print(f"Removed {f}")
 
-        db_path = os.path.expanduser("~/.npcsh/npcsh_history.db")
+        db_path = os.path.expanduser("~/npcsh_history.db")
         print("Reinitializing NPCs and jinxs...")
         initialize_base_npcs_if_needed(db_path)
         print("Refresh complete!")
@@ -450,7 +449,11 @@ def main(npc_name: str = None) -> None:
          state = initial_state
          state.current_path = os.getcwd()
          final_state, output = execute_command(args.command, state, router=router, command_history=command_history)
-         if final_state.stream_output:
+         # Handle output - check if it's a dict (from jinx) or a stream
+         if isinstance(output, dict):
+              display_output = output.get('output') or output.get('response') or str(output)
+              print(display_output)
+         elif final_state.stream_output and output is not None:
               for chunk in output:
                   print(str(chunk), end='')
               print()

@@ -8,9 +8,13 @@ steps:
     engine: python
     code: |
       import pandas as pd
-      query = {{ sql_query | tojson }}
-      try:
-          df = pd.read_sql_query(query, npc.db_conn)
-      except Exception as e:
-          df = pd.DataFrame({'Error': [str(e)]})
-      output = df.to_string()
+
+      query = context.get('sql_query', '').strip()
+      if not query:
+          context['output'] = "Usage: /sql <query>"
+      else:
+          try:
+              df = pd.read_sql_query(query, npc.db_conn)
+              context['output'] = df.to_string()
+          except Exception as e:
+              context['output'] = "SQL Error: " + str(e)

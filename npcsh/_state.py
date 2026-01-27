@@ -1,11 +1,14 @@
 # Standard library imports
 import atexit
+import base64
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 import filecmp
 import inspect
+
 import logging
-import os
+
 from pathlib import Path
 import platform
 import re
@@ -16,8 +19,11 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import textwrap
+import readline
+import json
 from typing import Dict, List, Any, Tuple, Union, Optional, Callable
 import yaml
 
@@ -40,9 +46,9 @@ try:
     import pty
     import tty
     import termios
-    import readline
+
 except ImportError:
-    readline = None
+    
     pty = None
     tty = None
     termios = None
@@ -53,15 +59,21 @@ try:
 except ImportError:
     chromadb = None
 
+try:
+    import ollama
+except ImportError:
+    ollama = None
+
 # Third-party imports
-from colorama import Fore, Back, Style
+from colorama import Style
 from litellm import RateLimitError
+import numpy as np
 from termcolor import colored
 
 # npcpy imports
 from npcpy.data.load import load_file_contents
 from npcpy.data.web import search_web
-from npcpy.gen.embeddings import get_embeddings
+
 from npcpy.llm_funcs import (
     check_llm_command,
     get_llm_response,
@@ -74,25 +86,25 @@ from npcpy.memory.command_history import (
     save_conversation_message,
     load_kg_from_db,
     save_kg_to_db,
+    format_memory_context,
 )
 from npcpy.memory.knowledge_graph import kg_evolve_incremental
 from npcpy.memory.search import execute_rag_command, execute_brainblast_command
-from npcpy.npc_compiler import NPC, Team, load_jinxs_from_directory, build_jinx_tool_catalog
+from npcpy.npc_compiler import NPC, Team, build_jinx_tool_catalog
 from npcpy.npc_sysenv import (
     print_and_process_stream_with_markdown,
     render_markdown,
     get_model_and_provider,
     get_locally_available_models,
-    lookup_provider
+
 )
 from npcpy.tools import auto_tools
+from npcpy.gen.embeddings import get_embeddings
 
 # Local module imports
 from .config import (
-    VERSION,
     DEFAULT_NPC_TEAM_PATH,
     PROJECT_NPC_TEAM_PATH,
-    HISTORY_DB_DEFAULT_PATH,
     READLINE_HISTORY_FILE,
     NPCSH_CHAT_MODEL,
     NPCSH_CHAT_PROVIDER,
@@ -156,6 +168,9 @@ class ShellState:
     video_gen_provider: str = NPCSH_VIDEO_GEN_PROVIDER
     current_mode: str = NPCSH_DEFAULT_MODE
     build_kg: bool = NPCSH_BUILD_KG
+    kg_link_facts: bool = False      # Link facts to concepts (requires LLM calls)
+    kg_link_concepts: bool = False   # Link concepts to concepts (requires LLM calls)
+    kg_link_facts_facts: bool = False  # Link facts to facts (requires LLM calls)
     api_key: Optional[str] = None
     api_url: Optional[str] = NPCSH_API_URL
     current_path: str = field(default_factory=os.getcwd)
@@ -303,6 +318,33 @@ def set_npcsh_config_value(key: str, value: str):
     }
     if env_key in field_map:
         setattr(ShellState, field_map[env_key], parsed_val)
+
+    # Persist to ~/.npcshrc
+    npcshrc_path = os.path.expanduser("~/.npcshrc")
+    try:
+        existing_lines = []
+        if os.path.exists(npcshrc_path):
+            with open(npcshrc_path, 'r') as f:
+                existing_lines = f.readlines()
+
+        # Update or add the export line
+        export_line = f"export {env_key}=\"{value}\"\n"
+        found = False
+        for i, line in enumerate(existing_lines):
+            if line.strip().startswith(f"export {env_key}="):
+                existing_lines[i] = export_line
+                found = True
+                break
+
+        if not found:
+            existing_lines.append(export_line)
+
+        with open(npcshrc_path, 'w') as f:
+            f.writelines(existing_lines)
+    except Exception as e:
+        print(f"Warning: Could not persist config to {npcshrc_path}: {e}")
+
+
 def get_npc_path(npc_name: str, db_path: str) -> str:
     project_npc_team_dir = os.path.abspath("./npc_team")
     project_npc_path = os.path.join(project_npc_team_dir, f"{npc_name}.npc")
@@ -317,7 +359,7 @@ def get_npc_path(npc_name: str, db_path: str) -> str:
             if result:
                 return result[0]
 
-    except Exception as e:
+    except Exception:
         try:
             with sqlite3.connect(db_path) as conn:
                 cursor = conn.cursor()
@@ -424,10 +466,10 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     old_package_jinxs = set()
     if os.path.exists(manifest_path):
         try:
-            import json
+
             with open(manifest_path, 'r') as f:
                 old_package_jinxs = set(json.load(f).get('jinxs', []))
-        except:
+        except Exception:
             pass
 
     # Track current package jinxs
@@ -480,7 +522,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
 
     # Save updated manifest
     try:
-        import json
+        
         with open(manifest_path, 'w') as f:
             json.dump({'jinxs': list(current_package_jinxs), 'updated': str(__import__('datetime').datetime.now())}, f, indent=2)
     except Exception as e:
@@ -561,9 +603,6 @@ def get_relevant_memories(
     max_memories: int = 10,
     state: Optional[ShellState] = None
 ) -> List[Dict]:
-    
-    engine = command_history.engine
-    
     all_memories = command_history.get_memories_for_scope(
         npc=npc_name,
         team=team_name,
@@ -588,7 +627,7 @@ def get_relevant_memories(
 
     if state and state.embedding_model and state.embedding_provider:
         try:
-            from npcpy.gen.embeddings import get_embeddings
+            
             
             search_text = query if query else "recent context"
             query_embedding = get_embeddings(
@@ -606,7 +645,7 @@ def get_relevant_memories(
                 state.embedding_provider
             )
             
-            import numpy as np
+
             similarities = []
             for mem_emb in memory_embeddings:
                 similarity = np.dot(query_embedding, mem_emb) / (
@@ -816,7 +855,6 @@ BASH_COMMANDS = [
     "command",
     "compgen",
     "complete",
-    "continue",
     "declare",
     "dirs",
     "disown",
@@ -1283,7 +1321,7 @@ def get_setting_windows(key, default=None):
 
 
 def setup_readline() -> str:
-    import readline
+
     if readline is None:
         return None
     try:
@@ -1429,7 +1467,7 @@ def make_completer(shell_state: ShellState, router: Any):
             else:
                 return None # readline expects None when no more completions
             
-        except Exception as e:
+        except Exception:
             # Using completion_logger for internal debugging, not printing to stdout for user.
             # completion_logger.error(f"Exception in completion: {e}", exc_info=True) 
             return None
@@ -1589,7 +1627,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
     try:
         import termios
         import tty
-        import readline
+    
     except ImportError:
         return input(prompt)
 
@@ -1625,7 +1663,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
     try:
         import shutil
         term_width = shutil.get_terminal_size().columns
-    except:
+    except json.JSONDecodeError:
         term_width = 80
 
     def draw():
@@ -1638,7 +1676,6 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         sys.stdout.write('\r')
         # Move up for each wrapped line we're on
         cursor_total = prompt_visible_len + pos
-        cursor_line = cursor_total // term_width
         # Go up to the first line of input
         for _ in range(num_lines - 1):
             sys.stdout.write('\033[A')
@@ -1721,7 +1758,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                         # Check if this looks like binary/image data
                                         # Image signatures: PNG (\x89PNG), JPEG (\xff\xd8\xff), GIF (GIF8), BMP (BM)
                                         # Also check for high ratio of non-printable chars
-                                        is_binary = False
+
                                         if len(paste_buffer) > 4:
                                             # Check for common image magic bytes
                                             if paste_buffer[:4] == '\x89PNG' or paste_buffer[:8] == '\x89PNG\r\n\x1a\n':
@@ -1742,8 +1779,8 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
 
                                         if is_binary:
                                             # Save image data to temp file
-                                            import tempfile
-                                            import os
+
+                                            
                                             try:
                                                 # Determine extension from magic bytes
                                                 ext = '.bin'
@@ -1766,14 +1803,14 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                                 with os.fdopen(fd, 'wb') as f:
                                                     if paste_buffer.startswith('data:image/'):
                                                         # Decode base64 data URL
-                                                        import base64
+
                                                         _, data = paste_buffer.split(',', 1)
                                                         f.write(base64.b64decode(data))
                                                     else:
                                                         f.write(paste_buffer.encode('latin-1'))
                                                 pasted_content = temp_path  # Store path to image
                                                 placeholder = f"[pasted image: {temp_path}]"
-                                            except:
+                                            except Exception:
                                                 pasted_content = None
                                                 placeholder = "[pasted image: failed to save]"
                                         else:
@@ -1971,7 +2008,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                         sys.stdout.flush()
                     else:
                         pass  # No tool call to show
-                except:
+                except Exception:
                     pass
 
             elif c and ord(c) >= 32:  # Printable
@@ -2000,7 +2037,7 @@ def _get_slash_hints(state, router, prefix='/') -> str:
         try:
             import shutil
             term_width = shutil.get_terminal_size().columns
-        except:
+        except Exception:
             term_width = 80
 
         # Build hint string that fits in terminal
@@ -2149,44 +2186,20 @@ def wrap_text(text: str, width: int = 80) -> str:
 
 
 
-def setup_readline() -> str:
-    """Setup readline with history and completion"""
-    try:
-        readline.read_history_file(READLINE_HISTORY_FILE)
-        readline.set_history_length(1000)
-        
-      
-        readline.parse_and_bind("tab: complete")
-        
-        readline.parse_and_bind("set enable-bracketed-paste on")
-        readline.parse_and_bind(r'"\C-r": reverse-search-history')
-        readline.parse_and_bind(r'"\C-e": end-of-line')
-        readline.parse_and_bind(r'"\C-a": beginning-of-line')
-        
-        return READLINE_HISTORY_FILE
-        
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        print(f"Warning: Could not read readline history file {READLINE_HISTORY_FILE}: {e}")
 
-
-def save_readline_history():
-    try:
-        readline.write_history_file(READLINE_HISTORY_FILE)
-    except OSError as e:
-        print(f"Warning: Could not write readline history file {READLINE_HISTORY_FILE}: {e}")
         
 def store_command_embeddings(command: str, output: Any, state: ShellState):
     if not chroma_client or not state.embedding_model or not state.embedding_provider:
-        if not chroma_client: print("Warning: ChromaDB client not available for embeddings.", file=sys.stderr)
+        if not chroma_client:
+            print("Warning: ChromaDB client not available for embeddings.", file=sys.stderr)
         return
     if not command and not output:
         return
 
     try:
         output_str = str(output) if output else ""
-        if not command and not output_str: return 
+        if not command and not output_str:
+            return
 
         texts_to_embed = [command, output_str]
 
@@ -2358,10 +2371,7 @@ def _ollama_supports_tools(model: str) -> Optional[bool]:
     Best-effort check for tool-call support on an Ollama model by inspecting its template/metadata.
     Mirrors the lightweight check used in the Flask serve path.
     """
-    try:
-        import ollama  # Local import to avoid hard dependency when Ollama isn't installed
-    except Exception:
-        return None
+
 
     try:
         details = ollama.show(model)
@@ -2468,7 +2478,7 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
                     print(colored(f"  ⚡ {tool_name}", "cyan") + colored(f" {args_display}", "white", attrs=["dark"]), end="", flush=True)
                 else:
                     print(colored(f"  ⚡ {tool_name}", "cyan"), end="", flush=True)
-            except:
+            except Exception:
                 pass
 
         # Execute tool
@@ -2484,14 +2494,14 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
                             result_preview = result_preview[:200] + "..."
                         if result_preview and result_preview not in ('None', '', '{}', '[]'):
                             print(colored(f"    → {result_preview}", "white", attrs=["dark"]), flush=True)
-                except:
+                except Exception:
                     pass
             return result
         except Exception as e:
             if log_level != "silent":
                 try:
                     print(colored(f" ✗ {str(e)[:100]}", "red"), flush=True)
-                except:
+                except Exception as e:
                     pass
             raise
     return wrapped
@@ -2642,10 +2652,10 @@ def should_skip_kg_processing(user_input: str, assistant_output: str) -> bool:
     
     return False
 
-def execute_slash_command(command: str, 
-                          stdin_input: Optional[str], 
-                          state: ShellState, 
-                          stream: bool, 
+def execute_slash_command(command: str,
+                          stdin_input: Optional[str],
+                          state: ShellState,
+                          stream: bool,
                           router) -> Tuple[ShellState, Any]:
     """Executes slash commands using the router."""
     try:
@@ -2653,7 +2663,13 @@ def execute_slash_command(command: str,
     except ValueError:
         all_command_parts = command.split()
     command_name = all_command_parts[0].lstrip('/')
+
+    # --- QUIT/EXIT HANDLING ---
+    if command_name in ['quit', 'exit', 'q']:
     
+        print("Goodbye!")
+        sys.exit(0)
+
     # --- NPC SWITCHING LOGIC ---
     if command_name in ['n', 'npc']:
         npc_to_switch_to = all_command_parts[1] if len(all_command_parts) > 1 else None
@@ -2914,9 +2930,6 @@ def process_pipeline_command(
                         "tools": tools_for_llm,
                         "tool_map": tool_exec_map,
                     }
-                    # Only add tool_choice for providers that support it (not gemini)
-                    is_gemini = (exec_provider and "gemini" in exec_provider.lower()) or \
-                                (exec_model and "gemini" in exec_model.lower())
                     llm_kwargs["tool_choice"] = 'auto'
 
                     # Agent loop: keep calling LLM until it stops making tool calls
@@ -3105,7 +3118,7 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
     MAX_DELEGATION_DEPTH = 1  # Only allow one level of delegation
 
     if delegation_depth > MAX_DELEGATION_DEPTH:
-        return state, {'output': f"⚠ Maximum delegation depth reached."}
+        return state, {'output': "⚠ Maximum delegation depth reached."}
 
     if not state.team or not hasattr(state.team, 'npcs') or npc_name not in state.team.npcs:
         return state, {'output': f"⚠ NPC '{npc_name}' not found in team"}
@@ -3311,7 +3324,7 @@ def execute_command(
                                 )
                             )
                             stdin_for_next = full_stream_output
-                    except:
+                    except Exception:
                         if output is not None:
                             try:
                                 stdin_for_next = str(output)
@@ -3413,7 +3426,7 @@ def execute_command(
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     setup_npcsh_config()
 
-    db_path = os.getenv("NPCSH_DB_PATH", HISTORY_DB_DEFAULT_PATH)
+    db_path = NPCSH_DB_PATH
     db_path = os.path.expanduser(db_path)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     command_history = CommandHistory(db_path)
@@ -3424,11 +3437,11 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         print("NPCSH initialization complete. Restart or source ~/.npcshrc.")
 
     try:
-        history_file = setup_readline()
+        setup_readline()
         atexit.register(save_readline_history)
         atexit.register(command_history.close)
-    except:
-        pass
+    except OSError as e:
+        print(f"Warning: Failed to setup readline history: {e}", file=sys.stderr)
 
     project_team_path = os.path.abspath(PROJECT_NPC_TEAM_PATH)
     global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
@@ -3437,7 +3450,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     default_forenpc_name = None
     global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
     if not os.path.exists(global_team_path):
-        print(f"Global NPC team directory doesn't exist. Initializing...")
+        print("Global NPC team directory doesn't exist. Initializing...")
         initialize_base_npcs_if_needed(db_path)
     if os.path.exists(project_team_path):
         team_dir = project_team_path
@@ -3657,6 +3670,10 @@ def process_result(
     final_output_str = None
 
     # FIX: Handle dict output properly
+    msg_input_tokens = None
+    msg_output_tokens = None
+    msg_cost = None
+
     if isinstance(output, dict):
         # Use None-safe check to not skip empty strings
         output_content = output.get('output') if 'output' in output else output.get('response')
@@ -3666,15 +3683,18 @@ def process_result(
         # Accumulate token usage if available
         if 'usage' in output:
             usage = output['usage']
-            result_state.session_input_tokens += usage.get('input_tokens', 0)
-            result_state.session_output_tokens += usage.get('output_tokens', 0)
+            msg_input_tokens = usage.get('input_tokens', 0)
+            msg_output_tokens = usage.get('output_tokens', 0)
+            result_state.session_input_tokens += msg_input_tokens
+            result_state.session_output_tokens += msg_output_tokens
             # Calculate cost
             from npcpy.gen.response import calculate_cost
-            result_state.session_cost_usd += calculate_cost(
+            msg_cost = calculate_cost(
                 model_for_stream,
-                usage.get('input_tokens', 0),
-                usage.get('output_tokens', 0)
+                msg_input_tokens,
+                msg_output_tokens
             )
+            result_state.session_cost_usd += msg_cost
 
         # If output_content is still a dict, convert to string
         if isinstance(output_content, dict):
@@ -3736,6 +3756,9 @@ def process_result(
             provider=active_npc.provider,
             npc=npc_name,
             team=team_name,
+            input_tokens=msg_input_tokens,
+            output_tokens=msg_output_tokens,
+            cost=msg_cost,
         )
 
         result_state.turn_count += 1
@@ -3844,15 +3867,15 @@ def process_result(
                             result_state.current_path
                         )
                         evolved_npc_kg, _ = kg_evolve_incremental(
-                            existing_kg=npc_kg, 
+                            existing_kg=npc_kg,
                             new_facts=approved_facts,
-                            model=active_npc.model, 
-                            provider=active_npc.provider, 
+                            model=active_npc.model,
+                            provider=active_npc.provider,
                             npc=active_npc,
                             get_concepts=True,
-                            link_concepts_facts=False, 
-                            link_concepts_concepts=False, 
-                            link_facts_facts=False,                         
+                            link_concepts_facts=result_state.kg_link_facts,
+                            link_concepts_concepts=result_state.kg_link_concepts,
+                            link_facts_facts=result_state.kg_link_facts_facts,
                         )
                         save_kg_to_db(
                             engine,

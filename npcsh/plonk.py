@@ -4,7 +4,6 @@ plonk - Vision-based GUI automation CLI entry point
 This is a thin wrapper that executes the plonk.jinx through the jinx mechanism.
 """
 import argparse
-import os
 import sys
 
 from npcsh._state import setup_shell
