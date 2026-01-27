@@ -3,7 +3,6 @@ npcsh configuration management
 """
 import os
 import importlib.metadata
-from typing import Any
 
 # Version
 try:

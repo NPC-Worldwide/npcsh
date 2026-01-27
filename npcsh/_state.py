@@ -1,6 +1,7 @@
 # Standard library imports
 import atexit
 import base64
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 import filecmp
