@@ -191,7 +191,6 @@ def get_file_color(filepath: str) -> tuple:
 
 def format_file_listing(output: str) -> str:
     """Format file listing output with colors"""
-    import os
     from colorama import Style
 
     lines = output.strip().split('\n')

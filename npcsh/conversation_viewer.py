@@ -7,7 +7,7 @@ import sys
 import tty
 import termios
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple
 
 from termcolor import colored
 
@@ -317,7 +317,7 @@ class ConversationViewer:
                     elif self.mode == 'preview' and self.preview_scroll > 0:
                         self.preview_scroll -= 1
 
-        except Exception as e:
+        except Exception:
             return None
         finally:
             # Restore terminal
