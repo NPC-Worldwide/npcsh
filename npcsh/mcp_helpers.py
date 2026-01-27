@@ -4,7 +4,6 @@ Raw MCP client with no exception handling and full visibility.
 """
 
 import asyncio
-import os
 import sys
 import json
 try:
@@ -245,7 +244,7 @@ class MCPClient:
                 
               
                 self._log(f"Executing tool: {tool_name} with args: {tool_args}")
-                print(f"\nExecuting tool call:")
+                print("\nExecuting tool call:")
                 print(f"  Jinx name: {tool_name}")
                 print(f"  Jinx args: {tool_args}")
                 print(f"  Jinx args type: {type(tool_args)}")
@@ -268,7 +267,7 @@ class MCPClient:
                     print(f"  TextContent detected, text: {tool_result.text}")
                     tool_result = tool_result.text
                 elif isinstance(tool_result, list) and all(hasattr(item, 'text') for item in tool_result):
-                    print(f"  List of TextContent detected")
+                    print("  List of TextContent detected")
                     tool_result = [item.text for item in tool_result]
                 
               

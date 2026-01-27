@@ -4,7 +4,7 @@ alicanto - Deep research mode CLI entry point
 This is a thin wrapper that executes the alicanto.jinx through the jinx mechanism.
 """
 import argparse
-import os
+
 import sys
 
 from npcsh._state import setup_shell
@@ -30,7 +30,7 @@ def main():
         sys.exit(1)
 
     # Setup shell to get team and default NPC
-    command_history, team, default_npc = setup_shell()
+    _, team, default_npc = setup_shell()
 
     if not team or "alicanto" not in team.jinxs_dict:
         print("Error: alicanto jinx not found. Ensure npc_team/jinxs/modes/alicanto.jinx exists.")

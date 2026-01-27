@@ -1,94 +1,339 @@
 jinx_name: file_search
-description: Search file contents using RAG (Retrieval Augmented Generation)
+description: Find and browse files with interactive TUI
 inputs:
-- query: ""
-- file_paths: ""
-- emodel: ""
-- eprovider: ""
-- vector_db_path: ""
-- recursive: "false"
+- pattern: ""
+- path: "."
+- recursive: "true"
+- text: "false"
 
 steps:
   - name: search_files
     engine: python
     code: |
       import os
+      import sys
+      import tty
+      import termios
       import glob as globmod
+      import subprocess
+      import fnmatch
+      from datetime import datetime
 
-      query = context.get('query', '').strip()
-      file_paths_str = context.get('file_paths', '').strip()
+      pattern = context.get('pattern', '').strip()
+      base_path = context.get('path', '.').strip() or '.'
+      recursive = context.get('recursive', 'true').lower() in ('true', '1', 'yes')
+      text_mode = context.get('text', '').lower() in ('true', '1', 'yes')
 
-      if not query or not file_paths_str:
+      if not pattern:
           lines = [
-              "Usage: /file_search <query> file_paths=<path1,path2,...>",
+              "Usage: /file_search <pattern>",
               "",
               "Options:",
-              "  file_paths     - Comma-separated file paths or glob patterns (required)",
-              "  emodel         - Embedding model",
-              "  eprovider      - Embedding provider",
-              "  vector_db_path - Path to vector database",
-              "  recursive      - Use recursive glob for patterns (default false)",
+              "  path      - Base directory to search (default: current dir)",
+              "  recursive - Search subdirectories (default: true)",
+              "  text      - Text-only output, no TUI (true/false)",
+              "",
+              "TUI Controls:",
+              "  j/k or arrows - Navigate",
+              "  1/2/3         - Sort by name/size/date",
+              "  p             - Preview file contents",
+              "  o             - Open in $EDITOR",
+              "  i             - Open in incognide",
+              "  c             - Copy path to clipboard",
+              "  q/ESC         - Quit",
               "",
               "Examples:",
-              "  /file_search how does auth work file_paths=src/*.py",
-              "  /file_search database schema file_paths=docs/,README.md",
+              "  /file_search *.py",
+              "  /file_search *.js path=src",
+              "  /file_search test_*.py recursive=false",
           ]
           context['output'] = "\n".join(lines)
       else:
-          recursive = context.get('recursive', 'false').lower() == 'true'
-          emodel = context.get('emodel') or None
-          eprovider = context.get('eprovider') or None
-          try:
-              emodel = emodel or (state.embedding_model if 'state' in dir() and state else None)
-              eprovider = eprovider or (state.embedding_provider if 'state' in dir() and state else None)
-          except:
-              pass
-          vector_db_path = context.get('vector_db_path') or os.path.expanduser("~/.npcsh/npcsh_chroma.db")
+          base_path = os.path.expanduser(base_path)
+          if not os.path.isabs(base_path):
+              base_path = os.path.abspath(base_path)
 
           try:
-              resolved_paths = []
-              for path_spec in file_paths_str.split(','):
-                  path_spec = path_spec.strip()
-                  if not path_spec:
-                      continue
-                  expanded = os.path.expanduser(path_spec)
-                  if '*' in expanded or '?' in expanded:
-                      if recursive:
-                          matches = globmod.glob(expanded, recursive=True)
-                      else:
-                          matches = globmod.glob(expanded)
-                      resolved_paths.extend(matches)
-                  else:
-                      resolved_paths.append(os.path.abspath(expanded))
+              # Find matching files
+              files = []
 
-              file_contents = []
-              loaded_files = []
-              for path in resolved_paths:
-                  if os.path.isfile(path):
-                      chunks = load_file_contents(path)
-                      basename = os.path.basename(path)
-                      file_contents.extend([basename + ": " + chunk for chunk in chunks])
-                      loaded_files.append(basename)
-                  elif os.path.isdir(path):
-                      for root, dirs, files in os.walk(path):
-                          for f in files:
+              if recursive:
+                  # Walk directory tree
+                  for root, dirs, filenames in os.walk(base_path):
+                      dirs[:] = [d for d in dirs if not d.startswith('.')]
+                      for f in filenames:
+                          if fnmatch.fnmatch(f, pattern) or fnmatch.fnmatch(f.lower(), pattern.lower()):
                               fpath = os.path.join(root, f)
-                              chunks = load_file_contents(fpath)
-                              file_contents.extend([f + ": " + chunk for chunk in chunks])
-                              loaded_files.append(f)
-
-              if not file_contents:
-                  context['output'] = "No files found or loaded from: " + file_paths_str
+                              try:
+                                  stat = os.stat(fpath)
+                                  files.append({
+                                      'name': f,
+                                      'path': fpath,
+                                      'size': stat.st_size,
+                                      'mtime': stat.st_mtime
+                                  })
+                              except:
+                                  pass
               else:
-                  result = execute_rag_command(
-                      command=query,
-                      vector_db_path=vector_db_path,
-                      embedding_model=emodel,
-                      embedding_provider=eprovider,
-                      file_contents=file_contents
-                  )
-                  response = result.get('response', 'No RAG response.')
-                  context['output'] = "Searched " + str(len(loaded_files)) + " files:\n\n" + response
+                  # Just current directory
+                  for f in os.listdir(base_path):
+                      if fnmatch.fnmatch(f, pattern) or fnmatch.fnmatch(f.lower(), pattern.lower()):
+                          fpath = os.path.join(base_path, f)
+                          if os.path.isfile(fpath):
+                              try:
+                                  stat = os.stat(fpath)
+                                  files.append({
+                                      'name': f,
+                                      'path': fpath,
+                                      'size': stat.st_size,
+                                      'mtime': stat.st_mtime
+                                  })
+                              except:
+                                  pass
+
+              if not files:
+                  context['output'] = f"No files matching '{pattern}' in {base_path}"
+              elif text_mode:
+                  # Text-only output
+                  lines = [f"Found {len(files)} files matching '{pattern}':", ""]
+                  for f in sorted(files, key=lambda x: x['name']):
+                      lines.append(f"  {f['path']}")
+                  context['output'] = "\n".join(lines)
+              else:
+                  # Interactive TUI mode
+                  def get_terminal_size():
+                      try:
+                          size = os.get_terminal_size()
+                          return size.columns, size.lines
+                      except:
+                          return 80, 24
+
+                  def format_size(size):
+                      if size < 1024:
+                          return f"{size}B"
+                      elif size < 1024 * 1024:
+                          return f"{size // 1024}K"
+                      else:
+                          return f"{size // (1024 * 1024)}M"
+
+                  def format_date(mtime):
+                      try:
+                          dt = datetime.fromtimestamp(mtime)
+                          now = datetime.now()
+                          diff = now - dt
+                          if diff.days == 0:
+                              return dt.strftime('%H:%M')
+                          elif diff.days < 7:
+                              return dt.strftime('%a %H:%M')
+                          else:
+                              return dt.strftime('%b %d')
+                      except:
+                          return '?'
+
+                  width, height = get_terminal_size()
+                  selected = 0
+                  scroll = 0
+                  list_height = height - 5
+                  mode = 'list'
+                  preview_scroll = 0
+                  preview_lines = []
+                  sort_mode = 'name'  # name, size, date
+
+                  def sort_files(files, sort_mode):
+                      if sort_mode == 'name':
+                          return sorted(files, key=lambda x: x['name'].lower())
+                      elif sort_mode == 'size':
+                          return sorted(files, key=lambda x: x['size'], reverse=True)
+                      elif sort_mode == 'date':
+                          return sorted(files, key=lambda x: x['mtime'], reverse=True)
+                      return files
+
+                  display_files = sort_files(files, sort_mode)
+
+                  fd = sys.stdin.fileno()
+                  old_settings = termios.tcgetattr(fd)
+
+                  try:
+                      tty.setcbreak(fd)
+                      sys.stdout.write('\033[?25l')
+                      sys.stdout.write('\033[2J\033[H')
+
+                      while True:
+                          width, height = get_terminal_size()
+                          list_height = height - 5
+
+                          if mode == 'list':
+                              if selected < scroll:
+                                  scroll = selected
+                              elif selected >= scroll + list_height:
+                                  scroll = selected - list_height + 1
+
+                          sys.stdout.write('\033[H')
+
+                          # Header
+                          if mode == 'list':
+                              sort_ind = {'name': '1', 'size': '2', 'date': '3'}[sort_mode]
+                              header = f" FILES ({len(display_files)}): '{pattern}' [sort:{sort_mode}({sort_ind})] "
+                          else:
+                              header = f" PREVIEW: {display_files[selected]['name']} "
+                          sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+
+                          # Column headers
+                          if mode == 'list':
+                              col_header = f' {"NAME":<30} {"SIZE":<8} {"MODIFIED":<12} {"PATH":<30}'
+                              sys.stdout.write(f'\033[90m{col_header[:width]}\033[0m\n')
+                          else:
+                              sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+
+                          if mode == 'list':
+                              for i in range(list_height):
+                                  idx = scroll + i
+                                  sys.stdout.write(f'\033[{3+i};1H\033[K')
+                                  if idx >= len(display_files):
+                                      continue
+
+                                  f = display_files[idx]
+                                  name = f['name'][:30]
+                                  size = format_size(f['size'])
+                                  mtime = format_date(f['mtime'])
+                                  # Show relative path if possible
+                                  path = f['path']
+                                  cwd = os.getcwd()
+                                  if path.startswith(cwd):
+                                      path = '.' + path[len(cwd):]
+                                  path = path[:35]
+
+                                  line = f" {name:<30} {size:<8} {mtime:<12} {path}"
+                                  line = line[:width-1]
+
+                                  if idx == selected:
+                                      sys.stdout.write(f'\033[47;30;1m>{line}\033[0m')
+                                  else:
+                                      sys.stdout.write(f' {line}')
+
+                              # Status bar
+                              sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                              f = display_files[selected] if display_files else {}
+                              full_path = f.get('path', '')
+                              sys.stdout.write(f'\033[{height-1};1H\033[K {full_path}'.ljust(width)[:width])
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav 1/2/3:Sort p:Preview o:Edit i:Incog c:Copy q:Quit [{selected+1}/{len(display_files)}] \033[0m')
+
+                          elif mode == 'preview':
+                              for i in range(list_height):
+                                  idx = preview_scroll + i
+                                  sys.stdout.write(f'\033[{3+i};1H\033[K')
+                                  if idx < len(preview_lines):
+                                      sys.stdout.write(preview_lines[idx][:width-1])
+
+                              sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                              sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(preview_lines)} lines]')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll b:Back o:Edit q:Quit \033[0m')
+
+                          sys.stdout.flush()
+
+                          c = sys.stdin.read(1)
+
+                          if c == '\x1b':
+                              c2 = sys.stdin.read(1)
+                              if c2 == '[':
+                                  c3 = sys.stdin.read(1)
+                                  if c3 == 'A':
+                                      if mode == 'list' and selected > 0:
+                                          selected -= 1
+                                      elif mode == 'preview' and preview_scroll > 0:
+                                          preview_scroll -= 1
+                                  elif c3 == 'B':
+                                      if mode == 'list' and selected < len(display_files) - 1:
+                                          selected += 1
+                                      elif mode == 'preview' and preview_scroll < 500:
+                                          preview_scroll += 1
+                              else:
+                                  if mode == 'preview':
+                                      mode = 'list'
+                                      sys.stdout.write('\033[2J\033[H')
+                                  else:
+                                      context['output'] = "Cancelled."
+                                      break
+                              continue
+
+                          if c == 'q' or c == '\x03':
+                              context['output'] = "Cancelled."
+                              break
+                          elif c == 'k':
+                              if mode == 'list' and selected > 0:
+                                  selected -= 1
+                              elif mode == 'preview' and preview_scroll > 0:
+                                  preview_scroll -= 1
+                          elif c == 'j':
+                              if mode == 'list' and selected < len(display_files) - 1:
+                                  selected += 1
+                              elif mode == 'preview' and preview_scroll < 500:
+                                  preview_scroll += 1
+                          elif c == '1':
+                              sort_mode = 'name'
+                              display_files = sort_files(files, sort_mode)
+                              selected = 0
+                              scroll = 0
+                          elif c == '2':
+                              sort_mode = 'size'
+                              display_files = sort_files(files, sort_mode)
+                              selected = 0
+                              scroll = 0
+                          elif c == '3':
+                              sort_mode = 'date'
+                              display_files = sort_files(files, sort_mode)
+                              selected = 0
+                              scroll = 0
+                          elif c == 'p' and mode == 'list' and display_files:
+                              # Preview file contents
+                              f = display_files[selected]
+                              try:
+                                  with open(f['path'], 'r', errors='replace') as fp:
+                                      content = fp.read(50000)
+                                  preview_lines = content.split('\n')[:500]
+                              except:
+                                  preview_lines = ['Error reading file']
+                              mode = 'preview'
+                              preview_scroll = 0
+                              sys.stdout.write('\033[2J\033[H')
+                          elif c == 'b' and mode == 'preview':
+                              mode = 'list'
+                              sys.stdout.write('\033[2J\033[H')
+                          elif c == 'o' and display_files:
+                              f = display_files[selected]
+                              editor = os.environ.get('EDITOR', 'vim')
+                              # Restore terminal, run editor, then back to TUI
+                              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                              sys.stdout.write('\033[?25h\033[2J\033[H')
+                              os.system(f'{editor} "{f["path"]}"')
+                              tty.setcbreak(fd)
+                              sys.stdout.write('\033[?25l\033[2J\033[H')
+                          elif c == 'i' and display_files:
+                              f = display_files[selected]
+                              try:
+                                  subprocess.run(['npcsh', '-c', f'/navigate url=file://{f["path"]}'], check=False, capture_output=True)
+                              except:
+                                  pass
+                          elif c == 'c' and display_files:
+                              f = display_files[selected]
+                              try:
+                                  subprocess.run(['xclip', '-selection', 'clipboard'], input=f['path'].encode(), check=True)
+                              except:
+                                  try:
+                                      subprocess.run(['xsel', '--clipboard', '--input'], input=f['path'].encode(), check=True)
+                                  except:
+                                      pass
+                          elif c in ('\r', '\n') and display_files:
+                              f = display_files[selected]
+                              context['output'] = f"Selected: {f['name']}\nPath: {f['path']}"
+                              break
+
+                  finally:
+                      termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                      sys.stdout.write('\033[?25h')
+                      sys.stdout.write('\033[2J\033[H')
+                      sys.stdout.flush()
+
           except Exception as e:
               import traceback
               context['output'] = "File search error: " + str(e) + "\n" + traceback.format_exc()

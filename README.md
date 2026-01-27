@@ -493,6 +493,9 @@ npc vixynt "a sunset over mountains"
 | `/teamviz` | Visualize team structure. Usage: `/teamviz save=output.png` |
 | `/ots` | Screenshot analysis. Usage: `/ots` then select area |
 | `/sleep` | Evolve knowledge graph. Usage: `/sleep --ops link_facts,deepen` |
+| `/kg_search` | Search knowledge graph with multiple modes. Usage: `/kg_search query mode=hybrid depth=2` |
+| `/mem_search` | Search approved memories. Usage: `/mem_search query status=approved top_k=10` |
+| `/mem_review` | Review pending memories interactively. Usage: `/mem_review limit=50` |
 
 ### System & Config
 | Command | Description |
@@ -522,6 +525,92 @@ npc vixynt "a sunset over mountains"
     --exploration     (-ex)        | --npc             (-np)        | --rprovider       (-rp)        |                               
     --format          (-f)         | --num_frames      (-num_f)     | --sprovider       (-s)         |                               
     ```
+
+## Memory & Knowledge Graph
+
+`npcsh` maintains a memory lifecycle system that allows agents to learn and grow from past interactions. Memories progress through stages and can be incorporated into a knowledge graph for advanced retrieval.
+
+### Memory Lifecycle
+
+Memories are extracted from conversations and follow this lifecycle:
+
+1. **pending_approval** - New memories awaiting review
+2. **human-approved** - Approved and ready for KG integration
+3. **human-rejected** - Rejected (used as negative examples)
+4. **human-edited** - Modified by user before approval
+5. **skipped** - Deferred for later review
+
+### Memory Commands
+
+```bash
+# Search through approved memories
+/mem_search python                      # Keyword search
+/mem_search python status=approved      # Filter by status
+/mem_search python top_k=20             # Limit results
+
+# Review pending memories interactively
+/mem_review                             # Review with default limit
+/mem_review limit=50                    # Review more at once
+```
+
+### Knowledge Graph
+
+The knowledge graph stores facts and concepts extracted from approved memories, enabling semantic search and reasoning. Facts are linked to concepts, allowing traversal-based discovery.
+
+```bash
+# Keyword search
+/kg_search python                       # Simple keyword match
+
+# Semantic similarity search
+/kg_search python mode=embedding        # Find semantically similar facts
+
+# Graph traversal search
+/kg_search python mode=link depth=3     # Traverse graph links
+
+# Hybrid search (combines methods)
+/kg_search python mode=all              # All methods combined
+
+# Explore concepts
+/kg_search type=concepts                # List all concepts
+/kg_search concept="Machine Learning"   # Explore a specific concept
+```
+
+### Knowledge Graph Evolution
+
+The `/sleep` command evolves the knowledge graph through consolidation, abstraction, and creative synthesis:
+
+```bash
+# Basic sleep (consolidation)
+/sleep
+
+# Import approved memories first, then evolve
+/sleep backfill=true
+
+# Dream mode - creative synthesis across domains
+/sleep dream=true
+
+# Combined backfill and dream
+/sleep backfill=true dream=true
+
+# Specific operations
+/sleep ops=prune,deepen,abstract
+```
+
+**Operations:**
+- **prune** - Remove redundant or low-value facts
+- **deepen** - Add detail to existing facts
+- **abstract** - Create higher-level generalizations
+- **link** - Connect related facts and concepts
+
+### Environment Variables
+
+```bash
+# Enable/disable automatic KG building (default: enabled)
+export NPCSH_BUILD_KG=1
+
+# Database path
+export NPCSH_DB_PATH=~/npcsh_history.db
+```
 
 ## Read the Docs
 To see more about how to use the jinxs and modes in the NPC Shell, read the docs at [npc-shell.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/)

@@ -1,4 +1,3 @@
-import os
 import shutil
 import textwrap
 from pathlib import Path
@@ -11,8 +10,7 @@ def build_flask_server(config, **kwargs):
     server_script = output_dir / 'npc_server.py'
     
     server_code = textwrap.dedent(f'''
-    import os
-    from npcpy.serve import start_flask_server
+      from npcpy.serve import start_flask_server
     from npcpy.npc_compiler import Team
     from sqlalchemy import create_engine
     
@@ -111,7 +109,7 @@ def build_docker_compose(config, **kwargs):
         volumes:
           - npc-data:/root/.npcsh
         environment:
-          - NPCSH_DB_PATH=/root/.npcsh/npcsh_history.db
+          - NPCSH_DB_PATH=/root/npcsh_history.db
     
     volumes:
       npc-data:

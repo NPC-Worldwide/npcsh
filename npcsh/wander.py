@@ -4,7 +4,6 @@ wander - Experimental wandering mode CLI entry point
 This is a thin wrapper that executes the wander.jinx through the jinx mechanism.
 """
 import argparse
-import os
 import sys
 
 from npcsh._state import setup_shell
