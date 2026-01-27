@@ -11,8 +11,7 @@ def build_flask_server(config, **kwargs):
     server_script = output_dir / 'npc_server.py'
     
     server_code = textwrap.dedent(f'''
-    import os
-    from npcpy.serve import start_flask_server
+      from npcpy.serve import start_flask_server
     from npcpy.npc_compiler import Team
     from sqlalchemy import create_engine
     

@@ -30,8 +30,8 @@ from typing import Optional, Dict, Any, List, Union, Callable, get_type_hints
 from functools import wraps
 import sys 
 
-from npcpy.llm_funcs import  generate_group_candidates, abstract, 
-zoom_in,   execute_llm_command, gen_image
+from npcpy.llm_funcs import (generate_group_candidates, abstract, 
+zoom_in,   execute_llm_command, gen_image)
 from npcpy.memory.search import search_similar_texts, execute_search_command, execute_rag_command,  answer_with_rag, execute_brainblast_command
 from npcpy.data.load import load_file_contents
 from npcpy.memory.command_history import CommandHistory
@@ -268,7 +268,7 @@ def register_selected_npcpy_tools():
              gen_image, 
              load_file_contents, 
              capture_screenshot, 
-             search_web, ]
+             search_web ]
 
     for func in tools:
       

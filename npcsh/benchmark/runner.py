@@ -5,14 +5,14 @@ Provides a convenient interface for running Terminal-Bench evaluations
 with different models and providers.
 """
 
-import os
 import subprocess
 import sys
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-import json
+
 
 
 @dataclass
@@ -243,7 +243,7 @@ class BenchmarkRunner:
         if n_tasks:
             cmd.extend(["-l", str(n_tasks)])
 
-        print(f"\nRunning Terminal-Bench evaluation:")
+        print("\nRunning Terminal-Bench evaluation:")
         print(f"  Model: {full_model}")
         print(f"  Dataset: {dataset_str}")
         print(f"  Concurrent tasks: {n_concurrent}")
@@ -378,9 +378,9 @@ class BenchmarkRunner:
         results = {}
 
         for model, provider in models:
-            print(f"\n{'='*60}")
+            print("\n" + '='*60)
             print(f"Evaluating: {provider}/{model}")
-            print(f"{'='*60}")
+            print('='*60)
 
             result = self.run(
                 model=model,
@@ -405,9 +405,9 @@ class BenchmarkRunner:
 
     def _print_comparison_summary(self, results: Dict[str, BenchmarkResult]) -> None:
         """Print a comparison summary table."""
-        print(f"\n{'='*60}")
+        print("\n" + '='*60)
         print("COMPARISON SUMMARY")
-        print(f"{'='*60}")
+        print('='*60)
         print(f"{'Model':<40} {'Accuracy':>10} {'Tasks':>10}")
         print("-" * 60)
 
@@ -583,7 +583,7 @@ Examples:
             ("gpt-4o", "openai"),
             ("gemini-2.0-flash", "gemini"),
         ]
-        results = runner.compare_models(
+        runner.compare_models(
             models_to_compare,
             n_concurrent=args.concurrent
         )
@@ -602,7 +602,7 @@ Examples:
             n_concurrent=args.concurrent,
             npc_name=args.npc,
         )
-        print(f"\nBenchmark complete!")
+        print("\nBenchmark complete!")
         print(f"Accuracy: {result.accuracy:.1%}")
         print(f"Results saved to: {result.output_dir}")
 
