@@ -1,11 +1,13 @@
 # Standard library imports
 import atexit
+import base64
 from dataclasses import dataclass, field
 from datetime import datetime
 import filecmp
 import inspect
+
 import logging
-import os
+
 from pathlib import Path
 import platform
 import re
@@ -16,8 +18,10 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import textwrap
+import readlineimport json
 from typing import Dict, List, Any, Tuple, Union, Optional, Callable
 import yaml
 
@@ -40,9 +44,9 @@ try:
     import pty
     import tty
     import termios
-    import readline
+
 except ImportError:
-    readline = None
+    
     pty = None
     tty = None
     termios = None
@@ -53,15 +57,21 @@ try:
 except ImportError:
     chromadb = None
 
+try:
+    import ollama
+except ImportError:
+    ollama = None
+
 # Third-party imports
-from colorama import Fore, Back, Style
+from colorama import Style
 from litellm import RateLimitError
+import numpy as np
 from termcolor import colored
 
 # npcpy imports
 from npcpy.data.load import load_file_contents
 from npcpy.data.web import search_web
-from npcpy.gen.embeddings import get_embeddings
+
 from npcpy.llm_funcs import (
     check_llm_command,
     get_llm_response,
@@ -78,13 +88,13 @@ from npcpy.memory.command_history import (
 )
 from npcpy.memory.knowledge_graph import kg_evolve_incremental
 from npcpy.memory.search import execute_rag_command, execute_brainblast_command
-from npcpy.npc_compiler import NPC, Team, load_jinxs_from_directory, build_jinx_tool_catalog
+from npcpy.npc_compiler import NPC, Team, build_jinx_tool_catalog
 from npcpy.npc_sysenv import (
     print_and_process_stream_with_markdown,
     render_markdown,
     get_model_and_provider,
     get_locally_available_models,
-    lookup_provider
+
 )
 from npcpy.tools import auto_tools
 
@@ -454,10 +464,10 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     old_package_jinxs = set()
     if os.path.exists(manifest_path):
         try:
-            import json
+
             with open(manifest_path, 'r') as f:
                 old_package_jinxs = set(json.load(f).get('jinxs', []))
-        except:
+        except Exception as e:
             pass
 
     # Track current package jinxs
@@ -510,7 +520,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
 
     # Save updated manifest
     try:
-        import json
+        
         with open(manifest_path, 'w') as f:
             json.dump({'jinxs': list(current_package_jinxs), 'updated': str(__import__('datetime').datetime.now())}, f, indent=2)
     except Exception as e:
@@ -618,7 +628,7 @@ def get_relevant_memories(
 
     if state and state.embedding_model and state.embedding_provider:
         try:
-            from npcpy.gen.embeddings import get_embeddings
+            
             
             search_text = query if query else "recent context"
             query_embedding = get_embeddings(
@@ -636,7 +646,7 @@ def get_relevant_memories(
                 state.embedding_provider
             )
             
-            import numpy as np
+
             similarities = []
             for mem_emb in memory_embeddings:
                 similarity = np.dot(query_embedding, mem_emb) / (
@@ -1312,7 +1322,7 @@ def get_setting_windows(key, default=None):
 
 
 def setup_readline() -> str:
-    import readline
+
     if readline is None:
         return None
     try:
@@ -1583,7 +1593,7 @@ def print_jinxs(jinxs):
     for jinx in jinxs:
         output += f"  {jinx.jinx_name}\n"
         output += f"   Description: {jinx.description}\n"
-        output += f"   Inputs: {jinx.inputs}\n"
+        output += f"   Inputs: {jinx.inputs}\n"    return output
     return output
 
 def open_terminal_editor(command: str) -> str:
@@ -1618,7 +1628,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
     try:
         import termios
         import tty
-        import readline
+    
     except ImportError:
         return input(prompt)
 
@@ -1654,7 +1664,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
     try:
         import shutil
         term_width = shutil.get_terminal_size().columns
-    except:
+    except json.JSONDecodeError:
         term_width = 80
 
     def draw():
@@ -1750,7 +1760,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                         # Check if this looks like binary/image data
                                         # Image signatures: PNG (\x89PNG), JPEG (\xff\xd8\xff), GIF (GIF8), BMP (BM)
                                         # Also check for high ratio of non-printable chars
-                                        is_binary = False
+
                                         if len(paste_buffer) > 4:
                                             # Check for common image magic bytes
                                             if paste_buffer[:4] == '\x89PNG' or paste_buffer[:8] == '\x89PNG\r\n\x1a\n':
@@ -1771,8 +1781,8 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
 
                                         if is_binary:
                                             # Save image data to temp file
-                                            import tempfile
-                                            import os
+
+                                            
                                             try:
                                                 # Determine extension from magic bytes
                                                 ext = '.bin'
@@ -1795,14 +1805,14 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                                 with os.fdopen(fd, 'wb') as f:
                                                     if paste_buffer.startswith('data:image/'):
                                                         # Decode base64 data URL
-                                                        import base64
+
                                                         _, data = paste_buffer.split(',', 1)
                                                         f.write(base64.b64decode(data))
                                                     else:
                                                         f.write(paste_buffer.encode('latin-1'))
                                                 pasted_content = temp_path  # Store path to image
                                                 placeholder = f"[pasted image: {temp_path}]"
-                                            except:
+                                            except Exception as e:
                                                 pasted_content = None
                                                 placeholder = "[pasted image: failed to save]"
                                         else:
@@ -2000,7 +2010,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                         sys.stdout.flush()
                     else:
                         pass  # No tool call to show
-                except:
+                except Exception as e:
                     pass
 
             elif c and ord(c) >= 32:  # Printable
@@ -2029,7 +2039,7 @@ def _get_slash_hints(state, router, prefix='/') -> str:
         try:
             import shutil
             term_width = shutil.get_terminal_size().columns
-        except:
+        except Exception as e:
             term_width = 80
 
         # Build hint string that fits in terminal
@@ -2178,33 +2188,7 @@ def wrap_text(text: str, width: int = 80) -> str:
 
 
 
-def setup_readline() -> str:
-    """Setup readline with history and completion"""
-    try:
-        readline.read_history_file(READLINE_HISTORY_FILE)
-        readline.set_history_length(1000)
-        
-      
-        readline.parse_and_bind("tab: complete")
-        
-        readline.parse_and_bind("set enable-bracketed-paste on")
-        readline.parse_and_bind(r'"\C-r": reverse-search-history')
-        readline.parse_and_bind(r'"\C-e": end-of-line')
-        readline.parse_and_bind(r'"\C-a": beginning-of-line')
-        
-        return READLINE_HISTORY_FILE
-        
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        print(f"Warning: Could not read readline history file {READLINE_HISTORY_FILE}: {e}")
 
-
-def save_readline_history():
-    try:
-        readline.write_history_file(READLINE_HISTORY_FILE)
-    except OSError as e:
-        print(f"Warning: Could not write readline history file {READLINE_HISTORY_FILE}: {e}")
         
 def store_command_embeddings(command: str, output: Any, state: ShellState):
     if not chroma_client or not state.embedding_model or not state.embedding_provider:
@@ -2387,10 +2371,7 @@ def _ollama_supports_tools(model: str) -> Optional[bool]:
     Best-effort check for tool-call support on an Ollama model by inspecting its template/metadata.
     Mirrors the lightweight check used in the Flask serve path.
     """
-    try:
-        import ollama  # Local import to avoid hard dependency when Ollama isn't installed
-    except Exception:
-        return None
+
 
     try:
         details = ollama.show(model)
@@ -2497,7 +2478,7 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
                     print(colored(f"  ⚡ {tool_name}", "cyan") + colored(f" {args_display}", "white", attrs=["dark"]), end="", flush=True)
                 else:
                     print(colored(f"  ⚡ {tool_name}", "cyan"), end="", flush=True)
-            except:
+            except Exception as e:
                 pass
 
         # Execute tool
@@ -2513,14 +2494,14 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
                             result_preview = result_preview[:200] + "..."
                         if result_preview and result_preview not in ('None', '', '{}', '[]'):
                             print(colored(f"    → {result_preview}", "white", attrs=["dark"]), flush=True)
-                except:
+                except Exception as e:
                     pass
             return result
         except Exception as e:
             if log_level != "silent":
                 try:
                     print(colored(f" ✗ {str(e)[:100]}", "red"), flush=True)
-                except:
+                except Exception as e:
                     pass
             raise
     return wrapped
@@ -2685,7 +2666,7 @@ def execute_slash_command(command: str,
 
     # --- QUIT/EXIT HANDLING ---
     if command_name in ['quit', 'exit', 'q']:
-        import sys
+    
         print("Goodbye!")
         sys.exit(0)
 
@@ -3346,7 +3327,7 @@ def execute_command(
                                 )
                             )
                             stdin_for_next = full_stream_output
-                    except:
+                    except Exception as e:
                         if output is not None:
                             try:
                                 stdin_for_next = str(output)
@@ -3462,8 +3443,8 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         history_file = setup_readline()
         atexit.register(save_readline_history)
         atexit.register(command_history.close)
-    except:
-        pass
+    except OSError as e:
+        print(f"Warning: Failed to setup readline history: {e}", file=sys.stderr)
 
     project_team_path = os.path.abspath(PROJECT_NPC_TEAM_PATH)
     global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
