@@ -1,0 +1,357 @@
+jinx_name: pti
+description: Pardon-The-Interruption - human-in-the-loop reasoning with think tags and interruptible streaming
+npc: frederic
+inputs:
+  - model: null
+  - provider: null
+  - files: null
+  - reasoning_model: null
+
+steps:
+  - name: pti_repl
+    engine: python
+    code: |
+      import os
+      import sys
+      import re
+      import tty
+      import termios
+      from termcolor import colored
+
+      from npcpy.llm_funcs import get_llm_response
+      from npcpy.npc_sysenv import get_system_message, render_markdown
+      from npcpy.data.load import load_file_contents
+      from npcpy.data.text import rag_search
+
+      npc = context.get('npc')
+      team = context.get('team')
+      messages = context.get('messages', [])
+      files = context.get('files')
+
+      # Resolve npc if it's a string (npc name) rather than NPC object
+      if isinstance(npc, str) and team:
+          npc = team.get(npc) if hasattr(team, 'get') else None
+      elif isinstance(npc, str):
+          npc = None
+
+      # ========== TUI Helper Functions ==========
+      def get_terminal_size():
+          try:
+              size = os.get_terminal_size()
+              return size.columns, size.lines
+          except:
+              return 80, 24
+
+      def extract_thinking(messages):
+          """Extract <think> blocks from assistant messages"""
+          thinking_blocks = []
+          for i, msg in enumerate(messages):
+              if msg.get('role') == 'assistant':
+                  content = msg.get('content', '')
+                  # Find all <think>...</think> blocks
+                  pattern = r'<think>(.*?)</think>'
+                  matches = re.findall(pattern, content, re.DOTALL)
+                  for j, match in enumerate(matches):
+                      thinking_blocks.append({
+                          'msg_idx': i,
+                          'block_idx': j,
+                          'content': match.strip()
+                      })
+          return thinking_blocks
+
+      def thinking_tui_browser(messages):
+          """Interactive TUI browser for thinking steps"""
+          thinking = extract_thinking(messages)
+
+          if not thinking:
+              print(colored("No thinking blocks found. Use <think> tags to show reasoning.", "yellow"))
+              return
+
+          width, height = get_terminal_size()
+          selected = 0
+          scroll = 0
+          list_height = height - 5
+          mode = 'list'
+          preview_scroll = 0
+          preview_lines = []
+
+          fd = sys.stdin.fileno()
+          old_settings = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              sys.stdout.write('\033[2J\033[H')
+
+              while True:
+                  width, height = get_terminal_size()
+                  list_height = height - 5
+
+                  if mode == 'list':
+                      if selected < scroll:
+                          scroll = selected
+                      elif selected >= scroll + list_height:
+                          scroll = selected - list_height + 1
+
+                  sys.stdout.write('\033[H')
+
+                  # Header
+                  if mode == 'list':
+                      header = f" PTI THINKING STEPS ({len(thinking)} blocks) "
+                  else:
+                      header = f" THINKING BLOCK {selected + 1} "
+                  sys.stdout.write(f'\033[43;30;1m{header.ljust(width)}\033[0m\n')
+
+                  if mode == 'list':
+                      col_header = f' {"#":<4} {"MSG":<5} {"PREVIEW":<65}'
+                      sys.stdout.write(f'\033[90m{col_header[:width]}\033[0m\n')
+                  else:
+                      sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+
+                  if mode == 'list':
+                      for i in range(list_height):
+                          idx = scroll + i
+                          sys.stdout.write(f'\033[{3+i};1H\033[K')
+                          if idx >= len(thinking):
+                              continue
+
+                          t = thinking[idx]
+                          msg_num = t['msg_idx'] + 1
+                          preview = t['content'][:65].replace('\n', ' ')
+
+                          line = f" {idx+1:<4} {msg_num:<5} {preview}"
+                          line = line[:width-1]
+
+                          if idx == selected:
+                              sys.stdout.write(f'\033[47;30;1m>{line.ljust(width-2)}\033[0m')
+                          else:
+                              sys.stdout.write(f'\033[33m{line}\033[0m')
+
+                      # Status bar
+                      sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                      t = thinking[selected] if thinking else {}
+                      word_count = len(t.get('content', '').split())
+                      sys.stdout.write(f'\033[{height-1};1H\033[K Words: {word_count}'.ljust(width)[:width])
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m j/k:Nav p:View Enter:Expand q:Quit [{selected+1}/{len(thinking)}] \033[0m')
+
+                  else:  # preview mode
+                      for i in range(list_height):
+                          idx = preview_scroll + i
+                          sys.stdout.write(f'\033[{3+i};1H\033[K')
+                          if idx < len(preview_lines):
+                              sys.stdout.write(preview_lines[idx][:width-1])
+
+                      sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                      sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(preview_lines)} lines]')
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m j/k:Scroll b:Back q:Quit \033[0m')
+
+                  sys.stdout.flush()
+
+                  c = sys.stdin.read(1)
+
+                  if c == '\x1b':
+                      c2 = sys.stdin.read(1)
+                      if c2 == '[':
+                          c3 = sys.stdin.read(1)
+                          if c3 == 'A':  # Up
+                              if mode == 'list' and selected > 0:
+                                  selected -= 1
+                              elif mode == 'preview' and preview_scroll > 0:
+                                  preview_scroll -= 1
+                          elif c3 == 'B':  # Down
+                              if mode == 'list' and selected < len(thinking) - 1:
+                                  selected += 1
+                              elif mode == 'preview' and preview_scroll < max(0, len(preview_lines) - list_height):
+                                  preview_scroll += 1
+                      else:
+                          if mode == 'preview':
+                              mode = 'list'
+                              sys.stdout.write('\033[2J\033[H')
+                          else:
+                              return
+                      continue
+
+                  if c == 'q' or c == '\x03':
+                      return
+                  elif c == 'k':
+                      if mode == 'list' and selected > 0:
+                          selected -= 1
+                      elif mode == 'preview' and preview_scroll > 0:
+                          preview_scroll -= 1
+                  elif c == 'j':
+                      if mode == 'list' and selected < len(thinking) - 1:
+                          selected += 1
+                      elif mode == 'preview' and preview_scroll < max(0, len(preview_lines) - list_height):
+                          preview_scroll += 1
+                  elif c in ('p', '\r', '\n') and mode == 'list':
+                      # Preview thinking block
+                      t = thinking[selected]
+                      preview_str = f"Thinking Block {selected + 1}\n"
+                      preview_str += f"From message {t['msg_idx'] + 1}\n"
+                      preview_str += f"{'=' * 40}\n\n"
+                      preview_str += t['content']
+                      preview_lines = preview_str.split('\n')
+                      mode = 'preview'
+                      preview_scroll = 0
+                      sys.stdout.write('\033[2J\033[H')
+                  elif c == 'b' and mode == 'preview':
+                      mode = 'list'
+                      sys.stdout.write('\033[2J\033[H')
+
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+              sys.stdout.write('\033[?25h')
+              sys.stdout.write('\033[2J\033[H')
+              sys.stdout.flush()
+
+      # PTI uses reasoning model for deeper thinking
+      # Handle case where npc might be a string (npc name) or NPC object
+      model = context.get('reasoning_model') or context.get('model') or (npc.model if npc and hasattr(npc, 'model') else None)
+      provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') else None)
+
+      print("""
+      ██████╗ ████████╗██╗
+      ██╔══██╗╚══██╔══╝██║
+      ██████╔╝   ██║   ██║
+      ██╔═══╝    ██║   ██║
+      ██║        ██║   ██║
+      ╚═╝        ╚═╝   ╚═╝
+
+      Pardon-The-Interruption
+      Human-in-the-loop reasoning mode
+      """)
+
+      npc_name = npc.name if npc else "pti"
+      print(f"Entering PTI mode (NPC: {npc_name}). Type '/pq' to exit.")
+      print("  - AI will use <think> tags for step-by-step reasoning")
+      print("  - Use <request_for_input> to pause and ask questions")
+      print("  - Ctrl+C interrupts stream for immediate feedback")
+      print("  - /thinking: Browse thinking steps")
+
+      # Load files if provided
+      loaded_content = {}
+      if files:
+          if isinstance(files, str):
+              files = [f.strip() for f in files.split(',')]
+          for file_path in files:
+              file_path = os.path.expanduser(file_path)
+              if os.path.exists(file_path):
+                  try:
+                      chunks = load_file_contents(file_path)
+                      loaded_content[file_path] = "\n".join(chunks)
+                      print(colored(f"Loaded: {file_path}", "green"))
+                  except Exception as e:
+                      print(colored(f"Error loading {file_path}: {e}", "red"))
+
+      # System message for PTI mode
+      pti_system = """You are an AI assistant in PTI (Pardon-The-Interruption) mode.
+
+      IMPORTANT INSTRUCTIONS:
+      1. Think step-by-step using <think>...</think> tags to show your reasoning
+      2. When you need more information from the user, use <request_for_input>your question</request_for_input>
+      3. Be thorough but concise in your reasoning
+      4. The user can interrupt at any time to provide guidance
+
+      Example:
+      <think>
+      Let me break this down...
+      Step 1: First I need to understand X
+      Step 2: Then consider Y
+      </think>
+
+      <request_for_input>
+      I notice you mentioned Z. Could you clarify what you mean by that?
+      </request_for_input>"""
+
+      if not messages or messages[0].get("role") != "system":
+          messages.insert(0, {"role": "system", "content": pti_system})
+
+      # REPL loop
+      user_input = None
+      while True:
+          try:
+              if not user_input:
+                  prompt_str = f"{npc_name}:pti> "
+                  user_input = input(prompt_str).strip()
+
+              if not user_input:
+                  user_input = None
+                  continue
+
+              if user_input.lower() == "/pq":
+                  print("Exiting PTI mode.")
+                  break
+
+              # Handle /thinking to browse thinking steps
+              if user_input.lower() == "/thinking":
+                  thinking_tui_browser(messages)
+                  user_input = None
+                  continue
+
+              # Build prompt with file context
+              prompt_for_llm = user_input
+              if loaded_content:
+                  context_str = "\n".join([f"--- {fname} ---\n{content}" for fname, content in loaded_content.items()])
+                  prompt_for_llm += f"\n\nContext:\n{context_str}"
+
+              prompt_for_llm += "\n\nThink step-by-step using <think> tags. Use <request_for_input> when you need clarification."
+
+              messages.append({"role": "user", "content": user_input})
+
+              try:
+                  resp = get_llm_response(
+                      prompt_for_llm,
+                      model=model,
+                      provider=provider,
+                      messages=messages[:-1],  # Don't duplicate the user message
+                      stream=True,
+                      npc=npc
+                  )
+
+                  response_stream = resp.get('response')
+                  full_response = ""
+                  request_found = False
+
+                  # Stream the response
+                  for chunk in response_stream:
+                      chunk_content = ""
+                      if hasattr(chunk, 'choices') and chunk.choices:
+                          delta = chunk.choices[0].delta
+                          if hasattr(delta, 'content') and delta.content:
+                              chunk_content = delta.content
+                      elif isinstance(chunk, dict):
+                          chunk_content = chunk.get("message", {}).get("content", "")
+
+                      if chunk_content:
+                          print(chunk_content, end='', flush=True)
+                          full_response += chunk_content
+
+                          # Check for request_for_input
+                          if "</request_for_input>" in full_response:
+                              request_found = True
+                              break
+
+                  print()  # newline after stream
+
+                  messages.append({"role": "assistant", "content": full_response})
+                  user_input = None  # Reset for next iteration
+
+              except KeyboardInterrupt:
+                  print(colored("\n\n--- Interrupted ---", "yellow"))
+                  interrupt_input = input("Your feedback: ").strip()
+                  if interrupt_input:
+                      user_input = interrupt_input
+                  else:
+                      user_input = None
+                  continue
+
+          except KeyboardInterrupt:
+              print("\nUse '/pq' to exit or continue.")
+              user_input = None
+              continue
+          except EOFError:
+              print("\nExiting PTI mode.")
+              break
+
+      context['output'] = "Exited PTI mode."
+      context['messages'] = messages
