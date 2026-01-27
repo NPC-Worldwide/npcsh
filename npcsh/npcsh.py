@@ -42,7 +42,6 @@ from npcsh._state import (
     execute_command,
     make_completer,
     process_result,
-    readline_safe_prompt,
     setup_shell,
     get_multiline_input,
 )
@@ -141,7 +140,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
         process_result(f"/{launched_jinx}", state, output, command_history)
     else:
         render_markdown(f'- Using {state.current_mode} mode. Use /agent, /cmd, or /chat to switch to other modes')
-    render_markdown(f'- To switch to a different NPC, type /npc <npc_name> or /n <npc_name> to switch to that NPC.')
+    render_markdown('- To switch to a different NPC, type /npc <npc_name> or /n <npc_name> to switch to that NPC.')
     render_markdown('\n- Here are the current NPCs available in your team: ' + ', '.join([npc_name for npc_name in state.team.npcs.keys()]))
     # Show jinxs organized by folder using _source_path from jinx objects
     jinxs_by_folder = {}
