@@ -323,24 +323,6 @@ steps:
                                       subprocess.run(['xsel', '--clipboard', '--input'], input=f['path'].encode(), check=True)
                                   except:
                                       pass
-                          elif c == 's' and display_files:
-                              # Run RAG search on selected file
-                              f = display_files[selected]
-                              file_contents = []
-                              chunks = load_file_contents(f['path'])
-                              file_contents.extend([f['name'] + ": " + chunk for chunk in chunks])
-
-                              result = execute_rag_command(
-                                  command=query,
-                                  vector_db_path=vector_db_path,
-                                  embedding_model=emodel,
-                                  embedding_provider=eprovider,
-                                  file_contents=file_contents
-                              )
-                              rag_result = result.get('response', 'No RAG response.')
-                              mode = 'rag'
-                              preview_scroll = 0
-                              sys.stdout.write('\033[2J\033[H')
                           elif c in ('\r', '\n') and display_files:
                               f = display_files[selected]
                               context['output'] = f"Selected: {f['name']}\nPath: {f['path']}"

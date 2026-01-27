@@ -1594,7 +1594,7 @@ def print_jinxs(jinxs):
     for jinx in jinxs:
         output += f"  {jinx.jinx_name}\n"
         output += f"   Description: {jinx.description}\n"
-        output += f"   Inputs: {jinx.inputs}\n"    return output
+        output += f"   Inputs: {jinx.inputs}\n"
     return output
 
 def open_terminal_editor(command: str) -> str:
@@ -2193,14 +2193,16 @@ def wrap_text(text: str, width: int = 80) -> str:
         
 def store_command_embeddings(command: str, output: Any, state: ShellState):
     if not chroma_client or not state.embedding_model or not state.embedding_provider:
-        if not chroma_client: print("Warning: ChromaDB client not available for embeddings.", file=sys.stderr)
+        if not chroma_client:
+            print("Warning: ChromaDB client not available for embeddings.", file=sys.stderr)
         return
     if not command and not output:
         return
 
     try:
         output_str = str(output) if output else ""
-        if not command and not output_str: return 
+        if not command and not output_str:
+            return
 
         texts_to_embed = [command, output_str]
 

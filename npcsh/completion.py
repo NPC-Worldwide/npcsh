@@ -2,8 +2,7 @@
 Readline and tab completion for npcsh
 """
 import os
-import shutil
-from typing import List, Any, Optional
+from typing import List, Any
 
 try:
     import readline
@@ -66,11 +65,8 @@ def get_file_completions(text: str) -> List[str]:
     completions = []
 
     if text.startswith("~"):
-        expanded = os.path.expanduser(text)
-        prefix = "~"
-        search_path = expanded
+        search_path = os.path.expanduser(text)
     else:
-        prefix = ""
         search_path = text
 
     # Get directory to search
