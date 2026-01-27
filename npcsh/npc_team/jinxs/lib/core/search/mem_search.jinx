@@ -1,22 +1,29 @@
 jinx_name: mem_search
-description: Search memories (approved, pending, or all)
+description: Search memories with interactive TUI and approval workflow
 inputs:
 - query: ""
 - status: "all"
 - npc_name: ""
 - team_name: ""
-- max_results: "10"
+- max_results: "20"
 - db_path: ""
+- text: "false"
 
 steps:
   - name: search_memories
     engine: python
     code: |
       import os
+      import sys
+      import tty
+      import termios
+      from datetime import datetime
       from npcpy.memory.command_history import CommandHistory
       from npcpy.memory.memory_processor import get_relevant_memories
 
       query = context.get('query', '').strip()
+      text_mode = context.get('text', '').lower() in ('true', '1', 'yes')
+
       if not query:
           lines = [
               "Usage: /mem_search <query> [status=all|approved|pending]",
@@ -25,19 +32,33 @@ steps:
               "  status      - Filter by status (all, approved, pending). Default is all",
               "  npc_name    - Filter by NPC name",
               "  team_name   - Filter by team name",
-              "  max_results - Max results to return (default 10)",
+              "  max_results - Max results to return (default 20)",
               "  db_path     - Path to history database",
+              "  text        - Text-only output, no TUI (true/false)",
+              "",
+              "TUI Controls:",
+              "  j/k or arrows - Navigate",
+              "  1/2/3         - Sort by time/status/npc",
+              "  f             - Filter by status (all/approved/pending)",
+              "  p             - Preview full memory",
+              "  a             - Approve selected memory",
+              "  x             - Reject selected memory",
+              "  q/ESC         - Quit",
+              "",
+              "Examples:",
+              "  /mem_search python",
+              "  /mem_search debugging status=pending",
           ]
           context['output'] = "\n".join(lines)
       else:
           status_filter = context.get('status', 'all').lower()
-          npc_name = context.get('npc_name') or (npc.name if npc else None)
+          npc_name = context.get('npc_name') or (npc.name if 'npc' in dir() and npc else None)
           team_name = context.get('team_name') or None
           try:
               team_name = team_name or (state.team.name if 'state' in dir() and state and state.team else None)
           except:
               pass
-          max_results = int(context.get('max_results') or 10)
+          max_results = int(context.get('max_results') or 20)
           db_path = context.get('db_path') or os.path.expanduser("~/npcsh_history.db")
           current_path = os.getcwd()
 
@@ -64,19 +85,304 @@ steps:
                       limit=max_results
                   )
 
-              if not memories:
-                  context['output'] = "No memories found for '" + query + "' (status=" + status_filter + ")"
-              else:
-                  lines = ["Found " + str(len(memories)) + " memories (status=" + status_filter + "):", ""]
-                  for i, mem in enumerate(memories, 1):
+              # Normalize to list of dicts
+              if memories:
+                  normalized = []
+                  for mem in memories:
                       if isinstance(mem, dict):
-                          ts = mem.get('timestamp', 'unknown')
-                          content = mem.get('final_memory') or mem.get('initial_memory') or mem.get('content', '')
-                          status = mem.get('status', '')
-                          lines.append(str(i) + ". [" + str(ts) + "] (" + status + ") " + str(content))
+                          normalized.append(mem)
                       else:
-                          lines.append(str(i) + ". " + str(mem))
+                          normalized.append({'content': str(mem), 'status': 'unknown', 'timestamp': '', 'npc': ''})
+                  memories = normalized
+              else:
+                  memories = []
+
+              if not memories:
+                  context['output'] = f"No memories found for '{query}' (status={status_filter})"
+              elif text_mode:
+                  # Text-only output
+                  lines = [f"Found {len(memories)} memories (status={status_filter}):", ""]
+                  for i, mem in enumerate(memories, 1):
+                      ts = mem.get('timestamp', 'unknown')
+                      content = mem.get('final_memory') or mem.get('initial_memory') or mem.get('content', '')
+                      status = mem.get('status', '')
+                      lines.append(f"{i}. [{ts}] ({status}) {str(content)[:80]}")
                   context['output'] = "\n".join(lines)
+              else:
+                  # Interactive TUI mode
+                  def get_terminal_size():
+                      try:
+                          size = os.get_terminal_size()
+                          return size.columns, size.lines
+                      except:
+                          return 80, 24
+
+                  def format_ts(ts):
+                      if not ts:
+                          return 'unknown'
+                      try:
+                          if 'T' in str(ts):
+                              dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
+                          else:
+                              dt = datetime.strptime(str(ts)[:19], '%Y-%m-%d %H:%M:%S')
+                          now = datetime.now()
+                          diff = now - dt.replace(tzinfo=None)
+                          if diff.days == 0:
+                              return f"Today {dt.strftime('%H:%M')}"
+                          elif diff.days == 1:
+                              return f"Yesterday {dt.strftime('%H:%M')}"
+                          elif diff.days < 7:
+                              return dt.strftime('%a %H:%M')
+                          else:
+                              return dt.strftime('%b %d')
+                      except:
+                          return str(ts)[:12]
+
+                  width, height = get_terminal_size()
+                  selected = 0
+                  scroll = 0
+                  list_height = height - 5
+                  mode = 'list'
+                  preview_scroll = 0
+                  sort_mode = 'time'  # time, status, npc
+                  current_filter = status_filter
+
+                  def sort_memories(mems, sort_mode):
+                      if sort_mode == 'time':
+                          return sorted(mems, key=lambda x: x.get('timestamp') or '', reverse=True)
+                      elif sort_mode == 'status':
+                          return sorted(mems, key=lambda x: (x.get('status') or '', x.get('timestamp') or ''), reverse=True)
+                      elif sort_mode == 'npc':
+                          return sorted(mems, key=lambda x: (x.get('npc') or '', x.get('timestamp') or ''), reverse=True)
+                      return mems
+
+                  def filter_memories(mems, filter_status):
+                      if filter_status == 'all':
+                          return mems
+                      return [m for m in mems if m.get('status') == filter_status]
+
+                  display_memories = filter_memories(sort_memories(memories, sort_mode), current_filter)
+
+                  fd = sys.stdin.fileno()
+                  old_settings = termios.tcgetattr(fd)
+
+                  try:
+                      tty.setcbreak(fd)
+                      sys.stdout.write('\033[?25l')
+                      sys.stdout.write('\033[2J\033[H')
+
+                      while True:
+                          width, height = get_terminal_size()
+                          list_height = height - 5
+
+                          if mode == 'list':
+                              if selected < scroll:
+                                  scroll = selected
+                              elif selected >= scroll + list_height:
+                                  scroll = selected - list_height + 1
+
+                          sys.stdout.write('\033[H')
+
+                          # Header
+                          if mode == 'list':
+                              sort_ind = {'time': '1', 'status': '2', 'npc': '3'}[sort_mode]
+                              header = f" MEM SEARCH ({len(display_memories)} results): '{query}' [sort:{sort_mode}({sort_ind}) filter:{current_filter}] "
+                          else:
+                              header = f" PREVIEW MEMORY "
+                          sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+
+                          # Column headers
+                          if mode == 'list':
+                              col_header = f' {"STATUS":<10} {"TIMESTAMP":<14} {"NPC":<12} {"CONTENT":<40}'
+                              sys.stdout.write(f'\033[90m{col_header[:width]}\033[0m\n')
+                          else:
+                              sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+
+                          if mode == 'list':
+                              for i in range(list_height):
+                                  idx = scroll + i
+                                  sys.stdout.write(f'\033[{3+i};1H\033[K')
+                                  if idx >= len(display_memories):
+                                      continue
+
+                                  m = display_memories[idx]
+                                  status = (m.get('status') or '?')[:10]
+                                  ts = format_ts(m.get('timestamp'))
+                                  npc_str = (m.get('npc') or 'default')[:12]
+                                  content = (m.get('final_memory') or m.get('initial_memory') or m.get('content', ''))
+                                  content = str(content)[:50].replace('\n', ' ')
+
+                                  # Color by status
+                                  if m.get('status') == 'approved':
+                                      status_color = '\033[32m'  # green
+                                  elif m.get('status') == 'pending':
+                                      status_color = '\033[33m'  # yellow
+                                  elif m.get('status') == 'rejected':
+                                      status_color = '\033[31m'  # red
+                                  else:
+                                      status_color = '\033[90m'  # gray
+
+                                  line = f" {status_color}{status:<10}\033[0m {ts:<14} {npc_str:<12} {content}"
+                                  line = line[:width+15]
+
+                                  if idx == selected:
+                                      sys.stdout.write(f'\033[47;30;1m>{line}\033[0m')
+                                  else:
+                                      sys.stdout.write(f' {line}')
+
+                              # Status bar
+                              sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                              sel = display_memories[selected] if display_memories else {}
+                              mem_id = sel.get('id', '') or sel.get('memory_id', '')
+                              sys.stdout.write(f'\033[{height-1};1H\033[K ID: {mem_id}'.ljust(width))
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav 1/2/3:Sort f:Filter p:Preview a:Approve x:Reject q:Quit [{selected+1}/{len(display_memories)}] \033[0m')
+
+                          else:  # preview mode
+                              sel = display_memories[selected]
+                              content = sel.get('final_memory') or sel.get('initial_memory') or sel.get('content', '')
+                              content_lines = str(content).split('\n')
+
+                              # Add metadata at top
+                              meta_lines = [
+                                  f"Status: {sel.get('status', '')}",
+                                  f"Timestamp: {sel.get('timestamp', '')}",
+                                  f"NPC: {sel.get('npc', '')}",
+                                  f"Team: {sel.get('team', '')}",
+                                  f"ID: {sel.get('id', '') or sel.get('memory_id', '')}",
+                                  "─" * 40,
+                              ]
+                              all_lines = meta_lines + content_lines
+
+                              for i in range(list_height):
+                                  idx = preview_scroll + i
+                                  sys.stdout.write(f'\033[{3+i};1H\033[K')
+                                  if idx < len(all_lines):
+                                      sys.stdout.write(all_lines[idx][:width-1])
+
+                              sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
+                              sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(all_lines)} lines]')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll b:Back a:Approve x:Reject q:Quit \033[0m')
+
+                          sys.stdout.flush()
+
+                          c = sys.stdin.read(1)
+
+                          if c == '\x1b':
+                              c2 = sys.stdin.read(1)
+                              if c2 == '[':
+                                  c3 = sys.stdin.read(1)
+                                  if c3 == 'A':  # Up
+                                      if mode == 'list' and selected > 0:
+                                          selected -= 1
+                                      elif mode == 'preview' and preview_scroll > 0:
+                                          preview_scroll -= 1
+                                  elif c3 == 'B':  # Down
+                                      if mode == 'list' and selected < len(display_memories) - 1:
+                                          selected += 1
+                                      elif mode == 'preview':
+                                          sel = display_memories[selected]
+                                          content = str(sel.get('final_memory') or sel.get('content', ''))
+                                          all_lines = content.split('\n')
+                                          if preview_scroll < max(0, len(all_lines) + 6 - list_height):
+                                              preview_scroll += 1
+                              else:
+                                  if mode == 'preview':
+                                      mode = 'list'
+                                      sys.stdout.write('\033[2J\033[H')
+                                  else:
+                                      context['output'] = "Cancelled."
+                                      break
+                              continue
+
+                          if c == 'q' or c == '\x03':
+                              context['output'] = "Cancelled."
+                              break
+                          elif c == 'k':
+                              if mode == 'list' and selected > 0:
+                                  selected -= 1
+                              elif mode == 'preview' and preview_scroll > 0:
+                                  preview_scroll -= 1
+                          elif c == 'j':
+                              if mode == 'list' and selected < len(display_memories) - 1:
+                                  selected += 1
+                              elif mode == 'preview':
+                                  sel = display_memories[selected]
+                                  content = str(sel.get('final_memory') or sel.get('content', ''))
+                                  all_lines = content.split('\n')
+                                  if preview_scroll < max(0, len(all_lines) + 6 - list_height):
+                                      preview_scroll += 1
+                          elif c == '1':
+                              sort_mode = 'time'
+                              display_memories = filter_memories(sort_memories(memories, sort_mode), current_filter)
+                              selected = 0
+                              scroll = 0
+                          elif c == '2':
+                              sort_mode = 'status'
+                              display_memories = filter_memories(sort_memories(memories, sort_mode), current_filter)
+                              selected = 0
+                              scroll = 0
+                          elif c == '3':
+                              sort_mode = 'npc'
+                              display_memories = filter_memories(sort_memories(memories, sort_mode), current_filter)
+                              selected = 0
+                              scroll = 0
+                          elif c == 'f' and mode == 'list':
+                              # Cycle through filters
+                              if current_filter == 'all':
+                                  current_filter = 'pending'
+                              elif current_filter == 'pending':
+                                  current_filter = 'approved'
+                              else:
+                                  current_filter = 'all'
+                              display_memories = filter_memories(sort_memories(memories, sort_mode), current_filter)
+                              selected = 0
+                              scroll = 0
+                          elif c == 'a' and display_memories:
+                              # Approve memory
+                              sel = display_memories[selected]
+                              mem_id = sel.get('id') or sel.get('memory_id')
+                              if mem_id:
+                                  try:
+                                      cmd_history.update_memory_status(mem_id, 'approved')
+                                      sel['status'] = 'approved'
+                                      # Update in original list too
+                                      for m in memories:
+                                          if (m.get('id') or m.get('memory_id')) == mem_id:
+                                              m['status'] = 'approved'
+                                  except Exception as e:
+                                      pass
+                          elif c == 'x' and display_memories:
+                              # Reject memory
+                              sel = display_memories[selected]
+                              mem_id = sel.get('id') or sel.get('memory_id')
+                              if mem_id:
+                                  try:
+                                      cmd_history.update_memory_status(mem_id, 'rejected')
+                                      sel['status'] = 'rejected'
+                                      for m in memories:
+                                          if (m.get('id') or m.get('memory_id')) == mem_id:
+                                              m['status'] = 'rejected'
+                                  except Exception as e:
+                                      pass
+                          elif c == 'p' and mode == 'list' and display_memories:
+                              mode = 'preview'
+                              preview_scroll = 0
+                              sys.stdout.write('\033[2J\033[H')
+                          elif c == 'b' and mode == 'preview':
+                              mode = 'list'
+                              sys.stdout.write('\033[2J\033[H')
+                          elif c in ('\r', '\n') and display_memories:
+                              sel = display_memories[selected]
+                              content = sel.get('final_memory') or sel.get('content', '')
+                              context['output'] = f"Selected memory:\n\n{content}"
+                              break
+
+                  finally:
+                      termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                      sys.stdout.write('\033[?25h')
+                      sys.stdout.write('\033[2J\033[H')
+                      sys.stdout.flush()
+
           except Exception as e:
               import traceback
               context['output'] = "Memory search error: " + str(e) + "\n" + traceback.format_exc()
