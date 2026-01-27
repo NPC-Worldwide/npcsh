@@ -11,6 +11,9 @@ steps:
     code: |
       import os
 
+      from npcpy.memory.command_history import CommandHistory
+      from npcsh.commands import execute_brainblast_command
+
       query = context.get('query', '').strip()
       if not query:
           lines = [
@@ -28,7 +31,7 @@ steps:
           ]
           context['output'] = "\n".join(lines)
       else:
-          db_path = context.get('db_path') or os.path.expanduser("~/.npcsh/npcsh_history.db")
+          db_path = context.get('db_path') or os.path.expanduser("~/npcsh_history.db")
           limit = int(context.get('limit') or 20)
 
           try:

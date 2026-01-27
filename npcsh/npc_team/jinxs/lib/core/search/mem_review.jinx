@@ -1,0 +1,73 @@
+jinx_name: mem_review
+description: Review pending memories with interactive UI
+inputs:
+- limit: "20"
+- npc_filter: ""
+- team_filter: ""
+- db_path: ""
+
+steps:
+  - name: review_memories
+    engine: python
+    code: |
+      import os
+      from npcpy.memory.command_history import CommandHistory
+      from npcpy.memory.memory_processor import memory_batch_review_ui
+
+      limit = int(context.get('limit') or 20)
+      npc_filter = context.get('npc_filter') or None
+      team_filter = context.get('team_filter') or None
+      db_path = context.get('db_path') or os.path.expanduser("~/npcsh_history.db")
+
+      # Get current npc/team from context if not specified
+      if not npc_filter:
+          try:
+              npc_filter = npc.name if 'npc' in dir() and npc else None
+          except:
+              pass
+
+      if not team_filter:
+          try:
+              team_filter = state.team.name if 'state' in dir() and state and state.team else None
+          except:
+              pass
+
+      try:
+          cmd_history = CommandHistory(db_path)
+
+          # Show what we're about to review
+          pending = cmd_history.get_pending_memories(limit=limit)
+          if npc_filter:
+              pending = [m for m in pending if m.get('npc') == npc_filter]
+          if team_filter:
+              pending = [m for m in pending if m.get('team') == team_filter]
+
+          if not pending:
+              context['output'] = "No pending memories to review."
+          else:
+              print(f"\nFound {len(pending)} pending memories")
+              if npc_filter:
+                  print(f"  NPC filter: {npc_filter}")
+              if team_filter:
+                  print(f"  Team filter: {team_filter}")
+
+              # Run interactive review
+              stats = memory_batch_review_ui(
+                  cmd_history,
+                  npc_filter=npc_filter,
+                  team_filter=team_filter,
+                  limit=limit
+              )
+
+              lines = [
+                  "Review complete:",
+                  f"  Approved: {stats.get('approved', 0)}",
+                  f"  Rejected: {stats.get('rejected', 0)}",
+                  f"  Edited:   {stats.get('edited', 0)}",
+                  f"  Skipped:  {stats.get('skipped', 0)}",
+              ]
+              context['output'] = "\n".join(lines)
+
+      except Exception as e:
+          import traceback
+          context['output'] = "Memory review error: " + str(e) + "\n" + traceback.format_exc()

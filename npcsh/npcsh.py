@@ -416,7 +416,7 @@ def main(npc_name: str = None) -> None:
                 os.remove(os.path.join(user_npc_team, f))
                 print(f"Removed {f}")
 
-        db_path = os.path.expanduser("~/.npcsh/npcsh_history.db")
+        db_path = os.path.expanduser("~/npcsh_history.db")
         print("Reinitializing NPCs and jinxs...")
         initialize_base_npcs_if_needed(db_path)
         print("Refresh complete!")
@@ -450,7 +450,11 @@ def main(npc_name: str = None) -> None:
          state = initial_state
          state.current_path = os.getcwd()
          final_state, output = execute_command(args.command, state, router=router, command_history=command_history)
-         if final_state.stream_output:
+         # Handle output - check if it's a dict (from jinx) or a stream
+         if isinstance(output, dict):
+              display_output = output.get('output') or output.get('response') or str(output)
+              print(display_output)
+         elif final_state.stream_output and output is not None:
               for chunk in output:
                   print(str(chunk), end='')
               print()

@@ -1,7 +1,8 @@
 jinx_name: "sleep"
-description: "Evolve knowledge graph. Use --dream to also run creative synthesis."
+description: "Evolve knowledge graph. Use --dream for creative synthesis, --backfill to import approved memories."
 inputs:
 - dream: False
+- backfill: False
 - ops: ""
 - model: ""
 - provider: ""
@@ -12,10 +13,10 @@ steps:
       import os
       import traceback
       from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db
-      from npcpy.memory.knowledge_graph import kg_sleep_process, kg_dream_process
-      # Assuming render_markdown is available if needed for logging progress
+      from npcpy.memory.knowledge_graph import kg_sleep_process, kg_dream_process, kg_backfill_from_memories
 
       is_dreaming = context.get('dream')
+      do_backfill = context.get('backfill')
       operations_str = context.get('ops')
       llm_model = context.get('model')
       llm_provider = context.get('provider')
@@ -26,24 +27,21 @@ steps:
       operations_config = None
       if operations_str and isinstance(operations_str, str):
           operations_config = [op.strip() for op in operations_str.split(',')]
-      
+
       # Fallback for model/provider if not explicitly set in Jinx inputs
       if not llm_model and current_npc and current_npc.model:
           llm_model = current_npc.model
       if not llm_provider and current_npc and current_npc.provider:
           llm_provider = current_npc.provider
-      
+
       # Final fallbacks from state
       if not llm_model: llm_model = state.chat_model if state else "llama3.2"
       if not llm_provider: llm_provider = state.chat_provider if state else "ollama"
 
       team_name = current_team.name if current_team else "__none__"
-      npc_name = current_npc.name if isinstance(current_npc, type(None).__class__) else "__none__"
+      npc_name = current_npc.name if current_npc else "__none__"
       current_path = os.getcwd()
       scope_str = f"Team: '{team_name}', NPC: '{npc_name}', Path: '{current_path}'"
-
-      # Assume render_markdown exists
-      # render_markdown(f"- Checking knowledge graph for scope: {scope_str}")
 
       command_history = None
       try:
@@ -57,13 +55,26 @@ steps:
 
       output_result = ""
       try:
+          # Run backfill first if requested
+          if do_backfill:
+              print("Running backfill from approved memories...")
+              stats = kg_backfill_from_memories(
+                  engine,
+                  model=llm_model,
+                  provider=llm_provider,
+                  npc=current_npc,
+                  get_concepts=True,
+                  dry_run=False
+              )
+              output_result += f"Backfill: +{stats['facts_after'] - stats['facts_before']} facts, +{stats['concepts_after'] - stats['concepts_before']} concepts\n"
+
           current_kg = load_kg_from_db(engine, team_name, npc_name, current_path)
 
           if not current_kg or not current_kg.get('facts'):
               output_msg = f"Knowledge graph for the current scope is empty. Nothing to process.\n"
               output_msg += f"  - Scope Checked: {scope_str}\n\n"
-              output_msg += "**Hint:** Have a conversation or run some commands first to build up knowledge in this specific context. The KG is unique to each combination of Team, NPC, and directory."
-              context['output'] = output_msg
+              output_msg += "**Hint:** Run `/sleep backfill=true` to import approved memories, or have conversations first."
+              context['output'] = output_result + output_msg if output_result else output_msg
               context['messages'] = output_messages
               exit()
 

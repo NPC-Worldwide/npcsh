@@ -21,7 +21,7 @@ class BenchmarkConfig:
     model: str = "claude-sonnet-4-20250514"
     provider: str = "anthropic"
     dataset: str = "terminal-bench"
-    dataset_version: str = "2.0"
+    dataset_version: Optional[str] = None  # If None, use latest
     n_concurrent: int = 4
     task_ids: Optional[List[str]] = None
     output_dir: Optional[str] = None
@@ -84,33 +84,52 @@ class BenchmarkRunner:
 
     def check_dependencies(self) -> Dict[str, bool]:
         """Check if required dependencies are installed."""
+        import shutil
+
         deps = {
             "harbor": False,
             "terminal-bench": False,
             "docker": False,
         }
 
-        # Check harbor
-        try:
-            result = subprocess.run(
-                ["harbor", "--version"],
-                capture_output=True,
-                text=True
-            )
-            deps["harbor"] = result.returncode == 0
-        except FileNotFoundError:
-            pass
+        # Find binaries in the same Python environment as current interpreter
+        # Use sys.prefix to get the virtualenv/pyenv directory (don't resolve symlinks)
+        bin_dir = Path(sys.prefix) / "bin"
+        if not bin_dir.exists():
+            # Fallback: use executable's directory without resolving
+            bin_dir = Path(sys.executable).parent
 
-        # Check terminal-bench (tb CLI)
-        try:
-            result = subprocess.run(
-                ["tb", "--help"],
-                capture_output=True,
-                text=True
-            )
-            deps["terminal-bench"] = result.returncode == 0
-        except FileNotFoundError:
-            pass
+        # Check harbor - first in current Python's bin dir, then PATH
+        harbor_bin = bin_dir / "harbor"
+        if not harbor_bin.exists():
+            harbor_bin = shutil.which("harbor")
+
+        if harbor_bin:
+            try:
+                result = subprocess.run(
+                    [str(harbor_bin), "--version"],
+                    capture_output=True,
+                    text=True
+                )
+                deps["harbor"] = result.returncode == 0
+            except (FileNotFoundError, OSError):
+                pass
+
+        # Check terminal-bench (tb CLI) - first in current Python's bin dir, then PATH
+        tb_bin = bin_dir / "tb"
+        if not tb_bin.exists():
+            tb_bin = shutil.which("tb")
+
+        if tb_bin:
+            try:
+                result = subprocess.run(
+                    [str(tb_bin), "--help"],
+                    capture_output=True,
+                    text=True
+                )
+                deps["terminal-bench"] = result.returncode == 0
+            except (FileNotFoundError, OSError):
+                pass
 
         # Check docker
         try:
@@ -146,9 +165,10 @@ class BenchmarkRunner:
         model: str = "claude-sonnet-4-20250514",
         provider: str = "anthropic",
         dataset: str = "terminal-bench",
-        dataset_version: str = "2.0",
+        dataset_version: Optional[str] = None,
         n_concurrent: int = 4,
         task_ids: Optional[List[str]] = None,
+        n_tasks: Optional[int] = None,
         npc_name: Optional[str] = None,
         timeout: int = 600,
     ) -> BenchmarkResult:
@@ -159,9 +179,10 @@ class BenchmarkRunner:
             model: Model name (e.g., "claude-sonnet-4-20250514", "gpt-4o")
             provider: Provider name (e.g., "anthropic", "openai", "gemini")
             dataset: Dataset name (default: "terminal-bench")
-            dataset_version: Dataset version (default: "2.0")
+            dataset_version: Dataset version (optional, uses latest if None)
             n_concurrent: Number of concurrent task executions
             task_ids: Optional list of specific task IDs to run
+            n_tasks: Optional limit on number of tasks to run
             npc_name: Optional NPC name to use (e.g., "sibiji", "corca")
             timeout: Per-task timeout in seconds
 
@@ -193,9 +214,22 @@ class BenchmarkRunner:
         else:
             agent_path = "npcsh.benchmark:NpcshAgent"
 
+        # Find harbor in the same Python environment as current interpreter
+        # Use sys.prefix to get the virtualenv/pyenv directory (don't resolve symlinks)
+        import shutil
+        bin_dir = Path(sys.prefix) / "bin"
+        if not bin_dir.exists():
+            bin_dir = Path(sys.executable).parent
+        harbor_bin = str(bin_dir / "harbor")
+        if not Path(harbor_bin).exists():
+            harbor_bin = shutil.which("harbor") or "harbor"
+
+        # Build dataset string (with optional version)
+        dataset_str = f"{dataset}@{dataset_version}" if dataset_version else dataset
+
         cmd = [
-            "harbor", "run",
-            "-d", f"{dataset}@{dataset_version}",
+            harbor_bin, "run",
+            "-d", dataset_str,
             "--agent-import-path", agent_path,
             "-m", full_model,
             "-n", str(n_concurrent),
@@ -203,12 +237,18 @@ class BenchmarkRunner:
         ]
 
         if task_ids:
-            cmd.extend(["--task-ids", ",".join(task_ids)])
+            for task_id in task_ids:
+                cmd.extend(["--task-name", task_id])
+
+        if n_tasks:
+            cmd.extend(["-l", str(n_tasks)])
 
         print(f"\nRunning Terminal-Bench evaluation:")
         print(f"  Model: {full_model}")
-        print(f"  Dataset: {dataset}@{dataset_version}")
+        print(f"  Dataset: {dataset_str}")
         print(f"  Concurrent tasks: {n_concurrent}")
+        if n_tasks:
+            print(f"  Max tasks: {n_tasks}")
         print(f"  Output: {output_dir}")
         if npc_name:
             print(f"  NPC: {npc_name}")
@@ -311,7 +351,7 @@ class BenchmarkRunner:
         self,
         models: List[tuple],
         dataset: str = "terminal-bench",
-        dataset_version: str = "2.0",
+        dataset_version: Optional[str] = None,
         n_concurrent: int = 4,
         task_ids: Optional[List[str]] = None,
     ) -> Dict[str, BenchmarkResult]:
@@ -321,7 +361,7 @@ class BenchmarkRunner:
         Args:
             models: List of (model, provider) tuples
             dataset: Dataset name
-            dataset_version: Dataset version
+            dataset_version: Dataset version (optional)
             n_concurrent: Number of concurrent tasks
             task_ids: Optional specific task IDs
 
@@ -436,20 +476,22 @@ def run_benchmark(
 def quick_test(
     model: str = "claude-sonnet-4-20250514",
     provider: str = "anthropic",
+    n_tasks: int = 3,
 ) -> BenchmarkResult:
     """
     Run a quick test with a few tasks to verify setup.
 
-    This runs only 3 easy tasks to quickly verify that everything is working.
+    This runs only a few tasks to quickly verify that everything is working.
     """
     runner = BenchmarkRunner()
 
-    # Use a small subset of easy tasks for quick testing
+    # Use -l flag to limit number of tasks instead of specifying task names
+    # This avoids issues with task names changing in the dataset
     return runner.run(
         model=model,
         provider=provider,
         n_concurrent=1,
-        task_ids=["ssl-cert", "git-server", "reshard-dataset"],  # Example easy tasks
+        n_tasks=n_tasks,
     )
 
 
@@ -484,8 +526,8 @@ Examples:
                        help="Provider name")
     parser.add_argument("--dataset", "-d", default="terminal-bench",
                        help="Dataset name")
-    parser.add_argument("--version", "-v", default="2.0",
-                       help="Dataset version")
+    parser.add_argument("--version", "-v", default=None,
+                       help="Dataset version (optional, uses latest if not specified)")
     parser.add_argument("--concurrent", "-n", type=int, default=4,
                        help="Number of concurrent tasks")
     parser.add_argument("--npc", help="NPC name to use")

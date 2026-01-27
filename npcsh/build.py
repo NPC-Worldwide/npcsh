@@ -111,7 +111,7 @@ def build_docker_compose(config, **kwargs):
         volumes:
           - npc-data:/root/.npcsh
         environment:
-          - NPCSH_DB_PATH=/root/.npcsh/npcsh_history.db
+          - NPCSH_DB_PATH=/root/npcsh_history.db
     
     volumes:
       npc-data:

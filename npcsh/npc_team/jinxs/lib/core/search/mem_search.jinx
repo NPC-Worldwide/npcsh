@@ -13,6 +13,8 @@ steps:
     engine: python
     code: |
       import os
+      from npcpy.memory.command_history import CommandHistory
+      from npcpy.memory.memory_processor import get_relevant_memories
 
       query = context.get('query', '').strip()
       if not query:
@@ -36,7 +38,7 @@ steps:
           except:
               pass
           max_results = int(context.get('max_results') or 10)
-          db_path = context.get('db_path') or os.path.expanduser("~/.npcsh/npcsh_history.db")
+          db_path = context.get('db_path') or os.path.expanduser("~/npcsh_history.db")
           current_path = os.getcwd()
 
           try:
@@ -54,11 +56,11 @@ steps:
                       state=state_obj
                   )
               else:
-                  memories = cmd_history.search_memories(
+                  memories = cmd_history.search_memory(
                       query=query,
-                      npc_name=npc_name,
-                      team_name=team_name,
-                      status=status_filter if status_filter != 'all' else None,
+                      npc=npc_name,
+                      team=team_name,
+                      status_filter=status_filter if status_filter != 'all' else None,
                       limit=max_results
                   )
 
