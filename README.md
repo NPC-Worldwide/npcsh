@@ -3,24 +3,38 @@
   <img src="https://raw.githubusercontent.com/NPC-Worldwide/npcsh/main/npcsh/npcsh.png" alt="npcsh logo" width=600></a>
 </p> 
 
-# NPC Shell
+# npcsh
 
-`npcsh` - a new standard in human-agent interaction. The NPC shell is a suite of programs to make use of multi-modal LLMs and agents in novel interactive modes in the command line. Build teams of agents, engineer context, and design custom interaction flows and tools for you and your agents to execute, all managed scalably through the NPC data layer.
+The NPC shell (`npcsh`) makes the most of multi-modal LLMs and agents through a powerful set of simple slash  commands and novel interactive modes, all from the comfort of the command line. Build teams of agents and schedule them on jobs, engineer context, and design custom interaction modes and Jinja Execution templates (Jinxs for you and your agents to invoke, all managed scalably for organizations of any size through the NPC data layer.
 
 To get started:
+For users who want to mainly use models through APIs (`ollama`, `gemini`, `kimi`, `grok`, `deepseek`, `anthropic`, `openai`, `mistral`, or any others provided by litellm )
 ```bash
-# for users who want to mainly use models through APIs (e.g. , gemini, grok, deepseek, anthropic, openai, mistral, , any others provided by litellm ):
 pip install 'npcsh[lite]' 
-# for users who want to use local models (these install diffusers/transformers/torch stack so it is big.):
+```
+For users who want to use and fine-tune local models (this installs `diffusers`/`transformers`/`torch` stack so it is big):
+
+```bash
 pip install 'npcsh[local]'
-# for users who want to use the voice mode `yap`, see also the OS-specific installation instructions for installing needed system audio  libraries
+```
+
+
+For users who want to use the voice mode `yap` (see also the OS-specific installation instructions for installing needed system audio  libraries)
+```bash
 pip install 'npcsh[yap]'
 ```
+
 Once installed: run
 ```bash
 npcsh
 ```
-and you will enter the NPC shell. Additionally, the pip installation includes the following CLI tools available in bash: `npc` cli, `wander`, `spool`, `yap`, and `nql`. Bin jinxs in `npc_team/jinxs/bin/` are automatically registered as CLI commands. 
+and you will enter the NPC shell. 
+
+If you do not have any local models
+
+
+
+Additionally, the pip installation includes the following CLI tools available in bash: `npc` cli, `wander`, `spool`, `yap`, and `nql`. Bin jinxs in `npc_team/jinxs/bin/` are automatically registered as CLI commands. 
 
 
 # Usage
