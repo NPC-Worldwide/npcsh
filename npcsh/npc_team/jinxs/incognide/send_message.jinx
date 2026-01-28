@@ -1,4 +1,4 @@
-jinx_name: studio.send_message
+jinx_name: studio_send_message
 description: Send a message in a chat pane.
 inputs:
 - paneId: "active"

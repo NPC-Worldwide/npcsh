@@ -1,4 +1,4 @@
-jinx_name: studio.close_pane
+jinx_name: studio_close_pane
 description: Close a pane in NPC Studio. Use paneId="active" or omit to close the active pane.
 inputs:
 - paneId: "active"
