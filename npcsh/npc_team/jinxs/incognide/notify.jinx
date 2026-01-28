@@ -1,4 +1,4 @@
-jinx_name: studio.notify
+jinx_name: studio_notify
 description: Show a notification toast in NPC Studio.
 inputs:
 - message: ""

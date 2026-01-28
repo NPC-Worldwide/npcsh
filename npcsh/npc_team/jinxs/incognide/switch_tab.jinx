@@ -1,4 +1,4 @@
-jinx_name: studio.switch_tab
+jinx_name: studio_switch_tab
 description: Switch to a specific tab in a pane.
 inputs:
 - paneId: "active"

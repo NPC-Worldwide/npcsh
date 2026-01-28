@@ -1,4 +1,4 @@
-jinx_name: studio.zen_mode
+jinx_name: studio_zen_mode
 description: Toggle zen mode (fullscreen) for a pane.
 inputs:
 - paneId: "active"

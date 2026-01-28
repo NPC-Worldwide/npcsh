@@ -1,4 +1,4 @@
-jinx_name: studio.focus_pane
+jinx_name: studio_focus_pane
 description: Focus/activate a specific pane in NPC Studio.
 inputs:
 - paneId: ""
