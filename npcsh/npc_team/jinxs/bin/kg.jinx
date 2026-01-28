@@ -1,0 +1,941 @@
+jinx_name: kg
+description: Interactive knowledge graph browser - explore facts, concepts, and links
+interactive: true
+inputs: []
+steps:
+  - name: kg_browser
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import select
+
+      if not sys.stdin.isatty():
+          context['output'] = "KG browser requires an interactive terminal."
+
+      else:
+          from sqlalchemy import create_engine, text
+
+          db_path = os.environ.get('NPCSH_DB_PATH', os.path.expanduser('~/npcsh_history.db'))
+          engine = create_engine(f'sqlite:///{db_path}')
+
+          # ── check tables exist ──────────────────────────────────
+          tables_ok = False
+          try:
+              with engine.connect() as conn:
+                  conn.execute(text("SELECT 1 FROM kg_facts LIMIT 1"))
+                  conn.execute(text("SELECT 1 FROM kg_concepts LIMIT 1"))
+                  conn.execute(text("SELECT 1 FROM kg_links LIMIT 1"))
+                  tables_ok = True
+          except Exception:
+              tables_ok = False
+
+          if not tables_ok:
+              context['output'] = "No knowledge graph data found. Use agent mode to build KG."
+
+          else:
+              # ── state ───────────────────────────────────────────
+              import math
+
+              class KGState:
+                  def __init__(self):
+                      self.tab = 0
+                      self.tabs = ['Facts', 'Concepts', 'Links', 'Search', 'Graph']
+                      self.sel = 0
+                      self.scroll = 0
+                      self.detail = False
+                      self.detail_scroll = 0
+                      self.status = ""
+
+                      # data
+                      self.facts = []
+                      self.concepts = []
+                      self.links = []
+                      self.search_results = []
+
+                      # stats
+                      self.fact_count = 0
+                      self.concept_count = 0
+                      self.link_count = 0
+                      self.max_gen = 0
+
+                      # generation filter
+                      self.gen_filter = None  # None = all
+
+                      # search
+                      self.search_mode = False
+                      self.search_buf = ""
+
+                      # detail data cache
+                      self.detail_lines = []
+
+                      # concept link counts for display
+                      self.concept_link_counts = {}
+
+                      # graph view
+                      self.graph_adj = {}        # concept -> set of neighbors
+                      self.graph_center = ''
+                      self.graph_neighbors = []
+                      self.graph_sel = 0
+                      self.graph_history = []    # stack for back navigation
+
+              ui = KGState()
+
+              def term_size():
+                  try:
+                      s = os.get_terminal_size()
+                      return s.columns, s.lines
+                  except Exception:
+                      return 80, 24
+
+              # ── database loading ─────────────────────────────────
+              def load_stats():
+                  with engine.connect() as conn:
+                      r = conn.execute(text("SELECT COUNT(*) FROM kg_facts"))
+                      ui.fact_count = r.scalar() or 0
+                      r = conn.execute(text("SELECT COUNT(*) FROM kg_concepts"))
+                      ui.concept_count = r.scalar() or 0
+                      r = conn.execute(text("SELECT COUNT(*) FROM kg_links"))
+                      ui.link_count = r.scalar() or 0
+                      r = conn.execute(text("SELECT COALESCE(MAX(generation), 0) FROM kg_facts"))
+                      ui.max_gen = r.scalar() or 0
+
+              def load_facts():
+                  ui.facts = []
+                  with engine.connect() as conn:
+                      if ui.gen_filter is not None:
+                          r = conn.execute(text(
+                              "SELECT statement, source_text, type, generation, origin "
+                              "FROM kg_facts WHERE generation = :gen ORDER BY rowid DESC"
+                          ), {"gen": ui.gen_filter})
+                      else:
+                          r = conn.execute(text(
+                              "SELECT statement, source_text, type, generation, origin "
+                              "FROM kg_facts ORDER BY rowid DESC"
+                          ))
+                      for row in r:
+                          ui.facts.append({
+                              'statement': row.statement or '',
+                              'source_text': row.source_text or '',
+                              'type': row.type or '',
+                              'generation': row.generation if row.generation is not None else 0,
+                              'origin': row.origin or 'organic',
+                          })
+
+              def load_concepts():
+                  ui.concepts = []
+                  ui.concept_link_counts = {}
+                  with engine.connect() as conn:
+                      if ui.gen_filter is not None:
+                          r = conn.execute(text(
+                              "SELECT name, generation, origin "
+                              "FROM kg_concepts WHERE generation = :gen ORDER BY name"
+                          ), {"gen": ui.gen_filter})
+                      else:
+                          r = conn.execute(text(
+                              "SELECT name, generation, origin FROM kg_concepts ORDER BY name"
+                          ))
+                      for row in r:
+                          ui.concepts.append({
+                              'name': row.name or '',
+                              'generation': row.generation if row.generation is not None else 0,
+                              'origin': row.origin or 'organic',
+                          })
+                      # count linked facts per concept
+                      r2 = conn.execute(text(
+                          "SELECT target, COUNT(*) as cnt FROM kg_links "
+                          "WHERE type = 'fact_to_concept' GROUP BY target"
+                      ))
+                      for row in r2:
+                          ui.concept_link_counts[row.target] = row.cnt
+
+              def load_links():
+                  ui.links = []
+                  with engine.connect() as conn:
+                      r = conn.execute(text(
+                          "SELECT source, target, type FROM kg_links ORDER BY rowid DESC"
+                      ))
+                      for row in r:
+                          ui.links.append({
+                              'source': row.source or '',
+                              'target': row.target or '',
+                              'type': row.type or '',
+                          })
+
+              def do_search(query):
+                  ui.search_results = []
+                  q = f"%{query}%"
+                  with engine.connect() as conn:
+                      r = conn.execute(text(
+                          "SELECT statement, source_text, type, generation, origin "
+                          "FROM kg_facts WHERE statement LIKE :q ORDER BY rowid DESC"
+                      ), {"q": q})
+                      for row in r:
+                          ui.search_results.append({
+                              'kind': 'fact',
+                              'text': row.statement or '',
+                              'source_text': row.source_text or '',
+                              'type': row.type or '',
+                              'generation': row.generation if row.generation is not None else 0,
+                              'origin': row.origin or 'organic',
+                          })
+                      r2 = conn.execute(text(
+                          "SELECT name, generation, origin "
+                          "FROM kg_concepts WHERE name LIKE :q ORDER BY name"
+                      ), {"q": q})
+                      for row in r2:
+                          ui.search_results.append({
+                              'kind': 'concept',
+                              'text': row.name or '',
+                              'source_text': '',
+                              'type': '',
+                              'generation': row.generation if row.generation is not None else 0,
+                              'origin': row.origin or 'organic',
+                          })
+
+              def load_fact_detail(idx):
+                  """Build detail lines for a fact."""
+                  if idx >= len(ui.facts):
+                      ui.detail_lines = ["(no data)"]
+                      return
+                  fact = ui.facts[idx]
+                  lines = []
+                  lines.append(("\033[1mFact:\033[0m", ""))
+                  # word-wrap statement
+                  W, _ = term_size()
+                  wrap_w = max(20, W - 6)
+                  stmt = fact['statement']
+                  while len(stmt) > wrap_w:
+                      lines.append(("  " + stmt[:wrap_w], ""))
+                      stmt = stmt[wrap_w:]
+                  if stmt:
+                      lines.append(("  " + stmt, ""))
+                  lines.append(("", ""))
+                  if fact['source_text']:
+                      lines.append(("\033[1mSource text:\033[0m", ""))
+                      st = fact['source_text']
+                      while len(st) > wrap_w:
+                          lines.append(("  " + st[:wrap_w], ""))
+                          st = st[wrap_w:]
+                      if st:
+                          lines.append(("  " + st, ""))
+                      lines.append(("", ""))
+                  lines.append((f"\033[1mType:\033[0m {fact['type']}", ""))
+                  lines.append((f"\033[1mGeneration:\033[0m {fact['generation']}", ""))
+                  lines.append((f"\033[1mOrigin:\033[0m {fact['origin']}", ""))
+                  lines.append(("", ""))
+                  # linked concepts
+                  lines.append(("\033[1mLinked Concepts:\033[0m", ""))
+                  with engine.connect() as conn:
+                      r = conn.execute(text(
+                          "SELECT target FROM kg_links "
+                          "WHERE source = :src AND type = 'fact_to_concept'"
+                      ), {"src": fact['statement']})
+                      found = False
+                      for row in r:
+                          lines.append(("  \033[36m" + (row.target or '') + "\033[0m", ""))
+                          found = True
+                      if not found:
+                          lines.append(("  \033[90m(none)\033[0m", ""))
+                  ui.detail_lines = lines
+
+              def load_concept_detail(idx):
+                  """Build detail lines for a concept."""
+                  if idx >= len(ui.concepts):
+                      ui.detail_lines = ["(no data)"]
+                      return
+                  concept = ui.concepts[idx]
+                  lines = []
+                  lines.append(("\033[1mConcept:\033[0m \033[36m" + concept['name'] + "\033[0m", ""))
+                  lines.append((f"\033[1mGeneration:\033[0m {concept['generation']}", ""))
+                  lines.append((f"\033[1mOrigin:\033[0m {concept['origin']}", ""))
+                  lines.append(("", ""))
+                  # linked facts
+                  lines.append(("\033[1mLinked Facts:\033[0m", ""))
+                  W, _ = term_size()
+                  wrap_w = max(20, W - 6)
+                  with engine.connect() as conn:
+                      r = conn.execute(text(
+                          "SELECT source FROM kg_links "
+                          "WHERE target = :tgt AND type = 'fact_to_concept'"
+                      ), {"tgt": concept['name']})
+                      found = False
+                      for row in r:
+                          s = row.source or ''
+                          if len(s) > wrap_w:
+                              s = s[:wrap_w - 3] + '...'
+                          lines.append(("  " + s, ""))
+                          found = True
+                      if not found:
+                          lines.append(("  \033[90m(none)\033[0m", ""))
+                  lines.append(("", ""))
+                  # linked concepts
+                  lines.append(("\033[1mLinked Concepts:\033[0m", ""))
+                  with engine.connect() as conn:
+                      r = conn.execute(text(
+                          "SELECT target FROM kg_links "
+                          "WHERE source = :name AND type = 'concept_to_concept' "
+                          "UNION "
+                          "SELECT source FROM kg_links "
+                          "WHERE target = :name AND type = 'concept_to_concept'"
+                      ), {"name": concept['name']})
+                      found2 = False
+                      for row in r:
+                          lines.append(("  \033[36m" + (row[0] or '') + "\033[0m", ""))
+                          found2 = True
+                      if not found2:
+                          lines.append(("  \033[90m(none)\033[0m", ""))
+                  ui.detail_lines = lines
+
+              def load_search_detail(idx):
+                  """Build detail for a search result item."""
+                  if idx >= len(ui.search_results):
+                      ui.detail_lines = ["(no data)"]
+                      return
+                  item = ui.search_results[idx]
+                  if item['kind'] == 'fact':
+                      # find it in full facts list by statement match and delegate
+                      for fi, f in enumerate(ui.facts):
+                          if f['statement'] == item['text']:
+                              load_fact_detail(fi)
+                              return
+                      # fallback: build inline
+                      ui.detail_lines = [
+                          ("\033[1mFact:\033[0m " + item['text'], ""),
+                          (f"\033[1mOrigin:\033[0m {item['origin']}", ""),
+                          (f"\033[1mGeneration:\033[0m {item['generation']}", ""),
+                      ]
+                  else:
+                      for ci, c in enumerate(ui.concepts):
+                          if c['name'] == item['text']:
+                              load_concept_detail(ci)
+                              return
+                      ui.detail_lines = [
+                          ("\033[1mConcept:\033[0m \033[36m" + item['text'] + "\033[0m", ""),
+                          (f"\033[1mOrigin:\033[0m {item['origin']}", ""),
+                          (f"\033[1mGeneration:\033[0m {item['generation']}", ""),
+                      ]
+
+              def load_all_data():
+                  load_stats()
+                  load_facts()
+                  load_concepts()
+                  load_links()
+                  load_graph_data()
+
+              def load_graph_data():
+                  """Load concept-to-concept adjacency for graph view."""
+                  ui.graph_adj = {}
+                  with engine.connect() as conn:
+                      r = conn.execute(text(
+                          "SELECT source, target FROM kg_links "
+                          "WHERE type = 'concept_to_concept'"
+                      ))
+                      for row in r:
+                          src = row.source or ''
+                          tgt = row.target or ''
+                          if src not in ui.graph_adj:
+                              ui.graph_adj[src] = set()
+                          if tgt not in ui.graph_adj:
+                              ui.graph_adj[tgt] = set()
+                          ui.graph_adj[src].add(tgt)
+                          ui.graph_adj[tgt].add(src)
+                  # Also add concepts with fact links but no concept links
+                  for c in ui.concepts:
+                      if c['name'] not in ui.graph_adj:
+                          ui.graph_adj[c['name']] = set()
+                  # Pick the most connected concept as initial center
+                  if ui.graph_adj:
+                      ui.graph_center = max(
+                          ui.graph_adj.keys(),
+                          key=lambda k: len(ui.graph_adj[k])
+                      )
+                  else:
+                      ui.graph_center = ui.concepts[0]['name'] if ui.concepts else ''
+                  ui.graph_history = []
+                  update_graph_neighbors()
+
+              def update_graph_neighbors():
+                  """Update neighbors list for current graph center."""
+                  if ui.graph_center in ui.graph_adj:
+                      ui.graph_neighbors = sorted(ui.graph_adj[ui.graph_center])
+                  else:
+                      ui.graph_neighbors = []
+                  ui.graph_sel = 0
+
+              # ── rendering ───────────────────────────────────────
+              def wline(row, txt):
+                  return f"\033[{row};1H\033[K{txt}"
+
+              def render():
+                  W, H = term_size()
+                  out = []
+                  out.append("\033[H")
+
+                  # ── header ──
+                  hdr = " Knowledge Graph "
+                  pad = '=' * W
+                  out.append(wline(1, f"\033[44;37;1m{pad}\033[0m"))
+                  out.append(f"\033[1;{max(1,(W - len(hdr))//2)}H\033[44;37;1m{hdr}\033[0m")
+
+                  # ── tabs ──
+                  tb = ""
+                  for i, t in enumerate(ui.tabs):
+                      if i == ui.tab:
+                          tb += f"\033[7;1m [{t}] \033[0m"
+                      else:
+                          tb += f"  {t}  "
+                  out.append(wline(2, f" {tb}"))
+                  out.append(wline(3, f"\033[90m{'─' * W}\033[0m"))
+
+                  # ── stats line ──
+                  gf = f"Gen: {ui.gen_filter}" if ui.gen_filter is not None else "Gen: all"
+                  stats_line = (
+                      f" {gf}  Facts: {ui.fact_count}  "
+                      f"Concepts: {ui.concept_count}  Links: {ui.link_count}"
+                  )
+                  out.append(wline(4, f"\033[90m{stats_line}\033[0m"))
+                  out.append(wline(5, f"\033[90m{'─' * W}\033[0m"))
+
+                  # ── body ──
+                  body_start = 6
+                  body_end = H - 3
+                  body_h = body_end - body_start + 1
+                  if body_h < 1:
+                      body_h = 1
+
+                  if ui.search_mode:
+                      render_search_input(out, W, body_start, body_h)
+                  elif ui.detail:
+                      render_detail(out, W, body_start, body_h)
+                  elif ui.tab == 0:
+                      render_facts(out, W, body_start, body_h)
+                  elif ui.tab == 1:
+                      render_concepts(out, W, body_start, body_h)
+                  elif ui.tab == 2:
+                      render_links_tab(out, W, body_start, body_h)
+                  elif ui.tab == 3:
+                      render_search_results(out, W, body_start, body_h)
+                  elif ui.tab == 4:
+                      render_graph(out, W, body_start, body_h)
+
+                  # ── separator ──
+                  out.append(wline(H - 2, f"\033[90m{'─' * W}\033[0m"))
+
+                  # ── status ──
+                  if ui.status:
+                      out.append(wline(H - 1, f" \033[33m{ui.status[:W-2]}\033[0m"))
+                  else:
+                      out.append(wline(H - 1, ""))
+
+                  # ── footer ──
+                  if ui.search_mode:
+                      foot = " Type query, [Enter] Search  [Esc] Cancel"
+                  elif ui.detail:
+                      foot = " [j/k] Scroll  [q/Esc] Back"
+                  elif ui.tab == 4:
+                      foot = " [Tab] Switch  [j/k] Select  [Enter] Center  [Backspace] Back  [q] Quit"
+                  else:
+                      foot = " [Tab] Switch  [j/k] Nav  [Enter] Detail  [/] Search  [g] Gen  [q] Quit"
+                  out.append(wline(H, f"\033[44;37m{foot[:W].ljust(W)}\033[0m"))
+
+                  sys.stdout.write(''.join(out))
+                  sys.stdout.flush()
+
+              # ── tab renderers ───────────────────────────────────
+
+              def render_facts(out, W, start, body_h):
+                  vis = ui.facts[ui.scroll:ui.scroll + body_h]
+                  for r in range(body_h):
+                      row = start + r
+                      i = r + ui.scroll
+                      if r >= len(vis):
+                          out.append(wline(row, ""))
+                          continue
+                      f = vis[r]
+                      stmt = f['statement'].replace('\n', ' ')
+                      origin_tag = f"[{f['origin']}]"
+                      gen_tag = f"gen:{f['generation']}"
+                      tag = f"\033[90m{origin_tag} {gen_tag}\033[0m"
+                      max_stmt = W - len(origin_tag) - len(gen_tag) - 10
+                      if max_stmt < 10:
+                          max_stmt = 10
+                      if len(stmt) > max_stmt:
+                          stmt = stmt[:max_stmt - 3] + '...'
+                      if i == ui.sel:
+                          line = f"  > {stmt}"
+                          # pad to W then add tag
+                          padded = line[:W-len(origin_tag)-len(gen_tag)-4].ljust(W-len(origin_tag)-len(gen_tag)-4)
+                          out.append(wline(row, f"\033[7m{padded} {origin_tag} {gen_tag}\033[0m"))
+                      else:
+                          out.append(wline(row, f"    {stmt}  {tag}"))
+                  if not ui.facts:
+                      out.append(wline(start, "  \033[90mNo facts found.\033[0m"))
+                      for r in range(1, body_h):
+                          out.append(wline(start + r, ""))
+
+              def render_concepts(out, W, start, body_h):
+                  vis = ui.concepts[ui.scroll:ui.scroll + body_h]
+                  for r in range(body_h):
+                      row = start + r
+                      i = r + ui.scroll
+                      if r >= len(vis):
+                          out.append(wline(row, ""))
+                          continue
+                      c = vis[r]
+                      name = c['name']
+                      lc = ui.concept_link_counts.get(name, 0)
+                      origin_tag = f"[{c['origin']}]"
+                      gen_tag = f"gen:{c['generation']}"
+                      info = f"\033[90m({lc} facts) {origin_tag} {gen_tag}\033[0m"
+                      max_name = W - 30
+                      if max_name < 10:
+                          max_name = 10
+                      if len(name) > max_name:
+                          name = name[:max_name - 3] + '...'
+                      if i == ui.sel:
+                          out.append(wline(row, f"\033[7m  > {name:<{max_name}}  ({lc} facts) {origin_tag} {gen_tag}\033[0m"))
+                      else:
+                          out.append(wline(row, f"    \033[36m{name:<{max_name}}\033[0m  {info}"))
+                  if not ui.concepts:
+                      out.append(wline(start, "  \033[90mNo concepts found.\033[0m"))
+                      for r in range(1, body_h):
+                          out.append(wline(start + r, ""))
+
+              def render_links_tab(out, W, start, body_h):
+                  vis = ui.links[ui.scroll:ui.scroll + body_h]
+                  for r in range(body_h):
+                      row = start + r
+                      i = r + ui.scroll
+                      if r >= len(vis):
+                          out.append(wline(row, ""))
+                          continue
+                      lnk = vis[r]
+                      src = lnk['source'].replace('\n', ' ')
+                      tgt = lnk['target'].replace('\n', ' ')
+                      lt = lnk['type']
+                      max_w = (W - 12) // 2
+                      if max_w < 10:
+                          max_w = 10
+                      if len(src) > max_w:
+                          src = src[:max_w - 3] + '...'
+                      if len(tgt) > max_w:
+                          tgt = tgt[:max_w - 3] + '...'
+                      arrow = f"\033[33m -> \033[0m"
+                      type_tag = f"\033[90m[{lt}]\033[0m"
+                      if i == ui.sel:
+                          out.append(wline(row, f"\033[7m  > {src} -> {tgt}  [{lt}]\033[0m"))
+                      else:
+                          out.append(wline(row, f"    {src}{arrow}{tgt}  {type_tag}"))
+                  if not ui.links:
+                      out.append(wline(start, "  \033[90mNo links found.\033[0m"))
+                      for r in range(1, body_h):
+                          out.append(wline(start + r, ""))
+
+              def render_search_results(out, W, start, body_h):
+                  items = ui.search_results
+                  vis = items[ui.scroll:ui.scroll + body_h]
+                  for r in range(body_h):
+                      row = start + r
+                      i = r + ui.scroll
+                      if r >= len(vis):
+                          out.append(wline(row, ""))
+                          continue
+                      item = vis[r]
+                      kind_tag = f"\033[90m[{item['kind']}]\033[0m"
+                      txt = item['text'].replace('\n', ' ')
+                      origin_tag = f"[{item['origin']}]"
+                      gen_tag = f"gen:{item['generation']}"
+                      max_t = W - 30
+                      if max_t < 10:
+                          max_t = 10
+                      if len(txt) > max_t:
+                          txt = txt[:max_t - 3] + '...'
+                      if item['kind'] == 'concept':
+                          txt = f"\033[36m{txt}\033[0m"
+                      if i == ui.sel:
+                          raw_txt = item['text'].replace('\n', ' ')
+                          if len(raw_txt) > max_t:
+                              raw_txt = raw_txt[:max_t - 3] + '...'
+                          out.append(wline(row, f"\033[7m  > [{item['kind']}] {raw_txt}  {origin_tag} {gen_tag}\033[0m"))
+                      else:
+                          out.append(wline(row, f"    {kind_tag} {txt}  \033[90m{origin_tag} {gen_tag}\033[0m"))
+                  if not items:
+                      out.append(wline(start, "  \033[90mNo search results. Press / to search.\033[0m"))
+                      for r in range(1, body_h):
+                          out.append(wline(start + r, ""))
+
+              def render_search_input(out, W, start, body_h):
+                  out.append(wline(start, f"  \033[1mSearch:\033[0m {ui.search_buf}\033[7m \033[0m"))
+                  for r in range(1, body_h):
+                      out.append(wline(start + r, ""))
+
+              def render_detail(out, W, start, body_h):
+                  lines = ui.detail_lines
+                  vis = lines[ui.detail_scroll:ui.detail_scroll + body_h]
+                  for r in range(body_h):
+                      row = start + r
+                      if r >= len(vis):
+                          out.append(wline(row, ""))
+                          continue
+                      line_data = vis[r]
+                      if isinstance(line_data, tuple):
+                          txt = line_data[0]
+                      else:
+                          txt = str(line_data)
+                      out.append(wline(row, f"  {txt}"))
+
+              # ── graph rendering ─────────────────────────────────
+
+              def render_graph(out, W, start, body_h):
+                  """Render a center+spoke graph of concepts."""
+                  if not ui.graph_center:
+                      out.append(wline(start, "  \033[90mNo concepts available for graph.\033[0m"))
+                      for r in range(1, body_h):
+                          out.append(wline(start + r, ""))
+                      return
+
+                  # Build a character canvas
+                  canvas = [[' '] * W for _ in range(body_h)]
+                  # Color map: parallel array of ANSI codes per cell (empty = default)
+                  colors = [['' for _ in range(W)] for _ in range(body_h)]
+
+                  cx = W // 2
+                  cy = body_h // 2
+
+                  # Draw center node
+                  clabel = ui.graph_center
+                  if len(clabel) > W // 3:
+                      clabel = clabel[:W // 3 - 2] + '..'
+                  ctext = f"\u2503 {clabel} \u2503"
+                  ctop = "\u250f" + "\u2501" * (len(ctext) - 2) + "\u2513"
+                  cbot = "\u2517" + "\u2501" * (len(ctext) - 2) + "\u251b"
+                  cx0 = cx - len(ctext) // 2
+
+                  # Place center box (3 rows)
+                  for i, ch in enumerate(ctop):
+                      if 0 <= cx0 + i < W and 0 <= cy - 1 < body_h:
+                          canvas[cy - 1][cx0 + i] = ch
+                          colors[cy - 1][cx0 + i] = '\033[1;33m'
+                  for i, ch in enumerate(ctext):
+                      if 0 <= cx0 + i < W and 0 <= cy < body_h:
+                          canvas[cy][cx0 + i] = ch
+                          colors[cy][cx0 + i] = '\033[1;33m'
+                  for i, ch in enumerate(cbot):
+                      if 0 <= cx0 + i < W and 0 <= cy + 1 < body_h:
+                          canvas[cy + 1][cx0 + i] = ch
+                          colors[cy + 1][cx0 + i] = '\033[1;33m'
+
+                  # Center box bounds (for avoiding overwrite)
+                  cbox_left = cx0
+                  cbox_right = cx0 + len(ctext)
+                  cbox_top = cy - 1
+                  cbox_bot = cy + 1
+
+                  neighbors = ui.graph_neighbors
+                  n = len(neighbors)
+
+                  if n > 0:
+                      # Calculate radius based on terminal size
+                      rx = min(W // 3, 30)
+                      ry = min(body_h // 3, max(3, body_h // 4))
+
+                      for idx, nbr in enumerate(neighbors):
+                          angle = (2 * math.pi * idx) / n - math.pi / 2
+                          nx = cx + int(rx * math.cos(angle))
+                          ny = cy + int(ry * math.sin(angle))
+
+                          # Clamp neighbor position
+                          nlabel = nbr
+                          if len(nlabel) > 18:
+                              nlabel = nlabel[:15] + '..'
+                          if idx == ui.graph_sel:
+                              ntext = f"[{nlabel}]"
+                              ncolor = '\033[7;36m'
+                          else:
+                              ntext = f"({nlabel})"
+                              ncolor = '\033[36m'
+
+                          nl = len(ntext)
+                          nlx = max(0, min(W - nl, nx - nl // 2))
+                          nly = max(0, min(body_h - 1, ny))
+
+                          # Place neighbor label
+                          for i, ch in enumerate(ntext):
+                              if 0 <= nlx + i < W:
+                                  canvas[nly][nlx + i] = ch
+                                  colors[nly][nlx + i] = ncolor
+
+                          # Draw edge from center to neighbor
+                          edge_x1, edge_y1 = cx, cy
+                          edge_x2, edge_y2 = nlx + nl // 2, nly
+                          draw_edge(canvas, colors, W, body_h,
+                                    edge_x1, edge_y1, edge_x2, edge_y2,
+                                    cbox_left, cbox_right, cbox_top, cbox_bot)
+
+                  # Fact count for center
+                  fc = ui.concept_link_counts.get(ui.graph_center, 0)
+                  info = f"{fc} linked facts, {n} connected concepts"
+                  info_x = max(0, cx - len(info) // 2)
+                  info_y = min(body_h - 1, cy + 3)
+                  for i, ch in enumerate(info):
+                      if 0 <= info_x + i < W and canvas[info_y][info_x + i] == ' ':
+                          canvas[info_y][info_x + i] = ch
+                          colors[info_y][info_x + i] = '\033[90m'
+
+                  # Render canvas to output
+                  for r in range(body_h):
+                      line = ""
+                      cur_color = ''
+                      for c_idx in range(W):
+                          cell_color = colors[r][c_idx]
+                          if cell_color != cur_color:
+                              if cur_color:
+                                  line += '\033[0m'
+                              line += cell_color
+                              cur_color = cell_color
+                          line += canvas[r][c_idx]
+                      if cur_color:
+                          line += '\033[0m'
+                      out.append(wline(start + r, line))
+
+              def draw_edge(canvas, colors, W, H, x1, y1, x2, y2,
+                            bl, br, bt, bb):
+                  """Draw a line between two points, skipping the center box area."""
+                  dx = x2 - x1
+                  dy = y2 - y1
+                  steps = max(abs(dx), abs(dy))
+                  if steps == 0:
+                      return
+                  xi = dx / steps
+                  yi = dy / steps
+                  x, y = float(x1), float(y1)
+                  for _ in range(steps):
+                      x += xi
+                      y += yi
+                      ix, iy = int(round(x)), int(round(y))
+                      if not (0 <= ix < W and 0 <= iy < H):
+                          continue
+                      # Skip center box area
+                      if bl <= ix < br and bt <= iy <= bb:
+                          continue
+                      # Only draw on empty cells
+                      if canvas[iy][ix] != ' ':
+                          continue
+                      # Pick character based on direction
+                      adx, ady = abs(dx), abs(dy)
+                      if ady < adx * 0.3:
+                          ch = '\u2500'  # ─
+                      elif adx < ady * 0.3:
+                          ch = '\u2502'  # │
+                      elif (dx > 0) == (dy > 0):
+                          ch = '\u00b7'  # ·
+                      else:
+                          ch = '\u00b7'  # ·
+                      canvas[iy][ix] = ch
+                      colors[iy][ix] = '\033[90m'
+
+              # ── input handling ──────────────────────────────────
+
+              def handle(c):
+                  if ui.search_mode:
+                      return handle_search_input(c)
+                  if c == '\x1b':
+                      return handle_esc()
+                  if c == 'q':
+                      if ui.detail:
+                          ui.detail = False
+                          ui.detail_scroll = 0
+                          ui.status = ""
+                      else:
+                          return False
+                  elif c == '\t':
+                      ui.tab = (ui.tab + 1) % len(ui.tabs)
+                      ui.sel = 0
+                      ui.scroll = 0
+                      ui.detail = False
+                      ui.status = ""
+                  elif c == 'k':
+                      nav_up()
+                  elif c == 'j':
+                      nav_down()
+                  elif c in ('\r', '\n'):
+                      do_enter()
+                  elif c == '/':
+                      ui.search_mode = True
+                      ui.search_buf = ""
+                      ui.status = ""
+                  elif c == 'g':
+                      if ui.tab != 4:
+                          cycle_gen()
+                  elif c in ('\x7f', '\x08'):
+                      # Backspace: go back in graph history
+                      if ui.tab == 4 and ui.graph_history:
+                          ui.graph_center = ui.graph_history.pop()
+                          update_graph_neighbors()
+                          ui.status = f"Back to: {ui.graph_center}"
+                  return True
+
+              def handle_esc():
+                  if select.select([sys.stdin], [], [], 0.05)[0]:
+                      c2 = sys.stdin.read(1)
+                      if c2 == '[':
+                          c3 = sys.stdin.read(1)
+                          if c3 == 'A':
+                              nav_up()
+                          elif c3 == 'B':
+                              nav_down()
+                  else:
+                      if ui.detail:
+                          ui.detail = False
+                          ui.detail_scroll = 0
+                          ui.status = ""
+                  return True
+
+              def handle_search_input(c):
+                  if c == '\x1b':
+                      if select.select([sys.stdin], [], [], 0.05)[0]:
+                          c2 = sys.stdin.read(1)
+                          if c2 == '[':
+                              sys.stdin.read(1)
+                      else:
+                          ui.search_mode = False
+                          ui.search_buf = ""
+                          ui.status = "Search cancelled"
+                  elif c in ('\r', '\n'):
+                      if ui.search_buf.strip():
+                          do_search(ui.search_buf.strip())
+                          ui.tab = 3
+                          ui.sel = 0
+                          ui.scroll = 0
+                          ui.status = f"Found {len(ui.search_results)} results for '{ui.search_buf.strip()}'"
+                      ui.search_mode = False
+                      ui.search_buf = ""
+                  elif c in ('\x7f', '\x08'):
+                      ui.search_buf = ui.search_buf[:-1]
+                  elif c == '\x15':
+                      ui.search_buf = ""
+                  elif len(c) == 1 and 32 <= ord(c) <= 126:
+                      ui.search_buf += c
+                  return True
+
+              def nav_up():
+                  if ui.detail:
+                      ui.detail_scroll = max(0, ui.detail_scroll - 1)
+                  elif ui.tab == 4:
+                      # Graph tab: cycle through neighbors
+                      if ui.graph_neighbors:
+                          ui.graph_sel = (ui.graph_sel - 1) % len(ui.graph_neighbors)
+                          ui.status = ui.graph_neighbors[ui.graph_sel]
+                  else:
+                      ui.sel = max(0, ui.sel - 1)
+                      if ui.sel < ui.scroll:
+                          ui.scroll = ui.sel
+                      ui.status = ""
+
+              def nav_down():
+                  _, H = term_size()
+                  body_h = H - 8
+                  if body_h < 1:
+                      body_h = 1
+                  if ui.detail:
+                      max_scroll = max(0, len(ui.detail_lines) - body_h)
+                      ui.detail_scroll = min(max_scroll, ui.detail_scroll + 1)
+                  elif ui.tab == 4:
+                      # Graph tab: cycle through neighbors
+                      if ui.graph_neighbors:
+                          ui.graph_sel = (ui.graph_sel + 1) % len(ui.graph_neighbors)
+                          ui.status = ui.graph_neighbors[ui.graph_sel]
+                  else:
+                      mx = max(0, current_list_len() - 1)
+                      ui.sel = min(mx, ui.sel + 1)
+                      if ui.sel >= ui.scroll + body_h:
+                          ui.scroll = ui.sel - body_h + 1
+                      ui.status = ""
+
+              def current_list_len():
+                  if ui.tab == 0:
+                      return len(ui.facts)
+                  elif ui.tab == 1:
+                      return len(ui.concepts)
+                  elif ui.tab == 2:
+                      return len(ui.links)
+                  elif ui.tab == 3:
+                      return len(ui.search_results)
+                  return 0
+
+              def do_enter():
+                  if ui.detail:
+                      return
+                  if ui.tab == 0 and ui.facts:
+                      load_fact_detail(ui.sel)
+                      ui.detail = True
+                      ui.detail_scroll = 0
+                  elif ui.tab == 1 and ui.concepts:
+                      load_concept_detail(ui.sel)
+                      ui.detail = True
+                      ui.detail_scroll = 0
+                  elif ui.tab == 2 and ui.links:
+                      # for a link, show details of source item
+                      lnk = ui.links[ui.sel]
+                      lines = []
+                      lines.append(("\033[1mLink:\033[0m", ""))
+                      lines.append((f"  \033[33mSource:\033[0m {lnk['source']}", ""))
+                      lines.append((f"  \033[33mTarget:\033[0m {lnk['target']}", ""))
+                      lines.append((f"  \033[33mType:\033[0m {lnk['type']}", ""))
+                      ui.detail_lines = lines
+                      ui.detail = True
+                      ui.detail_scroll = 0
+                  elif ui.tab == 3 and ui.search_results:
+                      load_search_detail(ui.sel)
+                      ui.detail = True
+                      ui.detail_scroll = 0
+                  elif ui.tab == 4 and ui.graph_neighbors:
+                      # Recenter graph on selected neighbor
+                      new_center = ui.graph_neighbors[ui.graph_sel]
+                      ui.graph_history.append(ui.graph_center)
+                      ui.graph_center = new_center
+                      update_graph_neighbors()
+                      ui.status = f"Centered: {new_center}"
+
+              def cycle_gen():
+                  if ui.gen_filter is None:
+                      ui.gen_filter = 0
+                  elif ui.gen_filter >= ui.max_gen:
+                      ui.gen_filter = None
+                  else:
+                      ui.gen_filter = ui.gen_filter + 1
+                  ui.sel = 0
+                  ui.scroll = 0
+                  ui.detail = False
+                  load_facts()
+                  load_concepts()
+                  if ui.gen_filter is not None:
+                      ui.status = f"Filter: generation {ui.gen_filter}"
+                  else:
+                      ui.status = "Filter: all generations"
+
+              # ── main loop ──────────────────────────────────────
+              load_all_data()
+              fd = sys.stdin.fileno()
+              old_attrs = termios.tcgetattr(fd)
+
+              try:
+                  tty.setcbreak(fd)
+                  sys.stdout.write('\033[?25l')
+                  sys.stdout.write('\033[2J\033[H')
+                  sys.stdout.flush()
+                  render()
+                  while True:
+                      c = sys.stdin.read(1)
+                      if not handle(c):
+                          break
+                      render()
+              finally:
+                  termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+                  sys.stdout.write('\033[?25h\033[2J\033[H')
+                  sys.stdout.flush()
+
+              context['output'] = "KG browser closed."

@@ -1,0 +1,407 @@
+jinx_name: jinxs
+description: Interactive jinx browser - browse, search, and preview available jinxs
+interactive: true
+inputs: []
+steps:
+  - name: jinxs_browser
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import select
+      import yaml
+      from pathlib import Path
+
+      if not sys.stdin.isatty():
+          context['output'] = "Jinxs browser requires an interactive terminal."
+
+      elif not state or not state.team:
+          context['output'] = "No team loaded."
+
+      else:
+          # ── data loading ─────────────────────────────────────
+          def load_jinxs():
+              """Load jinxs from team directory and global ~/.npcsh directory."""
+              items = []
+              seen_paths = set()
+
+              def scan_dir(base_dir, source_label):
+                  if not base_dir.exists():
+                      return
+                  for sub in sorted(base_dir.iterdir()):
+                      if sub.is_dir():
+                          for jf in sorted(sub.glob('*.jinx')):
+                              rp = str(jf.resolve())
+                              if rp in seen_paths:
+                                  continue
+                              seen_paths.add(rp)
+                              try:
+                                  with open(jf) as f:
+                                      content = f.read()
+                                      header = content.split('steps:')[0] if 'steps:' in content else content
+                                      data = yaml.safe_load(header) or {}
+                              except Exception:
+                                  data = {}
+                              items.append({
+                                  'name': data.get('jinx_name', jf.stem),
+                                  'folder': sub.name,
+                                  'description': data.get('description', ''),
+                                  'inputs': data.get('inputs', []),
+                                  'interactive': data.get('interactive', False),
+                                  'path': str(jf),
+                                  'source': source_label,
+                              })
+
+              # Team jinxs
+              team_dir = Path(state.team.team_path) / 'jinxs'
+              scan_dir(team_dir, 'team')
+
+              # Global jinxs
+              global_dir = Path.home() / '.npcsh' / 'npc_team' / 'jinxs'
+              if global_dir.resolve() != team_dir.resolve():
+                  scan_dir(global_dir, 'global')
+
+              return items
+
+          # ── TUI state ────────────────────────────────────────
+          class TUIState:
+              def __init__(self):
+                  self.tab = 0
+                  self.tabs = ['All', 'Bin', 'Modes', 'Interactive']
+                  self.sel = 0
+                  self.scroll = 0
+                  self.all_jinxs = []
+                  self.filtered = []
+                  self.search_mode = False
+                  self.search_buf = ""
+                  self.search_query = ""
+                  self.detail = False
+                  self.detail_scroll = 0
+                  self.status = ""
+
+          ui = TUIState()
+
+          def term_size():
+              try:
+                  s = os.get_terminal_size()
+                  return s.columns, s.lines
+              except Exception:
+                  return 80, 24
+
+          def apply_filters():
+              """Apply tab filter and search query to the full jinx list."""
+              items = ui.all_jinxs
+
+              # Tab filter
+              if ui.tab == 1:
+                  items = [j for j in items if j['folder'] == 'bin']
+              elif ui.tab == 2:
+                  items = [j for j in items if j['folder'] == 'modes']
+              elif ui.tab == 3:
+                  items = [j for j in items if j['interactive']]
+
+              # Search filter
+              if ui.search_query:
+                  q = ui.search_query.lower()
+                  items = [j for j in items if q in j['name'].lower() or q in j['description'].lower()]
+
+              ui.filtered = items
+              # Clamp selection
+              if ui.sel >= len(ui.filtered):
+                  ui.sel = max(0, len(ui.filtered) - 1)
+              if ui.scroll > ui.sel:
+                  ui.scroll = ui.sel
+
+          # ── rendering ────────────────────────────────────────
+          def wline(row, text):
+              """Write full line at row, clear to EOL."""
+              return f"\033[{row};1H\033[K{text}"
+
+          def render():
+              W, H = term_size()
+              out = []
+
+              # Home cursor (no full-screen clear)
+              out.append("\033[H")
+
+              # ── header ──
+              hdr = " Jinxs "
+              pad = '=' * W
+              out.append(wline(1, f"\033[44;37;1m{pad}\033[0m"))
+              out.append(f"\033[1;{max(1, (W - len(hdr)) // 2)}H\033[44;37;1m{hdr}\033[0m")
+
+              # ── tabs ──
+              tb = ""
+              for i, t in enumerate(ui.tabs):
+                  if i == ui.tab:
+                      tb += f"\033[7;1m [{t}] \033[0m"
+                  else:
+                      tb += f"  {t}  "
+              out.append(wline(2, f" {tb}"))
+
+              # ── count line ──
+              count = len(ui.filtered)
+              total = len(ui.all_jinxs)
+              if ui.search_query:
+                  count_text = f"  {count} matching (of {total}) | search: \"{ui.search_query}\""
+              elif ui.tab == 0:
+                  count_text = f"  {total} jinxs loaded"
+              else:
+                  count_text = f"  {count} jinxs ({ui.tabs[ui.tab].lower()})"
+              out.append(wline(3, f"\033[90m{'─' * W}\033[0m"))
+              out.append(wline(4, count_text))
+              out.append(wline(5, f"\033[90m{'─' * W}\033[0m"))
+
+              # ── body ──
+              body_start = 6
+              body_end = H - 3  # leave room for separator, status, footer
+              body_h = body_end - body_start + 1
+              if body_h < 1:
+                  body_h = 1
+
+              if ui.detail:
+                  render_detail(out, W, body_start, body_h)
+              else:
+                  render_list(out, W, body_start, body_h)
+
+              # ── separator ──
+              out.append(wline(H - 2, f"\033[90m{'─' * W}\033[0m"))
+
+              # ── status / search ──
+              if ui.search_mode:
+                  out.append(wline(H - 1, f" \033[33m/\033[0m\033[1m{ui.search_buf}\033[0m\033[90m_\033[0m"))
+              elif ui.status:
+                  out.append(wline(H - 1, f" \033[33m{ui.status[:W-2]}\033[0m"))
+              else:
+                  out.append(wline(H - 1, ""))
+
+              # ── footer ──
+              if ui.search_mode:
+                  foot = " [Enter] Apply  [Esc] Cancel"
+              elif ui.detail:
+                  foot = " [j/k] Scroll  [q/Esc] Back"
+              else:
+                  foot = " [Tab] Filter  [j/k] Nav  [Enter] Detail  [/] Search  [q] Quit"
+              out.append(wline(H, f"\033[44;37m{foot[:W].ljust(W)}\033[0m"))
+
+              sys.stdout.write(''.join(out))
+              sys.stdout.flush()
+
+          def render_list(out, W, start, body_h):
+              vis = ui.filtered[ui.scroll:ui.scroll + body_h]
+              name_col = 22  # width for folder/name column
+              marker_col = 6  # width for [i] marker
+              for r in range(body_h):
+                  row = start + r
+                  idx = r + ui.scroll
+                  if r >= len(vis):
+                      out.append(wline(row, ""))
+                      continue
+                  j = vis[r]
+                  label = f"{j['folder']}/{j['name']}"
+                  if len(label) > name_col:
+                      label = label[:name_col - 1] + "\u2026"
+                  marker = " [i] " if j['interactive'] else "     "
+                  desc_max = W - name_col - marker_col - 6
+                  desc = j['description']
+                  if len(desc) > desc_max:
+                      desc = desc[:desc_max - 3] + "..."
+                  if idx == ui.sel:
+                      line = f" > {label:<{name_col}} {marker} {desc}"
+                      out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+                  else:
+                      out.append(wline(row, f"   {label:<{name_col}} \033[36m{marker}\033[0m\033[90m{desc}\033[0m"))
+              if not ui.filtered:
+                  out.append(wline(start, "  \033[90mNo jinxs match the current filter.\033[0m"))
+                  for r in range(1, body_h):
+                      out.append(wline(start + r, ""))
+
+          def render_detail(out, W, start, body_h):
+              if not ui.filtered:
+                  for r in range(body_h):
+                      out.append(wline(start + r, ""))
+                  return
+
+              j = ui.filtered[ui.sel]
+              lines = []
+              lines.append(f"\033[1mName:\033[0m      /{j['name']}")
+              lines.append(f"\033[1mFolder:\033[0m    {j['folder']}/")
+              lines.append(f"\033[1mSource:\033[0m    {j['source']}")
+              lines.append(f"\033[1mInteractive:\033[0m {'yes' if j['interactive'] else 'no'}")
+              lines.append("")
+              lines.append(f"\033[1mDescription:\033[0m")
+              # Wrap description
+              desc = j['description']
+              while desc:
+                  lines.append(f"  {desc[:W-4]}")
+                  desc = desc[W-4:]
+              lines.append("")
+              lines.append(f"\033[1mInputs:\033[0m")
+              if j['inputs']:
+                  for inp in j['inputs']:
+                      if isinstance(inp, dict):
+                          for k, v in inp.items():
+                              default = f" = {v}" if v is not None and v != '' else ""
+                              lines.append(f"  - {k}{default}")
+                      elif isinstance(inp, str):
+                          lines.append(f"  - {inp}")
+                      else:
+                          lines.append(f"  - {inp}")
+              else:
+                  lines.append("  (none)")
+              lines.append("")
+              lines.append(f"\033[1mPath:\033[0m")
+              lines.append(f"  {j['path']}")
+
+              vis = lines[ui.detail_scroll:ui.detail_scroll + body_h]
+              for r in range(body_h):
+                  row = start + r
+                  if r < len(vis):
+                      out.append(wline(row, f"  {vis[r]}"))
+                  else:
+                      out.append(wline(row, ""))
+
+          # ── input handling ─────────────────────────────────────
+          def handle(c):
+              if ui.search_mode:
+                  return handle_search(c)
+              if c == '\x1b':
+                  return handle_esc()
+              if c == 'q':
+                  if ui.detail:
+                      ui.detail = False
+                      ui.detail_scroll = 0
+                      ui.status = ""
+                  else:
+                      return False
+              elif c == '\t':
+                  ui.tab = (ui.tab + 1) % len(ui.tabs)
+                  ui.sel = 0
+                  ui.scroll = 0
+                  ui.detail = False
+                  ui.status = ""
+                  apply_filters()
+              elif c == 'k':
+                  nav_up()
+              elif c == 'j':
+                  nav_down()
+              elif c in ('\r', '\n'):
+                  do_enter()
+              elif c == '/':
+                  ui.search_mode = True
+                  ui.search_buf = ui.search_query
+                  ui.status = ""
+              return True
+
+          def handle_esc():
+              if select.select([sys.stdin], [], [], 0.05)[0]:
+                  c2 = sys.stdin.read(1)
+                  if c2 == '[':
+                      c3 = sys.stdin.read(1)
+                      if c3 == 'A':
+                          nav_up()
+                      elif c3 == 'B':
+                          nav_down()
+                  # consume any other escape sequence
+              else:
+                  # bare Esc
+                  if ui.detail:
+                      ui.detail = False
+                      ui.detail_scroll = 0
+                      ui.status = ""
+                  elif ui.search_query:
+                      ui.search_query = ""
+                      ui.sel = 0
+                      ui.scroll = 0
+                      apply_filters()
+                      ui.status = "Search cleared"
+              return True
+
+          def handle_search(c):
+              if c == '\x1b':
+                  # Check if arrow key or bare esc
+                  if select.select([sys.stdin], [], [], 0.05)[0]:
+                      c2 = sys.stdin.read(1)
+                      if c2 == '[':
+                          sys.stdin.read(1)  # consume arrow char
+                  else:
+                      ui.search_mode = False
+                      ui.search_buf = ""
+                      ui.status = "Search cancelled"
+              elif c in ('\r', '\n'):
+                  ui.search_mode = False
+                  ui.search_query = ui.search_buf
+                  ui.search_buf = ""
+                  ui.sel = 0
+                  ui.scroll = 0
+                  apply_filters()
+                  if ui.search_query:
+                      ui.status = f"Filter: \"{ui.search_query}\" ({len(ui.filtered)} results)"
+                  else:
+                      ui.status = "Search cleared"
+              elif c in ('\x7f', '\x08'):
+                  ui.search_buf = ui.search_buf[:-1]
+              elif c == '\x15':  # Ctrl+U clear line
+                  ui.search_buf = ""
+              elif 32 <= ord(c) <= 126:
+                  ui.search_buf += c
+              return True
+
+          def nav_up():
+              if ui.detail:
+                  ui.detail_scroll = max(0, ui.detail_scroll - 1)
+              else:
+                  ui.sel = max(0, ui.sel - 1)
+                  if ui.sel < ui.scroll:
+                      ui.scroll = ui.sel
+              ui.status = ""
+
+          def nav_down():
+              _, H = term_size()
+              body_h = H - 8  # body_start=6, footer uses 3 lines
+              if body_h < 1:
+                  body_h = 1
+              if ui.detail:
+                  ui.detail_scroll += 1
+              else:
+                  mx = max(0, len(ui.filtered) - 1)
+                  ui.sel = min(mx, ui.sel + 1)
+                  if ui.sel >= ui.scroll + body_h:
+                      ui.scroll = ui.sel - body_h + 1
+              ui.status = ""
+
+          def do_enter():
+              if ui.detail:
+                  # Already in detail, do nothing extra
+                  pass
+              elif ui.filtered:
+                  ui.detail = True
+                  ui.detail_scroll = 0
+                  ui.status = ""
+
+          # ── main loop ──────────────────────────────────────────
+          ui.all_jinxs = load_jinxs()
+          apply_filters()
+
+          fd = sys.stdin.fileno()
+          old_attrs = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')    # hide cursor
+              sys.stdout.write('\033[2J\033[H') # initial full clear
+              sys.stdout.flush()
+              render()
+              while True:
+                  c = sys.stdin.read(1)
+                  if not handle(c):
+                      break
+                  render()
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+              sys.stdout.write('\033[?25h\033[2J\033[H')
+              sys.stdout.flush()
+
+          context['output'] = "Jinxs browser closed."

@@ -114,7 +114,7 @@ steps:
 
                       line = str(items[idx])[:width-2]
                       if current_tab in [0, 1, 2] and idx == selected:
-                          sys.stdout.write(f'\033[47;30;1m>{line.ljust(width-2)}\033[0m')
+                          sys.stdout.write(f'\033[7;1m>{line.ljust(width-2)}\033[0m')
                       else:
                           # Color gold/cliff markers
                           if '[GOLD]' in line:

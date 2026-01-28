@@ -1,5 +1,5 @@
 jinx_name: guac
-description: Interactive Python data analysis TUI - live variable inspector, DataFrame viewer, code execution
+description: Interactive Python TUI - live variable inspector, code execution, DataFrame viewer
 inputs:
   - model: null
   - provider: null
@@ -202,7 +202,7 @@ steps:
           # ===== HEADER =====
           mode_colors = {"code": "\033[32m", "natural": "\033[35m", "inspect": "\033[33m"}
           mode_str = f"{mode_colors[state.mode]}[{state.mode}]\033[0m"
-          header = f" GUAC - Python Data Analysis {mode_str} "
+          header = f" GUAC - Interactive Python {mode_str} "
           status_color = "\033[33m" if "..." in state.status else "\033[32m"
           out.append(f"\033[1;1H\033[42;30;1m{header.ljust(width)}\033[0m")
           out.append(f"\033[1;{width-len(state.status)-3}H{status_color}[{state.status}]\033[0m")
@@ -275,7 +275,7 @@ steps:
           tabs = ""
           for i, name in enumerate(panel_names):
               if i == state.panel:
-                  tabs += f"\033[47;30m {name} \033[0m"
+                  tabs += f"\033[7m {name} \033[0m"
               else:
                   tabs += f"\033[90m {name} \033[0m"
           out.append(f"\033[3;{right_x}H{tabs}")
@@ -291,7 +291,7 @@ steps:
                   info = var_info(name, value)
                   display = f"{name[:10]:<10} {info[:rpanel_w-12]}"
                   if idx == state.selected_var:
-                      out.append(f"\033[{4+i};{right_x}H\033[47;30m>{display[:rpanel_w]}\033[0m")
+                      out.append(f"\033[{4+i};{right_x}H\033[7m>{display[:rpanel_w]}\033[0m")
                   elif isinstance(value, pd.DataFrame):
                       out.append(f"\033[{4+i};{right_x}H\033[34m {display[:rpanel_w]}\033[0m")
                   elif isinstance(value, np.ndarray):

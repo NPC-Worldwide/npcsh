@@ -1,0 +1,343 @@
+jinx_name: models
+description: Interactive model browser - detect available models and set active defaults
+interactive: true
+inputs: []
+steps:
+  - name: model_browser
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import select
+
+      if not sys.stdin.isatty():
+          context['output'] = "Models TUI requires an interactive terminal."
+
+      else:
+          from npcpy.npc_sysenv import get_locally_available_models
+          from npcsh.config import set_npcsh_config_value
+
+          LOCAL_PROVIDERS = {'ollama', 'llamacpp', 'lmstudio', 'mlx', 'lora'}
+          CLOUD_PROVIDERS = {'openai', 'anthropic', 'gemini', 'deepseek'}
+
+          class TUIState:
+              def __init__(self):
+                  self.tab = 0
+                  self.tabs = ['All', 'Local', 'Cloud', 'Active']
+                  self.sel = 0
+                  self.scroll = 0
+                  self.status = ""
+                  self.models = []        # list of (provider, model_id)
+                  self.filtered = []      # filtered view
+                  self.chat_model = ''
+                  self.chat_provider = ''
+                  self.vision_model = ''
+                  self.vision_provider = ''
+                  self.embed_model = ''
+                  self.embed_provider = ''
+                  self.reasoning_model = ''
+                  self.reasoning_provider = ''
+
+          ui = TUIState()
+
+          def term_size():
+              try:
+                  s = os.get_terminal_size()
+                  return s.columns, s.lines
+              except:
+                  return 80, 24
+
+          def load_active():
+              ui.chat_model = os.environ.get('NPCSH_CHAT_MODEL', '')
+              ui.chat_provider = os.environ.get('NPCSH_CHAT_PROVIDER', '')
+              ui.vision_model = os.environ.get('NPCSH_VISION_MODEL', '')
+              ui.vision_provider = os.environ.get('NPCSH_VISION_PROVIDER', '')
+              ui.embed_model = os.environ.get('NPCSH_EMBEDDING_MODEL', '')
+              ui.embed_provider = os.environ.get('NPCSH_EMBEDDING_PROVIDER', '')
+              ui.reasoning_model = os.environ.get('NPCSH_REASONING_MODEL', '')
+              ui.reasoning_provider = os.environ.get('NPCSH_REASONING_PROVIDER', '')
+
+          def detect_models():
+              ui.status = "Detecting models..."
+              try:
+                  models_dict = get_locally_available_models('.', airplane_mode=False)
+              except Exception as e:
+                  models_dict = {}
+                  ui.status = f"Detection error: {e}"
+              ui.models = []
+              if models_dict:
+                  for model_id, provider in sorted(models_dict.items(), key=lambda x: (x[1], x[0])):
+                      ui.models.append((provider, model_id))
+              if ui.models and not ui.status.startswith("Detection error"):
+                  ui.status = f"Found {len(ui.models)} models"
+              apply_filter()
+
+          def apply_filter():
+              if ui.tab == 0:
+                  ui.filtered = list(ui.models)
+              elif ui.tab == 1:
+                  ui.filtered = [(p, m) for p, m in ui.models if p in LOCAL_PROVIDERS]
+              elif ui.tab == 2:
+                  ui.filtered = [(p, m) for p, m in ui.models if p in CLOUD_PROVIDERS]
+              elif ui.tab == 3:
+                  active = set()
+                  if ui.chat_model and ui.chat_provider:
+                      active.add((ui.chat_provider, ui.chat_model))
+                  if ui.vision_model and ui.vision_provider:
+                      active.add((ui.vision_provider, ui.vision_model))
+                  if ui.embed_model and ui.embed_provider:
+                      active.add((ui.embed_provider, ui.embed_model))
+                  if ui.reasoning_model and ui.reasoning_provider:
+                      active.add((ui.reasoning_provider, ui.reasoning_model))
+                  ui.filtered = [(p, m) for p, m in ui.models if (p, m) in active]
+              ui.sel = min(ui.sel, max(0, len(ui.filtered) - 1))
+              ui.scroll = min(ui.scroll, max(0, ui.sel))
+
+          def model_roles(provider, model_id):
+              roles = []
+              if model_id == ui.chat_model and provider == ui.chat_provider:
+                  roles.append('chat')
+              if model_id == ui.vision_model and provider == ui.vision_provider:
+                  roles.append('vision')
+              if model_id == ui.embed_model and provider == ui.embed_provider:
+                  roles.append('embed')
+              if model_id == ui.reasoning_model and provider == ui.reasoning_provider:
+                  roles.append('reasoning')
+              return roles
+
+          # -- rendering -----------------------------------------------
+          def wline(row, text):
+              return f"\033[{row};1H\033[K{text}"
+
+          def render():
+              W, H = term_size()
+              out = []
+
+              out.append("\033[H")
+
+              # -- header --
+              hdr = " Models "
+              pad = '=' * W
+              out.append(wline(1, f"\033[44;37;1m{pad}\033[0m"))
+              out.append(f"\033[1;{max(1,(W - len(hdr)) // 2)}H\033[44;37;1m{hdr}\033[0m")
+
+              # -- tabs --
+              tb = ""
+              for i, t in enumerate(ui.tabs):
+                  if i == ui.tab:
+                      tb += f"\033[7;1m [{t}] \033[0m"
+                  else:
+                      tb += f"  {t}  "
+              out.append(wline(2, f" {tb}"))
+              out.append(wline(3, f"\033[90m{'─' * W}\033[0m"))
+
+              # -- column header --
+              prov_w = 14
+              model_w = max(24, W - prov_w - 24)
+              col_hdr = f"   {'Provider':<{prov_w}}{'Model':<{model_w}}Status"
+              out.append(wline(4, f"\033[1m{col_hdr[:W]}\033[0m"))
+
+              # -- body --
+              body_start = 5
+              body_end = H - 4
+              body_h = body_end - body_start + 1
+
+              vis = ui.filtered[ui.scroll:ui.scroll + body_h]
+              for r in range(body_h):
+                  row = body_start + r
+                  idx = r + ui.scroll
+                  if r >= len(vis):
+                      out.append(wline(row, ""))
+                      continue
+                  provider, model_id = vis[r]
+                  roles = model_roles(provider, model_id)
+                  if roles:
+                      role_str = "\033[32m* " + ', '.join(roles) + "\033[0m"
+                      role_plain = "* " + ', '.join(roles)
+                  else:
+                      role_str = ""
+                      role_plain = ""
+
+                  disp_model = model_id
+                  if len(disp_model) > model_w - 1:
+                      disp_model = disp_model[:model_w - 4] + '...'
+
+                  line_plain = f"   {provider:<{prov_w}}{disp_model:<{model_w}}{role_plain}"
+
+                  if idx == ui.sel:
+                      # highlighted row
+                      line_sel = f" > {provider:<{prov_w}}{disp_model:<{model_w}}{role_plain}"
+                      out.append(wline(row, f"\033[7m{line_sel[:W].ljust(W)}\033[0m"))
+                  else:
+                      prov_color = "\033[36m" if provider in LOCAL_PROVIDERS else "\033[35m"
+                      line_fmt = f"   {prov_color}{provider:<{prov_w}}\033[0m{disp_model:<{model_w}}{role_str}"
+                      out.append(wline(row, line_fmt))
+
+              if not ui.filtered:
+                  out.append(wline(body_start, "  \033[90mNo models found for this filter.\033[0m"))
+
+              # -- separator --
+              out.append(wline(H - 3, f"\033[90m{'─' * W}\033[0m"))
+
+              # -- active summary --
+              parts = []
+              if ui.chat_model:
+                  parts.append(f"chat: {ui.chat_model}/{ui.chat_provider}")
+              if ui.vision_model:
+                  parts.append(f"vision: {ui.vision_model}/{ui.vision_provider}")
+              if ui.embed_model:
+                  parts.append(f"embed: {ui.embed_model}/{ui.embed_provider}")
+              if ui.reasoning_model:
+                  parts.append(f"reasoning: {ui.reasoning_model}/{ui.reasoning_provider}")
+              summary = '  '.join(parts)
+              if summary:
+                  out.append(wline(H - 2, f" \033[33m{summary[:W-2]}\033[0m"))
+              else:
+                  out.append(wline(H - 2, " \033[90mNo active models configured.\033[0m"))
+
+              # -- status / footer --
+              if ui.status:
+                  stat_line = f" \033[33m{ui.status[:W-2]}\033[0m"
+              else:
+                  stat_line = ""
+              # combine status into footer area
+              foot = " [Tab] Filter  [j/k] Nav  [c] Set Chat  [v] Set Vision  [e] Set Embed  [r] Set Reasoning  [d] Refresh  [q] Quit"
+              out.append(wline(H - 1, stat_line))
+              out.append(wline(H, f"\033[44;37m{foot[:W].ljust(W)}\033[0m"))
+
+              sys.stdout.write(''.join(out))
+              sys.stdout.flush()
+
+          # -- input handling ------------------------------------------
+          def handle(c):
+              if c == '\x1b':
+                  return handle_esc()
+              if c == 'q':
+                  return False
+              elif c == '\t':
+                  ui.tab = (ui.tab + 1) % len(ui.tabs)
+                  ui.sel = 0
+                  ui.scroll = 0
+                  apply_filter()
+                  ui.status = ""
+              elif c == 'k':
+                  nav_up()
+              elif c == 'j':
+                  nav_down()
+              elif c == 'c':
+                  assign_role('chat')
+              elif c == 'v':
+                  assign_role('vision')
+              elif c == 'e':
+                  assign_role('embed')
+              elif c == 'r':
+                  assign_role('reasoning')
+              elif c == 'd':
+                  detect_models()
+                  load_active()
+              return True
+
+          def handle_esc():
+              if select.select([sys.stdin], [], [], 0.05)[0]:
+                  c2 = sys.stdin.read(1)
+                  if c2 == '[':
+                      c3 = sys.stdin.read(1)
+                      if c3 == 'A':
+                          nav_up()
+                      elif c3 == 'B':
+                          nav_down()
+                      elif c3 == 'Z':
+                          # Shift+Tab: cycle tabs backward
+                          ui.tab = (ui.tab - 1) % len(ui.tabs)
+                          ui.sel = 0
+                          ui.scroll = 0
+                          apply_filter()
+                          ui.status = ""
+                  # consume any other escape sequence
+              else:
+                  # bare Esc: quit
+                  return False
+              return True
+
+          def nav_up():
+              ui.sel = max(0, ui.sel - 1)
+              if ui.sel < ui.scroll:
+                  ui.scroll = ui.sel
+              ui.status = ""
+
+          def nav_down():
+              _, H = term_size()
+              body_h = H - 8
+              mx = max(0, len(ui.filtered) - 1)
+              ui.sel = min(mx, ui.sel + 1)
+              if ui.sel >= ui.scroll + body_h:
+                  ui.scroll = ui.sel - body_h + 1
+              ui.status = ""
+
+          def assign_role(role):
+              if not ui.filtered:
+                  ui.status = "No model selected."
+                  return
+              if ui.sel >= len(ui.filtered):
+                  ui.status = "No model selected."
+                  return
+              provider, model_id = ui.filtered[ui.sel]
+
+              if role == 'chat':
+                  set_npcsh_config_value('NPCSH_CHAT_MODEL', model_id)
+                  set_npcsh_config_value('NPCSH_CHAT_PROVIDER', provider)
+                  os.environ['NPCSH_CHAT_MODEL'] = model_id
+                  os.environ['NPCSH_CHAT_PROVIDER'] = provider
+                  ui.chat_model = model_id
+                  ui.chat_provider = provider
+                  ui.status = f"Chat model set to {model_id}/{provider}"
+              elif role == 'vision':
+                  set_npcsh_config_value('NPCSH_VISION_MODEL', model_id)
+                  set_npcsh_config_value('NPCSH_VISION_PROVIDER', provider)
+                  os.environ['NPCSH_VISION_MODEL'] = model_id
+                  os.environ['NPCSH_VISION_PROVIDER'] = provider
+                  ui.vision_model = model_id
+                  ui.vision_provider = provider
+                  ui.status = f"Vision model set to {model_id}/{provider}"
+              elif role == 'embed':
+                  set_npcsh_config_value('NPCSH_EMBEDDING_MODEL', model_id)
+                  set_npcsh_config_value('NPCSH_EMBEDDING_PROVIDER', provider)
+                  os.environ['NPCSH_EMBEDDING_MODEL'] = model_id
+                  os.environ['NPCSH_EMBEDDING_PROVIDER'] = provider
+                  ui.embed_model = model_id
+                  ui.embed_provider = provider
+                  ui.status = f"Embedding model set to {model_id}/{provider}"
+              elif role == 'reasoning':
+                  set_npcsh_config_value('NPCSH_REASONING_MODEL', model_id)
+                  set_npcsh_config_value('NPCSH_REASONING_PROVIDER', provider)
+                  os.environ['NPCSH_REASONING_MODEL'] = model_id
+                  os.environ['NPCSH_REASONING_PROVIDER'] = provider
+                  ui.reasoning_model = model_id
+                  ui.reasoning_provider = provider
+                  ui.status = f"Reasoning model set to {model_id}/{provider}"
+
+          # -- main loop -----------------------------------------------
+          load_active()
+          detect_models()
+          fd = sys.stdin.fileno()
+          old_attrs = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')    # hide cursor
+              sys.stdout.write('\033[2J\033[H') # initial full clear
+              sys.stdout.flush()
+              render()
+              while True:
+                  c = sys.stdin.read(1)
+                  if not handle(c):
+                      break
+                  render()
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+              sys.stdout.write('\033[?25h\033[2J\033[H')
+              sys.stdout.flush()
+
+          context['output'] = "Models TUI closed."

@@ -12,6 +12,7 @@ class CommandRouter:
         self.routes = {}
         self.help_info = {}
         self.jinx_routes = {}
+        self.jinx_objects = {}  # command_name -> Jinx object
 
     def route(self, command: str, help_text: str = "") -> Callable:
         def wrapper(func):
@@ -42,12 +43,17 @@ class CommandRouter:
     
     def register_jinx(self, jinx: Jinx):
         command_name = jinx.jinx_name
-        
+
         def jinx_handler(command: str, **kwargs):
             return self._execute_jinx(jinx, command, **kwargs)
-        
+
         self.jinx_routes[command_name] = jinx_handler
+        self.jinx_objects[command_name] = jinx
         self.help_info[command_name] = jinx.description or "Jinx command"
+
+    def is_interactive(self, command_name: str) -> bool:
+        jinx = self.jinx_objects.get(command_name)
+        return bool(jinx and getattr(jinx, 'interactive', False))
     
     def _execute_jinx(self, jinx: Jinx, command: str, **kwargs):
         messages = kwargs.get("messages", [])
