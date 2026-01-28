@@ -43,6 +43,7 @@ NPCSH_STREAM_OUTPUT = os.environ.get("NPCSH_STREAM_OUTPUT", "0") == "1"
 NPCSH_API_URL = os.environ.get("NPCSH_API_URL", None)
 NPCSH_SEARCH_PROVIDER = os.environ.get("NPCSH_SEARCH_PROVIDER", "duckduckgo")
 NPCSH_BUILD_KG = os.environ.get("NPCSH_BUILD_KG", "1") != "0"
+NPCSH_EDIT_APPROVAL = os.environ.get("NPCSH_EDIT_APPROVAL", "off")  # off, interactive, auto
 
 
 def get_shell_config_file() -> str:
