@@ -67,38 +67,30 @@ steps:
           return files
 
       def do_sync():
-          # Find the repo npc_team directory
-          # Check common locations
-          possible_repo_paths = [
-              Path.home() / "npcww" / "npc-core" / "npcsh" / "npcsh" / "npc_team",
-              Path.home() / "npc-core" / "npcsh" / "npcsh" / "npc_team",
-              Path.home() / "repos" / "npcsh" / "npcsh" / "npc_team",
-              Path.home() / "Projects" / "npcsh" / "npcsh" / "npc_team",
-          ]
-
-          # Also check if we can find it via pip show
-          try:
-              import subprocess
-              result = subprocess.run(['pip', 'show', 'npcsh', '-f'], capture_output=True, text=True)
-              if result.returncode == 0:
-                  for line in result.stdout.split('\n'):
-                      if line.startswith('Location:'):
-                          pip_path = Path(line.split(':', 1)[1].strip()) / "npcsh" / "npc_team"
-                          if pip_path.exists():
-                              possible_repo_paths.insert(0, pip_path)
-          except:
-              pass
-
+          # Find the npc_team directory from the installed npcsh package
+          import subprocess
           repo_npc_team = None
-          for path in possible_repo_paths:
-              if path.exists() and path.is_dir():
-                  repo_npc_team = path
-                  break
+
+          result = subprocess.run(['pip', 'show', 'npcsh'], capture_output=True, text=True)
+          if result.returncode == 0:
+              location = None
+              editable_location = None
+              for line in result.stdout.split('\n'):
+                  if line.startswith('Location:'):
+                      location = Path(line.split(':', 1)[1].strip())
+                  elif line.startswith('Editable project location:'):
+                      editable_location = Path(line.split(':', 1)[1].strip())
+
+              # Prefer editable location if available
+              if editable_location:
+                  repo_npc_team = editable_location / "npcsh" / "npc_team"
+              elif location:
+                  repo_npc_team = location / "npcsh" / "npc_team"
+
+          if not repo_npc_team or not repo_npc_team.exists():
+              return f"Error: Could not find npcsh package npc_team directory. Is npcsh installed?"
 
           local_npc_team = Path.home() / ".npcsh" / "npc_team"
-
-          if not repo_npc_team:
-              return "Error: Could not find npcsh repo npc_team directory.\nSearched:\n" + "\n".join(f"  - {p}" for p in possible_repo_paths)
 
           if not local_npc_team.exists():
               return f"Error: Local npc_team directory not found at {local_npc_team}"
