@@ -2760,15 +2760,19 @@ def process_pipeline_command(
     if cmd_to_process.startswith("/"):
         command_name = cmd_to_process.split()[0].lstrip('/')
         
-        # Check if this is an interactive mode by looking for the jinx file in modes/
+        # Check if this is an interactive mode
         is_interactive_mode = False
-        
-        # Check global modes
-        global_modes_jinx = os.path.expanduser(f'~/.npcsh/npc_team/jinxs/modes/{command_name}.jinx')
-        if os.path.exists(global_modes_jinx):
+
+        # Check if the jinx declares interactive: true
+        if router.is_interactive(command_name):
             is_interactive_mode = True
-        
-        # Check team modes
+
+        # Also check modes/ directory (legacy)
+        if not is_interactive_mode:
+            global_modes_jinx = os.path.expanduser(f'~/.npcsh/npc_team/jinxs/modes/{command_name}.jinx')
+            if os.path.exists(global_modes_jinx):
+                is_interactive_mode = True
+
         if not is_interactive_mode and state.team and state.team.team_path:
             team_modes_jinx = os.path.join(state.team.team_path, 'jinxs', 'modes', f'{command_name}.jinx')
             if os.path.exists(team_modes_jinx):

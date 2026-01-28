@@ -1,5 +1,6 @@
 jinx_name: setup
 description: Interactive setup wizard for npcsh - detect local models, configure defaults
+interactive: true
 inputs:
   - skip_detection: ""
 steps:
@@ -136,7 +137,7 @@ steps:
                       row = 5 + i
                       idx = i + state.scroll_offset
                       if idx == state.selected_idx:
-                          out.append(f"\033[{row};4H\033[47;30m> {model} ({provider})\033[0m")
+                          out.append(f"\033[{row};4H\033[7m> {model} ({provider})\033[0m")
                       else:
                           out.append(f"\033[{row};4H  {model} \033[90m({provider})\033[0m")
 
