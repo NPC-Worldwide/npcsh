@@ -1,0 +1,299 @@
+jinx_name: config_tui
+description: Interactive TUI editor for npcsh configuration (~/.npcshrc)
+inputs: []
+steps:
+  - name: config_editor
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import select
+      from pathlib import Path
+
+      if not sys.stdin.isatty():
+          context['output'] = "Config TUI requires an interactive terminal."
+          return
+
+      # ========== Config Items ==========
+      CONFIG_ITEMS = [
+          {'key': 'NPCSH_CHAT_MODEL', 'label': 'Chat Model', 'type': 'text', 'shortcut': 'model'},
+          {'key': 'NPCSH_CHAT_PROVIDER', 'label': 'Chat Provider', 'type': 'text', 'shortcut': 'provider'},
+          {'key': 'NPCSH_VISION_MODEL', 'label': 'Vision Model', 'type': 'text'},
+          {'key': 'NPCSH_VISION_PROVIDER', 'label': 'Vision Provider', 'type': 'text'},
+          {'key': 'NPCSH_EMBEDDING_MODEL', 'label': 'Embedding Model', 'type': 'text'},
+          {'key': 'NPCSH_EMBEDDING_PROVIDER', 'label': 'Embedding Provider', 'type': 'text'},
+          {'key': 'NPCSH_REASONING_MODEL', 'label': 'Reasoning Model', 'type': 'text'},
+          {'key': 'NPCSH_REASONING_PROVIDER', 'label': 'Reasoning Provider', 'type': 'text'},
+          {'key': 'NPCSH_DEFAULT_MODE', 'label': 'Default Mode', 'type': 'choice', 'choices': ['agent', 'chat', 'code']},
+          {'key': 'NPCSH_STREAM_OUTPUT', 'label': 'Stream Output', 'type': 'toggle'},
+          {'key': 'NPCSH_BUILD_KG', 'label': 'Build Knowledge Graph', 'type': 'toggle'},
+          {'key': 'NPCSH_SEARCH_PROVIDER', 'label': 'Search Provider', 'type': 'choice', 'choices': ['duckduckgo', 'google', 'bing']},
+      ]
+
+      # ========== State ==========
+      class ConfigState:
+          def __init__(self):
+              self.selected_idx = 0
+              self.scroll_offset = 0
+              self.editing = False
+              self.edit_buffer = ""
+              self.edit_cursor = 0
+              self.values = {}
+              self.modified = set()
+              self.status = ""
+
+      state = ConfigState()
+
+      # ========== Helpers ==========
+      def get_size():
+          try:
+              s = os.get_terminal_size()
+              return s.columns, s.lines
+          except:
+              return 80, 24
+
+      def load_values():
+          """Load current values from environment and npcshrc."""
+          for item in CONFIG_ITEMS:
+              key = item['key']
+              # First try environment
+              value = os.environ.get(key, '')
+              if not value:
+                  # Try reading from npcshrc
+                  npcshrc = Path.home() / '.npcshrc'
+                  if npcshrc.exists():
+                      with open(npcshrc) as f:
+                          for line in f:
+                              if line.strip().startswith(f'export {key}='):
+                                  value = line.split('=', 1)[1].strip().strip('"').strip("'")
+                                  break
+              state.values[key] = value
+
+      def save_values():
+          """Save modified values to ~/.npcshrc."""
+          from npcsh.config import set_npcsh_config_value
+          for key in state.modified:
+              set_npcsh_config_value(key, state.values[key])
+          state.modified.clear()
+          state.status = "Saved!"
+
+      def format_value(item, value):
+          """Format value for display."""
+          if item['type'] == 'toggle':
+              return '\033[32mON\033[0m' if value in ('1', 'true', 'True', True) else '\033[31mOFF\033[0m'
+          elif not value:
+              return '\033[90m(not set)\033[0m'
+          return value
+
+      # ========== Rendering ==========
+      def render_screen():
+          width, height = get_size()
+          out = []
+          out.append("\033[2J\033[H")
+
+          # Header
+          header = " NPCSH Configuration "
+          out.append(f"\033[1;1H\033[44;37;1m{'=' * width}\033[0m")
+          out.append(f"\033[1;{(width - len(header)) // 2}H\033[44;37;1m{header}\033[0m")
+
+          # Config items
+          visible_height = height - 6
+          visible = CONFIG_ITEMS[state.scroll_offset:state.scroll_offset + visible_height]
+
+          label_width = max(len(item['label']) for item in CONFIG_ITEMS) + 2
+          value_width = width - label_width - 10
+
+          for i, item in enumerate(visible):
+              row = 3 + i
+              idx = i + state.scroll_offset
+              key = item['key']
+              value = state.values.get(key, '')
+              display_value = format_value(item, value)
+
+              # Indicator for modified
+              mod_indicator = '*' if key in state.modified else ' '
+
+              if idx == state.selected_idx:
+                  if state.editing:
+                      # Show edit mode
+                      out.append(f"\033[{row};2H\033[47;30m{item['label']:<{label_width}}\033[0m")
+                      # Edit buffer with cursor
+                      cursor_pos = min(state.edit_cursor, len(state.edit_buffer))
+                      before = state.edit_buffer[:cursor_pos]
+                      after = state.edit_buffer[cursor_pos:]
+                      out.append(f"\033[{row};{label_width+4}H{before}\033[7m \033[0m{after}")
+                  else:
+                      out.append(f"\033[{row};2H\033[47;30m{mod_indicator}{item['label']:<{label_width}} {display_value[:value_width]}\033[0m")
+              else:
+                  out.append(f"\033[{row};2H{mod_indicator}{item['label']:<{label_width}} {display_value[:value_width]}")
+
+              # Type indicator
+              type_hint = {'text': '[e]', 'toggle': '[t]', 'choice': '[c]'}.get(item['type'], '')
+              out.append(f"\033[{row};{width-4}H\033[90m{type_hint}\033[0m")
+
+          # Status line
+          if state.status:
+              out.append(f"\033[{height-2};2H\033[33m{state.status}\033[0m")
+
+          # Footer
+          if state.editing:
+              footer = "[Enter] Save  [Esc] Cancel"
+          else:
+              footer = "[j/k] Navigate  [e] Edit  [t] Toggle  [s] Save All  [q] Quit"
+          out.append(f"\033[{height};1H\033[90m{footer[:width]}\033[0m")
+
+          sys.stdout.write(''.join(out))
+          sys.stdout.flush()
+
+      # ========== Input Handling ==========
+      def handle_input(c):
+          if state.editing:
+              return handle_edit_input(c)
+
+          if c == 'q':
+              if state.modified:
+                  state.status = "Unsaved changes! Press 's' to save or 'q' again to discard."
+                  return True
+              return False
+
+          if c == '\x1b':  # Escape sequence
+              if select.select([sys.stdin], [], [], 0.05)[0]:
+                  c2 = sys.stdin.read(1)
+                  if c2 == '[':
+                      c3 = sys.stdin.read(1)
+                      if c3 == 'A':  # Up
+                          move_up()
+                      elif c3 == 'B':  # Down
+                          move_down()
+              return True
+
+          if c == 'k':
+              move_up()
+          elif c == 'j':
+              move_down()
+          elif c == 'e' or c == '\r' or c == '\n':
+              start_edit()
+          elif c == 't':
+              toggle_value()
+          elif c == 'c':
+              cycle_choice()
+          elif c == 's':
+              save_values()
+
+          return True
+
+      def handle_edit_input(c):
+          if c == '\x1b':  # Escape - cancel edit
+              state.editing = False
+              state.edit_buffer = ""
+              state.status = "Edit cancelled"
+              return True
+
+          if c == '\r' or c == '\n':  # Enter - save edit
+              key = CONFIG_ITEMS[state.selected_idx]['key']
+              state.values[key] = state.edit_buffer
+              state.modified.add(key)
+              state.editing = False
+              state.edit_buffer = ""
+              state.status = f"Changed {key}"
+              return True
+
+          if c == '\x7f' or c == '\x08':  # Backspace
+              if state.edit_cursor > 0:
+                  state.edit_buffer = state.edit_buffer[:state.edit_cursor-1] + state.edit_buffer[state.edit_cursor:]
+                  state.edit_cursor -= 1
+              return True
+
+          if c >= ' ' and c <= '~':  # Printable
+              state.edit_buffer = state.edit_buffer[:state.edit_cursor] + c + state.edit_buffer[state.edit_cursor:]
+              state.edit_cursor += 1
+              return True
+
+          return True
+
+      def move_up():
+          state.selected_idx = max(0, state.selected_idx - 1)
+          if state.selected_idx < state.scroll_offset:
+              state.scroll_offset = state.selected_idx
+          state.status = ""
+
+      def move_down():
+          _, height = get_size()
+          visible_height = height - 6
+          state.selected_idx = min(len(CONFIG_ITEMS) - 1, state.selected_idx + 1)
+          if state.selected_idx >= state.scroll_offset + visible_height:
+              state.scroll_offset = state.selected_idx - visible_height + 1
+          state.status = ""
+
+      def start_edit():
+          item = CONFIG_ITEMS[state.selected_idx]
+          if item['type'] == 'toggle':
+              toggle_value()
+          elif item['type'] == 'choice':
+              cycle_choice()
+          else:
+              key = item['key']
+              state.edit_buffer = state.values.get(key, '')
+              state.edit_cursor = len(state.edit_buffer)
+              state.editing = True
+              state.status = "Editing... Enter to save, Esc to cancel"
+
+      def toggle_value():
+          item = CONFIG_ITEMS[state.selected_idx]
+          if item['type'] != 'toggle':
+              return
+          key = item['key']
+          current = state.values.get(key, '0')
+          new_value = '0' if current in ('1', 'true', 'True') else '1'
+          state.values[key] = new_value
+          state.modified.add(key)
+          state.status = f"Toggled {item['label']}"
+
+      def cycle_choice():
+          item = CONFIG_ITEMS[state.selected_idx]
+          if item['type'] != 'choice':
+              return
+          key = item['key']
+          choices = item.get('choices', [])
+          if not choices:
+              return
+          current = state.values.get(key, '')
+          try:
+              idx = choices.index(current)
+              next_idx = (idx + 1) % len(choices)
+          except ValueError:
+              next_idx = 0
+          state.values[key] = choices[next_idx]
+          state.modified.add(key)
+          state.status = f"Changed to {choices[next_idx]}"
+
+      # ========== Main Loop ==========
+      load_values()
+
+      fd = sys.stdin.fileno()
+      old_settings = termios.tcgetattr(fd)
+
+      try:
+          tty.setcbreak(fd)
+          sys.stdout.write('\033[?25l')  # Hide cursor
+
+          render_screen()
+
+          while True:
+              c = sys.stdin.read(1)
+              if not handle_input(c):
+                  break
+              render_screen()
+
+      finally:
+          termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+          sys.stdout.write('\033[?25h')  # Show cursor
+          sys.stdout.write('\033[2J\033[H')  # Clear screen
+          sys.stdout.flush()
+
+      if state.modified:
+          context['output'] = f"Exited with unsaved changes: {', '.join(state.modified)}"
+      else:
+          context['output'] = "Configuration editor closed."

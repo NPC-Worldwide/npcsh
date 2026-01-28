@@ -1,0 +1,327 @@
+jinx_name: team_tui
+description: Interactive TUI for managing team context, NPCs, and jinxs
+inputs: []
+steps:
+  - name: team_manager
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import select
+      import yaml
+      from pathlib import Path
+
+      if not sys.stdin.isatty():
+          context['output'] = "Team TUI requires an interactive terminal."
+          return
+
+      team = context.get('team')
+      if not team:
+          context['output'] = "No team loaded."
+          return
+
+      # ========== State ==========
+      class TeamState:
+          def __init__(self):
+              self.tab = 0  # 0=Team Context, 1=NPCs, 2=Jinxs
+              self.tabs = ['Team Context', 'NPCs', 'Jinxs']
+              self.selected_idx = 0
+              self.scroll_offset = 0
+              self.editing = False
+              self.edit_field = None
+              self.edit_buffer = ""
+              self.edit_cursor = 0
+              self.status = ""
+              self.team_ctx = {}
+              self.npcs = []
+              self.jinxs = []
+
+      state = TeamState()
+
+      # ========== Helpers ==========
+      def get_size():
+          try:
+              s = os.get_terminal_size()
+              return s.columns, s.lines
+          except:
+              return 80, 24
+
+      def load_team_data():
+          """Load team context, NPCs, and jinxs."""
+          # Load team.ctx
+          if hasattr(team, 'team_ctx'):
+              state.team_ctx = team.team_ctx or {}
+          else:
+              ctx_path = Path(team.team_path) / 'team.ctx'
+              if ctx_path.exists():
+                  with open(ctx_path) as f:
+                      state.team_ctx = yaml.safe_load(f) or {}
+
+          # Load NPCs
+          if hasattr(team, 'npcs'):
+              state.npcs = list(team.npcs.keys())
+          else:
+              npc_dir = Path(team.team_path)
+              state.npcs = [f.stem for f in npc_dir.glob('*.npc')]
+
+          # Load Jinxs count by folder
+          jinxs_dir = Path(team.team_path) / 'jinxs'
+          state.jinxs = []
+          if jinxs_dir.exists():
+              for subdir in sorted(jinxs_dir.iterdir()):
+                  if subdir.is_dir():
+                      count = len(list(subdir.glob('*.jinx')))
+                      state.jinxs.append((subdir.name, count))
+
+      def save_team_ctx():
+          """Save team.ctx file."""
+          ctx_path = Path(team.team_path) / 'team.ctx'
+          with open(ctx_path, 'w') as f:
+              yaml.dump(state.team_ctx, f, default_flow_style=False)
+          state.status = "Team context saved!"
+
+      # ========== Rendering ==========
+      def render_screen():
+          width, height = get_size()
+          out = []
+          out.append("\033[2J\033[H")
+
+          # Header
+          team_name = getattr(team, 'name', 'Unknown')
+          header = f" Team: {team_name} "
+          out.append(f"\033[1;1H\033[44;37;1m{'=' * width}\033[0m")
+          out.append(f"\033[1;{(width - len(header)) // 2}H\033[44;37;1m{header}\033[0m")
+
+          # Tabs
+          tab_str = ""
+          for i, tab in enumerate(state.tabs):
+              if i == state.tab:
+                  tab_str += f"\033[47;30m [{tab}] \033[0m"
+              else:
+                  tab_str += f" [{tab}] "
+          out.append(f"\033[2;2H{tab_str}")
+
+          # Content area
+          out.append(f"\033[3;1H\033[90m{'─' * width}\033[0m")
+
+          if state.tab == 0:
+              render_team_ctx(out, width, height)
+          elif state.tab == 1:
+              render_npcs(out, width, height)
+          elif state.tab == 2:
+              render_jinxs(out, width, height)
+
+          # Status
+          if state.status:
+              out.append(f"\033[{height-2};2H\033[33m{state.status}\033[0m")
+
+          # Footer
+          if state.editing:
+              footer = "[Enter] Save  [Esc] Cancel"
+          else:
+              footer = "[Tab] Switch Tab  [j/k] Navigate  [e] Edit  [s] Save  [q] Quit"
+          out.append(f"\033[{height};1H\033[90m{footer[:width]}\033[0m")
+
+          sys.stdout.write(''.join(out))
+          sys.stdout.flush()
+
+      def render_team_ctx(out, width, height):
+          """Render team context tab."""
+          fields = [
+              ('forenpc', 'Forenpc'),
+              ('model', 'Model'),
+              ('provider', 'Provider'),
+              ('context', 'Context'),
+          ]
+
+          row = 5
+          for i, (key, label) in enumerate(fields):
+              value = state.team_ctx.get(key, '')
+              if isinstance(value, str) and len(value) > 50:
+                  value = value[:50] + '...'
+
+              if i == state.selected_idx:
+                  if state.editing:
+                      out.append(f"\033[{row};4H\033[1m{label}:\033[0m")
+                      out.append(f"\033[{row+1};6H{state.edit_buffer[:width-10]}\033[7m \033[0m")
+                      row += 2
+                  else:
+                      out.append(f"\033[{row};4H\033[47;30m{label}: {value}\033[0m")
+                      row += 1
+              else:
+                  if value:
+                      out.append(f"\033[{row};4H{label}: \033[32m{value}\033[0m")
+                  else:
+                      out.append(f"\033[{row};4H{label}: \033[90m(not set)\033[0m")
+                  row += 1
+
+      def render_npcs(out, width, height):
+          """Render NPCs tab."""
+          visible_height = height - 8
+          visible = state.npcs[state.scroll_offset:state.scroll_offset + visible_height]
+
+          row = 5
+          for i, npc_name in enumerate(visible):
+              idx = i + state.scroll_offset
+              npc_obj = team.npcs.get(npc_name) if hasattr(team, 'npcs') else None
+
+              if npc_obj:
+                  model_info = f"{npc_obj.model or 'default'}/{npc_obj.provider or 'default'}"
+              else:
+                  model_info = ""
+
+              if idx == state.selected_idx:
+                  out.append(f"\033[{row};4H\033[47;30m> {npc_name:<15} {model_info}\033[0m")
+              else:
+                  out.append(f"\033[{row};4H  {npc_name:<15} \033[90m{model_info}\033[0m")
+              row += 1
+
+          if not state.npcs:
+              out.append(f"\033[5;4H\033[90mNo NPCs found in team.\033[0m")
+
+      def render_jinxs(out, width, height):
+          """Render Jinxs tab."""
+          visible_height = height - 8
+          visible = state.jinxs[state.scroll_offset:state.scroll_offset + visible_height]
+
+          row = 5
+          for i, (folder, count) in enumerate(visible):
+              idx = i + state.scroll_offset
+              if idx == state.selected_idx:
+                  out.append(f"\033[{row};4H\033[47;30m> {folder}/ ({count} jinxs)\033[0m")
+              else:
+                  out.append(f"\033[{row};4H  {folder}/ \033[90m({count} jinxs)\033[0m")
+              row += 1
+
+          if not state.jinxs:
+              out.append(f"\033[5;4H\033[90mNo jinxs folders found.\033[0m")
+
+      # ========== Input Handling ==========
+      def handle_input(c):
+          if state.editing:
+              return handle_edit_input(c)
+
+          if c == 'q':
+              return False
+
+          if c == '\t':  # Tab - switch tabs
+              state.tab = (state.tab + 1) % len(state.tabs)
+              state.selected_idx = 0
+              state.scroll_offset = 0
+              state.status = ""
+
+          elif c == '\x1b':  # Escape sequence
+              if select.select([sys.stdin], [], [], 0.05)[0]:
+                  c2 = sys.stdin.read(1)
+                  if c2 == '[':
+                      c3 = sys.stdin.read(1)
+                      if c3 == 'A':  # Up
+                          move_up()
+                      elif c3 == 'B':  # Down
+                          move_down()
+
+          elif c == 'k':
+              move_up()
+          elif c == 'j':
+              move_down()
+          elif c == 'e' or c == '\r' or c == '\n':
+              start_edit()
+          elif c == 's':
+              save_team_ctx()
+
+          return True
+
+      def handle_edit_input(c):
+          if c == '\x1b':  # Escape - cancel
+              state.editing = False
+              state.edit_buffer = ""
+              state.status = "Edit cancelled"
+              return True
+
+          if c == '\r' or c == '\n':  # Enter - save
+              if state.edit_field:
+                  state.team_ctx[state.edit_field] = state.edit_buffer
+                  state.status = f"Updated {state.edit_field}"
+              state.editing = False
+              state.edit_buffer = ""
+              state.edit_field = None
+              return True
+
+          if c == '\x7f' or c == '\x08':  # Backspace
+              if state.edit_cursor > 0:
+                  state.edit_buffer = state.edit_buffer[:state.edit_cursor-1] + state.edit_buffer[state.edit_cursor:]
+                  state.edit_cursor -= 1
+
+          elif c >= ' ' and c <= '~':  # Printable
+              state.edit_buffer = state.edit_buffer[:state.edit_cursor] + c + state.edit_buffer[state.edit_cursor:]
+              state.edit_cursor += 1
+
+          return True
+
+      def move_up():
+          state.selected_idx = max(0, state.selected_idx - 1)
+          if state.selected_idx < state.scroll_offset:
+              state.scroll_offset = state.selected_idx
+          state.status = ""
+
+      def move_down():
+          _, height = get_size()
+          visible_height = height - 8
+
+          if state.tab == 0:
+              max_idx = 3  # 4 fields in team ctx
+          elif state.tab == 1:
+              max_idx = len(state.npcs) - 1
+          else:
+              max_idx = len(state.jinxs) - 1
+
+          state.selected_idx = min(max_idx, state.selected_idx + 1)
+          if state.selected_idx >= state.scroll_offset + visible_height:
+              state.scroll_offset = state.selected_idx - visible_height + 1
+          state.status = ""
+
+      def start_edit():
+          if state.tab == 0:
+              fields = ['forenpc', 'model', 'provider', 'context']
+              if state.selected_idx < len(fields):
+                  state.edit_field = fields[state.selected_idx]
+                  state.edit_buffer = str(state.team_ctx.get(state.edit_field, ''))
+                  state.edit_cursor = len(state.edit_buffer)
+                  state.editing = True
+                  state.status = "Editing..."
+          elif state.tab == 1:
+              if state.npcs and state.selected_idx < len(state.npcs):
+                  npc_name = state.npcs[state.selected_idx]
+                  state.status = f"Selected NPC: {npc_name} (edit NPC files directly)"
+          elif state.tab == 2:
+              if state.jinxs and state.selected_idx < len(state.jinxs):
+                  folder, _ = state.jinxs[state.selected_idx]
+                  state.status = f"Selected folder: {folder}/"
+
+      # ========== Main Loop ==========
+      load_team_data()
+
+      fd = sys.stdin.fileno()
+      old_settings = termios.tcgetattr(fd)
+
+      try:
+          tty.setcbreak(fd)
+          sys.stdout.write('\033[?25l')  # Hide cursor
+
+          render_screen()
+
+          while True:
+              c = sys.stdin.read(1)
+              if not handle_input(c):
+                  break
+              render_screen()
+
+      finally:
+          termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+          sys.stdout.write('\033[?25h')  # Show cursor
+          sys.stdout.write('\033[2J\033[H')  # Clear screen
+          sys.stdout.flush()
+
+      context['output'] = "Team manager closed."
