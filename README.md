@@ -5,14 +5,7 @@
 
 # NPC Shell
 
-`npcsh` - a new standard in human-agent interaction. Co-create with agents to build organizations that refine themselves and evolve to your needs.
-
-The NPC shell is a suite of programs to make use of multi-modal LLMs and agents in novel interactive modes. Based in the command line, use it wherever you work. 
-
-- It is developed to work reliably with small models and performs excellently with the state-of-the-art models from major model providers. 
-- Fundamentally, the core program of npcsh extends the familiar bash environment with an intelligent layer that lets users seamlessly ask agents questions, run pre-built or custom macros or agents, all without breaking the flow of command-line work.
-- Switching between agents is a breeze in `npcsh`, letting you quickly and easily take advantage of a variety of agents (e.g. coding agents versus tool-calling agents versus prompt-based ReACT Flow agents) and personas (e.g. Data scientist, mapmaker with ennui, etc.).
-- Project variables and context can be stored in team `.ctx` files. Personas (`.npc`) and Jinja execution templates (`.jinx`) are likewise stored in `yaml` within the global `npcsh` team or your project-specific one, letting you focus on adjusting and engineering context and system prompts iteratively so you can constantly improve your agent team's performance.
+`npcsh` - a new standard in human-agent interaction. The NPC shell is a suite of programs to make use of multi-modal LLMs and agents in novel interactive modes in the command line. Build teams of agents, engineer context, and design custom interaction flows and tools for you and your agents to execute, all managed scalably through the NPC data layer.
 
 To get started:
 ```bash

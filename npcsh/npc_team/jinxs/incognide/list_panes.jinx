@@ -1,4 +1,4 @@
-jinx_name: studio.list_panes
+jinx_name: studio_list_panes
 description: List all open panes in NPC Studio. Returns pane IDs, types, titles, and which is active.
 inputs: []
 steps:

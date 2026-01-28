@@ -1,4 +1,4 @@
-jinx_name: studio.run_terminal
+jinx_name: studio_run_terminal
 description: Execute a command in a terminal pane.
 inputs:
 - paneId: "active"

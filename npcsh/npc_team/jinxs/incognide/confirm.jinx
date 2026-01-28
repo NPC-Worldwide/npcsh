@@ -1,4 +1,4 @@
-jinx_name: studio.confirm
+jinx_name: studio_confirm
 description: Show a confirmation dialog and return the user's choice.
 inputs:
 - message: ""

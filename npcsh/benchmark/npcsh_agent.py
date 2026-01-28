@@ -53,14 +53,26 @@ class NpcshAgent(BaseInstalledAgent):
         Returns:
             List of ExecInput commands to execute
         """
-        # Wrap the instruction with explicit jinx usage directions
+        # Wrap the instruction with explicit jinx usage directions and retry logic
         tool_instruction = f"""You have access to jinxs including edit_file (for writing/creating files), sh (for running shell commands), and python (for running Python code).
 
-IMPORTANT: You MUST use these jinxs to complete the task. Do NOT just output code as text - use the edit_file jinx to actually write files to disk.
+IMPORTANT RULES:
+1. You MUST use these jinxs to complete the task. Do NOT just output code as text - use the edit_file jinx to actually write files to disk.
+2. After implementing a solution, you MUST verify it works by running any provided test scripts.
+3. If a test fails or produces an error, you MUST try a DIFFERENT approach. Do not give up.
+4. Keep trying different approaches until you succeed or have tried at least 10 different solutions.
+5. NEVER assume success - always check the actual output of test commands.
 
 Task: {instruction}
 
-Remember: Use edit_file to write any code files. Use sh to run shell commands like gcc, make, etc."""
+WORKFLOW:
+1. Implement your solution using edit_file and sh
+2. Run any test scripts mentioned in the task
+3. Check the output carefully - look for "PASS", "SUCCESS", "OK" or similar
+4. If the test failed, analyze why and try a completely different approach
+5. Repeat until the test passes
+
+Remember: Use edit_file to write code files. Use sh to run commands. VERIFY your solution works before concluding."""
 
         escaped_instruction = shlex.quote(tool_instruction)
         model_name = self.model_name
@@ -90,18 +102,25 @@ Remember: Use edit_file to write any code files. Use sh to run shell commands li
         # Build environment variables for API keys
         env_vars = []
         api_key_map = {
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openai": "OPENAI_API_KEY",
-            "gemini": "GOOGLE_API_KEY",
-            "google": "GOOGLE_API_KEY",
-            "deepseek": "DEEPSEEK_API_KEY",
-            "groq": "GROQ_API_KEY",
-            "openrouter": "OPENROUTER_API_KEY",
+            "anthropic": ["ANTHROPIC_API_KEY"],
+            "openai": ["OPENAI_API_KEY"],
+            "gemini": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+            "google": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+            "deepseek": ["DEEPSEEK_API_KEY"],
+            "groq": ["GROQ_API_KEY"],
+            "openrouter": ["OPENROUTER_API_KEY"],
         }
 
-        for prov, env_key in api_key_map.items():
-            if env_key in os.environ:
-                env_vars.append(f'{env_key}="{os.environ[env_key]}"')
+        added_keys = set()
+        for prov, env_keys in api_key_map.items():
+            for env_key in env_keys:
+                if env_key in os.environ:
+                    # For Gemini, always pass as GOOGLE_API_KEY (what litellm expects)
+                    target_key = "GOOGLE_API_KEY" if env_key == "GEMINI_API_KEY" else env_key
+                    if target_key not in added_keys:
+                        env_vars.append(f'{target_key}="{os.environ[env_key]}"')
+                        added_keys.add(target_key)
+                    break
 
         env_prefix = " ".join(env_vars) + " " if env_vars else ""
 
@@ -215,14 +234,26 @@ class NpcshAgentWithNpc(NpcshAgent):
 
     def create_run_agent_commands(self, instruction: str) -> list:
         """Create commands using a specific NPC."""
-        # Wrap the instruction with explicit jinx usage directions
+        # Wrap the instruction with explicit jinx usage directions and retry logic
         tool_instruction = f"""You have access to jinxs including edit_file (for writing/creating files), sh (for running shell commands), and python (for running Python code).
 
-IMPORTANT: You MUST use these jinxs to complete the task. Do NOT just output code as text - use the edit_file jinx to actually write files to disk.
+IMPORTANT RULES:
+1. You MUST use these jinxs to complete the task. Do NOT just output code as text - use the edit_file jinx to actually write files to disk.
+2. After implementing a solution, you MUST verify it works by running any provided test scripts.
+3. If a test fails or produces an error, you MUST try a DIFFERENT approach. Do not give up.
+4. Keep trying different approaches until you succeed or have tried at least 10 different solutions.
+5. NEVER assume success - always check the actual output of test commands.
 
 Task: {instruction}
 
-Remember: Use edit_file to write any code files. Use sh to run shell commands like gcc, make, etc."""
+WORKFLOW:
+1. Implement your solution using edit_file and sh
+2. Run any test scripts mentioned in the task
+3. Check the output carefully - look for "PASS", "SUCCESS", "OK" or similar
+4. If the test failed, analyze why and try a completely different approach
+5. Repeat until the test passes
+
+Remember: Use edit_file to write code files. Use sh to run commands. VERIFY your solution works before concluding."""
 
         escaped_instruction = shlex.quote(tool_instruction)
         model_name = self.model_name

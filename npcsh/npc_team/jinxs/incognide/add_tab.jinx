@@ -1,4 +1,4 @@
-jinx_name: studio.add_tab
+jinx_name: studio_add_tab
 description: Add a new tab to a pane.
 inputs:
 - paneId: "active"

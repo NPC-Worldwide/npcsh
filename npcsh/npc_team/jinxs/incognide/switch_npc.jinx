@@ -1,4 +1,4 @@
-jinx_name: studio.switch_npc
+jinx_name: studio_switch_npc
 description: Switch the active NPC in a chat pane.
 inputs:
 - paneId: "active"

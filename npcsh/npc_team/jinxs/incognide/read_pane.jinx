@@ -1,4 +1,4 @@
-jinx_name: studio.read_pane
+jinx_name: studio_read_pane
 description: Read the contents of a pane. For editor panes returns file content, for chat panes returns messages, for browser panes returns URL/title.
 inputs:
 - paneId: "active"

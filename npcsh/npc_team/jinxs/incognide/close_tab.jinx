@@ -1,4 +1,4 @@
-jinx_name: studio.close_tab
+jinx_name: studio_close_tab
 description: Close a specific tab in a pane.
 inputs:
 - paneId: "active"
