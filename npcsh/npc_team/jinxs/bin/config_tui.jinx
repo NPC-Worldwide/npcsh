@@ -1,5 +1,6 @@
 jinx_name: config_tui
 description: Interactive TUI editor for npcsh configuration (~/.npcshrc)
+interactive: true
 inputs: []
 steps:
   - name: config_editor
@@ -118,14 +119,14 @@ steps:
               if idx == state.selected_idx:
                   if state.editing:
                       # Show edit mode
-                      out.append(f"\033[{row};2H\033[47;30m{item['label']:<{label_width}}\033[0m")
+                      out.append(f"\033[{row};2H\033[7m{item['label']:<{label_width}}\033[0m")
                       # Edit buffer with cursor
                       cursor_pos = min(state.edit_cursor, len(state.edit_buffer))
                       before = state.edit_buffer[:cursor_pos]
                       after = state.edit_buffer[cursor_pos:]
                       out.append(f"\033[{row};{label_width+4}H{before}\033[7m \033[0m{after}")
                   else:
-                      out.append(f"\033[{row};2H\033[47;30m{mod_indicator}{item['label']:<{label_width}} {display_value[:value_width]}\033[0m")
+                      out.append(f"\033[{row};2H\033[7m{mod_indicator}{item['label']:<{label_width}} {display_value[:value_width]}\033[0m")
               else:
                   out.append(f"\033[{row};2H{mod_indicator}{item['label']:<{label_width}} {display_value[:value_width]}")
 

@@ -207,7 +207,7 @@ steps:
                                   line = line[:width-1]
 
                                   if idx == selected:
-                                      sys.stdout.write(f'\033[47;30;1m>{line}\033[0m')
+                                      sys.stdout.write(f'\033[7;1m>{line}\033[0m')
                                   else:
                                       sys.stdout.write(f' {line}')
 

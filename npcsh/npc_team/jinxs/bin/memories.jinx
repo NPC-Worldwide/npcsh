@@ -1,5 +1,6 @@
 jinx_name: memories
 description: Interactive TUI for browsing and managing npcsh memories
+interactive: true
 inputs:
   - scope: ""
 steps:
@@ -130,7 +131,7 @@ steps:
           for i, tab in enumerate(state.tabs):
               count = sum(1 for m in state.memories if state.tab == 0 or True)  # Will filter properly
               if i == state.tab:
-                  tab_str += f"\033[47;30m [{tab}] \033[0m"
+                  tab_str += f"\033[7m [{tab}] \033[0m"
               else:
                   tab_str += f" [{tab}] "
           out.append(f"\033[2;2H{tab_str}")
@@ -184,7 +185,7 @@ steps:
               content = content.replace('\n', ' ')
 
               if idx == state.selected_idx:
-                  out.append(f"\033[{row};2H\033[47;30m{status_icon} {date_str} {npc_str:<8} {content}\033[0m")
+                  out.append(f"\033[{row};2H\033[7m{status_icon} {date_str} {npc_str:<8} {content}\033[0m")
               else:
                   out.append(f"\033[{row};2H{status_icon} {date_str} \033[90m{npc_str:<8}\033[0m {content}")
 

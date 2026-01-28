@@ -451,7 +451,7 @@ steps:
                                   line = line[:width-1]
 
                                   if idx == selected:
-                                      sys.stdout.write('\033[47;30;1m>' + line.ljust(width-1) + '\033[0m')
+                                      sys.stdout.write('\033[7;1m>' + line.ljust(width-1) + '\033[0m')
                                   else:
                                       sys.stdout.write(' ' + line)
 

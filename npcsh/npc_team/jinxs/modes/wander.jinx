@@ -217,7 +217,7 @@ steps:
           panel_tabs = ""
           for i, name in enumerate(["Output", "Streams", "Starred"]):
               if i == state.current_panel:
-                  panel_tabs += f"\033[47;30m {name} \033[0m "
+                  panel_tabs += f"\033[7m {name} \033[0m "
               else:
                   panel_tabs += f"\033[90m {name} \033[0m "
 

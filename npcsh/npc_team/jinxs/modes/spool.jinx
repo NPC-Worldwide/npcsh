@@ -118,7 +118,7 @@ steps:
                               color = ''
 
                           if idx == selected:
-                              sys.stdout.write(f'\033[47;30;1m>{line.ljust(width-2)}\033[0m')
+                              sys.stdout.write(f'\033[7;1m>{line.ljust(width-2)}\033[0m')
                           elif color:
                               sys.stdout.write(f'{color}{line}\033[0m')
                           else:

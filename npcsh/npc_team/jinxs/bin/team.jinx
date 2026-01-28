@@ -1,0 +1,504 @@
+jinx_name: team
+description: Interactive TUI for managing team context, NPCs, and jinxs
+interactive: true
+inputs: []
+steps:
+  - name: team_manager
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import select
+      import yaml
+      from pathlib import Path
+
+      if not sys.stdin.isatty():
+          context['output'] = "Team TUI requires an interactive terminal."
+
+      elif not state or not state.team:
+          context['output'] = "No team loaded."
+
+      else:
+          TEAM_DIR = Path(state.team.team_path)
+
+          # Find the actual .ctx file (first *.ctx found, same as Team class)
+          CTX_PATH = None
+          for _f in sorted(TEAM_DIR.glob('*.ctx')):
+              CTX_PATH = _f
+              break
+
+          class TUIState:
+              def __init__(self):
+                  self.tab = 0
+                  self.tabs = ['Context', 'NPCs', 'Jinxs']
+                  self.sel = 0
+                  self.scroll = 0
+                  self.editing = False
+                  self.edit_field = None
+                  self.edit_buf = ""
+                  self.edit_cursor = 0
+                  self.status = ""
+                  self.team_ctx = {}
+                  self.npcs = []
+                  self.npc_data = {}
+                  self.jinxs = []
+                  self.jinx_data = {}
+                  self.detail = False
+                  self.detail_idx = 0
+                  self.detail_scroll = 0
+
+          ui = TUIState()
+
+          def term_size():
+              try:
+                  s = os.get_terminal_size()
+                  return s.columns, s.lines
+              except:
+                  return 80, 24
+
+          def load_data():
+              if CTX_PATH and CTX_PATH.exists():
+                  with open(CTX_PATH) as f:
+                      ui.team_ctx = yaml.safe_load(f) or {}
+              ui.npcs = sorted([f.stem for f in TEAM_DIR.glob('*.npc')])
+              ui.npc_data = {}
+              for name in ui.npcs:
+                  try:
+                      with open(TEAM_DIR / f"{name}.npc") as f:
+                          ui.npc_data[name] = yaml.safe_load(f) or {}
+                  except:
+                      ui.npc_data[name] = {}
+              ui.jinxs = []
+              ui.jinx_data = {}
+              jdir = TEAM_DIR / 'jinxs'
+              if jdir.exists():
+                  for sub in sorted(jdir.iterdir()):
+                      if sub.is_dir():
+                          for jf in sorted(sub.glob('*.jinx')):
+                              ui.jinxs.append((sub.name, jf.stem))
+                              try:
+                                  with open(jf) as f:
+                                      ui.jinx_data[f"{sub.name}/{jf.stem}"] = yaml.safe_load(f) or {}
+                              except:
+                                  ui.jinx_data[f"{sub.name}/{jf.stem}"] = {}
+
+          def ctx_fields():
+              return list(ui.team_ctx.keys()) if ui.team_ctx else []
+
+          def fmt_val(raw, maxw):
+              if isinstance(raw, list):
+                  v = ', '.join(str(x) for x in raw)
+              elif isinstance(raw, bool):
+                  v = 'true' if raw else 'false'
+              else:
+                  v = str(raw) if raw else ''
+              if len(v) > maxw:
+                  v = v[:maxw-3] + '...'
+              return v
+
+          def save_ctx():
+              p = CTX_PATH or (TEAM_DIR / 'team.ctx')
+              with open(p, 'w') as f:
+                  yaml.dump(ui.team_ctx, f, default_flow_style=False)
+              ui.status = f"Saved {p.name}"
+
+          def save_npc(name):
+              with open(TEAM_DIR / f"{name}.npc", 'w') as f:
+                  yaml.dump(ui.npc_data[name], f, default_flow_style=False)
+              ui.status = f"Saved {name}.npc"
+
+          def save_jinx(key):
+              folder, name = key.split('/', 1)
+              p = TEAM_DIR / 'jinxs' / folder / f"{name}.jinx"
+              with open(p, 'w') as f:
+                  yaml.dump(ui.jinx_data[key], f, default_flow_style=False)
+              ui.status = f"Saved {key}.jinx"
+
+          # ── rendering ──────────────────────────────────────────
+          def w(row, col, text):
+              """Write text at position, clearing the line first."""
+              return f"\033[{row};1H\033[K\033[{row};{col}H{text}"
+
+          def wline(row, text):
+              """Write full line at row, clear to EOL."""
+              return f"\033[{row};1H\033[K{text}"
+
+          def render():
+              W, H = term_size()
+              out = []
+
+              # Home cursor (no full-screen clear)
+              out.append("\033[H")
+
+              # ── header ──
+              team_name = state.team.name or 'team'
+              hdr = f" {team_name} "
+              pad = '=' * W
+              out.append(wline(1, f"\033[44;37;1m{pad}\033[0m"))
+              out.append(f"\033[1;{max(1,(W - len(hdr)) // 2)}H\033[44;37;1m{hdr}\033[0m")
+
+              # ── tabs ──
+              tb = ""
+              for i, t in enumerate(ui.tabs):
+                  if i == ui.tab:
+                      tb += f"\033[7;1m [{t}] \033[0m"
+                  else:
+                      tb += f"  {t}  "
+              out.append(wline(2, f" {tb}"))
+              out.append(wline(3, f"\033[90m{'─' * W}\033[0m"))
+
+              # ── body ──
+              body_start = 4
+              body_end = H - 3  # leave room for separator, status, footer
+              body_h = body_end - body_start + 1
+
+              if ui.detail:
+                  render_detail(out, W, body_start, body_h)
+              elif ui.tab == 0:
+                  render_ctx(out, W, body_start, body_h)
+              elif ui.tab == 1:
+                  render_npcs(out, W, body_start, body_h)
+              else:
+                  render_jinxs(out, W, body_start, body_h)
+
+              # clear any leftover body lines
+              # (handled per-line in each render_ function)
+
+              # ── separator ──
+              out.append(wline(H - 2, f"\033[90m{'─' * W}\033[0m"))
+
+              # ── status ──
+              if ui.status:
+                  out.append(wline(H - 1, f" \033[33m{ui.status[:W-2]}\033[0m"))
+              else:
+                  out.append(wline(H - 1, ""))
+
+              # ── footer ──
+              if ui.editing:
+                  foot = " [Enter] Save  [Esc] Cancel  [Backspace] Delete"
+              elif ui.detail:
+                  foot = " [j/k] Navigate  [e/Enter] Edit  [s] Save  [q/Esc] Back"
+              else:
+                  foot = " [Tab] Switch  [j/k] Nav  [Enter] Open  [s] Save  [q] Quit"
+              out.append(wline(H, f"\033[44;37m{foot[:W].ljust(W)}\033[0m"))
+
+              sys.stdout.write(''.join(out))
+              sys.stdout.flush()
+
+          def render_ctx(out, W, start, body_h):
+              fields = ctx_fields()
+              for r in range(body_h):
+                  row = start + r
+                  i = r
+                  if i >= len(fields):
+                      out.append(wline(row, ""))
+                      continue
+                  key = fields[i]
+                  raw = ui.team_ctx.get(key, '')
+                  val = fmt_val(raw, W - 20)
+
+                  if i == ui.sel:
+                      if ui.editing:
+                          out.append(wline(row, f"  \033[1m{key}:\033[0m \033[44;37m{ui.edit_buf}\033[0m\033[K"))
+                      else:
+                          line = f"  {key}: {val}"
+                          out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+                  else:
+                      if val:
+                          out.append(wline(row, f"  {key}: \033[32m{val}\033[0m"))
+                      else:
+                          out.append(wline(row, f"  {key}: \033[90m(empty)\033[0m"))
+              if not fields:
+                  out.append(wline(start, "  \033[90mNo context file found.\033[0m"))
+
+          def render_npcs(out, W, start, body_h):
+              vis = ui.npcs[ui.scroll:ui.scroll + body_h]
+              for r in range(body_h):
+                  row = start + r
+                  i = r + ui.scroll
+                  if r >= len(vis):
+                      out.append(wline(row, ""))
+                      continue
+                  name = vis[r]
+                  ndata = ui.npc_data.get(name, {})
+                  directive = str(ndata.get('primary_directive', ''))[:W-30]
+                  directive = directive.replace('\n', ' ')
+                  if i == ui.sel:
+                      line = f"  > {name:<16} {directive}"
+                      out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+                  else:
+                      out.append(wline(row, f"    {name:<16} \033[90m{directive}\033[0m"))
+              if not ui.npcs:
+                  out.append(wline(start, "  \033[90mNo NPCs found.\033[0m"))
+
+          def render_jinxs(out, W, start, body_h):
+              vis = ui.jinxs[ui.scroll:ui.scroll + body_h]
+              for r in range(body_h):
+                  row = start + r
+                  i = r + ui.scroll
+                  if r >= len(vis):
+                      out.append(wline(row, ""))
+                      continue
+                  folder, name = vis[r]
+                  label = f"{folder}/{name}"
+                  jdata = ui.jinx_data.get(label, {})
+                  desc = str(jdata.get('description', ''))[:W-30]
+                  if i == ui.sel:
+                      line = f"  > {label:<24} {desc}"
+                      out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+                  else:
+                      out.append(wline(row, f"    {label:<24} \033[90m{desc}\033[0m"))
+              if not ui.jinxs:
+                  out.append(wline(start, "  \033[90mNo jinxs found.\033[0m"))
+
+          def render_detail(out, W, start, body_h):
+              if ui.tab == 1 and ui.npcs:
+                  name = ui.npcs[ui.sel]
+                  data = ui.npc_data.get(name, {})
+                  title = f"NPC: {name}"
+              elif ui.tab == 2 and ui.jinxs:
+                  folder, name = ui.jinxs[ui.sel]
+                  key = f"{folder}/{name}"
+                  data = ui.jinx_data.get(key, {})
+                  title = f"Jinx: {key}"
+              else:
+                  for r in range(body_h):
+                      out.append(wline(start + r, ""))
+                  return
+
+              out.append(wline(start, f"  \033[1m{title}\033[0m"))
+              out.append(wline(start + 1, f"  \033[90m{'─' * (W - 4)}\033[0m"))
+
+              fields = list(data.keys()) if data else []
+              vis = fields[ui.detail_scroll:ui.detail_scroll + body_h - 2]
+              for r in range(body_h - 2):
+                  row = start + 2 + r
+                  fi = r + ui.detail_scroll
+                  if r >= len(vis):
+                      out.append(wline(row, ""))
+                      continue
+                  fkey = vis[r]
+                  fval = fmt_val(data.get(fkey, ''), W - 25)
+                  if fi == ui.detail_idx:
+                      if ui.editing:
+                          out.append(wline(row, f"  \033[1m{fkey}:\033[0m \033[44;37m{ui.edit_buf}\033[0m"))
+                      else:
+                          line = f"  {fkey}: {fval}"
+                          out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+                  else:
+                      out.append(wline(row, f"  {fkey}: \033[36m{fval}\033[0m"))
+
+          # ── input handling ─────────────────────────────────────
+          def handle(c):
+              if ui.editing:
+                  return handle_edit(c)
+              if c == '\x1b':
+                  return handle_esc()
+              if c == 'q':
+                  if ui.detail:
+                      ui.detail = False
+                      ui.status = ""
+                  else:
+                      return False
+              elif c == '\t':
+                  ui.tab = (ui.tab + 1) % 3
+                  ui.sel = 0
+                  ui.scroll = 0
+                  ui.detail = False
+                  ui.status = ""
+              elif c == 'k':
+                  nav_up()
+              elif c == 'j':
+                  nav_down()
+              elif c in ('\r', '\n', 'e'):
+                  do_enter()
+              elif c == 's':
+                  do_save()
+              return True
+
+          def handle_esc():
+              if select.select([sys.stdin], [], [], 0.05)[0]:
+                  c2 = sys.stdin.read(1)
+                  if c2 == '[':
+                      c3 = sys.stdin.read(1)
+                      if c3 == 'A':
+                          nav_up()
+                      elif c3 == 'B':
+                          nav_down()
+                  # consume any other escape sequence
+              else:
+                  # bare Esc
+                  if ui.detail:
+                      ui.detail = False
+                      ui.status = ""
+              return True
+
+          def handle_edit(c):
+              if c == '\x1b':
+                  # Check if arrow key or bare esc
+                  if select.select([sys.stdin], [], [], 0.05)[0]:
+                      c2 = sys.stdin.read(1)
+                      if c2 == '[':
+                          sys.stdin.read(1)  # consume arrow char
+                  else:
+                      ui.editing = False
+                      ui.edit_buf = ""
+                      ui.status = "Cancelled"
+              elif c in ('\r', '\n'):
+                  finish_edit()
+              elif c in ('\x7f', '\x08'):
+                  ui.edit_buf = ui.edit_buf[:-1]
+              elif c == '\x15':  # Ctrl+U clear line
+                  ui.edit_buf = ""
+              elif 32 <= ord(c) <= 126:
+                  ui.edit_buf += c
+              return True
+
+          def nav_up():
+              if ui.detail:
+                  ui.detail_idx = max(0, ui.detail_idx - 1)
+                  if ui.detail_idx < ui.detail_scroll:
+                      ui.detail_scroll = ui.detail_idx
+              else:
+                  ui.sel = max(0, ui.sel - 1)
+                  if ui.sel < ui.scroll:
+                      ui.scroll = ui.sel
+              ui.status = ""
+
+          def nav_down():
+              _, H = term_size()
+              body_h = H - 6
+              if ui.detail:
+                  if ui.tab == 1 and ui.npcs:
+                      n = ui.npcs[ui.sel]
+                      mx = max(0, len(ui.npc_data.get(n, {})) - 1)
+                  elif ui.tab == 2 and ui.jinxs:
+                      f, n = ui.jinxs[ui.sel]
+                      mx = max(0, len(ui.jinx_data.get(f"{f}/{n}", {})) - 1)
+                  else:
+                      mx = 0
+                  ui.detail_idx = min(mx, ui.detail_idx + 1)
+                  if ui.detail_idx >= ui.detail_scroll + body_h - 2:
+                      ui.detail_scroll = ui.detail_idx - body_h + 3
+              else:
+                  if ui.tab == 0:
+                      mx = max(0, len(ctx_fields()) - 1)
+                  elif ui.tab == 1:
+                      mx = max(0, len(ui.npcs) - 1)
+                  else:
+                      mx = max(0, len(ui.jinxs) - 1)
+                  ui.sel = min(mx, ui.sel + 1)
+                  if ui.sel >= ui.scroll + body_h:
+                      ui.scroll = ui.sel - body_h + 1
+              ui.status = ""
+
+          def do_enter():
+              if ui.tab == 0:
+                  start_ctx_edit()
+              elif ui.tab == 1 and ui.npcs:
+                  if not ui.detail:
+                      ui.detail = True
+                      ui.detail_idx = 0
+                      ui.detail_scroll = 0
+                  else:
+                      start_detail_edit()
+              elif ui.tab == 2 and ui.jinxs:
+                  if not ui.detail:
+                      ui.detail = True
+                      ui.detail_idx = 0
+                      ui.detail_scroll = 0
+                  else:
+                      start_detail_edit()
+
+          def start_ctx_edit():
+              fields = ctx_fields()
+              if ui.sel < len(fields):
+                  ui.edit_field = fields[ui.sel]
+                  raw = ui.team_ctx.get(ui.edit_field, '')
+                  ui.edit_buf = fmt_val(raw, 9999)  # full value, no truncation
+                  ui.editing = True
+
+          def start_detail_edit():
+              if ui.tab == 1:
+                  name = ui.npcs[ui.sel]
+                  data = ui.npc_data.get(name, {})
+              elif ui.tab == 2:
+                  f, n = ui.jinxs[ui.sel]
+                  data = ui.jinx_data.get(f"{f}/{n}", {})
+              else:
+                  return
+              fields = list(data.keys())
+              if ui.detail_idx < len(fields):
+                  ui.edit_field = fields[ui.detail_idx]
+                  raw = data.get(ui.edit_field, '')
+                  if isinstance(raw, list):
+                      ui.edit_buf = ', '.join(str(x) for x in raw)
+                  else:
+                      ui.edit_buf = str(raw) if raw else ''
+                  ui.editing = True
+
+          def finish_edit():
+              if ui.tab == 0:
+                  old = ui.team_ctx.get(ui.edit_field)
+                  if isinstance(old, list):
+                      ui.team_ctx[ui.edit_field] = [x.strip() for x in ui.edit_buf.split(',') if x.strip()]
+                  elif isinstance(old, bool):
+                      ui.team_ctx[ui.edit_field] = ui.edit_buf.lower() in ('true', '1', 'yes')
+                  else:
+                      ui.team_ctx[ui.edit_field] = ui.edit_buf
+              elif ui.tab == 1 and ui.detail:
+                  name = ui.npcs[ui.sel]
+                  old = ui.npc_data[name].get(ui.edit_field)
+                  if isinstance(old, list):
+                      ui.npc_data[name][ui.edit_field] = [x.strip() for x in ui.edit_buf.split(',') if x.strip()]
+                  elif isinstance(old, bool):
+                      ui.npc_data[name][ui.edit_field] = ui.edit_buf.lower() in ('true', '1', 'yes')
+                  else:
+                      ui.npc_data[name][ui.edit_field] = ui.edit_buf
+              elif ui.tab == 2 and ui.detail:
+                  f, n = ui.jinxs[ui.sel]
+                  key = f"{f}/{n}"
+                  old = ui.jinx_data[key].get(ui.edit_field)
+                  if isinstance(old, list):
+                      ui.jinx_data[key][ui.edit_field] = [x.strip() for x in ui.edit_buf.split(',') if x.strip()]
+                  elif isinstance(old, bool):
+                      ui.jinx_data[key][ui.edit_field] = ui.edit_buf.lower() in ('true', '1', 'yes')
+                  else:
+                      ui.jinx_data[key][ui.edit_field] = ui.edit_buf
+              ui.editing = False
+              ui.edit_buf = ""
+              ui.status = f"Set {ui.edit_field}"
+
+          def do_save():
+              if ui.tab == 0:
+                  save_ctx()
+              elif ui.tab == 1 and ui.detail and ui.npcs:
+                  save_npc(ui.npcs[ui.sel])
+              elif ui.tab == 2 and ui.detail and ui.jinxs:
+                  f, n = ui.jinxs[ui.sel]
+                  save_jinx(f"{f}/{n}")
+
+          # ── main loop ──────────────────────────────────────────
+          load_data()
+          fd = sys.stdin.fileno()
+          old_attrs = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')    # hide cursor
+              sys.stdout.write('\033[2J\033[H') # initial full clear
+              sys.stdout.flush()
+              render()
+              while True:
+                  c = sys.stdin.read(1)
+                  if not handle(c):
+                      break
+                  render()
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+              sys.stdout.write('\033[?25h\033[2J\033[H')
+              sys.stdout.flush()
+
+          context['output'] = "Team TUI closed."
