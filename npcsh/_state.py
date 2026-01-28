@@ -125,6 +125,7 @@ from .config import (
     NPCSH_API_URL,
     NPCSH_SEARCH_PROVIDER,
     NPCSH_BUILD_KG,
+    NPCSH_EDIT_APPROVAL,
     setup_npcsh_config,
     is_npcsh_initialized,
     set_npcsh_initialized,
@@ -185,6 +186,10 @@ class ShellState:
     session_start_time: float = field(default_factory=lambda: __import__('time').time())
     # Logging level: "silent", "normal", "verbose"
     log_level: str = "normal"
+    # Edit approval mode: "off", "interactive", "auto"
+    edit_approval: str = NPCSH_EDIT_APPROVAL
+    # Pending file edits for approval
+    pending_edits: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     def get_model_for_command(self, model_type: str = "chat"):
         if model_type == "chat":
@@ -271,6 +276,8 @@ CONFIG_KEY_MAP = {
     "stream": "NPCSH_STREAM_OUTPUT",
     "apiurl": "NPCSH_API_URL",
     "buildkg": "NPCSH_BUILD_KG",
+    "editapproval": "NPCSH_EDIT_APPROVAL",
+    "approval": "NPCSH_EDIT_APPROVAL",
 }
 
 
@@ -315,6 +322,7 @@ def set_npcsh_config_value(key: str, value: str):
         "NPCSH_BUILD_KG": "build_kg",
         "NPCSH_API_URL": "api_url",
         "NPCSH_STREAM_OUTPUT": "stream_output",
+        "NPCSH_EDIT_APPROVAL": "edit_approval",
     }
     if env_key in field_map:
         setattr(ShellState, field_map[env_key], parsed_val)

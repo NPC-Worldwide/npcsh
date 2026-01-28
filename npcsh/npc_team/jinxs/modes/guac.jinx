@@ -24,8 +24,6 @@ steps:
 
       import numpy as np
       import pandas as pd
-      import matplotlib
-      matplotlib.use('Agg')  # Non-interactive backend for TUI
       import matplotlib.pyplot as plt
 
       from npcpy.llm_funcs import get_llm_response
