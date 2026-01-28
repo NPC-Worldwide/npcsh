@@ -1,0 +1,240 @@
+jinx_name: setup
+description: Interactive setup wizard for npcsh - detect local models, configure defaults
+inputs:
+  - skip_detection: ""
+steps:
+  - name: setup_wizard
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import select
+      from pathlib import Path
+
+      if not sys.stdin.isatty():
+          context['output'] = "Setup wizard requires an interactive terminal."
+
+      else:
+          def detect_ollama_models():
+              models = []
+              try:
+                  import ollama
+                  result = ollama.list()
+                  for model in result.get('models', []):
+                      name = model.get('model', model.get('name', ''))
+                      if name:
+                          models.append(('ollama', name))
+              except:
+                  pass
+              return models
+
+          def detect_lm_studio_models():
+              models = []
+              try:
+                  import requests
+                  resp = requests.get('http://localhost:1234/v1/models', timeout=2)
+                  if resp.status_code == 200:
+                      data = resp.json()
+                      for m in data.get('data', []):
+                          models.append(('lm_studio', m.get('id', '')))
+              except:
+                  pass
+              return models
+
+          def detect_api_keys():
+              keys = {}
+              for key in ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'DEEPSEEK_API_KEY']:
+                  if os.environ.get(key):
+                      keys[key] = True
+              return keys
+
+          def get_cloud_models(api_keys):
+              models = []
+              if api_keys.get('ANTHROPIC_API_KEY'):
+                  models.extend([
+                      ('anthropic', 'claude-sonnet-4-20250514'),
+                      ('anthropic', 'claude-3-5-haiku-20241022'),
+                  ])
+              if api_keys.get('OPENAI_API_KEY'):
+                  models.extend([
+                      ('openai', 'gpt-4o'),
+                      ('openai', 'gpt-4o-mini'),
+                  ])
+              if api_keys.get('GEMINI_API_KEY'):
+                  models.extend([
+                      ('gemini', 'gemini-2.0-flash'),
+                      ('gemini', 'gemini-1.5-pro'),
+                  ])
+              if api_keys.get('DEEPSEEK_API_KEY'):
+                  models.extend([
+                      ('deepseek', 'deepseek-chat'),
+                  ])
+              return models
+
+          class SetupState:
+              def __init__(self):
+                  self.phase = 'detect'
+                  self.local_models = []
+                  self.cloud_models = []
+                  self.api_keys = {}
+                  self.providers_status = {}
+                  self.selected_idx = 0
+                  self.scroll_offset = 0
+                  self.selections = {'chat_model': None, 'chat_provider': None}
+                  self.status = "Detecting..."
+
+          state = SetupState()
+
+          def get_size():
+              try:
+                  s = os.get_terminal_size()
+                  return s.columns, s.lines
+              except:
+                  return 80, 24
+
+          def get_all_models():
+              return state.local_models + state.cloud_models
+
+          def render_screen():
+              width, height = get_size()
+              out = []
+              out.append("\033[2J\033[H")
+              header = " NPCSH Setup Wizard "
+              out.append(f"\033[1;1H\033[44;37;1m{'=' * width}\033[0m")
+              out.append(f"\033[1;{(width - len(header)) // 2}H\033[44;37;1m{header}\033[0m")
+
+              if state.phase == 'detect':
+                  out.append(f"\033[3;2H\033[1mDetected Providers:\033[0m")
+                  row = 5
+                  for provider, status in state.providers_status.items():
+                      icon = "\033[32m✓\033[0m" if status['available'] else "\033[31m✗\033[0m"
+                      count = f"({status['count']} models)" if status['count'] > 0 else "(not running)"
+                      out.append(f"\033[{row};4H{icon} {provider} {count}")
+                      row += 1
+                  row += 1
+                  out.append(f"\033[{row};2H\033[1mAPI Keys:\033[0m")
+                  row += 1
+                  for key in ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'DEEPSEEK_API_KEY']:
+                      present = state.api_keys.get(key, False)
+                      icon = "\033[32m✓\033[0m" if present else "\033[31m✗\033[0m"
+                      short_key = key.replace('_API_KEY', '').lower()
+                      out.append(f"\033[{row};4H{icon} {short_key}")
+                      row += 1
+                  row += 2
+                  out.append(f"\033[{row};2H\033[33m{state.status}\033[0m")
+                  row += 2
+                  out.append(f"\033[{row};2HPress [Enter] to select model, [q] to quit")
+
+              elif state.phase == 'select_chat':
+                  out.append(f"\033[3;2H\033[1mSelect Default Chat Model:\033[0m")
+                  models = get_all_models()
+                  visible_height = height - 8
+                  visible = models[state.scroll_offset:state.scroll_offset + visible_height]
+                  for i, (provider, model) in enumerate(visible):
+                      row = 5 + i
+                      idx = i + state.scroll_offset
+                      if idx == state.selected_idx:
+                          out.append(f"\033[{row};4H\033[47;30m> {model} ({provider})\033[0m")
+                      else:
+                          out.append(f"\033[{row};4H  {model} \033[90m({provider})\033[0m")
+
+              out.append(f"\033[{height};1H\033[90m[j/k] Navigate  [Enter] Select  [q] Quit\033[0m")
+              sys.stdout.write(''.join(out))
+              sys.stdout.flush()
+
+          def handle_input(c):
+              if c == 'q':
+                  return False
+              if c == '\x1b':
+                  if select.select([sys.stdin], [], [], 0.05)[0]:
+                      c2 = sys.stdin.read(1)
+                      if c2 == '[':
+                          c3 = sys.stdin.read(1)
+                          if c3 == 'A' and state.phase == 'select_chat':
+                              state.selected_idx = max(0, state.selected_idx - 1)
+                              if state.selected_idx < state.scroll_offset:
+                                  state.scroll_offset = state.selected_idx
+                          elif c3 == 'B' and state.phase == 'select_chat':
+                              models = get_all_models()
+                              _, height = get_size()
+                              state.selected_idx = min(len(models) - 1, state.selected_idx + 1)
+                              visible_height = height - 8
+                              if state.selected_idx >= state.scroll_offset + visible_height:
+                                  state.scroll_offset = state.selected_idx - visible_height + 1
+                  return True
+              if c == 'k' and state.phase == 'select_chat':
+                  state.selected_idx = max(0, state.selected_idx - 1)
+                  if state.selected_idx < state.scroll_offset:
+                      state.scroll_offset = state.selected_idx
+              elif c == 'j' and state.phase == 'select_chat':
+                  models = get_all_models()
+                  _, height = get_size()
+                  state.selected_idx = min(len(models) - 1, state.selected_idx + 1)
+                  visible_height = height - 8
+                  if state.selected_idx >= state.scroll_offset + visible_height:
+                      state.scroll_offset = state.selected_idx - visible_height + 1
+              elif c == '\r' or c == '\n':
+                  if state.phase == 'detect':
+                      if get_all_models():
+                          state.phase = 'select_chat'
+                          state.selected_idx = 0
+                      else:
+                          return False
+                  elif state.phase == 'select_chat':
+                      models = get_all_models()
+                      if models and state.selected_idx < len(models):
+                          provider, model = models[state.selected_idx]
+                          state.selections['chat_model'] = model
+                          state.selections['chat_provider'] = provider
+                          from npcsh.config import set_npcsh_config_value
+                          set_npcsh_config_value('NPCSH_CHAT_MODEL', model)
+                          set_npcsh_config_value('NPCSH_CHAT_PROVIDER', provider)
+                      return False
+              return True
+
+          def run_detection():
+              state.status = "Detecting Ollama..."
+              render_screen()
+              ollama_models = detect_ollama_models()
+              state.providers_status['ollama'] = {'available': len(ollama_models) > 0, 'count': len(ollama_models)}
+              state.local_models.extend(ollama_models)
+
+              state.status = "Detecting LM Studio..."
+              render_screen()
+              lm_models = detect_lm_studio_models()
+              state.providers_status['lm_studio'] = {'available': len(lm_models) > 0, 'count': len(lm_models)}
+              state.local_models.extend(lm_models)
+
+              state.status = "Checking API keys..."
+              render_screen()
+              state.api_keys = detect_api_keys()
+              state.cloud_models = get_cloud_models(state.api_keys)
+
+              total = len(state.local_models) + len(state.cloud_models)
+              state.status = f"Found {total} models."
+
+          fd = sys.stdin.fileno()
+          old_settings = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              run_detection()
+              render_screen()
+              while True:
+                  c = sys.stdin.read(1)
+                  if not handle_input(c):
+                      break
+                  render_screen()
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+              sys.stdout.write('\033[?25h')
+              sys.stdout.write('\033[2J\033[H')
+              sys.stdout.flush()
+
+          if state.selections['chat_model']:
+              context['output'] = f"Setup complete! Model: {state.selections['chat_model']} ({state.selections['chat_provider']})"
+          else:
+              context['output'] = "Setup cancelled."
