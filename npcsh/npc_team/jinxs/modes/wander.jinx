@@ -1,10 +1,18 @@
 jinx_name: wander
 description: Interactive wandering mode - creative exploration with live TUI dashboard
+interactive: true
 inputs:
   - problem: null
   - environment: null
   - low_temp: 0.5
   - high_temp: 1.9
+  - n_min: 30
+  - n_max: 150
+  - interruption_likelihood: 0.1
+  - sample_rate: 0.5
+  - n_high_temp_streams: 5
+  - include_events: true
+  - num_events: 3
   - model: null
   - provider: null
 
@@ -31,10 +39,17 @@ steps:
 
       problem = context.get('problem')
       environment = context.get('environment')
-      low_temp = float(context.get('low_temp', 0.3))
-      high_temp = float(context.get('high_temp', 1.5))
+      low_temp = float(context.get('low_temp') or 0.5)
+      high_temp = float(context.get('high_temp') or 1.9)
+      n_min = int(context.get('n_min') or 30)
+      n_max = int(context.get('n_max') or 150)
+      interruption_likelihood = float(context.get('interruption_likelihood') or 0.1)
+      sample_rate = float(context.get('sample_rate') or 0.5)
+      n_high_temp_streams = int(context.get('n_high_temp_streams') or 5)
+      include_events = bool(context.get('include_events', True))
+      num_events = int(context.get('num_events') or 3)
 
-      # Resolve npc if it's a string (npc name) rather than NPC object
+      # Resolve npc
       if isinstance(npc, str) and team:
           npc = team.get(npc) if hasattr(team, 'get') else None
       elif isinstance(npc, str):
@@ -43,37 +58,84 @@ steps:
       model = context.get('model') or (npc.model if npc and hasattr(npc, 'model') else None)
       provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') else None)
 
+      # ========== Problem Entry ==========
       if not problem:
-          context['output'] = """Usage: /wander <problem to explore>
-
-      Interactive TUI Controls:
-        SPACE     - Generate new wandering stream
-        t         - Toggle temperature (low/high)
-        e         - Trigger random event
-        s         - Star current insight (save to favorites)
-        r         - Request reflection/synthesis
-        j/k       - Scroll through output
-        Tab       - Switch panels (Environment/Streams/Starred)
-        q         - Quit and show final synthesis
-
-      Example: /wander How might we reimagine urban transportation?"""
-          context['messages'] = messages
-          exit()
+          if not sys.stdin.isatty():
+              context['output'] = "Wander requires an interactive terminal or a problem argument."
+              context['messages'] = messages
+              exit()
+          print("\033[1;35m WANDER - Creative Exploration \033[0m")
+          print("\033[90mEnter a problem or question to explore (or 'q' to quit):\033[0m")
+          try:
+              problem = input("\033[33m> \033[0m").strip()
+          except (EOFError, KeyboardInterrupt):
+              problem = ""
+          if not problem or problem.lower() == 'q':
+              context['output'] = "Wander cancelled."
+              context['messages'] = messages
+              exit()
 
       # ========== State ==========
       class WanderState:
           def __init__(self):
               self.environment = ""
-              self.streams = []  # List of {temp, insight, event, starred, timestamp}
-              self.starred = []  # Starred insights
+              self.streams = []       # [{temp, insight, words, samples, event, starred, timestamp}]
+              self.starred = []
               self.current_temp = high_temp
               self.scroll_offset = 0
-              self.current_panel = 0  # 0=main, 1=streams, 2=starred
+              self.current_panel = 0  # 0=main, 1=streams, 2=starred, 3=review
               self.status = "Ready"
               self.generating = False
               self.last_output = ""
+              self.all_samples = []   # collected word samples across streams
+              self.events = []        # [{type, text}]
+              self.quit_requested = False
+              self.auto_done = False
+              # Review mode
+              self.review_mode = False
+              self.review_items = []      # [{idx, text_preview, selected}]
+              self.review_cursor = 0
+              self.review_scroll = 0
+              self.review_sample_count = 0
+              self.editing_count = False
+              self.count_buf = ""
 
       state = WanderState()
+
+      # ========== Event Weights ==========
+      EVENT_WEIGHTS = {
+          'encounter': 0.20,
+          'discovery': 0.20,
+          'obstacle': 0.15,
+          'insight': 0.20,
+          'shift': 0.10,
+          'memory': 0.15,
+      }
+
+      def weighted_event_type():
+          types = list(EVENT_WEIGHTS.keys())
+          weights = list(EVENT_WEIGHTS.values())
+          return random.choices(types, weights=weights, k=1)[0]
+
+      # ========== Original Algorithm Helpers ==========
+      def truncate_to_word_count(text, n):
+          words = text.split()
+          if len(words) <= n:
+              return text
+          return ' '.join(words[:n])
+
+      def subsample_words(text, k=20):
+          words = text.split()
+          if len(words) <= k:
+              return words
+          return random.sample(words, k)
+
+      def extract_samples(text, rate):
+          words = text.split()
+          n_sample = max(1, int(len(words) * rate))
+          if len(words) <= n_sample:
+              return words
+          return random.sample(words, n_sample)
 
       # ========== TUI Helpers ==========
       def get_size():
@@ -93,9 +155,7 @@ steps:
           return lines
 
       def draw_box(x, y, w, h, title="", color="\033[90m"):
-          """Draw a box with optional title"""
           out = []
-          # Top border
           if title:
               title_part = f" {title} "
               border = "─" * ((w - len(title_part) - 2) // 2)
@@ -103,23 +163,20 @@ steps:
           else:
               top = "┌" + "─" * (w - 2) + "┐"
           out.append(f"\033[{y};{x}H{color}{top}\033[0m")
-          # Sides
           for i in range(1, h - 1):
               out.append(f"\033[{y+i};{x}H{color}│\033[0m")
               out.append(f"\033[{y+i};{x+w-1}H{color}│\033[0m")
-          # Bottom
           out.append(f"\033[{y+h-1};{x}H{color}└{'─' * (w - 2)}┘\033[0m")
           return ''.join(out)
 
       def render_screen():
           width, height = get_size()
           out = []
-
-          # Clear screen
           out.append("\033[2J\033[H")
 
           # ===== HEADER =====
-          header = f" WANDER - {problem[:width-20]}... " if len(problem) > width-20 else f" WANDER - {problem} "
+          prob_display = problem[:width-20] + "..." if len(problem) > width-20 else problem
+          header = f" WANDER - {prob_display} "
           temp_info = f"\033[35m[T={state.current_temp:.1f}]\033[0m"
           status_color = "\033[33m" if state.generating else "\033[32m"
           status_info = f"{status_color}[{state.status}]\033[0m"
@@ -127,20 +184,26 @@ steps:
           out.append(f"\033[1;1H\033[7;1m{header.ljust(width)}\033[0m")
           out.append(f"\033[1;{width-35}H{temp_info} {status_info}")
 
-          # ===== LAYOUT =====
-          # Left panel: Environment + Controls (30% width)
-          # Right panel: Main output / Streams / Starred (70% width)
+          if state.review_mode:
+              render_review(out, width, height)
+          else:
+              render_explore(out, width, height)
+
+          sys.stdout.write(''.join(out))
+          sys.stdout.flush()
+
+      def render_explore(out, width, height):
           left_w = max(25, width // 3)
           right_w = width - left_w - 1
           panel_h = height - 4
 
-          # ===== LEFT PANEL: Environment =====
+          # Left: Environment
           out.append(draw_box(1, 3, left_w, panel_h // 2, "Environment", "\033[36m"))
-          env_lines = wrap_text(state.environment or "Press 'e' to generate...", left_w - 4)
+          env_lines = wrap_text(state.environment or "Generating...", left_w - 4)
           for i, line in enumerate(env_lines[:panel_h // 2 - 3]):
               out.append(f"\033[{4+i};3H{line[:left_w-4]}")
 
-          # ===== LEFT PANEL: Controls =====
+          # Left: Controls
           ctrl_y = 3 + panel_h // 2
           out.append(draw_box(1, ctrl_y, left_w, panel_h // 2, "Controls", "\033[33m"))
           controls = [
@@ -148,49 +211,48 @@ steps:
               f"t - Temp: {state.current_temp:.1f}",
               "e - Trigger event",
               "s - Star insight",
-              "r - Reflect/synthesize",
+              "R - Review & synthesize",
               "Tab - Switch panel",
               "j/k - Scroll",
               "q - Quit",
               "",
               f"Streams: {len(state.streams)}",
+              f"Samples: {len(state.all_samples)}",
               f"Starred: {len(state.starred)}",
           ]
           for i, ctrl in enumerate(controls[:panel_h // 2 - 3]):
               out.append(f"\033[{ctrl_y+1+i};3H\033[90m{ctrl[:left_w-4]}\033[0m")
 
-          # ===== RIGHT PANEL =====
+          # Right panel
           panel_titles = ["Output", "Stream History", "Starred Insights"]
-          panel_color = ["\033[37m", "\033[36m", "\033[33m"][state.current_panel]
-          out.append(draw_box(left_w + 1, 3, right_w, panel_h, panel_titles[state.current_panel], panel_color))
+          panel_idx = min(state.current_panel, 2)
+          panel_color = ["\033[37m", "\033[36m", "\033[33m"][panel_idx]
+          out.append(draw_box(left_w + 1, 3, right_w, panel_h, panel_titles[panel_idx], panel_color))
 
-          # Panel content
           content_w = right_w - 4
           content_h = panel_h - 3
           content_lines = []
 
-          if state.current_panel == 0:  # Main output
+          if panel_idx == 0:
               if state.last_output:
                   content_lines = wrap_text(state.last_output, content_w)
               else:
-                  content_lines = ["", "  Press SPACE to begin wandering...", "",
-                                   "  The AI will explore your problem from",
-                                   "  different perspectives and temperatures.", "",
-                                   "  Star insights you find valuable with 's'.",
-                                   "  Request synthesis anytime with 'r'."]
+                  content_lines = ["", "  Waiting for streams..."]
 
-          elif state.current_panel == 1:  # Stream history
+          elif panel_idx == 1:
               for i, stream in enumerate(reversed(state.streams)):
-                  starred = "★ " if stream.get('starred') else "  "
-                  header = f"{starred}\033[35mStream {len(state.streams)-i} (T={stream.get('temp', 0):.1f})\033[0m"
-                  content_lines.append(header)
+                  starred_mark = "★ " if stream.get('starred') else "  "
+                  hdr = f"{starred_mark}\033[35mStream {len(state.streams)-i} (T={stream.get('temp', 0):.1f}, {len(stream.get('words', []))}w)\033[0m"
+                  content_lines.append(hdr)
                   preview = stream.get('insight', '')[:100].replace('\n', ' ')
                   content_lines.append(f"  {preview}...")
+                  if stream.get('samples'):
+                      content_lines.append(f"  \033[90mSamples: {' '.join(stream['samples'][:8])}...\033[0m")
                   content_lines.append("")
 
-          elif state.current_panel == 2:  # Starred
+          elif panel_idx == 2:
               if not state.starred:
-                  content_lines = ["", "  No starred insights yet.", "", "  Press 's' after generating a stream", "  to star valuable insights."]
+                  content_lines = ["", "  No starred insights yet.", "", "  Press 's' to star current stream."]
               else:
                   for i, item in enumerate(state.starred):
                       content_lines.append(f"★ {i+1}. [T={item.get('temp', 0):.1f}]")
@@ -198,22 +260,19 @@ steps:
                           content_lines.append(f"    {line}")
                       content_lines.append("")
 
-          # Apply scroll and render content
           visible = content_lines[state.scroll_offset:state.scroll_offset + content_h]
           for i, line in enumerate(visible):
-              # Strip ANSI for length calc but keep for display
               out.append(f"\033[{4+i};{left_w+3}H{line[:content_w]}")
 
-          # Scroll indicator
           if len(content_lines) > content_h:
               scroll_pct = state.scroll_offset / max(1, len(content_lines) - content_h)
               indicator_pos = int(scroll_pct * (content_h - 1))
               out.append(f"\033[{4+indicator_pos};{width-1}H\033[33m▐\033[0m")
 
-          # ===== FOOTER =====
+          # Footer
           panel_tabs = ""
           for i, name in enumerate(["Output", "Streams", "Starred"]):
-              if i == state.current_panel:
+              if i == panel_idx:
                   panel_tabs += f"\033[7m {name} \033[0m "
               else:
                   panel_tabs += f"\033[90m {name} \033[0m "
@@ -221,14 +280,46 @@ steps:
           out.append(f"\033[{height-1};1H\033[90m{'─' * width}\033[0m")
           out.append(f"\033[{height};1H{panel_tabs}")
 
-          sys.stdout.write(''.join(out))
-          sys.stdout.flush()
+      def render_review(out, width, height):
+          panel_h = height - 4
+          out.append(draw_box(1, 3, width, panel_h, "Review Insights", "\033[33m"))
+
+          content_w = width - 6
+          content_h = panel_h - 5
+
+          # Sample count control at top
+          if state.editing_count:
+              count_line = f"  Insights to sample: \033[7m {state.count_buf} \033[0m  (Enter to confirm, Esc to cancel)"
+          else:
+              count_line = f"  Insights to sample: \033[1m{state.review_sample_count}\033[0m / {len(state.review_items)}  (n to change)"
+          out.append(f"\033[4;3H{count_line[:content_w]}")
+          out.append(f"\033[5;3H\033[90m{'─' * (content_w)}\033[0m")
+
+          # Items list
+          for i in range(content_h):
+              idx = state.review_scroll + i
+              row = 6 + i
+              out.append(f"\033[{row};3H\033[K")
+              if idx >= len(state.review_items):
+                  continue
+              item = state.review_items[idx]
+              check = "\033[32m[x]\033[0m" if item['selected'] else "\033[90m[ ]\033[0m"
+              cursor = "\033[7m>" if idx == state.review_cursor else " "
+              text = item['text_preview'][:content_w - 10]
+              if idx == state.review_cursor:
+                  out.append(f"{cursor} {check} {text}\033[0m")
+              else:
+                  out.append(f"  {check} {text}")
+
+          # Footer
+          out.append(f"\033[{height-1};1H\033[90m{'─' * width}\033[0m")
+          footer = " j/k:Nav  SPACE:Toggle  a:All  x:None  n:Count  Enter:Synthesize  Esc:Back "
+          out.append(f"\033[{height};1H\033[7m{footer.ljust(width)}\033[0m")
 
       # ========== Actions ==========
       def generate_environment():
           state.status = "Generating environment..."
           state.generating = True
-          render_screen()
 
           env_prompt = f"""Create a vivid, metaphorical environment for wandering through while exploring:
           "{problem}"
@@ -246,77 +337,122 @@ steps:
           state.status = "Ready"
           state.generating = False
 
-      def generate_stream():
-          if state.generating:
-              return
-
-          # Alternate temperature like the original
+      def run_one_stream():
+          """Original algorithm: generate with random word-count cutoff, subsample, extract samples."""
+          # Alternate temperature
           if len(state.streams) % 2 == 0:
               state.current_temp = low_temp
+              is_high = False
           else:
               state.current_temp = high_temp
+              is_high = True
 
-          state.status = f"Wandering (T={state.current_temp:.1f})..."
+          temp = state.current_temp
+          word_limit = random.randint(n_min, n_max)
+          state.status = f"Stream {len(state.streams)+1} (T={temp:.1f}, ~{word_limit}w)..."
           state.generating = True
-          render_screen()
 
-          # Build context from recent streams
-          recent = state.streams[-3:] if state.streams else []
-          recent_context = "\n".join([s.get('insight', '')[:200] for s in recent]) if recent else "Starting fresh"
+          # Build prompt
+          if is_high:
+              # High-temp: use subsample seeds from previous stream
+              seeds = []
+              if state.streams:
+                  prev = state.streams[-1]
+                  seeds = subsample_words(prev.get('insight', ''), k=20)
+              seed_text = ' '.join(seeds) if seeds else problem
 
-          wander_prompt = f"""You are wandering through: {state.environment or 'a conceptual landscape'}
+              sys_prompt = "Just generate without thinking. Let words and ideas flow freely. Do not filter or organize."
+              wander_prompt = f"""Seeds: {seed_text}
 
-          Problem: "{problem}"
+              Context: {state.environment or 'a conceptual landscape'}
+              Problem: "{problem}"
 
-          Recent thoughts: {recent_context}
+              Generate freely from these seeds. Follow any tangent. No structure needed."""
+          else:
+              # Low-temp: focused exploration
+              recent = state.streams[-3:] if state.streams else []
+              recent_context = "\n".join([s.get('insight', '')[:200] for s in recent]) if recent else "Starting fresh"
 
-          In this exploration (temperature {state.current_temp}):
-          - Let associations flow freely
-          - Notice unexpected connections
-          - Follow interesting tangents
-          - Share what emerges
+              sys_prompt = None
+              wander_prompt = f"""You are wandering through: {state.environment or 'a conceptual landscape'}
 
-          Respond naturally, 2-4 paragraphs."""
+              Problem: "{problem}"
 
-          resp = get_llm_response(wander_prompt, model=model, provider=provider,
-                                   temperature=state.current_temp, npc=npc)
-          insight = str(resp.get('response', ''))
+              Recent thoughts: {recent_context}
 
-          stream = {
-              'temp': state.current_temp,
-              'temp': state.current_temp,
+              In this exploration:
+              - Let associations flow freely
+              - Notice unexpected connections
+              - Follow interesting tangents
+              - Share what emerges
+
+              Respond naturally, 2-4 paragraphs."""
+
+          try:
+              kwargs = dict(model=model, provider=provider, temperature=temp, npc=npc)
+              if sys_prompt:
+                  kwargs['system_prompt'] = sys_prompt
+              resp = get_llm_response(wander_prompt, **kwargs)
+              insight = str(resp.get('response', ''))
+          except Exception as e:
+              insight = "Error: " + str(e)
+
+          # Probabilistic interruption: truncate at random word count
+          if random.random() < interruption_likelihood:
+              word_limit = random.randint(n_min // 2, n_min)
+          insight = truncate_to_word_count(insight, word_limit)
+
+          # Extract samples
+          words = insight.split()
+          samples = extract_samples(insight, sample_rate)
+          state.all_samples.extend(samples)
+
+          stream_entry = {
+              'temp': temp,
               'insight': insight,
+              'words': words,
+              'samples': samples,
               'event': None,
               'starred': False,
               'timestamp': datetime.now().isoformat()
           }
-          state.streams.append(stream)
+          state.streams.append(stream_entry)
           state.last_output = insight
+
+          # After high-temp streams, maybe inject an event
+          if is_high and include_events and len(state.events) < num_events:
+              if random.random() < 0.3:
+                  _trigger_event_sync()
+
           state.scroll_offset = 0
-          state.status = "Ready"
           state.generating = False
+          state.status = f"Ready. {len(state.streams)} streams, {len(state.all_samples)} samples"
 
-      def trigger_event():
-          if state.generating:
-              return
-
-          state.status = "Event occurring..."
-          state.generating = True
-          render_screen()
-
-          event_types = ["encounter", "discovery", "obstacle", "revelation", "memory", "transformation"]
-          event_type = random.choice(event_types)
-
+      def _trigger_event_sync():
+          event_type = weighted_event_type()
           event_prompt = f"""In the environment: {state.environment or 'a conceptual landscape'}
           While exploring "{problem}", a {event_type} occurs.
 
           Describe this {event_type} in 2-3 vivid sentences.
           Make it metaphorical and thought-provoking."""
 
-          resp = get_llm_response(event_prompt, model=model, provider=provider, temperature=1.0, npc=npc)
-          event = str(resp.get('response', ''))
+          try:
+              resp = get_llm_response(event_prompt, model=model, provider=provider, temperature=1.0, npc=npc)
+              event_text = str(resp.get('response', ''))
+          except Exception as e:
+              event_text = f"A {event_type} occurred but faded before you could grasp it."
 
-          state.last_output = f"[{event_type.upper()}]\n\n{event}"
+          state.events.append({'type': event_type, 'text': event_text})
+          if state.streams:
+              state.streams[-1]['event'] = {'type': event_type, 'text': event_text}
+          state.last_output = f"[{event_type.upper()}]\n\n{event_text}"
+
+      def trigger_event():
+          if state.generating:
+              return
+          state.status = "Event occurring..."
+          state.generating = True
+          _trigger_event_sync()
           state.scroll_offset = 0
           state.status = "Ready"
           state.generating = False
@@ -333,122 +469,252 @@ steps:
               state.starred.append(state.streams[-1])
               state.status = "★ Starred!"
 
-      def synthesize():
-          if state.generating or not state.streams:
+      def enter_review():
+          """Enter review mode where user selects insights for synthesis."""
+          if not state.streams:
+              state.status = "No streams to review"
+              return
+          state.review_mode = True
+          state.review_items = []
+          for i, s in enumerate(state.streams):
+              preview = s.get('insight', '')[:120].replace('\n', ' ')
+              state.review_items.append({
+                  'idx': i,
+                  'text_preview': f"[T={s.get('temp', 0):.1f}] {preview}",
+                  'selected': s.get('starred', False),
+              })
+          # Default: select starred + random sample
+          n_select = max(1, min(len(state.review_items), int(len(state.review_items) * sample_rate)))
+          state.review_sample_count = n_select
+          # Auto-select starred ones, then fill randomly
+          selected_idxs = set()
+          for item in state.review_items:
+              if state.streams[item['idx']].get('starred'):
+                  item['selected'] = True
+                  selected_idxs.add(item['idx'])
+          remaining = [item for item in state.review_items if item['idx'] not in selected_idxs]
+          n_random = max(0, n_select - len(selected_idxs))
+          if remaining and n_random > 0:
+              for item in random.sample(remaining, min(n_random, len(remaining))):
+                  item['selected'] = True
+          state.review_cursor = 0
+          state.review_scroll = 0
+
+      def synthesize_from_review():
+          """Synthesize using the selected review items."""
+          selected = [state.review_items[i] for i in range(len(state.review_items)) if state.review_items[i]['selected']]
+          if not selected:
+              state.status = "No insights selected"
               return
 
+          state.review_mode = False
           state.status = "Synthesizing..."
           state.generating = True
-          render_screen()
 
-          all_insights = "\n---\n".join([s.get('insight', '') for s in state.streams])
-          starred_insights = "\n---\n".join([s.get('insight', '') for s in state.starred]) if state.starred else "None"
+          selected_insights = []
+          for item in selected:
+              idx = item['idx']
+              selected_insights.append(state.streams[idx].get('insight', ''))
 
-          synth_prompt = f"""After wandering through thoughts about "{problem}":
+          # Collect samples from selected streams
+          selected_samples = []
+          for item in selected:
+              idx = item['idx']
+              selected_samples.extend(state.streams[idx].get('samples', []))
 
-          All explorations:
-          {all_insights}
+          sample_text = ' '.join(selected_samples[:50]) if selected_samples else 'N/A'
 
-          Starred insights:
-          {starred_insights}
+          synth_prompt = f"""You are synthesizing a wandering exploration of: "{problem}"
 
-          Synthesize:
-          1. Key themes and patterns
-          2. Most surprising connections
-          3. Questions worth pursuing
-          4. Potential next steps
+          Environment traversed: {state.environment or 'a conceptual landscape'}
 
-          Be concise but insightful."""
+          Selected explorations ({len(selected)} of {len(state.streams)} streams):
+          {"---".join(selected_insights)}
 
-          resp = get_llm_response(synth_prompt, model=model, provider=provider, temperature=0.4, npc=npc)
-          synthesis = str(resp.get('response', ''))
+          Word samples extracted during wandering: {sample_text}
+
+          Events encountered: {'; '.join([e['type'] + ': ' + e['text'][:100] for e in state.events]) if state.events else 'None'}
+
+          From these wanderings, synthesize creative hypotheses:
+          1. What unexpected patterns emerge from the word samples?
+          2. What creative hypotheses can you form by connecting disparate ideas?
+          3. What questions have emerged that weren't visible at the start?
+          4. What surprising connections exist between the different temperature explorations?
+
+          Be bold, creative, and insightful. These hypotheses should feel like discoveries, not summaries."""
+
+          try:
+              resp = get_llm_response(synth_prompt, model=model, provider=provider, temperature=0.4, npc=npc)
+              synthesis = str(resp.get('response', ''))
+          except Exception as e:
+              synthesis = "Error during synthesis: " + str(e)
 
           state.last_output = "=== SYNTHESIS ===\n\n" + synthesis
           state.scroll_offset = 0
+          state.current_panel = 0
           state.status = "Ready"
           state.generating = False
+
+      # ========== Auto-run ==========
+      def auto_run():
+          if not environment:
+              generate_environment()
+          else:
+              state.environment = environment
+
+          total_streams = n_high_temp_streams * 2  # low + high alternating
+          for i in range(total_streams):
+              if state.quit_requested:
+                  break
+              run_one_stream()
+
+          if not state.quit_requested:
+              state.auto_done = True
+              state.status = f"Done! {len(state.streams)} streams. R=Review, SPACE=more, q=quit"
 
       # ========== Main Loop ==========
       fd = sys.stdin.fileno()
       old_settings = termios.tcgetattr(fd)
+      import select as _sel
 
       try:
           tty.setcbreak(fd)
-          sys.stdout.write('\033[?25l')  # Hide cursor
+          sys.stdout.write('\033[?25l')
           sys.stdout.flush()
-
-          # Generate environment AFTER TUI is set up
-          if environment:
-              state.environment = environment
-          else:
-              generate_environment()
 
           render_screen()
 
-          while True:
-              c = os.read(fd, 1).decode('latin-1')
+          auto_thread = threading.Thread(target=auto_run, daemon=True)
+          auto_thread.start()
 
-              if c == 'q' or c == '\x03':  # q or Ctrl+C
-                  break
-              elif c == ' ':  # Space - new stream
-                  generate_stream()
-              elif c == 't':  # Toggle temperature
-                  toggle_temp()
-              elif c == 'e':  # Trigger event
-                  trigger_event()
-              elif c == 's':  # Star
-                  star_current()
-              elif c == 'r':  # Reflect/synthesize
-                  synthesize()
-              elif c == '\t':  # Tab - switch panel
-                  state.current_panel = (state.current_panel + 1) % 3
-                  state.scroll_offset = 0
-              elif c == 'j':  # Scroll down
-                  state.scroll_offset += 1
-              elif c == 'k':  # Scroll up
-                  state.scroll_offset = max(0, state.scroll_offset - 1)
-              elif c == '\x1b':  # Escape sequence
-                  import select as _sel
-                  if _sel.select([fd], [], [], 0.05)[0]:
-                      c2 = os.read(fd, 1).decode('latin-1')
+          while True:
+              if _sel.select([fd], [], [], 0.3)[0]:
+                  c = os.read(fd, 1).decode('latin-1')
+
+                  if state.review_mode:
+                      # Review mode input
+                      if state.editing_count:
+                          if c in ('\r', '\n'):
+                              try:
+                                  val = int(state.count_buf)
+                                  state.review_sample_count = max(0, min(val, len(state.review_items)))
+                              except:
+                                  pass
+                              state.editing_count = False
+                          elif c == '\x1b':
+                              state.editing_count = False
+                          elif c == '\x7f' or c == '\x08':
+                              state.count_buf = state.count_buf[:-1]
+                          elif c.isdigit():
+                              state.count_buf += c
+                      else:
+                          if c == '\x1b':
+                              if _sel.select([fd], [], [], 0.05)[0]:
+                                  c2 = os.read(fd, 1).decode('latin-1')
+                                  if c2 == '[':
+                                      c3 = os.read(fd, 1).decode('latin-1')
+                                      if c3 == 'A':
+                                          state.review_cursor = max(0, state.review_cursor - 1)
+                                      elif c3 == 'B':
+                                          state.review_cursor = min(len(state.review_items) - 1, state.review_cursor + 1)
+                              else:
+                                  state.review_mode = False
+                          elif c == 'j':
+                              state.review_cursor = min(len(state.review_items) - 1, state.review_cursor + 1)
+                          elif c == 'k':
+                              state.review_cursor = max(0, state.review_cursor - 1)
+                          elif c == ' ':
+                              if state.review_items:
+                                  state.review_items[state.review_cursor]['selected'] = not state.review_items[state.review_cursor]['selected']
+                          elif c == 'a':
+                              for item in state.review_items:
+                                  item['selected'] = True
+                          elif c == 'x':
+                              for item in state.review_items:
+                                  item['selected'] = False
+                          elif c == 'n':
+                              state.editing_count = True
+                              state.count_buf = str(state.review_sample_count)
+                          elif c in ('\r', '\n'):
+                              threading.Thread(target=synthesize_from_review, daemon=True).start()
+                          elif c == 'q':
+                              state.quit_requested = True
+                              break
+                          # Keep cursor in scroll view
+                          _, h = get_size()
+                          view_h = h - 9
+                          if state.review_cursor < state.review_scroll:
+                              state.review_scroll = state.review_cursor
+                          elif state.review_cursor >= state.review_scroll + view_h:
+                              state.review_scroll = state.review_cursor - view_h + 1
                   else:
-                      break
-                  if c2 == '[':
-                      c3 = os.read(fd, 1).decode('latin-1')
-                      if c3 == 'A':  # Up
-                          state.scroll_offset = max(0, state.scroll_offset - 1)
-                      elif c3 == 'B':  # Down
-                          state.scroll_offset += 1
-                      elif c3 == 'C':  # Right - next panel
+                      # Explore mode input
+                      if c == 'q' or c == '\x03':
+                          state.quit_requested = True
+                          break
+                      elif c == ' ':
+                          if not state.generating:
+                              threading.Thread(target=run_one_stream, daemon=True).start()
+                      elif c == 't':
+                          toggle_temp()
+                      elif c == 'e':
+                          if not state.generating:
+                              threading.Thread(target=trigger_event, daemon=True).start()
+                      elif c == 's':
+                          star_current()
+                      elif c == 'R' or c == 'r':
+                          if not state.generating:
+                              enter_review()
+                      elif c == '\t':
                           state.current_panel = (state.current_panel + 1) % 3
                           state.scroll_offset = 0
-                      elif c3 == 'D':  # Left - prev panel
-                          state.current_panel = (state.current_panel - 1) % 3
-                          state.scroll_offset = 0
+                      elif c == 'j':
+                          state.scroll_offset += 1
+                      elif c == 'k':
+                          state.scroll_offset = max(0, state.scroll_offset - 1)
+                      elif c == '\x1b':
+                          if _sel.select([fd], [], [], 0.05)[0]:
+                              c2 = os.read(fd, 1).decode('latin-1')
+                              if c2 == '[':
+                                  c3 = os.read(fd, 1).decode('latin-1')
+                                  if c3 == 'A':
+                                      state.scroll_offset = max(0, state.scroll_offset - 1)
+                                  elif c3 == 'B':
+                                      state.scroll_offset += 1
+                                  elif c3 == 'C':
+                                      state.current_panel = (state.current_panel + 1) % 3
+                                      state.scroll_offset = 0
+                                  elif c3 == 'D':
+                                      state.current_panel = (state.current_panel - 1) % 3
+                                      state.scroll_offset = 0
+                          else:
+                              state.quit_requested = True
+                              break
 
               render_screen()
 
       finally:
           termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-          sys.stdout.write('\033[?25h')  # Show cursor
-          sys.stdout.write('\033[2J\033[H')  # Clear screen
+          sys.stdout.write('\033[?25h')
+          sys.stdout.write('\033[2J\033[H')
           sys.stdout.flush()
 
-          # Final output
           if state.streams:
               print(colored("=== WANDER SESSION COMPLETE ===\n", "green"))
               print(f"Problem: {problem}")
               print(f"Streams: {len(state.streams)}")
-              print(f"Starred: {len(state.starred)}\n")
+              print(f"Samples: {len(state.all_samples)}")
+              print(f"Starred: {len(state.starred)}")
+              print(f"Events:  {len(state.events)}\n")
 
               if state.starred:
                   print(colored("Starred Insights:", "yellow"))
                   for i, s in enumerate(state.starred):
-                      print(f"\n{i+1}. [T={s.get('temp', 0):.1f}] {s.get('insight')[:300]}...")
+                      print(f"\n{i+1}. [T={s.get('temp', 0):.1f}] {s.get('insight', '')[:300]}...")
 
-              print(colored("\n--- Final Synthesis ---", "cyan"))
-              synthesize()
-              print(state.last_output)
+              if state.last_output and "SYNTHESIS" in state.last_output:
+                  print(colored("\n--- Final Synthesis ---", "cyan"))
+                  print(state.last_output)
 
       context['output'] = state.last_output
       context['messages'] = messages
@@ -457,4 +723,6 @@ steps:
           'environment': state.environment,
           'streams': state.streams,
           'starred': state.starred,
+          'events': state.events,
+          'samples': state.all_samples,
       }
