@@ -196,7 +196,19 @@ steps:
       provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') else 'gemini')
 
       if not query:
-          context['output'] = """Usage: /alicanto <research query>
+          if sys.stdin.isatty():
+              print("\033[1;36m ALICANTO - Deep Research Mode \033[0m")
+              print("\033[90mEnter your research query (or 'q' to quit):\033[0m")
+              try:
+                  query = input("\033[33m> \033[0m").strip()
+              except (EOFError, KeyboardInterrupt):
+                  query = ""
+              if not query or query.lower() == 'q':
+                  context['output'] = "Alicanto cancelled."
+                  context['messages'] = messages
+                  exit()
+          else:
+              context['output'] = """Usage: /alicanto <research query>
 
       Options:
         --num-npcs N      Number of research perspectives (default: 5)
@@ -207,8 +219,8 @@ steps:
         --format FORMAT   Output: report|summary|full (default: report)
 
       Example: /alicanto What are the latest advances in quantum computing?"""
-          context['messages'] = messages
-          exit()
+              context['messages'] = messages
+              exit()
 
       print(f"""
        █████╗ ██╗     ██╗ ██████╗ █████╗ ███╗   ██╗████████╗ ██████╗
