@@ -6,7 +6,7 @@ import os
 import sys
 import difflib
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Tuple
 from enum import Enum
 
 # Platform-specific imports
@@ -324,8 +324,8 @@ class DiffViewer:
                 start = hunk.start_original - 1 + offset
 
                 # Count removals and additions in this hunk
-                removals = [l[1:] for l in hunk.lines if l.startswith('-')]
-                additions = [l[1:] for l in hunk.lines if l.startswith('+')]
+                removals = [ln[1:] for ln in hunk.lines if ln.startswith('-')]
+                additions = [ln[1:] for ln in hunk.lines if ln.startswith('+')]
 
                 # Remove old lines
                 del result_lines[start:start + len(removals)]
