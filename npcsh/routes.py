@@ -62,7 +62,10 @@ class CommandRouter:
         try:
             import shlex
             
-            parts = shlex.split(command)
+            try:
+                parts = shlex.split(command)
+            except ValueError:
+                parts = command.split()
             args = parts[1:] if len(parts) > 1 else []
             
             # Use extract_jinx_inputs

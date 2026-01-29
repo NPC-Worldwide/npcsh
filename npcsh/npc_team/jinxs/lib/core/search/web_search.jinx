@@ -1,5 +1,6 @@
 jinx_name: web_search
 description: Search the web with interactive TUI
+interactive: true
 inputs:
 - query: ""
 - provider: ""
@@ -54,18 +55,50 @@ steps:
           try:
               raw_results = search_web(query, provider=provider, num_results=num_results)
 
-              # Normalize results
+              # Normalize results - handle different provider formats
               results = []
               if raw_results:
-                  for res in raw_results:
-                      if isinstance(res, dict):
+                  # Perplexity returns [answer_text, [url1, url2, ...]]
+                  if (len(raw_results) == 2
+                      and isinstance(raw_results[0], str)
+                      and isinstance(raw_results[1], (list, tuple))):
+                      answer_text = raw_results[0]
+                      citations = raw_results[1]
+                      # First result: the AI answer
+                      results.append({
+                          'title': 'AI Answer',
+                          'url': '',
+                          'snippet': answer_text[:500]
+                      })
+                      # Then each citation as a result
+                      for url in citations:
+                          url_str = str(url).strip()
+                          try:
+                              from urllib.parse import urlparse
+                              domain = urlparse(url_str).netloc
+                          except:
+                              domain = url_str[:40]
                           results.append({
-                              'title': res.get('title', 'No title'),
-                              'url': res.get('url', res.get('link', '')),
-                              'snippet': res.get('snippet', res.get('description', ''))
+                              'title': domain or url_str[:60],
+                              'url': url_str,
+                              'snippet': ''
                           })
-                      else:
-                          results.append({'title': str(res)[:50], 'url': str(res), 'snippet': ''})
+                  else:
+                      for res in raw_results:
+                          if isinstance(res, dict):
+                              results.append({
+                                  'title': res.get('title', 'No title'),
+                                  'url': res.get('url', res.get('link', '')),
+                                  'snippet': res.get('snippet', res.get('description', res.get('content', '')))
+                              })
+                          elif isinstance(res, str):
+                              # Could be a URL or text
+                              if res.startswith('http'):
+                                  results.append({'title': res[:60], 'url': res, 'snippet': ''})
+                              else:
+                                  results.append({'title': res[:60], 'url': '', 'snippet': res[:200]})
+                          else:
+                              results.append({'title': str(res)[:60], 'url': str(res), 'snippet': ''})
 
               if not results:
                   context['output'] = "No web results found."
@@ -128,7 +161,7 @@ steps:
                               header = f" WEB SEARCH ({len(results)} results): '{query}' "
                           else:
                               header = f" PREVIEW: {results[selected]['title'][:width-12]} "
-                          sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+                          sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
 
                           # Column headers
                           if mode == 'list':
@@ -162,7 +195,7 @@ steps:
                               sel = results[selected] if results else {}
                               snippet = (sel.get('snippet') or '')[:width-2]
                               sys.stdout.write(f'\033[{height-1};1H\033[K {snippet}'.ljust(width))
-                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav p:Preview o:Open i:Incog c:Copy q:Quit [{selected+1}/{len(results)}] \033[0m')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav p:Preview o:Open i:Incog c:Copy q:Quit [{selected+1}/{len(results)}] \033[0m')
 
                           else:  # preview mode
                               for i in range(list_height):
@@ -173,16 +206,21 @@ steps:
 
                               sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
                               sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(preview_content)} lines]')
-                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll b:Back o:Open c:Copy q:Quit \033[0m')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll b:Back o:Open c:Copy q:Quit \033[0m')
 
                           sys.stdout.flush()
 
-                          c = sys.stdin.read(1)
+                          c = os.read(fd, 1).decode('latin-1')
 
                           if c == '\x1b':
-                              c2 = sys.stdin.read(1)
+                              import select as _sel
+                              if _sel.select([fd], [], [], 0.05)[0]:
+                                  c2 = os.read(fd, 1).decode('latin-1')
+                              else:
+                                  context['output'] = "Cancelled."
+                                  break
                               if c2 == '[':
-                                  c3 = sys.stdin.read(1)
+                                  c3 = os.read(fd, 1).decode('latin-1')
                                   if c3 == 'A':
                                       if mode == 'list' and selected > 0:
                                           selected -= 1

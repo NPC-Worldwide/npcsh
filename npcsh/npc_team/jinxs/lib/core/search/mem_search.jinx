@@ -19,7 +19,6 @@ steps:
       import termios
       from datetime import datetime
       from npcpy.memory.command_history import CommandHistory
-      from npcpy.memory.memory_processor import get_relevant_memories
 
       query = context.get('query', '').strip()
       text_mode = context.get('text', '').lower() in ('true', '1', 'yes')
@@ -65,25 +64,13 @@ steps:
           try:
               cmd_history = CommandHistory(db_path)
 
-              if status_filter == 'approved':
-                  state_obj = state if 'state' in dir() else None
-                  memories = get_relevant_memories(
-                      command_history=cmd_history,
-                      npc_name=npc_name or '__none__',
-                      team_name=team_name or '__none__',
-                      path=current_path,
-                      query=query,
-                      max_memories=max_results,
-                      state=state_obj
-                  )
-              else:
-                  memories = cmd_history.search_memory(
-                      query=query,
-                      npc=npc_name,
-                      team=team_name,
-                      status_filter=status_filter if status_filter != 'all' else None,
-                      limit=max_results
-                  )
+              memories = cmd_history.search_memory(
+                  query=query,
+                  npc=npc_name,
+                  team=team_name,
+                  status_filter=status_filter if status_filter != 'all' else None,
+                  limit=max_results
+              )
 
               # Normalize to list of dicts
               if memories:
@@ -189,7 +176,7 @@ steps:
                               header = f" MEM SEARCH ({len(display_memories)} results): '{query}' [sort:{sort_mode}({sort_ind}) filter:{current_filter}] "
                           else:
                               header = f" PREVIEW MEMORY "
-                          sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+                          sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
 
                           # Column headers
                           if mode == 'list':
@@ -235,7 +222,7 @@ steps:
                               sel = display_memories[selected] if display_memories else {}
                               mem_id = sel.get('id', '') or sel.get('memory_id', '')
                               sys.stdout.write(f'\033[{height-1};1H\033[K ID: {mem_id}'.ljust(width))
-                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav 1/2/3:Sort f:Filter p:Preview a:Approve x:Reject q:Quit [{selected+1}/{len(display_memories)}] \033[0m')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav 1/2/3:Sort f:Filter p:Preview a:Approve x:Reject q:Quit [{selected+1}/{len(display_memories)}] \033[0m')
 
                           else:  # preview mode
                               sel = display_memories[selected]
@@ -261,7 +248,7 @@ steps:
 
                               sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
                               sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(all_lines)} lines]')
-                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll b:Back a:Approve x:Reject q:Quit \033[0m')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll b:Back a:Approve x:Reject q:Quit \033[0m')
 
                           sys.stdout.flush()
 

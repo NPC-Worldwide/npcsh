@@ -1,5 +1,6 @@
 jinx_name: file_search
 description: Find and browse files with interactive TUI
+interactive: true
 inputs:
 - pattern: ""
 - path: "."
@@ -176,7 +177,7 @@ steps:
                               header = f" FILES ({len(display_files)}): '{pattern}' [sort:{sort_mode}({sort_ind})] "
                           else:
                               header = f" PREVIEW: {display_files[selected]['name']} "
-                          sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+                          sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
 
                           # Column headers
                           if mode == 'list':
@@ -216,7 +217,7 @@ steps:
                               f = display_files[selected] if display_files else {}
                               full_path = f.get('path', '')
                               sys.stdout.write(f'\033[{height-1};1H\033[K {full_path}'.ljust(width)[:width])
-                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav 1/2/3:Sort p:Preview o:Edit i:Incog c:Copy q:Quit [{selected+1}/{len(display_files)}] \033[0m')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav 1/2/3:Sort p:Preview o:Edit i:Incog c:Copy q:Quit [{selected+1}/{len(display_files)}] \033[0m')
 
                           elif mode == 'preview':
                               for i in range(list_height):
@@ -227,16 +228,26 @@ steps:
 
                               sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
                               sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(preview_lines)} lines]')
-                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll b:Back o:Edit q:Quit \033[0m')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll b:Back o:Edit q:Quit \033[0m')
 
                           sys.stdout.flush()
 
-                          c = sys.stdin.read(1)
+                          c = os.read(fd, 1).decode('latin-1')
 
                           if c == '\x1b':
-                              c2 = sys.stdin.read(1)
+                              import select as _sel
+                              if _sel.select([fd], [], [], 0.05)[0]:
+                                  c2 = os.read(fd, 1).decode('latin-1')
+                              else:
+                                  if mode == 'preview':
+                                      mode = 'list'
+                                      sys.stdout.write('\033[2J\033[H')
+                                  else:
+                                      context['output'] = "Cancelled."
+                                      break
+                                  continue
                               if c2 == '[':
-                                  c3 = sys.stdin.read(1)
+                                  c3 = os.read(fd, 1).decode('latin-1')
                                   if c3 == 'A':
                                       if mode == 'list' and selected > 0:
                                           selected -= 1

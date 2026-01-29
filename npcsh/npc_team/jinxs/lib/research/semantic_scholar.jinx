@@ -152,7 +152,7 @@ steps:
                                   header = f" SEMANTIC SCHOLAR ({len(display_papers)} papers): '{query}' [sort:{sort_mode}({sort_ind}){yr}] "
                               else:
                                   header = f" PREVIEW: {display_papers[selected].get('title', '')[:width-12]} "
-                              sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+                              sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
 
                               # Column headers
                               if mode == 'list':
@@ -191,7 +191,7 @@ steps:
                                   venue = (sel.get('venue') or '')[:30]
                                   has_pdf = 'PDF' if sel.get('openAccessPdf') else ''
                                   sys.stdout.write(f'\033[{height-1};1H\033[K {venue}  {has_pdf}'.ljust(width))
-                                  sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav 0/1/2/3:Sort y:Year p:Preview o:Open i:Incog d:Download q:Quit [{selected+1}/{len(display_papers)}] \033[0m')
+                                  sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav 0/1/2/3:Sort y:Year p:Preview o:Open i:Incog d:Download q:Quit [{selected+1}/{len(display_papers)}] \033[0m')
 
                               else:  # preview mode
                                   sel = display_papers[selected]
@@ -253,7 +253,7 @@ steps:
 
                                   sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
                                   sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(preview_lines)} lines]')
-                                  sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll b:Back o:Open d:Download q:Quit \033[0m')
+                                  sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll b:Back o:Open d:Download q:Quit \033[0m')
 
                               sys.stdout.flush()
 

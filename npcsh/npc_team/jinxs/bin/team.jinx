@@ -136,8 +136,8 @@ steps:
               team_name = state.team.name or 'team'
               hdr = f" {team_name} "
               pad = '=' * W
-              out.append(wline(1, f"\033[44;37;1m{pad}\033[0m"))
-              out.append(f"\033[1;{max(1,(W - len(hdr)) // 2)}H\033[44;37;1m{hdr}\033[0m")
+              out.append(wline(1, f"\033[7;1m{pad}\033[0m"))
+              out.append(f"\033[1;{max(1,(W - len(hdr)) // 2)}H\033[7;1m{hdr}\033[0m")
 
               # ── tabs ──
               tb = ""
@@ -182,7 +182,7 @@ steps:
                   foot = " [j/k] Navigate  [e/Enter] Edit  [s] Save  [q/Esc] Back"
               else:
                   foot = " [Tab] Switch  [j/k] Nav  [Enter] Open  [s] Save  [q] Quit"
-              out.append(wline(H, f"\033[44;37m{foot[:W].ljust(W)}\033[0m"))
+              out.append(wline(H, f"\033[7m{foot[:W].ljust(W)}\033[0m"))
 
               sys.stdout.write(''.join(out))
               sys.stdout.flush()
@@ -201,7 +201,7 @@ steps:
 
                   if i == ui.sel:
                       if ui.editing:
-                          out.append(wline(row, f"  \033[1m{key}:\033[0m \033[44;37m{ui.edit_buf}\033[0m\033[K"))
+                          out.append(wline(row, f"  \033[1m{key}:\033[0m \033[7m{ui.edit_buf}\033[0m\033[K"))
                       else:
                           line = f"  {key}: {val}"
                           out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
@@ -283,7 +283,7 @@ steps:
                   fval = fmt_val(data.get(fkey, ''), W - 25)
                   if fi == ui.detail_idx:
                       if ui.editing:
-                          out.append(wline(row, f"  \033[1m{fkey}:\033[0m \033[44;37m{ui.edit_buf}\033[0m"))
+                          out.append(wline(row, f"  \033[1m{fkey}:\033[0m \033[7m{ui.edit_buf}\033[0m"))
                       else:
                           line = f"  {fkey}: {fval}"
                           out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
@@ -319,10 +319,10 @@ steps:
               return True
 
           def handle_esc():
-              if select.select([sys.stdin], [], [], 0.05)[0]:
-                  c2 = sys.stdin.read(1)
+              if select.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
                   if c2 == '[':
-                      c3 = sys.stdin.read(1)
+                      c3 = os.read(fd, 1).decode('latin-1')
                       if c3 == 'A':
                           nav_up()
                       elif c3 == 'B':
@@ -338,10 +338,10 @@ steps:
           def handle_edit(c):
               if c == '\x1b':
                   # Check if arrow key or bare esc
-                  if select.select([sys.stdin], [], [], 0.05)[0]:
-                      c2 = sys.stdin.read(1)
+                  if select.select([fd], [], [], 0.05)[0]:
+                      c2 = os.read(fd, 1).decode('latin-1')
                       if c2 == '[':
-                          sys.stdin.read(1)  # consume arrow char
+                          os.read(fd, 1).decode('latin-1')  # consume arrow char
                   else:
                       ui.editing = False
                       ui.edit_buf = ""
@@ -492,7 +492,7 @@ steps:
               sys.stdout.flush()
               render()
               while True:
-                  c = sys.stdin.read(1)
+                  c = os.read(fd, 1).decode('latin-1')
                   if not handle(c):
                       break
                   render()

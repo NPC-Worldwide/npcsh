@@ -106,7 +106,7 @@ steps:
                       header = f" CORCA MCP TOOLS ({len(tools)} available) "
                   else:
                       header = f" TOOL: {tools[selected]['name']} "
-                  sys.stdout.write(f'\033[46;30;1m{header.ljust(width)}\033[0m\n')
+                  sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
 
                   if mode == 'list':
                       col_header = f' {"NAME":<25} {"DESCRIPTION":<50}'
@@ -139,7 +139,7 @@ steps:
                       params = t.get('params', {}).get('properties', {})
                       param_names = list(params.keys())[:5]
                       sys.stdout.write(f'\033[{height-1};1H\033[K Params: {", ".join(param_names) if param_names else "none"}'.ljust(width)[:width])
-                      sys.stdout.write(f'\033[{height};1H\033[K\033[46;30m j/k:Nav p:Details Enter:Copy q:Quit [{selected+1}/{len(tools)}] \033[0m')
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav p:Details Enter:Copy q:Quit [{selected+1}/{len(tools)}] \033[0m')
 
                   else:  # preview mode
                       for i in range(list_height):
@@ -150,7 +150,7 @@ steps:
 
                       sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
                       sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(preview_lines)} lines]')
-                      sys.stdout.write(f'\033[{height};1H\033[K\033[46;30m j/k:Scroll b:Back q:Quit \033[0m')
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll b:Back q:Quit \033[0m')
 
                   sys.stdout.flush()
 

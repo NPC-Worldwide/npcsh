@@ -5,7 +5,7 @@
 
 # npcsh
 
-The NPC shell (`npcsh`) makes the most of multi-modal LLMs and agents through a powerful set of simple slash  commands and novel interactive modes, all from the comfort of the command line. Build teams of agents and schedule them on jobs, engineer context, and design custom interaction modes and Jinja Execution templates (Jinxs for you and your agents to invoke, all managed scalably for organizations of any size through the NPC data layer.
+The NPC shell (`npcsh`) makes the most of multi-modal LLMs and agents through a powerful set of simple slash  commands and novel interactive modes, all from the comfort of the command line. Build teams of agents and schedule them on jobs, engineer context, and design custom interaction modes and Jinja Execution templates (Jinxs for you and your agents to invoke, all managed scalably for organizations of any size through the NPC  data layer.
 
 To get started:
 For users who want to mainly use models through APIs (`ollama`, `gemini`, `kimi`, `grok`, `deepseek`, `anthropic`, `openai`, `mistral`, or any others provided by litellm )
