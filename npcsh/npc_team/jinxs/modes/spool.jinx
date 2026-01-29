@@ -87,7 +87,7 @@ steps:
                       header = f" CONVERSATION HISTORY ({len(history)} messages) "
                   else:
                       header = f" MESSAGE {selected + 1} "
-                  sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+                  sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
 
                   if mode == 'list':
                       col_header = f' {"#":<4} {"ROLE":<12} {"PREVIEW":<60}'
@@ -129,7 +129,7 @@ steps:
                       user_msgs = len([m for m in history if m.get('role') == 'user'])
                       asst_msgs = len([m for m in history if m.get('role') == 'assistant'])
                       sys.stdout.write(f'\033[{height-1};1H\033[K User: {user_msgs} | Assistant: {asst_msgs}'.ljust(width)[:width])
-                      sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav p:Preview c:Copy q:Quit [{selected+1}/{len(history)}] \033[0m')
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav p:Preview c:Copy q:Quit [{selected+1}/{len(history)}] \033[0m')
 
                   else:  # preview mode
                       for i in range(list_height):
@@ -140,7 +140,7 @@ steps:
 
                       sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
                       sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(preview_lines)} lines]')
-                      sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll b:Back c:Copy q:Quit \033[0m')
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll b:Back c:Copy q:Quit \033[0m')
 
                   sys.stdout.flush()
 

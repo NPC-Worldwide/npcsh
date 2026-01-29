@@ -1,288 +1,163 @@
 jinx_name: plonk
-description: Vision-based GUI automation - use vision model to interact with screen elements
+description: Vision-based GUI automation TUI - visual task management and action automation
+interactive: true
 inputs:
   - task: null
   - vmodel: null
   - vprovider: null
   - max_iterations: 10
-  - debug: true
-  - browse: false
+  - debug: false
 
 steps:
-  - name: plonk_execute
+  - name: plonk_tui
     engine: python
     code: |
       import os
       import sys
       import tty
       import termios
+      import select
       import time
+      import json
       import platform
-      from termcolor import colored
+      from datetime import datetime
 
       from npcpy.llm_funcs import get_llm_response
-      from npcpy.data.image import capture_screenshot
-      from npcpy.work.desktop import perform_action
+
+      try:
+          from npcpy.data.image import capture_screenshot
+          from npcpy.work.desktop import perform_action
+          VISION_AVAILABLE = True
+      except ImportError:
+          VISION_AVAILABLE = False
 
       npc = context.get('npc')
       team = context.get('team')
       messages = context.get('messages', [])
 
-      # Resolve npc if it's a string (npc name) rather than NPC object
       if isinstance(npc, str) and team:
           npc = team.get(npc) if hasattr(team, 'get') else None
       elif isinstance(npc, str):
           npc = None
 
-      # ========== TUI Helper Functions ==========
-      def get_terminal_size():
-          try:
-              size = os.get_terminal_size()
-              return size.columns, size.lines
-          except:
-              return 80, 24
-
-      def plonk_tui_browser(summary, click_history):
-          """Interactive TUI browser for plonk action history"""
-          if not summary and not click_history:
-              print(colored("No actions recorded.", "yellow"))
-              return
-
-          width, height = get_terminal_size()
-          selected = 0
-          scroll = 0
-          list_height = height - 5
-          mode = 'summary'  # summary or history
-
-          fd = sys.stdin.fileno()
-          old_settings = termios.tcgetattr(fd)
-
-          try:
-              tty.setcbreak(fd)
-              sys.stdout.write('\033[?25l')
-              sys.stdout.write('\033[2J\033[H')
-
-              while True:
-                  width, height = get_terminal_size()
-                  list_height = height - 5
-
-                  items = summary if mode == 'summary' else click_history
-
-                  if not items:
-                      items = [{'action': 'none', 'reason': 'No actions'}]
-
-                  if selected >= len(items):
-                      selected = max(0, len(items) - 1)
-
-                  if selected < scroll:
-                      scroll = selected
-                  elif selected >= scroll + list_height:
-                      scroll = selected - list_height + 1
-
-                  sys.stdout.write('\033[H')
-
-                  # Tab bar
-                  summary_tab = '\033[44;37;1m Summary \033[0m' if mode == 'summary' else '\033[90m Summary \033[0m'
-                  history_tab = '\033[44;37;1m History \033[0m' if mode == 'history' else '\033[90m History \033[0m'
-                  header = f" PLONK ACTION BROWSER  {summary_tab} {history_tab} "
-                  sys.stdout.write(f'\033[44;37;1m{" PLONK ACTION BROWSER".ljust(width)}\033[0m\n')
-
-                  if mode == 'summary':
-                      col_header = f' {"STEP":<6} {"ACTION":<12} {"COORDS":<15} {"REASON":<40}'
-                  else:
-                      col_header = f' {"#":<4} {"ACTION":<10} {"X":<6} {"Y":<6} {"DETAILS":<40}'
-                  sys.stdout.write(f'\033[90m{col_header[:width]}\033[0m\n')
-
-                  for i in range(list_height):
-                      idx = scroll + i
-                      sys.stdout.write(f'\033[{3+i};1H\033[K')
-                      if idx >= len(items):
-                          continue
-
-                      item = items[idx]
-
-                      if mode == 'summary':
-                          step = item.get('iteration', idx + 1)
-                          action = item.get('action', '?')[:12]
-                          coords = item.get('last_click_coords', 'N/A')[:15]
-                          reason = item.get('reason', item.get('error', ''))[:40]
-                          line = f" {step:<6} {action:<12} {coords:<15} {reason}"
-                      else:
-                          action = item.get('action', '?')[:10]
-                          x = str(item.get('x', '-'))[:6]
-                          y = str(item.get('y', '-'))[:6]
-                          details = item.get('reason', item.get('text', item.get('key', item.get('command', ''))))[:40]
-                          line = f" {idx+1:<4} {action:<10} {x:<6} {y:<6} {details}"
-
-                      line = line[:width-1]
-
-                      # Color by action type
-                      action_type = item.get('action', '')
-                      if action_type == 'done':
-                          color = '\033[32m'  # green
-                      elif action_type == 'fail':
-                          color = '\033[31m'  # red
-                      elif action_type == 'click':
-                          color = '\033[33m'  # yellow
-                      elif action_type == 'type':
-                          color = '\033[36m'  # cyan
-                      else:
-                          color = ''
-
-                      if idx == selected:
-                          sys.stdout.write(f'\033[7;1m>{line.ljust(width-2)}\033[0m')
-                      elif color:
-                          sys.stdout.write(f'{color}{line}\033[0m')
-                      else:
-                          sys.stdout.write(f' {line}')
-
-                  # Status bar
-                  sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
-                  stats = f"Actions: {len(summary)} | Clicks: {len([h for h in click_history if h.get('action') == 'click'])}"
-                  sys.stdout.write(f'\033[{height-1};1H\033[K {stats}'.ljust(width)[:width])
-                  sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav Tab:Toggle Enter:Details q:Quit [{selected+1}/{len(items)}] \033[0m')
-
-                  sys.stdout.flush()
-
-                  c = sys.stdin.read(1)
-
-                  if c == '\x1b':
-                      c2 = sys.stdin.read(1)
-                      if c2 == '[':
-                          c3 = sys.stdin.read(1)
-                          if c3 == 'A' and selected > 0:
-                              selected -= 1
-                          elif c3 == 'B' and selected < len(items) - 1:
-                              selected += 1
-                      else:
-                          return
-                      continue
-
-                  if c == 'q' or c == '\x03':
-                      return
-                  elif c == 'k' and selected > 0:
-                      selected -= 1
-                  elif c == 'j' and selected < len(items) - 1:
-                      selected += 1
-                  elif c == '\t':  # Tab to toggle
-                      mode = 'history' if mode == 'summary' else 'summary'
-                      selected = 0
-                      scroll = 0
-                  elif c in ('\r', '\n'):
-                      # Show full details
-                      item = items[selected]
-                      details = "\n".join(f"{k}: {v}" for k, v in item.items())
-                      print(f'\033[2J\033[H{details}\n\nPress any key to continue...')
-                      sys.stdout.flush()
-                      sys.stdin.read(1)
-                      sys.stdout.write('\033[2J\033[H')
-
-          finally:
-              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-              sys.stdout.write('\033[?25h')
-              sys.stdout.write('\033[2J\033[H')
-              sys.stdout.flush()
-
-      task = context.get('task')
       vision_model = context.get('vmodel') or (npc.model if npc and hasattr(npc, 'model') else 'gpt-4o')
       vision_provider = context.get('vprovider') or (npc.provider if npc and hasattr(npc, 'provider') else 'openai')
       max_iterations = int(context.get('max_iterations', 10))
-      debug = context.get('debug', True)
 
-      if not task:
-          context['output'] = """Usage: /plonk <task description>
-
-      Options:
-        --vmodel MODEL      Vision model to use (default: gpt-4o)
-        --vprovider PROV    Vision provider (default: openai)
-        --max-iterations N  Max steps (default: 10)
-
-      Example: /plonk Open Firefox and navigate to google.com"""
-          context['messages'] = messages
-          exit()
-
-      print(f"""
-      ██████╗ ██╗      ██████╗ ███╗   ██╗██╗  ██╗
-      ██╔══██╗██║     ██╔═══██╗████╗  ██║██║ ██╔╝
-      ██████╔╝██║     ██║   ██║██╔██╗ ██║█████╔╝
-      ██╔═══╝ ██║     ██║   ██║██║╚██╗██║██╔═██╗
-      ██║     ███████╗╚██████╔╝██║ ╚████║██║  ██╗
-      ╚═╝     ╚══════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝
-
-      Vision GUI Automation
-      Task: {task}
-      Model: {vision_model} | Max iterations: {max_iterations}
-      """)
-
-      # System-specific examples
-      system = platform.system()
-      if system == "Windows":
+      system_name = platform.system()
+      if system_name == "Windows":
           app_examples = "start firefox, notepad, calc"
-      elif system == "Darwin":
+      elif system_name == "Darwin":
           app_examples = "open -a Firefox, open -a TextEdit"
       else:
           app_examples = "firefox &, gedit &, gnome-calculator &"
 
-      # Action types
-      ACTION_SCHEMA = {
-          "type": "object",
-          "properties": {
-              "action": {
-                  "type": "string",
-                  "enum": ["click", "type", "key", "launch", "wait", "done", "fail"],
-                  "description": "Action to perform"
-              },
-              "x": {"type": "number", "description": "X coordinate (0-100 percentage)"},
-              "y": {"type": "number", "description": "Y coordinate (0-100 percentage)"},
-              "text": {"type": "string", "description": "Text to type or key to press"},
-              "command": {"type": "string", "description": "Command to launch"},
-              "duration": {"type": "number", "description": "Wait duration in seconds"},
-              "reason": {"type": "string", "description": "Explanation of action"}
-          },
-          "required": ["action", "reason"]
-      }
+      json_schema_example = '{"action":"click","x":50,"y":30,"reason":"Click the URL bar"}'
 
-      click_history = []
-      summary = []
+      # ========== State ==========
+      class PlonkState:
+          def __init__(self):
+              self.tasks = []       # [{"text":str, "status":"pending|running|done|failed", "actions":[]}]
+              self.sel = 0
+              self.scroll = 0
+              self.panel = 0        # 0=tasks, 1=actions
+              self.mode = 'idle'    # idle, input, running, paused, step
+              self.input_buf = ""
+              self.input_cursor = 0
+              self.current_task = -1
+              self.iteration = 0
+              self.max_iter = max_iterations
+              self.status = "Ready"
+              self.action_scroll = 0
+              self.last_screenshot = ""
 
-      for iteration in range(max_iterations):
-          print(colored(f"\n--- Iteration {iteration + 1}/{max_iterations} ---", "cyan"))
+      ui = PlonkState()
 
-          # Capture screenshot
-          ss = capture_screenshot()
-          if not ss or 'file_path' not in ss:
-              print(colored("Failed to capture screenshot", "red"))
-              break
+      # ========== Helpers ==========
+      def get_size():
+          try:
+              s = os.get_terminal_size()
+              return s.columns, s.lines
+          except:
+              return 80, 24
 
-          screenshot_path = ss['file_path']
-          if debug:
-              print(colored(f"Screenshot: {screenshot_path}", "gray"))
+      def add_task(text):
+          ui.tasks.append({"text": text.strip(), "status": "pending", "actions": []})
 
-          # Build context from history
-          history_context = ""
-          if click_history:
-              history_context = f"\nPrevious actions ({len(click_history)}):\n"
-              for i, click in enumerate(click_history[-5:], 1):
-                  history_context += f"  {i}. {click.get('action', 'unknown')} at ({click.get('x', '?')}, {click.get('y', '?')}) - {click.get('reason', '')}\n"
+      def delete_task():
+          if ui.tasks and ui.mode == 'idle':
+              del ui.tasks[ui.sel]
+              if ui.sel >= len(ui.tasks):
+                  ui.sel = max(0, len(ui.tasks) - 1)
 
-          prompt = f"""You are a GUI automation assistant. Analyze this screenshot and determine the next action to complete the task.
+      def get_current_actions():
+          if ui.panel == 1 and 0 <= ui.sel < len(ui.tasks):
+              return ui.tasks[ui.sel].get('actions', [])
+          if ui.current_task >= 0 and ui.current_task < len(ui.tasks):
+              return ui.tasks[ui.current_task].get('actions', [])
+          return []
 
-      TASK: {task}
+      # ========== Automation ==========
+      def run_one_step():
+          if ui.current_task < 0 or ui.current_task >= len(ui.tasks):
+              ui.mode = 'idle'
+              ui.status = "No task"
+              return
 
-      {history_context}
+          task = ui.tasks[ui.current_task]
 
-      Available actions:
-      - click: Click at x,y coordinates (0-100 percentage of screen)
-      - type: Type text
-      - key: Press key (enter, tab, escape, etc.)
-      - launch: Launch application ({app_examples})
-      - wait: Wait for duration seconds
-      - done: Task completed successfully
-      - fail: Task cannot be completed
+          if ui.iteration >= ui.max_iter:
+              task['status'] = 'failed'
+              task['actions'].append({"action": "fail", "reason": "Max iterations reached"})
+              advance_to_next_task()
+              return
 
-      Respond with JSON: {{"action": "...", "x": N, "y": N, "text": "...", "command": "...", "duration": N, "reason": "..."}}"""
+          if not VISION_AVAILABLE:
+              task['status'] = 'failed'
+              task['actions'].append({"action": "fail", "reason": "Vision/desktop modules not available"})
+              advance_to_next_task()
+              return
+
+          ui.iteration += 1
+          ui.status = "Capturing screen..."
+          render_screen()
 
           try:
+              ss = capture_screenshot()
+              if not ss or 'file_path' not in ss:
+                  task['actions'].append({"action": "fail", "reason": "Screenshot failed"})
+                  task['status'] = 'failed'
+                  advance_to_next_task()
+                  return
+
+              screenshot_path = ss['file_path']
+              ui.last_screenshot = screenshot_path
+
+              history_context = ""
+              if task['actions']:
+                  history_context = "\nPrevious actions:\n"
+                  for i, act in enumerate(task['actions'][-5:], 1):
+                      history_context += "  " + str(i) + ". " + act.get('action', '?')
+                      if act.get('x'):
+                          history_context += " at (" + str(act.get('x', '?')) + ", " + str(act.get('y', '?')) + ")"
+                      history_context += " - " + act.get('reason', '') + "\n"
+
+              prompt = "You are a GUI automation assistant. Analyze this screenshot and determine the next action.\n\n"
+              prompt += "TASK: " + task['text'] + "\n"
+              prompt += history_context + "\n"
+              prompt += "Available actions:\n"
+              prompt += "- click: Click at x,y coordinates (0-100 percentage of screen)\n"
+              prompt += "- type: Type text (use 'text' field)\n"
+              prompt += "- key: Press key like enter, tab, escape (use 'text' field)\n"
+              prompt += "- launch: Launch application (use 'command' field, e.g. " + app_examples + ")\n"
+              prompt += "- wait: Wait for 'duration' seconds\n"
+              prompt += "- done: Task completed successfully\n"
+              prompt += "- fail: Task cannot be completed\n\n"
+              prompt += "Respond with JSON, e.g.: " + json_schema_example
+
+              ui.status = "Thinking... (iter " + str(ui.iteration) + "/" + str(ui.max_iter) + ")"
+              render_screen()
+
               resp = get_llm_response(
                   prompt,
                   model=vision_model,
@@ -294,86 +169,397 @@ steps:
 
               action_response = resp.get('response', {})
               if isinstance(action_response, str):
-                  import json
                   try:
                       action_response = json.loads(action_response)
                   except:
-                      print(colored(f"Invalid JSON response: {action_response[:100]}", "red"))
-                      continue
+                      task['actions'].append({"action": "error", "reason": "Invalid JSON from model"})
+                      ui.status = "Bad response, retrying..."
+                      return
 
               action = action_response.get('action', 'fail')
-              reason = action_response.get('reason', 'No reason provided')
-
-              print(colored(f"Action: {action} - {reason}", "yellow"))
+              reason = action_response.get('reason', '')
 
               if action == 'done':
-                  print(colored("Task completed successfully!", "green"))
-                  summary.append({"iteration": iteration + 1, "action": "done", "reason": reason})
-                  break
+                  task['status'] = 'done'
+                  task['actions'].append({"action": "done", "reason": reason})
+                  advance_to_next_task()
+                  return
 
               if action == 'fail':
-                  print(colored(f"Task failed: {reason}", "red"))
-                  summary.append({"iteration": iteration + 1, "action": "fail", "reason": reason})
-                  break
+                  task['status'] = 'failed'
+                  task['actions'].append({"action": "fail", "reason": reason})
+                  advance_to_next_task()
+                  return
 
-              # Execute action
+              # Execute the action
+              act_record = {"action": action, "reason": reason}
+
               if action == 'click':
                   x, y = action_response.get('x', 50), action_response.get('y', 50)
                   perform_action('click', x=x, y=y)
-                  click_history.append({"action": "click", "x": x, "y": y, "reason": reason})
-                  print(colored(f"Clicked at ({x}, {y})", "green"))
-
+                  act_record['x'] = x
+                  act_record['y'] = y
               elif action == 'type':
-                  text = action_response.get('text', '')
-                  perform_action('type', text=text)
-                  click_history.append({"action": "type", "text": text[:20], "reason": reason})
-                  print(colored(f"Typed: {text[:30]}...", "green"))
-
+                  txt = action_response.get('text', '')
+                  perform_action('type', text=txt)
+                  act_record['text'] = txt
               elif action == 'key':
                   key = action_response.get('text', 'enter')
                   perform_action('key', key=key)
-                  click_history.append({"action": "key", "key": key, "reason": reason})
-                  print(colored(f"Pressed key: {key}", "green"))
-
+                  act_record['key'] = key
               elif action == 'launch':
                   cmd = action_response.get('command', '')
                   perform_action('launch', command=cmd)
-                  click_history.append({"action": "launch", "command": cmd, "reason": reason})
-                  print(colored(f"Launched: {cmd}", "green"))
-                  time.sleep(2)  # Wait for app to open
-
+                  act_record['command'] = cmd
+                  time.sleep(2)
               elif action == 'wait':
-                  duration = action_response.get('duration', 1)
-                  time.sleep(duration)
-                  click_history.append({"action": "wait", "duration": duration, "reason": reason})
-                  print(colored(f"Waited {duration}s", "green"))
+                  dur = action_response.get('duration', 1)
+                  time.sleep(dur)
+                  act_record['duration'] = dur
 
-              summary.append({
-                  "iteration": iteration + 1,
-                  "action": action,
-                  "last_click_coords": f"({click_history[-1].get('x', 'N/A')}, {click_history[-1].get('y', 'N/A')})" if click_history else "N/A",
-                  "reason": reason
-              })
+              task['actions'].append(act_record)
+              ui.status = action + " - " + reason[:40]
+              time.sleep(0.3)
 
-              time.sleep(0.5)  # Brief pause between actions
+              if ui.mode == 'step':
+                  ui.mode = 'paused'
+                  ui.status = "Paused (step done)"
 
           except Exception as e:
-              print(colored(f"Error in iteration {iteration + 1}: {e}", "red"))
-              summary.append({"iteration": iteration + 1, "error": str(e)})
+              task['actions'].append({"action": "error", "reason": str(e)})
+              ui.status = "Error: " + str(e)[:40]
 
-      # Generate summary
-      print("\n" + "="*50)
-      print(colored("PLONK SESSION SUMMARY", "cyan", attrs=['bold']))
-      print("="*50)
-      for s in summary:
-          print(f"  Step {s.get('iteration', '?')}: {s.get('action', 'unknown')} - {s.get('reason', s.get('error', ''))[:60]}")
+      def advance_to_next_task():
+          # Find next pending task
+          for i in range(len(ui.tasks)):
+              if ui.tasks[i]['status'] == 'pending':
+                  start_task(i)
+                  return
+          # All done
+          ui.mode = 'idle'
+          ui.current_task = -1
+          done_count = sum(1 for t in ui.tasks if t['status'] == 'done')
+          fail_count = sum(1 for t in ui.tasks if t['status'] == 'failed')
+          ui.status = "Complete: " + str(done_count) + " done, " + str(fail_count) + " failed"
 
-      context['output'] = f"Plonk completed with {len(summary)} actions"
-      context['messages'] = messages
-      context['plonk_summary'] = summary
-      context['click_history'] = click_history
+      def start_task(idx):
+          ui.current_task = idx
+          ui.tasks[idx]['status'] = 'running'
+          ui.iteration = 0
+          ui.mode = 'running'
+          ui.status = "Running: " + ui.tasks[idx]['text'][:30]
 
-      # Launch interactive browser automatically
-      if summary:
-          print(colored("\nLaunching action browser...", "cyan"))
-          plonk_tui_browser(summary, click_history)
+      def start_selected():
+          if not ui.tasks:
+              return
+          if ui.tasks[ui.sel]['status'] in ('pending', 'failed'):
+              ui.tasks[ui.sel]['status'] = 'pending'
+              ui.tasks[ui.sel]['actions'] = []
+              start_task(ui.sel)
+
+      def run_all():
+          if not ui.tasks:
+              return
+          for t in ui.tasks:
+              if t['status'] != 'done':
+                  t['status'] = 'pending'
+                  t['actions'] = []
+          # Find first pending
+          for i, t in enumerate(ui.tasks):
+              if t['status'] == 'pending':
+                  start_task(i)
+                  return
+
+      # ========== Rendering ==========
+      def render_screen():
+          width, height = get_size()
+          out = []
+          out.append("\033[H")
+
+          # Header
+          mode_str = ui.mode.upper()
+          if ui.mode == 'running' and ui.current_task >= 0:
+              mode_str = "RUNNING [" + str(ui.iteration) + "/" + str(ui.max_iter) + "]"
+          header = " PLONK - Visual Task Automation "
+          mode_display = " [" + mode_str + "] "
+          out.append("\033[1;1H\033[7;1m" + header.ljust(width) + "\033[0m")
+          out.append("\033[1;" + str(width - len(mode_display) - 1) + "H\033[33;1m" + mode_display + "\033[0m")
+
+          # Split: top = tasks, bottom = actions
+          split = max(6, (height - 4) // 2)
+          task_h = split - 2
+          action_h = height - split - 4
+
+          # ── Tasks panel ──
+          task_label = " Tasks (" + str(len(ui.tasks)) + ") "
+          if ui.panel == 0:
+              out.append("\033[3;1H\033[36;1m" + task_label + "\033[90m" + ("-" * (width - len(task_label))) + "\033[0m")
+          else:
+              out.append("\033[3;1H\033[90m" + task_label + ("-" * (width - len(task_label))) + "\033[0m")
+
+          if ui.mode == 'input':
+              # Show input line
+              out.append("\033[4;1H\033[K  New task: \033[7m " + ui.input_buf + " \033[0m")
+              for i in range(1, task_h):
+                  out.append("\033[" + str(4+i) + ";1H\033[K")
+          elif not ui.tasks:
+              out.append("\033[4;1H\033[K\033[90m  No tasks. Press 'a' to add a task.\033[0m")
+              for i in range(1, task_h):
+                  out.append("\033[" + str(4+i) + ";1H\033[K")
+          else:
+              if ui.sel < ui.scroll:
+                  ui.scroll = ui.sel
+              elif ui.sel >= ui.scroll + task_h:
+                  ui.scroll = ui.sel - task_h + 1
+
+              for i in range(task_h):
+                  idx = ui.scroll + i
+                  row = 4 + i
+                  out.append("\033[" + str(row) + ";1H\033[K")
+                  if idx >= len(ui.tasks):
+                      continue
+
+                  t = ui.tasks[idx]
+                  status = t['status']
+                  icon = {"pending": "\033[90m-", "running": "\033[33m>", "done": "\033[32m+", "failed": "\033[31mx"}.get(status, " ")
+                  action_count = str(len(t.get('actions', [])))
+                  text = t['text'][:width - 25]
+
+                  line = "  " + icon + "\033[0m " + text + " \033[90m[" + status + "] (" + action_count + " acts)\033[0m"
+
+                  if idx == ui.sel and ui.panel == 0:
+                      out.append("\033[7m>" + line + "\033[0m")
+                  else:
+                      out.append(" " + line)
+
+          # ── Actions panel ──
+          action_row = 3 + split
+          acts = get_current_actions()
+          act_label = " Actions (" + str(len(acts)) + ") "
+          if ui.panel == 1:
+              out.append("\033[" + str(action_row) + ";1H\033[36;1m" + act_label + "\033[90m" + ("-" * (width - len(act_label))) + "\033[0m")
+          else:
+              out.append("\033[" + str(action_row) + ";1H\033[90m" + act_label + ("-" * (width - len(act_label))) + "\033[0m")
+
+          if not acts:
+              out.append("\033[" + str(action_row+1) + ";1H\033[K\033[90m  No actions yet.\033[0m")
+              for i in range(1, action_h):
+                  out.append("\033[" + str(action_row+1+i) + ";1H\033[K")
+          else:
+              if ui.action_scroll < 0:
+                  ui.action_scroll = 0
+
+              for i in range(action_h):
+                  idx = ui.action_scroll + i
+                  row = action_row + 1 + i
+                  out.append("\033[" + str(row) + ";1H\033[K")
+                  if idx >= len(acts):
+                      continue
+
+                  a = acts[idx]
+                  action = a.get('action', '?')
+                  reason = a.get('reason', '')[:width - 35]
+                  coords = ""
+                  if a.get('x') is not None:
+                      coords = "(" + str(a.get('x', '')) + "," + str(a.get('y', '')) + ") "
+                  elif a.get('text'):
+                      coords = '"' + str(a['text'])[:15] + '" '
+                  elif a.get('key'):
+                      coords = '[' + str(a['key']) + '] '
+                  elif a.get('command'):
+                      coords = str(a['command'])[:20] + ' '
+
+                  act_color = {"click": "\033[33m", "type": "\033[36m", "key": "\033[35m",
+                               "launch": "\033[34m", "done": "\033[32m", "fail": "\033[31m",
+                               "error": "\033[31m", "wait": "\033[90m"}.get(action, "")
+
+                  line = "  " + str(idx+1) + ". " + act_color + action + "\033[0m " + coords + "\033[90m" + reason + "\033[0m"
+
+                  if idx == ui.action_scroll and ui.panel == 1:
+                      out.append("\033[7m " + line + "\033[0m")
+                  else:
+                      out.append(" " + line)
+
+          # ── Status bar ──
+          out.append("\033[" + str(height-2) + ";1H\033[K\033[90m" + ("-" * width) + "\033[0m")
+          status_line = " " + ui.status + "  |  Model: " + str(vision_model) + "  |  Max: " + str(ui.max_iter)
+          out.append("\033[" + str(height-1) + ";1H\033[K" + status_line[:width])
+
+          # ── Footer ──
+          if ui.mode == 'input':
+              footer = " Type task, Enter:Confirm  Esc:Cancel "
+          elif ui.mode in ('running', 'step'):
+              footer = " p:Pause  s:Step  Q:Abort  Tab:Panel  j/k:Scroll "
+          elif ui.mode == 'paused':
+              footer = " r:Resume  s:Step  Q:Abort  Tab:Panel  j/k:Scroll "
+          else:
+              footer = " a:Add  d:Delete  Enter:Run  R:RunAll  Tab:Panel  j/k:Nav  q:Quit "
+          out.append("\033[" + str(height) + ";1H\033[K\033[7m" + footer.ljust(width) + "\033[0m")
+
+          sys.stdout.write(''.join(out))
+          sys.stdout.flush()
+
+      # ========== Input Handling ==========
+      def handle_input(c, fd):
+          if ui.mode == 'input':
+              return handle_input_mode(c, fd)
+
+          # Escape sequences
+          if c == '\x1b':
+              if select.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
+                  if c2 == '[':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'A':    # Up
+                          nav_up()
+                      elif c3 == 'B':  # Down
+                          nav_down()
+              else:
+                  # Bare Esc
+                  if ui.mode == 'paused':
+                      ui.mode = 'idle'
+                      ui.status = "Aborted"
+                      if ui.current_task >= 0 and ui.current_task < len(ui.tasks):
+                          ui.tasks[ui.current_task]['status'] = 'failed'
+                      ui.current_task = -1
+              return True
+
+          if c == 'q' and ui.mode == 'idle':
+              return False
+          if c == 'Q':
+              # Abort running
+              if ui.mode in ('running', 'paused', 'step'):
+                  ui.mode = 'idle'
+                  if ui.current_task >= 0 and ui.current_task < len(ui.tasks):
+                      ui.tasks[ui.current_task]['status'] = 'failed'
+                  ui.current_task = -1
+                  ui.status = "Aborted"
+              elif ui.mode == 'idle':
+                  return False
+              return True
+
+          if c == 'j':
+              nav_down()
+          elif c == 'k':
+              nav_up()
+          elif c == '\t':
+              ui.panel = 1 - ui.panel
+              ui.action_scroll = 0
+          elif c == 'a' and ui.mode == 'idle':
+              ui.mode = 'input'
+              ui.input_buf = ""
+              ui.input_cursor = 0
+          elif c == 'd' and ui.mode == 'idle':
+              delete_task()
+          elif c in ('\r', '\n') and ui.mode == 'idle':
+              start_selected()
+          elif c == 'R' and ui.mode == 'idle':
+              run_all()
+          elif c == 'p' and ui.mode == 'running':
+              ui.mode = 'paused'
+              ui.status = "Paused"
+          elif c == 'r' and ui.mode == 'paused':
+              ui.mode = 'running'
+              ui.status = "Resumed"
+          elif c == 's' and ui.mode in ('paused', 'idle'):
+              if ui.current_task >= 0:
+                  ui.mode = 'step'
+              elif ui.tasks and ui.tasks[ui.sel]['status'] in ('pending', 'failed'):
+                  ui.tasks[ui.sel]['actions'] = []
+                  start_task(ui.sel)
+                  ui.mode = 'step'
+
+          return True
+
+      def handle_input_mode(c, fd):
+          if c == '\x1b':
+              # Cancel input
+              if select.select([fd], [], [], 0.05)[0]:
+                  os.read(fd, 2)  # consume rest of escape seq
+              ui.mode = 'idle'
+              ui.input_buf = ""
+              return True
+
+          if c in ('\r', '\n'):
+              if ui.input_buf.strip():
+                  add_task(ui.input_buf)
+                  ui.sel = len(ui.tasks) - 1
+              ui.mode = 'idle'
+              ui.input_buf = ""
+              return True
+
+          if c == '\x7f' or c == '\x08':  # Backspace
+              if ui.input_cursor > 0:
+                  ui.input_buf = ui.input_buf[:ui.input_cursor-1] + ui.input_buf[ui.input_cursor:]
+                  ui.input_cursor -= 1
+          elif c >= ' ' and c <= '~':
+              ui.input_buf = ui.input_buf[:ui.input_cursor] + c + ui.input_buf[ui.input_cursor:]
+              ui.input_cursor += 1
+
+          return True
+
+      def nav_up():
+          if ui.panel == 0:
+              ui.sel = max(0, ui.sel - 1)
+          else:
+              ui.action_scroll = max(0, ui.action_scroll - 1)
+
+      def nav_down():
+          if ui.panel == 0:
+              ui.sel = min(max(0, len(ui.tasks) - 1), ui.sel + 1)
+          else:
+              acts = get_current_actions()
+              ui.action_scroll = min(max(0, len(acts) - 1), ui.action_scroll + 1)
+
+      # ========== Auto-add task from CLI ==========
+      task_arg = context.get('task')
+      if task_arg:
+          add_task(str(task_arg))
+
+      # ========== Main Loop ==========
+      if not sys.stdin.isatty():
+          context['output'] = "Plonk requires an interactive terminal."
+      else:
+          fd = sys.stdin.fileno()
+          old_settings = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              sys.stdout.write('\033[2J')
+              render_screen()
+
+              running = True
+              while running:
+                  if ui.mode in ('running', 'step'):
+                      # Non-blocking check for user input
+                      if select.select([fd], [], [], 0.05)[0]:
+                          c = os.read(fd, 1).decode('latin-1')
+                          running = handle_input(c, fd)
+                      else:
+                          run_one_step()
+                  else:
+                      # Blocking wait for input
+                      c = os.read(fd, 1).decode('latin-1')
+                      running = handle_input(c, fd)
+
+                  render_screen()
+
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+              sys.stdout.write('\033[?25h')
+              sys.stdout.write('\033[2J\033[H')
+              sys.stdout.flush()
+
+          # Summary output
+          if ui.tasks:
+              lines = ["PLONK SESSION SUMMARY", "=" * 40]
+              for i, t in enumerate(ui.tasks):
+                  lines.append(str(i+1) + ". [" + t['status'] + "] " + t['text'])
+                  for j, a in enumerate(t.get('actions', [])):
+                      lines.append("   " + str(j+1) + ". " + a.get('action', '?') + " - " + a.get('reason', '')[:50])
+              context['output'] = "\n".join(lines)
+          else:
+              context['output'] = "Plonk session ended."
+
+          context['messages'] = messages

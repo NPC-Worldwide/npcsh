@@ -1,7 +1,8 @@
 jinx_name: "vixynt"
-description: "Generates images from text descriptions or edits existing ones."
+description: "Image creation studio TUI - generate and manage images with parameter controls"
+interactive: true
 inputs:
-- prompt
+- prompt: null
 - model: null
 - provider: null
 - output_name: null
@@ -10,113 +11,378 @@ inputs:
 - height: null
 - width: null
 steps:
-  - name: "generate_or_edit_image"
+  - name: "vixynt_tui"
     engine: "python"
     code: |
       import os
-      import base64
-      from io import BytesIO
+      import sys
+      import tty
+      import termios
+      import select
       from datetime import datetime
       from PIL import Image
-      from npcpy.llm_funcs import gen_image
-      
-      # Extract inputs from context with proper type conversion
-      image_prompt = str(context.get('prompt', '')).strip()
-      output_name = context.get('output_name')
-      attachments_str = context.get('attachments')
-      
-      # Handle integer inputs - they may come as strings or ints
-      try:
-          n_images = int(context.get('n_images', 1))
-      except (ValueError, TypeError):
-          n_images = 1
-      
-      try:
-          height = int(context.get('height', 1024))
-      except (ValueError, TypeError):
-          height = 1024
-      
-      try:
-          width = int(context.get('width', 1024))
-      except (ValueError, TypeError):
-          width = 1024
-      
-      # Get model and provider from context or environment
-      model = context.get('model')
-      provider = context.get('provider')
 
-      # Fallback to environment variables
-      if not model:
-          model = os.getenv('NPCSH_IMAGE_GEN_MODEL')
-      if not provider:
-          provider = os.getenv('NPCSH_IMAGE_GEN_PROVIDER')
-      
-      # Parse attachments
-      input_images = []
-      if attachments_str and str(attachments_str).strip():
-          input_images = [p.strip() for p in str(attachments_str).split(',')]
-      
-      output_messages = context.get('messages', [])
-      
-      if not image_prompt:
-          output = "Error: No prompt provided for image generation."
-      else:
+      from npcpy.llm_funcs import gen_image
+
+      npc = context.get('npc')
+      if isinstance(npc, str):
+          npc = None
+
+      # ========== State ==========
+      class VixyntState:
+          def __init__(self):
+              self.prompt = ""
+              self.model = ""
+              self.provider = ""
+              self.width_val = 1024
+              self.height_val = 1024
+              self.n_images = 1
+              self.output_name = ""
+              self.attachments = ""
+              # UI state
+              self.params = ['prompt', 'model', 'provider', 'width', 'height', 'n_images', 'output', 'attachments']
+              self.sel = 0
+              self.scroll = 0
+              self.mode = 'params'  # params, editing, gallery, generating
+              self.edit_buf = ""
+              self.edit_cursor = 0
+              self.status = "Ready"
+              self.gallery = []  # [{"path": str, "prompt": str, "timestamp": str}]
+              self.gallery_sel = 0
+              self.gallery_scroll = 0
+
+      ui = VixyntState()
+
+      # Load from context
+      ui.prompt = str(context.get('prompt') or '')
+      ui.model = str(context.get('model') or os.getenv('NPCSH_IMAGE_GEN_MODEL', ''))
+      ui.provider = str(context.get('provider') or os.getenv('NPCSH_IMAGE_GEN_PROVIDER', ''))
+      try:
+          ui.width_val = int(context.get('width') or 1024)
+      except:
+          pass
+      try:
+          ui.height_val = int(context.get('height') or 1024)
+      except:
+          pass
+      try:
+          ui.n_images = int(context.get('n_images') or 1)
+      except:
+          pass
+      ui.output_name = str(context.get('output_name') or '')
+      ui.attachments = str(context.get('attachments') or '')
+
+      # Load existing gallery
+      img_dir = os.path.expanduser("~/.npcsh/images/")
+      if os.path.isdir(img_dir):
+          for f in sorted(os.listdir(img_dir), reverse=True)[:50]:
+              if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                  ui.gallery.append({"path": os.path.join(img_dir, f), "prompt": "", "timestamp": f})
+
+      def get_size():
           try:
-              # Generate image(s)
+              s = os.get_terminal_size()
+              return s.columns, s.lines
+          except:
+              return 80, 24
+
+      def get_param_value(idx):
+          p = ui.params[idx]
+          if p == 'prompt': return ui.prompt
+          if p == 'model': return ui.model or '(env default)'
+          if p == 'provider': return ui.provider or '(env default)'
+          if p == 'width': return str(ui.width_val)
+          if p == 'height': return str(ui.height_val)
+          if p == 'n_images': return str(ui.n_images)
+          if p == 'output': return ui.output_name or '(auto)'
+          if p == 'attachments': return ui.attachments or '(none)'
+          return ''
+
+      def set_param_value(idx, val):
+          p = ui.params[idx]
+          if p == 'prompt': ui.prompt = val
+          elif p == 'model': ui.model = val
+          elif p == 'provider': ui.provider = val
+          elif p == 'width':
+              try: ui.width_val = int(val)
+              except: pass
+          elif p == 'height':
+              try: ui.height_val = int(val)
+              except: pass
+          elif p == 'n_images':
+              try: ui.n_images = max(1, int(val))
+              except: pass
+          elif p == 'output': ui.output_name = val
+          elif p == 'attachments': ui.attachments = val
+
+      def generate_images():
+          ui.mode = 'generating'
+          ui.status = "Generating..."
+          render_screen()
+
+          if not ui.prompt:
+              ui.status = "Error: No prompt provided"
+              ui.mode = 'params'
+              return
+
+          input_images = []
+          if ui.attachments.strip():
+              input_images = [p.strip() for p in ui.attachments.split(',')]
+
+          try:
               result = gen_image(
-                  prompt=image_prompt,
-                  model=model,
-                  provider=provider,
+                  prompt=ui.prompt,
+                  model=ui.model or None,
+                  provider=ui.provider or None,
                   npc=npc,
-                  height=height,
-                  width=width,
-                  n_images=n_images, 
+                  height=ui.height_val,
+                  width=ui.width_val,
+                  n_images=ui.n_images,
                   input_images=input_images if input_images else None
               )
-              
-              # Ensure we have a list of images
+
               if not isinstance(result, list):
                   images_list = [result] if result is not None else []
               else:
                   images_list = result
-              
-              saved_files = []
 
+              saved = []
               for i, image in enumerate(images_list):
                   if image is None:
                       continue
-
-                  # Determine output filename
-                  if output_name and str(output_name).strip():
-                      base_name, ext = os.path.splitext(os.path.expanduser(str(output_name)))
+                  if ui.output_name and ui.output_name.strip():
+                      base, ext = os.path.splitext(os.path.expanduser(ui.output_name))
                       if not ext:
                           ext = ".png"
-                      current_output_file = f"{base_name}_{i}{ext}" if len(images_list) > 1 else f"{base_name}{ext}"
+                      out_file = base + ("_" + str(i) if len(images_list) > 1 else "") + ext
                   else:
-                      os.makedirs(os.path.expanduser("~/.npcsh/images/"), exist_ok=True)
-                      current_output_file = (
-                          os.path.expanduser("~/.npcsh/images/")
-                          + f"image_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{i}.png"
-                      )
+                      os.makedirs(img_dir, exist_ok=True)
+                      out_file = os.path.join(img_dir, "image_" + datetime.now().strftime('%Y%m%d_%H%M%S') + "_" + str(i) + ".png")
+                  image.save(out_file)
+                  saved.append(out_file)
+                  ui.gallery.insert(0, {"path": out_file, "prompt": ui.prompt, "timestamp": os.path.basename(out_file)})
 
-                  # Save image to file
-                  image.save(current_output_file)
-                  saved_files.append(current_output_file)
-
-              if saved_files:
-                  output = f"Image(s) generated: {', '.join(saved_files)}"
-                  if input_images:
-                      output = f"Image(s) edited: {', '.join(saved_files)}"
-                  context['generated_images'] = saved_files
-              else:
-                  output = "No images were generated."
-                  
+              ui.status = "Generated " + str(len(saved)) + " image(s): " + ", ".join(os.path.basename(f) for f in saved)
           except Exception as e:
-              import traceback
-              traceback.print_exc()
-              output = f"Error {'editing' if input_images else 'generating'} image: {str(e)}"
-      
-      context['output'] = output
-      context['messages'] = output_messages
-      context['model'] = model
-      context['provider'] = provider
+              ui.status = "Error: " + str(e)[:60]
+
+          ui.mode = 'params'
+
+      # ========== Rendering ==========
+      def render_screen():
+          width, height = get_size()
+          out = []
+          out.append("\033[H")
+
+          header = " VIXYNT - Image Creation Studio "
+          out.append("\033[1;1H\033[7;1m" + header.ljust(width) + "\033[0m")
+
+          if ui.mode in ('params', 'editing', 'generating'):
+              # Parameter panel
+              out.append("\033[3;1H\033[36;1m Parameters \033[90m" + ("-" * (width - 13)) + "\033[0m")
+
+              for i, p in enumerate(ui.params):
+                  row = 4 + i
+                  out.append("\033[" + str(row) + ";1H\033[K")
+                  label = p.capitalize() + ":"
+                  val = get_param_value(i)
+
+                  if ui.mode == 'editing' and i == ui.sel:
+                      line = "  " + label.ljust(14) + "\033[7m " + ui.edit_buf + " \033[0m"
+                  else:
+                      line = "  " + label.ljust(14) + val[:width - 18]
+
+                  if i == ui.sel and ui.mode != 'editing':
+                      out.append("\033[7m>" + line + "\033[0m")
+                  else:
+                      out.append(" " + line)
+
+              # Gallery preview
+              gallery_row = 4 + len(ui.params) + 1
+              out.append("\033[" + str(gallery_row) + ";1H\033[33;1m Gallery (" + str(len(ui.gallery)) + ") \033[90m" + ("-" * (width - 20)) + "\033[0m")
+
+              gallery_h = height - gallery_row - 4
+              for i in range(gallery_h):
+                  idx = ui.gallery_scroll + i
+                  row = gallery_row + 1 + i
+                  out.append("\033[" + str(row) + ";1H\033[K")
+                  if idx >= len(ui.gallery):
+                      continue
+                  g = ui.gallery[idx]
+                  fname = os.path.basename(g['path'])[:width - 6]
+                  out.append("  " + fname)
+
+          elif ui.mode == 'gallery':
+              out.append("\033[3;1H\033[33;1m Gallery (" + str(len(ui.gallery)) + ") \033[90m" + ("-" * (width - 20)) + "\033[0m")
+
+              gallery_h = height - 6
+              for i in range(gallery_h):
+                  idx = ui.gallery_scroll + i
+                  row = 4 + i
+                  out.append("\033[" + str(row) + ";1H\033[K")
+                  if idx >= len(ui.gallery):
+                      continue
+                  g = ui.gallery[idx]
+                  fname = os.path.basename(g['path'])
+                  if idx == ui.gallery_sel:
+                      out.append("\033[7m> " + fname[:width-4] + "\033[0m")
+                  else:
+                      out.append("  " + fname[:width-4])
+
+          # Status + footer
+          out.append("\033[" + str(height-2) + ";1H\033[K\033[90m" + ("-" * width) + "\033[0m")
+          out.append("\033[" + str(height-1) + ";1H\033[K " + ui.status[:width-2])
+
+          if ui.mode == 'editing':
+              footer = " Type value, Enter:Confirm  Esc:Cancel "
+          elif ui.mode == 'gallery':
+              footer = " j/k:Nav  o:Open  Enter:Select  b:Back  q:Quit "
+          elif ui.mode == 'generating':
+              footer = " Generating... "
+          else:
+              footer = " j/k:Nav  e:Edit  Enter:Generate  g:Gallery  q:Quit "
+          out.append("\033[" + str(height) + ";1H\033[K\033[7m" + footer.ljust(width) + "\033[0m")
+
+          sys.stdout.write(''.join(out))
+          sys.stdout.flush()
+
+      # ========== Input Handling ==========
+      def handle_input(c, fd):
+          if ui.mode == 'editing':
+              return handle_edit(c, fd)
+          if ui.mode == 'gallery':
+              return handle_gallery(c, fd)
+
+          if c == '\x1b':
+              if select.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
+                  if c2 == '[':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'A':
+                          ui.sel = max(0, ui.sel - 1)
+                      elif c3 == 'B':
+                          ui.sel = min(len(ui.params) - 1, ui.sel + 1)
+              return True
+
+          if c == 'q':
+              return False
+          elif c == 'j':
+              ui.sel = min(len(ui.params) - 1, ui.sel + 1)
+          elif c == 'k':
+              ui.sel = max(0, ui.sel - 1)
+          elif c == 'e' or c in ('\r', '\n'):
+              if c in ('\r', '\n') and ui.sel == 0 and ui.prompt:
+                  # Enter on prompt with existing prompt = generate
+                  generate_images()
+              else:
+                  ui.mode = 'editing'
+                  ui.edit_buf = get_param_value(ui.sel)
+                  if ui.edit_buf in ('(env default)', '(auto)', '(none)'):
+                      ui.edit_buf = ""
+                  ui.edit_cursor = len(ui.edit_buf)
+          elif c == 'g':
+              ui.mode = 'gallery'
+              ui.gallery_sel = 0
+              ui.gallery_scroll = 0
+          elif c == 'G':
+              generate_images()
+
+          return True
+
+      def handle_edit(c, fd):
+          if c == '\x1b':
+              if select.select([fd], [], [], 0.05)[0]:
+                  os.read(fd, 2)
+              ui.mode = 'params'
+              return True
+
+          if c in ('\r', '\n'):
+              set_param_value(ui.sel, ui.edit_buf)
+              ui.mode = 'params'
+              return True
+
+          if c == '\x7f' or c == '\x08':
+              if ui.edit_cursor > 0:
+                  ui.edit_buf = ui.edit_buf[:ui.edit_cursor-1] + ui.edit_buf[ui.edit_cursor:]
+                  ui.edit_cursor -= 1
+          elif c >= ' ' and c <= '~':
+              ui.edit_buf = ui.edit_buf[:ui.edit_cursor] + c + ui.edit_buf[ui.edit_cursor:]
+              ui.edit_cursor += 1
+
+          return True
+
+      def handle_gallery(c, fd):
+          if c == '\x1b':
+              if select.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
+                  if c2 == '[':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'A':
+                          ui.gallery_sel = max(0, ui.gallery_sel - 1)
+                      elif c3 == 'B':
+                          ui.gallery_sel = min(max(0, len(ui.gallery) - 1), ui.gallery_sel + 1)
+              else:
+                  ui.mode = 'params'
+              return True
+
+          if c == 'q':
+              return False
+          elif c == 'b':
+              ui.mode = 'params'
+          elif c == 'j':
+              ui.gallery_sel = min(max(0, len(ui.gallery) - 1), ui.gallery_sel + 1)
+          elif c == 'k':
+              ui.gallery_sel = max(0, ui.gallery_sel - 1)
+          elif c == 'o' and ui.gallery:
+              import subprocess
+              path = ui.gallery[ui.gallery_sel]['path']
+              try:
+                  subprocess.Popen(['xdg-open', path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  ui.status = "Opened: " + os.path.basename(path)
+              except:
+                  ui.status = "Could not open image"
+
+          # Keep gallery_scroll in range
+          _, height = get_size()
+          gallery_h = height - 6
+          if ui.gallery_sel < ui.gallery_scroll:
+              ui.gallery_scroll = ui.gallery_sel
+          elif ui.gallery_sel >= ui.gallery_scroll + gallery_h:
+              ui.gallery_scroll = ui.gallery_sel - gallery_h + 1
+
+          return True
+
+      # ========== One-shot mode ==========
+      if ui.prompt and context.get('prompt'):
+          # If prompt provided via CLI args, generate immediately
+          generate_images()
+          context['output'] = ui.status
+          context['messages'] = context.get('messages', [])
+
+      # ========== Main TUI Loop ==========
+      elif not sys.stdin.isatty():
+          context['output'] = "Vixynt requires an interactive terminal."
+      else:
+          fd = sys.stdin.fileno()
+          old_settings = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              sys.stdout.write('\033[2J')
+              render_screen()
+
+              running = True
+              while running:
+                  c = os.read(fd, 1).decode('latin-1')
+                  running = handle_input(c, fd)
+                  render_screen()
+
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+              sys.stdout.write('\033[?25h')
+              sys.stdout.write('\033[2J\033[H')
+              sys.stdout.flush()
+
+          context['output'] = ui.status
+          context['messages'] = context.get('messages', [])

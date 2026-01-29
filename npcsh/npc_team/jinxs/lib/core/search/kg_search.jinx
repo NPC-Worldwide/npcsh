@@ -1,5 +1,6 @@
 jinx_name: kg_search
 description: Search the knowledge graph with interactive TUI
+interactive: true
 inputs:
 - query: ""
 - type: "facts"
@@ -241,11 +242,11 @@ steps:
                           # Header
                           if mode == 'list':
                               sort_ind = {'score': '1', 'concept': '2', 'type': '3'}[sort_mode]
-                              q = query or concept or search_type
-                              header = f" KG SEARCH ({len(display_results)} results): '{q}' [sort:{sort_mode}({sort_ind}) filter:{type_filter}] "
+                              label = query or concept or search_type
+                              header = f" KG SEARCH ({len(display_results)} results): '{label}' [sort:{sort_mode}({sort_ind}) filter:{type_filter}] "
                           else:
                               header = f" PREVIEW: {display_results[selected]['type']} "
-                          sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+                          sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
 
                           # Column headers
                           if mode == 'list':
@@ -286,7 +287,7 @@ steps:
                               sel = display_results[selected] if display_results else {}
                               source = sel.get('source', '')
                               sys.stdout.write(f'\033[{height-1};1H\033[K Source: {source}'.ljust(width))
-                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav 1/2/3:Sort c:Concepts e:Explore p:Preview q:Quit [{selected+1}/{len(display_results)}] \033[0m')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav 1/2/3:Sort c:Concepts e:Explore p:Preview q:Quit [{selected+1}/{len(display_results)}] \033[0m')
 
                           else:  # preview mode
                               sel = display_results[selected]
@@ -311,16 +312,26 @@ steps:
 
                               sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
                               sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(all_lines)} lines]')
-                              sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll b:Back e:Explore q:Quit \033[0m')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll b:Back e:Explore q:Quit \033[0m')
 
                           sys.stdout.flush()
 
-                          c = sys.stdin.read(1)
+                          c = os.read(fd, 1).decode('latin-1')
 
                           if c == '\x1b':
-                              c2 = sys.stdin.read(1)
+                              import select as _sel
+                              if _sel.select([fd], [], [], 0.05)[0]:
+                                  c2 = os.read(fd, 1).decode('latin-1')
+                              else:
+                                  if mode == 'preview':
+                                      mode = 'list'
+                                      sys.stdout.write('\033[2J\033[H')
+                                  else:
+                                      context['output'] = "Cancelled."
+                                      break
+                                  continue
                               if c2 == '[':
-                                  c3 = sys.stdin.read(1)
+                                  c3 = os.read(fd, 1).decode('latin-1')
                                   if c3 == 'A':  # Up
                                       if mode == 'list' and selected > 0:
                                           selected -= 1

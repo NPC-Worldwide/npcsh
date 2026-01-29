@@ -123,7 +123,7 @@ steps:
                       header = f" REATTACH ({len(convos)} convos): {target_path[:width-30]} "
                   else:
                       header = f" PREVIEW: {convos[selected]['conversation_id'][:width-12]} "
-                  sys.stdout.write(f'\033[44;37;1m{header.ljust(width)}\033[0m\n')
+                  sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
                   sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
 
                   if mode == 'list':
@@ -173,7 +173,7 @@ steps:
                       cost_str = f"${cost:.4f}" if cost else "-"
                       tok_str = f"{in_tok}in/{out_tok}out" if (in_tok or out_tok) else "-"
                       sys.stdout.write(f'\033[{height-1};1H\033[K {sel["conversation_id"][:16]}  {sel_model}  tokens:{tok_str}  cost:{cost_str}'.ljust(width))
-                      sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Nav  Enter:Select  p:Preview  q:Quit  [{selected+1}/{len(convos)}] \033[0m')
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav  Enter:Select  p:Preview  q:Quit  [{selected+1}/{len(convos)}] \033[0m')
                   else:
                       for i in range(list_height):
                           idx = preview_scroll + i
@@ -216,7 +216,7 @@ steps:
 
                       sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
                       sys.stdout.write(f'\033[{height-1};1H\033[K {len(preview_msgs)} messages')
-                      sys.stdout.write(f'\033[{height};1H\033[K\033[44;37m j/k:Scroll  b:Back  Enter:Select  q:Quit \033[0m')
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll  b:Back  Enter:Select  q:Quit \033[0m')
 
                   sys.stdout.flush()
 
