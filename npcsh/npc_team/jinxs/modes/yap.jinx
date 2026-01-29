@@ -29,7 +29,7 @@ steps:
           from gtts import gTTS
           from npcpy.data.audio import (
               FORMAT, CHANNELS, RATE, CHUNK,
-              transcribe_recording, convert_mp3_to_wav, cleanup_temp_files
+              transcribe_recording, convert_mp3_to_wav
           )
           AUDIO_AVAILABLE = True
       except ImportError as e:
@@ -144,7 +144,11 @@ steps:
                   import winsound
                   winsound.PlaySound(wav_path, winsound.SND_FILENAME)
 
-              cleanup_temp_files([f.name, wav_path])
+              for _p in [f.name, wav_path]:
+                  try:
+                      os.remove(_p)
+                  except:
+                      pass
           except Exception as e:
               print(colored(f"TTS error: {e}", "red"))
 
@@ -189,7 +193,10 @@ steps:
           try:
               segments, _ = whisper_model.transcribe(audio_path, beam_size=5)
               text = " ".join([seg.text for seg in segments])
-              cleanup_temp_files([audio_path])
+              try:
+                  os.remove(audio_path)
+              except:
+                  pass
               return text.strip()
           except Exception as e:
               print(colored(f"Transcription error: {e}", "red"))

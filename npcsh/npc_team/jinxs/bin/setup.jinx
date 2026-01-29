@@ -103,8 +103,8 @@ steps:
               out = []
               out.append("\033[2J\033[H")
               header = " NPCSH Setup Wizard "
-              out.append(f"\033[1;1H\033[44;37;1m{'=' * width}\033[0m")
-              out.append(f"\033[1;{(width - len(header)) // 2}H\033[44;37;1m{header}\033[0m")
+              out.append(f"\033[1;1H\033[7;1m{'=' * width}\033[0m")
+              out.append(f"\033[1;{(width - len(header)) // 2}H\033[7;1m{header}\033[0m")
 
               if state.phase == 'detect':
                   out.append(f"\033[3;2H\033[1mDetected Providers:\033[0m")
@@ -149,10 +149,10 @@ steps:
               if c == 'q':
                   return False
               if c == '\x1b':
-                  if select.select([sys.stdin], [], [], 0.05)[0]:
-                      c2 = sys.stdin.read(1)
+                  if select.select([fd], [], [], 0.05)[0]:
+                      c2 = os.read(fd, 1).decode('latin-1')
                       if c2 == '[':
-                          c3 = sys.stdin.read(1)
+                          c3 = os.read(fd, 1).decode('latin-1')
                           if c3 == 'A' and state.phase == 'select_chat':
                               state.selected_idx = max(0, state.selected_idx - 1)
                               if state.selected_idx < state.scroll_offset:
@@ -225,7 +225,7 @@ steps:
               run_detection()
               render_screen()
               while True:
-                  c = sys.stdin.read(1)
+                  c = os.read(fd, 1).decode('latin-1')
                   if not handle_input(c):
                       break
                   render_screen()

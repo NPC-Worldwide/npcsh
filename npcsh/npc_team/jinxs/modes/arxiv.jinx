@@ -417,7 +417,7 @@ steps:
                                   header = " ARXIV: '" + query + "' (" + str(len(papers)) + " papers) [sort:" + sort_key + "] "
                           else:
                               header = " " + papers[selected]['title'][:width-4] + " "
-                          sys.stdout.write('\033[45;37;1m' + header.ljust(width) + '\033[0m\n')
+                          sys.stdout.write('\033[7;1m' + header.ljust(width) + '\033[0m\n')
 
                           if mode == 'list':
                               # Column headers
@@ -456,7 +456,7 @@ steps:
                                       sys.stdout.write(' ' + line)
 
                               sys.stdout.write('\033[' + str(height-1) + ';1H\033[K\033[90m' + ("─" * width) + '\033[0m')
-                              sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[45;37m j/k:Nav Enter:View o/i/p:Open d:Download  1-3:Sort y/a:Filter c:Clear  q:Quit [' + str(selected+1) + '/' + str(len(papers)) + '] \033[0m')
+                              sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[7m j/k:Nav Enter:View o/i/p:Open d:Download  1-3:Sort y/a:Filter c:Clear  q:Quit [' + str(selected+1) + '/' + str(len(papers)) + '] \033[0m')
 
                           elif mode == 'detail':
                               sys.stdout.write('\033[90m' + ("─" * width) + '\033[0m\n')
@@ -489,13 +489,13 @@ steps:
                                       sys.stdout.write('  ' + lines[idx][:width-4])
 
                               sys.stdout.write('\033[' + str(height-1) + ';1H\033[K\033[90m' + ("─" * width) + '\033[0m')
-                              sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[45;37m j/k:Scroll  b:Back  o:Browser  i:Incognide  p:PDF  d:Download  v:TermView  q:Quit \033[0m')
+                              sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[7m j/k:Scroll  b:Back  o:Browser  i:Incognide  p:PDF  d:Download  v:TermView  q:Quit \033[0m')
 
                           elif mode == 'pdfview':
                               # PDF terminal view mode
                               p = papers[selected]
                               header = " PDF VIEW: " + p['aid'] + " "
-                              sys.stdout.write('\033[46;37;1m' + header.ljust(width) + '\033[0m\n')
+                              sys.stdout.write('\033[7;1m' + header.ljust(width) + '\033[0m\n')
                               sys.stdout.write('\033[90m' + ("─" * width) + '\033[0m\n')
 
                               view_height = height - 4
@@ -510,7 +510,7 @@ steps:
 
                               sys.stdout.write('\033[' + str(height-1) + ';1H\033[K\033[90m' + ("─" * width) + '\033[0m')
                               pct = int((pdf_scroll / max(1, len(pdf_lines) - view_height)) * 100) if len(pdf_lines) > view_height else 100
-                              sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[46;37m j/k/PgDn/PgUp:Scroll  b:Back  d:Download  q:Quit  [' + str(pct) + '%] \033[0m')
+                              sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[7m j/k/PgDn/PgUp:Scroll  b:Back  d:Download  q:Quit  [' + str(pct) + '%] \033[0m')
 
                           sys.stdout.flush()
 

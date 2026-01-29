@@ -1,5 +1,6 @@
 jinx_name: "compress"
-description: "Manages conversation and knowledge context. Defaults to compacting context. Use flags for other operations."
+description: "Manages conversation and knowledge context - compress, flush, sleep, dream"
+interactive: true
 inputs:
 - flush: ""
 - sleep: False
@@ -12,6 +13,7 @@ steps:
     engine: "python"
     code: |
       import os
+      import sys
       import traceback
       from npcpy.llm_funcs import breathe
       from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db
@@ -25,116 +27,402 @@ steps:
       llm_model = context.get('model')
       llm_provider = context.get('provider')
       output_messages = context.get('messages', [])
-      
-      USAGE = """Usage:
-        /compress                       (Compacts conversation context)
-        /compress --flush <number>        (Removes the last N messages)
-        /compress --sleep [...]         (Evolves the knowledge graph)
-          --dream                       (With --sleep: enables creative synthesis)
-          --ops "op1,op2"               (With --sleep: specifies KG operations)
-          --model <name>                (With --sleep: specifies LLM model)
-          --provider <name>             (With --sleep: specifies LLM provider)"""
 
-      # --- Argument Validation: Ensure mutual exclusivity ---
-      is_flushing = flush_n_str is not None and flush_n_str.strip() != ''
-      if is_sleeping and is_flushing:
-          context['output'] = f"Error: --sleep and --flush are mutually exclusive.\n{USAGE}"
-          context['messages'] = output_messages
-          exit()
+      # --- Detect if called with explicit flags ---
+      is_flushing = flush_n_str is not None and str(flush_n_str).strip() != ''
+      has_explicit_args = is_flushing or is_sleeping or is_dreaming
 
-      # --- Dispatcher: Route to the correct functionality ---
+      # ========== Execution Functions ==========
+      def do_compress():
+          """Compact conversation context via breathe()"""
+          try:
+              result = breathe(**context)
+              if isinstance(result, dict):
+                  return result.get('output', 'Context compressed.')
+              return "Context compression process initiated."
+          except Exception as e:
+              traceback.print_exc()
+              return "Error during context compression: " + str(e)
 
-      # 1. SLEEP: Evolve the Knowledge Graph
-      if is_sleeping:
+      def do_flush(n):
+          """Remove last N messages from context"""
+          messages_list = list(output_messages)
+          original_len = len(messages_list)
+          if messages_list and messages_list[0].get("role") == "system":
+              system_message = messages_list.pop(0)
+              num_to_remove = min(n, len(messages_list))
+              final_messages = [system_message] + messages_list[:-num_to_remove] if num_to_remove < len(messages_list) else [system_message]
+          else:
+              num_to_remove = min(n, original_len)
+              final_messages = messages_list[:-num_to_remove] if num_to_remove < original_len else []
+          removed_count = original_len - len(final_messages)
+          context['messages'] = final_messages
+          return "Flushed " + str(removed_count) + " message(s). Context is now " + str(len(final_messages)) + " messages."
+
+      def do_sleep(model, provider, ops_str, dream=False):
+          """Evolve knowledge graph via sleep/dream"""
           current_npc = context.get('npc')
           current_team = context.get('team')
-          
-          # Parameter setup for KG process
-          operations_config = [op.strip() for op in operations_str.split(',')] if operations_str else None
-          if not llm_model and current_npc: llm_model = current_npc.model
-          if not llm_provider and current_npc: llm_provider = current_npc.provider
-          if not llm_model: llm_model = state.chat_model if state else "llama3.2"
-          if not llm_provider: llm_provider = state.chat_provider if state else "ollama"
-
+          operations_config = [op.strip() for op in ops_str.split(',')] if ops_str else None
+          if not model and current_npc: model = current_npc.model
+          if not provider and current_npc: provider = current_npc.provider
+          if not model: model = state.chat_model if state else "llama3.2"
+          if not provider: provider = state.chat_provider if state else "ollama"
           team_name = current_team.name if current_team else "__none__"
           npc_name = current_npc.name if current_npc else "__none__"
           current_path = os.getcwd()
-          scope_str = f"Team: '{team_name}', NPC: '{npc_name}', Path: '{current_path}'"
-          
+          scope_str = "Team: '" + team_name + "', NPC: '" + npc_name + "', Path: '" + current_path + "'"
           command_history = None
           try:
               db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
               command_history = CommandHistory(db_path)
               engine = command_history.engine
               current_kg = load_kg_from_db(engine, team_name, npc_name, current_path)
-
               if not current_kg or not current_kg.get('facts'):
-                  context['output'] = f"Knowledge graph for the current scope is empty. Nothing to process.\n- Scope: {scope_str}"
-                  exit()
-
+                  return "Knowledge graph for the current scope is empty. Nothing to process.\n- Scope: " + scope_str
               original_facts = len(current_kg.get('facts', []))
               original_concepts = len(current_kg.get('concepts', []))
-              
-              evolved_kg, _ = kg_sleep_process(existing_kg=current_kg, model=llm_model, provider=llm_provider, npc=current_npc, operations_config=operations_config)
+              evolved_kg, _ = kg_sleep_process(existing_kg=current_kg, model=model, provider=provider, npc=current_npc, operations_config=operations_config)
               process_type = "Sleep"
-
-              if is_dreaming:
-                  evolved_kg, _ = kg_dream_process(existing_kg=evolved_kg, model=llm_model, provider=llm_provider, npc=current_npc)
+              if dream:
+                  evolved_kg, _ = kg_dream_process(existing_kg=evolved_kg, model=model, provider=provider, npc=current_npc)
                   process_type += " & Dream"
-
               save_kg_to_db(engine, evolved_kg, team_name, npc_name, current_path)
-              
               new_facts = len(evolved_kg.get('facts', []))
               new_concepts = len(evolved_kg.get('concepts', []))
-              
-              context['output'] = (f"{process_type} process complete.\n"
-                                   f"- Facts: {original_facts} -> {new_facts} ({new_facts - original_facts:+})\n"
-                                   f"- Concepts: {original_concepts} -> {new_concepts} ({new_concepts - original_concepts:+})")
+              return (process_type + " process complete.\n"
+                      "- Facts: " + str(original_facts) + " -> " + str(new_facts) + " (" + str(new_facts - original_facts) + ")\n"
+                      "- Concepts: " + str(original_concepts) + " -> " + str(new_concepts) + " (" + str(new_concepts - original_concepts) + ")")
           except Exception as e:
               traceback.print_exc()
-              context['output'] = f"Error during KG evolution: {e}"
+              return "Error during KG evolution: " + str(e)
           finally:
               if command_history: command_history.close()
+
+      # ========== Direct execution (flags provided) ==========
+      if has_explicit_args:
+          if is_sleeping and is_flushing:
+              context['output'] = "Error: --sleep and --flush are mutually exclusive."
+              context['messages'] = output_messages
+          elif is_sleeping:
+              context['output'] = do_sleep(llm_model, llm_provider, operations_str, dream=bool(is_dreaming))
+              context['messages'] = output_messages
+          elif is_flushing:
+              try:
+                  n = int(flush_n_str)
+                  if n <= 0:
+                      context['output'] = "Error: Number of messages to flush must be positive."
+                  else:
+                      context['output'] = do_flush(n)
+              except ValueError:
+                  context['output'] = "Error: Invalid number '" + str(flush_n_str) + "'."
+
+      # ========== Interactive TUI (no flags) ==========
+      elif sys.stdin.isatty():
+          import tty
+          import termios
+          import select as _sel
+
+          class CompressState:
+              def __init__(self):
+                  self.actions = [
+                      {'name': 'Compress', 'desc': 'Compact conversation context (breathe)', 'key': 'compress'},
+                      {'name': 'Flush', 'desc': 'Remove last N messages from context', 'key': 'flush'},
+                      {'name': 'Sleep', 'desc': 'Evolve knowledge graph', 'key': 'sleep'},
+                      {'name': 'Sleep + Dream', 'desc': 'Evolve KG with creative synthesis', 'key': 'dream'},
+                  ]
+                  self.sel = 0
+                  self.mode = 'menu'  # menu, params, editing, running
+                  # Params for each action
+                  self.flush_n = "5"
+                  self.sleep_model = ""
+                  self.sleep_provider = ""
+                  self.sleep_ops = ""
+                  self.status = "Select an action"
+                  self.msg_count = len(output_messages)
+                  # Param editing
+                  self.param_sel = 0
+                  self.edit_buf = ""
+                  self.edit_cursor = 0
+
+              def get_params(self):
+                  """Return list of (label, value) for current action"""
+                  key = self.actions[self.sel]['key']
+                  if key == 'compress':
+                      return [('Messages in context', str(self.msg_count), False)]
+                  elif key == 'flush':
+                      return [
+                          ('Messages to flush', self.flush_n, True),
+                          ('Messages in context', str(self.msg_count), False),
+                      ]
+                  elif key == 'sleep':
+                      return [
+                          ('Model', self.sleep_model or '(default)', True),
+                          ('Provider', self.sleep_provider or '(default)', True),
+                          ('Operations', self.sleep_ops or '(all)', True),
+                      ]
+                  elif key == 'dream':
+                      return [
+                          ('Model', self.sleep_model or '(default)', True),
+                          ('Provider', self.sleep_provider or '(default)', True),
+                          ('Operations', self.sleep_ops or '(all)', True),
+                      ]
+                  return []
+
+              def set_param(self, idx, val):
+                  key = self.actions[self.sel]['key']
+                  if key == 'flush':
+                      if idx == 0: self.flush_n = val
+                  elif key in ('sleep', 'dream'):
+                      if idx == 0: self.sleep_model = val
+                      elif idx == 1: self.sleep_provider = val
+                      elif idx == 2: self.sleep_ops = val
+
+          st = CompressState()
+
+          def get_size():
+              try:
+                  s = os.get_terminal_size()
+                  return s.columns, s.lines
+              except:
+                  return 80, 24
+
+          def render():
+              width, height = get_size()
+              out = []
+              out.append("\033[H")
+
+              # Header
+              header = " COMPRESS - Context & Memory Manager "
+              out.append("\033[1;1H\033[7;1m" + header.ljust(width) + "\033[0m")
+
+              if st.mode == 'menu':
+                  out.append("\033[3;1H\033[36;1m Actions \033[90m" + ("-" * (width - 11)) + "\033[0m")
+                  for i, act in enumerate(st.actions):
+                      row = 4 + i
+                      out.append("\033[" + str(row) + ";1H\033[K")
+                      line = "  " + act['name'].ljust(18) + "\033[90m" + act['desc'][:width-24] + "\033[0m"
+                      if i == st.sel:
+                          out.append("\033[7m>" + line + "\033[0m")
+                      else:
+                          out.append(" " + line)
+
+                  # Show params preview below
+                  params = st.get_params()
+                  param_start = 4 + len(st.actions) + 1
+                  out.append("\033[" + str(param_start) + ";1H\033[33;1m Parameters \033[90m" + ("-" * (width - 14)) + "\033[0m")
+                  for j, (label, val, editable) in enumerate(params):
+                      row = param_start + 1 + j
+                      out.append("\033[" + str(row) + ";1H\033[K")
+                      marker = "[e]" if editable else "   "
+                      out.append("  " + label.ljust(22) + val[:width-30] + "  \033[90m" + marker + "\033[0m")
+
+                  # Clear remaining lines
+                  clear_start = param_start + 1 + len(params)
+                  for r in range(clear_start, height - 2):
+                      out.append("\033[" + str(r) + ";1H\033[K")
+
+              elif st.mode == 'params':
+                  params = st.get_params()
+                  act = st.actions[st.sel]
+                  out.append("\033[3;1H\033[36;1m " + act['name'] + " Parameters \033[90m" + ("-" * (width - len(act['name']) - 16)) + "\033[0m")
+                  for j, (label, val, editable) in enumerate(params):
+                      row = 4 + j
+                      out.append("\033[" + str(row) + ";1H\033[K")
+                      if st.mode == 'editing' and j == st.param_sel:
+                          line = "  " + label.ljust(22) + "\033[7m " + st.edit_buf + " \033[0m"
+                      else:
+                          marker = " [e]" if editable else ""
+                          line = "  " + label.ljust(22) + val[:width-30] + "\033[90m" + marker + "\033[0m"
+                      if j == st.param_sel:
+                          out.append("\033[7m>" + line + "\033[0m")
+                      else:
+                          out.append(" " + line)
+
+                  clear_start = 4 + len(params)
+                  for r in range(clear_start, height - 2):
+                      out.append("\033[" + str(r) + ";1H\033[K")
+
+              elif st.mode == 'editing':
+                  # Same as params but with edit field
+                  params = st.get_params()
+                  act = st.actions[st.sel]
+                  out.append("\033[3;1H\033[36;1m " + act['name'] + " Parameters \033[90m" + ("-" * (width - len(act['name']) - 16)) + "\033[0m")
+                  for j, (label, val, editable) in enumerate(params):
+                      row = 4 + j
+                      out.append("\033[" + str(row) + ";1H\033[K")
+                      if j == st.param_sel:
+                          line = "  " + label.ljust(22) + "\033[7m " + st.edit_buf + " \033[0m"
+                          out.append(">" + line)
+                      else:
+                          marker = " [e]" if editable else ""
+                          line = "  " + label.ljust(22) + val[:width-30] + "\033[90m" + marker + "\033[0m"
+                          out.append(" " + line)
+
+                  clear_start = 4 + len(params)
+                  for r in range(clear_start, height - 2):
+                      out.append("\033[" + str(r) + ";1H\033[K")
+
+              elif st.mode == 'running':
+                  out.append("\033[3;1H\033[K")
+                  out.append("\033[4;1H\033[K  Running " + st.actions[st.sel]['name'] + "...")
+                  for r in range(5, height - 2):
+                      out.append("\033[" + str(r) + ";1H\033[K")
+
+              # Status + footer
+              out.append("\033[" + str(height-2) + ";1H\033[K\033[90m" + ("-" * width) + "\033[0m")
+              out.append("\033[" + str(height-1) + ";1H\033[K " + st.status[:width-2])
+
+              if st.mode == 'menu':
+                  footer = " j/k:Nav  Enter:Configure  G:Run Now  q:Quit "
+              elif st.mode == 'params':
+                  footer = " j/k:Nav  e:Edit  Enter:Execute  b:Back  q:Quit "
+              elif st.mode == 'editing':
+                  footer = " Type value  Enter:Confirm  Esc:Cancel "
+              else:
+                  footer = " Running... "
+              out.append("\033[" + str(height) + ";1H\033[K\033[7m" + footer.ljust(width) + "\033[0m")
+
+              sys.stdout.write(''.join(out))
+              sys.stdout.flush()
+
+          def execute_action():
+              """Run the selected action and return result text"""
+              key = st.actions[st.sel]['key']
+              st.mode = 'running'
+              render()
+
+              if key == 'compress':
+                  return do_compress()
+              elif key == 'flush':
+                  try:
+                      n = int(st.flush_n)
+                      if n <= 0:
+                          return "Error: Number must be positive."
+                      return do_flush(n)
+                  except ValueError:
+                      return "Error: Invalid number '" + st.flush_n + "'."
+              elif key == 'sleep':
+                  return do_sleep(st.sleep_model or None, st.sleep_provider or None, st.sleep_ops or None, dream=False)
+              elif key == 'dream':
+                  return do_sleep(st.sleep_model or None, st.sleep_provider or None, st.sleep_ops or None, dream=True)
+              return "Unknown action."
+
+          fd = sys.stdin.fileno()
+          old_settings = termios.tcgetattr(fd)
+          result_text = None
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              sys.stdout.write('\033[2J')
+              render()
+
+              running = True
+              while running:
+                  c = os.read(fd, 1).decode('latin-1')
+
+                  if st.mode == 'editing':
+                      if c == '\x1b':
+                          if _sel.select([fd], [], [], 0.05)[0]:
+                              os.read(fd, 2)
+                          st.mode = 'params'
+                      elif c in ('\r', '\n'):
+                          st.set_param(st.param_sel, st.edit_buf)
+                          st.mode = 'params'
+                          st.status = "Parameter updated."
+                      elif c == '\x7f' or c == '\x08':
+                          if st.edit_cursor > 0:
+                              st.edit_buf = st.edit_buf[:st.edit_cursor-1] + st.edit_buf[st.edit_cursor:]
+                              st.edit_cursor -= 1
+                      elif c >= ' ' and c <= '~':
+                          st.edit_buf = st.edit_buf[:st.edit_cursor] + c + st.edit_buf[st.edit_cursor:]
+                          st.edit_cursor += 1
+                      render()
+                      continue
+
+                  if c == '\x1b':
+                      if _sel.select([fd], [], [], 0.05)[0]:
+                          c2 = os.read(fd, 1).decode('latin-1')
+                          if c2 == '[':
+                              c3 = os.read(fd, 1).decode('latin-1')
+                              if c3 == 'A':  # Up
+                                  if st.mode == 'menu':
+                                      st.sel = max(0, st.sel - 1)
+                                  elif st.mode == 'params':
+                                      st.param_sel = max(0, st.param_sel - 1)
+                              elif c3 == 'B':  # Down
+                                  if st.mode == 'menu':
+                                      st.sel = min(len(st.actions) - 1, st.sel + 1)
+                                  elif st.mode == 'params':
+                                      params = st.get_params()
+                                      st.param_sel = min(len(params) - 1, st.param_sel + 1)
+                      else:
+                          if st.mode == 'params':
+                              st.mode = 'menu'
+                              st.status = "Select an action"
+                          else:
+                              result_text = "Cancelled."
+                              running = False
+                      render()
+                      continue
+
+                  if c == 'q' or c == '\x03':
+                      result_text = "Cancelled."
+                      running = False
+                  elif st.mode == 'menu':
+                      if c == 'j':
+                          st.sel = min(len(st.actions) - 1, st.sel + 1)
+                      elif c == 'k':
+                          st.sel = max(0, st.sel - 1)
+                      elif c in ('\r', '\n'):
+                          params = st.get_params()
+                          editable = [p for p in params if p[2]]
+                          if editable:
+                              st.mode = 'params'
+                              st.param_sel = 0
+                              st.status = "Configure parameters, then Enter to execute"
+                          else:
+                              result_text = execute_action()
+                              running = False
+                      elif c == 'G':
+                          result_text = execute_action()
+                          running = False
+                  elif st.mode == 'params':
+                      if c == 'j':
+                          params = st.get_params()
+                          st.param_sel = min(len(params) - 1, st.param_sel + 1)
+                      elif c == 'k':
+                          st.param_sel = max(0, st.param_sel - 1)
+                      elif c == 'e':
+                          params = st.get_params()
+                          if st.param_sel < len(params) and params[st.param_sel][2]:
+                              st.mode = 'editing'
+                              val = params[st.param_sel][1]
+                              st.edit_buf = "" if val.startswith('(') else val
+                              st.edit_cursor = len(st.edit_buf)
+                      elif c == 'b':
+                          st.mode = 'menu'
+                          st.status = "Select an action"
+                      elif c in ('\r', '\n'):
+                          result_text = execute_action()
+                          running = False
+
+                  render()
+
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+              sys.stdout.write('\033[?25h')
+              sys.stdout.write('\033[2J\033[H')
+              sys.stdout.flush()
+
+          context['output'] = result_text or "Cancelled."
+          if 'messages' not in context:
               context['messages'] = output_messages
 
-      # 2. FLUSH: Remove messages from context
-      elif is_flushing:
-          try:
-              n = int(flush_n_str)
-              if n <= 0:
-                  context['output'] = "Error: Number of messages to flush must be positive."
-                  exit()
-          except ValueError:
-              context['output'] = f"Error: Invalid number '{flush_n_str}'. {USAGE}"
-              exit()
-
-          messages_list = list(output_messages)
-          original_len = len(messages_list)
-          final_messages = []
-          
-          if messages_list and messages_list[0].get("role") == "system":
-              system_message = messages_list.pop(0)
-              num_to_remove = min(n, len(messages_list))
-              final_messages = [system_message] + messages_list[:-num_to_remove]
-          else:
-              num_to_remove = min(n, original_len)
-              final_messages = messages_list[:-num_to_remove]
-          
-          removed_count = original_len - len(final_messages)
-          context['output'] = f"Flushed {removed_count} message(s). Context is now {len(final_messages)} messages."
-          context['messages'] = final_messages
-
-      # 3. DEFAULT: Compact conversation context
+      # ========== Non-interactive fallback ==========
       else:
-          try:
-              result = breathe(**context)
-              if isinstance(result, dict):
-                  context['output'] = result.get('output', 'Context compressed.')
-                  context['messages'] = result.get('messages', output_messages)
-              else:
-                  context['output'] = "Context compression process initiated."
-                  context['messages'] = output_messages
-          except Exception as e:
-              traceback.print_exc()
-              context['output'] = f"Error during context compression: {e}"
+          result = do_compress()
+          context['output'] = result
+          if 'messages' not in context:
               context['messages'] = output_messages
