@@ -1,5 +1,6 @@
 import os
 import sys
+import shutil
 import argparse
 import importlib.metadata
 import warnings
@@ -123,7 +124,7 @@ Welcome to {BLUE}npc{RESET}{RUST}sh{RESET}!
        {BLUE}|🤖|{RESET}
 {RUST}___________________________________________{RESET}
 
-Begin by asking a question, issuing a bash command, or typing '/help' for more information.
+Ask a question, run a command, or type '/help' to get started.
 """)
 
 
@@ -138,35 +139,88 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
     if launched_jinx:
         state, output = execute_command(f"/{launched_jinx}", state, router=router, command_history=command_history)
         process_result(f"/{launched_jinx}", state, output, command_history)
-    else:
-        render_markdown(f'- Using {state.current_mode} mode. Use /agent, /cmd, or /chat to switch to other modes')
-    render_markdown('- To switch to a different NPC, type /npc <npc_name> or /n <npc_name> to switch to that NPC.')
-    render_markdown('\n- Here are the current NPCs available in your team: ' + ', '.join([npc_name for npc_name in state.team.npcs.keys()]))
-    # Show jinxs organized by folder using _source_path from jinx objects
-    jinxs_by_folder = {}
+
+    # Print startup info panel
+    BLUE = "\033[1;94m"
+    RUST = "\033[1;38;5;202m"
+    DIM = "\033[2m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+    term_width = min(shutil.get_terminal_size().columns, 80)
+
+    def _wrap_names(names, indent=4, sep="  "):
+        """Wrap a list of prefixed names to fit terminal width."""
+        lines = []
+        line = " " * indent
+        for name in names:
+            if len(line) + len(name) + len(sep) > term_width and line.strip():
+                lines.append(line.rstrip())
+                line = " " * indent
+            line += name + sep
+        if line.strip():
+            lines.append(line.rstrip())
+        return "\n".join(lines)
+
+    if not launched_jinx:
+        print(f"  {DIM}mode:{RESET} {BOLD}{state.current_mode}{RESET}  {DIM}│{RESET}  {DIM}switch:{RESET} /agent  /cmd  /chat")
+
+    # NPCs with @ prefix
+    npc_names = [f"@{n}" for n in state.team.npcs.keys()]
+    print(f"  {DIM}npcs:{RESET} {BLUE}{('  ').join(npc_names)}{RESET}")
+
+    # Jinxs - organized by group, hiding incognide, computer_use, and browser
+    hidden_folders = {'incognide', 'computer_use', 'browser'}
+    jinxs_by_group = {}
     if hasattr(state.team, 'jinxs_dict'):
         for jinx_name, jinx_obj in state.team.jinxs_dict.items():
-            folder = 'other'
+            group = 'other'
+            subgroup = None
             if hasattr(jinx_obj, '_source_path') and jinx_obj._source_path:
                 parts = jinx_obj._source_path.split(os.sep)
                 if 'jinxs' in parts:
                     idx = parts.index('jinxs')
-                    if idx + 1 < len(parts) - 1:
-                        folder = parts[idx + 1]
+                    remaining = parts[idx + 1:]  # e.g. ['lib', 'core', 'sh.jinx']
+                    if any(seg in hidden_folders for seg in remaining):
+                        continue
+                    if len(remaining) > 1:
+                        group = remaining[0]
+                        # For lib, use the subfolder as subgroup
+                        if group == 'lib' and len(remaining) > 2:
+                            subgroup = remaining[1]
                     else:
-                        folder = 'root'
-            if folder not in jinxs_by_folder:
-                jinxs_by_folder[folder] = []
-            jinxs_by_folder[folder].append(jinx_name)
+                        group = 'root'
+            key = (group, subgroup)
+            if key not in jinxs_by_group:
+                jinxs_by_group[key] = []
+            jinxs_by_group[key].append(jinx_name)
 
-    if jinxs_by_folder:
-        folder_order = ['bin', 'lib', 'npc_studio', 'root', 'other']
-        sorted_folders = sorted(jinxs_by_folder.keys(), key=lambda x: (folder_order.index(x) if x in folder_order else 99, x))
-        jinx_summary = []
-        for folder in sorted_folders:
-            count = len(jinxs_by_folder[folder])
-            jinx_summary.append(f"{folder}/ ({count})")
-        render_markdown('\n- Available Jinxs: ' + ', '.join(jinx_summary) + ' — use `/jinxs` for details')
+    if jinxs_by_group:
+        print()
+        # Collect top-level groups and their subgroups
+        group_order = ['bin', 'modes', 'lib', 'npc_studio', 'root', 'other']
+        # Sort keys: by group order, then subgroup alphabetically
+        sorted_keys = sorted(
+            jinxs_by_group.keys(),
+            key=lambda k: (group_order.index(k[0]) if k[0] in group_order else 99, k[1] or '')
+        )
+        last_group = None
+        for group, subgroup in sorted_keys:
+            names = sorted(jinxs_by_group[(group, subgroup)])
+            prefixed = [f"/{n}" for n in names]
+            if group != last_group:
+                label = group
+                if group == 'lib' and subgroup:
+                    label = f"lib/{subgroup}"
+                print(f"  {RUST}{label}/{RESET}")
+            elif subgroup:
+                print(f"  {RUST}lib/{subgroup}/{RESET}")
+            else:
+                print(f"  {RUST}{group}/{RESET}")
+            print(_wrap_names(prefixed))
+            last_group = group
+        print(f"\n  {DIM}/jinxs for full list{RESET}")
+    print()
     
     is_windows = platform.system().lower().startswith("win")
     try:
@@ -187,32 +241,40 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                 try:
                     print(f"  -> Archiving knowledge for: T='{team_name}', N='{npc_name}', P='{path}'")
 
-                    convo_id = current_state.conversation_id
-                    all_messages = command_history.get_conversations_by_id(convo_id)
+                    # Only build KG from approved memories, not raw conversation
+                    memory_examples = command_history.get_memory_examples_for_context(
+                        npc=npc_name, team=team_name, directory_path=path
+                    )
+                    approved = memory_examples.get("approved", []) + memory_examples.get("edited", [])
 
-                    scope_messages = [
-                        m for m in all_messages
-                        if m.get('directory_path') == path and m.get('team') == team_name and m.get('npc') == npc_name
-                    ]
-
-                    full_text = "\n".join([f"{m['role']}: {m['content']}" for m in scope_messages if m.get('content')])
-
-                    if not full_text.strip():
-                        print("     ...No content for this scope, skipping.")
+                    if not approved:
+                        print("     ...No approved memories for this scope, skipping.")
                         continue
+
+                    memory_statements = []
+                    for mem in approved:
+                        statement = mem.get("final_memory") or mem.get("initial_memory")
+                        if statement:
+                            memory_statements.append(statement)
+
+                    if not memory_statements:
+                        continue
+
+                    memory_text = "\n".join(f"- {s}" for s in memory_statements)
+                    print(colored(f"     evolving KG from {len(memory_statements)} approved memories...", "cyan"))
 
                     current_kg = load_kg_from_db(engine, team_name, npc_name, path)
 
                     evolved_kg, _ = kg_evolve_incremental(
                         existing_kg=current_kg,
-                        new_content_text=full_text,
+                        new_content_text=memory_text,
                         model=current_state.npc.model,
                         provider=current_state.npc.provider,
-                        npc= current_state.npc,
+                        npc=current_state.npc,
                         get_concepts=True,
-                        link_concepts_facts = True,
-                        link_concepts_concepts = True,
-                        link_facts_facts = True,
+                        link_concepts_facts=True,
+                        link_concepts_concepts=True,
+                        link_facts_facts=True,
                     )
 
                     save_kg_to_db(engine,
@@ -237,16 +299,19 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                     # Display usage before compacting
                     display_usage(state)
 
-                    planning_state = {
-                        "goal": "ongoing npcsh session",
-                        "facts": [f"Working in {state.current_path}", f"Current mode: {state.current_mode}"],
-                        "successes": [],
-                        "mistakes": [],
-                        "todos": [],
-                        "constraints": ["Follow user requests", "Use appropriate mode for tasks"]
-                    }
-                    compressed_state = state.npc.compress_planning_state(planning_state)
-                    state.messages = [{"role": "system", "content": f"Session context: {compressed_state}"}]
+                    # Pass actual messages so compress_planning_state summarizes real conversation
+                    try:
+                        compressed_state = state.npc.compress_planning_state(state.messages)
+                    except Exception:
+                        # Fallback: just keep recent messages if summarization fails
+                        compressed_state = None
+
+                    # Keep last 6 messages (3 exchanges) for immediate context
+                    recent = state.messages[-6:]
+                    if compressed_state:
+                        state.messages = [{"role": "system", "content": f"Session context (earlier conversation summary): {compressed_state}"}] + recent
+                    else:
+                        state.messages = recent
 
                 try:
                     completer = make_completer(state, router)
