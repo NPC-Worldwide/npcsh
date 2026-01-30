@@ -1,0 +1,795 @@
+jinx_name: git
+description: Interactive terminal UI for git status, staging, diffs, log, and commits
+interactive: true
+inputs:
+  - path: ""
+steps:
+  - name: git_tui
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import select
+      import subprocess
+      import textwrap
+
+      if not sys.stdin.isatty():
+          context['output'] = "Git TUI requires an interactive terminal."
+      else:
+          repo_path = context.get('path', '').strip() or os.getcwd()
+
+          def run_git(*args, cwd=None):
+              """Run a git command and return (returncode, stdout, stderr)."""
+              try:
+                  r = subprocess.run(
+                      ['git'] + list(args),
+                      cwd=cwd or repo_path,
+                      capture_output=True, text=True, timeout=15
+                  )
+                  return r.returncode, r.stdout, r.stderr
+              except Exception as e:
+                  return 1, '', str(e)
+
+          # Check if we're in a git repo
+          rc, _, _ = run_git('rev-parse', '--is-inside-work-tree')
+          if rc != 0:
+              context['output'] = "Not a git repository: " + repo_path
+          else:
+              # Get repo root
+              _, root, _ = run_git('rev-parse', '--show-toplevel')
+              repo_root = root.strip()
+
+              def get_size():
+                  try:
+                      s = os.get_terminal_size()
+                      return s.columns, s.lines
+                  except:
+                      return 80, 24
+
+              # ========== Data loading ==========
+              def load_status():
+                  """Load git status into structured data."""
+                  _, out, _ = run_git('status', '--porcelain=v1', '-uall')
+                  staged = []
+                  modified = []
+                  untracked = []
+                  for line in out.splitlines():
+                      if len(line) < 4:
+                          continue
+                      x = line[0]  # index status
+                      y = line[1]  # worktree status
+                      path = line[3:]
+                      # Rename: old -> new
+                      if ' -> ' in path:
+                          path = path.split(' -> ')[-1]
+
+                      entry = {'path': path, 'x': x, 'y': y}
+                      if x in ('M', 'A', 'D', 'R', 'C'):
+                          staged.append(entry)
+                      if y in ('M', 'D'):
+                          modified.append(entry)
+                      if x == '?' and y == '?':
+                          untracked.append(entry)
+                  return staged, modified, untracked
+
+              def load_log(n=30):
+                  """Load recent commits."""
+                  _, out, _ = run_git('log', '--oneline', '--decorate', '-n', str(n),
+                                       '--format=%h\t%s\t%an\t%ar\t%D')
+                  commits = []
+                  for line in out.splitlines():
+                      parts = line.split('\t')
+                      if len(parts) >= 4:
+                          commits.append({
+                              'hash': parts[0],
+                              'subject': parts[1],
+                              'author': parts[2],
+                              'date': parts[3],
+                              'refs': parts[4] if len(parts) > 4 else ''
+                          })
+                  return commits
+
+              def load_branches():
+                  """Load branch list."""
+                  _, out, _ = run_git('branch', '-a', '--format=%(refname:short)\t%(objectname:short)\t%(HEAD)\t%(upstream:short)\t%(subject)')
+                  branches = []
+                  for line in out.splitlines():
+                      parts = line.split('\t')
+                      if len(parts) >= 3:
+                          branches.append({
+                              'name': parts[0],
+                              'hash': parts[1] if len(parts) > 1 else '',
+                              'current': parts[2] == '*' if len(parts) > 2 else False,
+                              'upstream': parts[3] if len(parts) > 3 else '',
+                              'subject': parts[4] if len(parts) > 4 else ''
+                          })
+                  return branches
+
+              def load_diff(path=None, staged=False):
+                  """Load diff output."""
+                  args = ['diff', '--color=never']
+                  if staged:
+                      args.append('--cached')
+                  if path:
+                      args.extend(['--', path])
+                  _, out, _ = run_git(*args)
+                  return out.splitlines()
+
+              def load_stash():
+                  """Load stash list."""
+                  _, out, _ = run_git('stash', 'list')
+                  return out.splitlines()
+
+              # ========== State ==========
+              TABS = ['Status', 'Log', 'Branches', 'Stash']
+
+              class St:
+                  tab = 0
+                  sel = 0
+                  scroll = 0
+                  # Status
+                  staged = []
+                  modified = []
+                  untracked = []
+                  all_files = []  # flat list for navigation
+                  # Log
+                  commits = []
+                  # Branches
+                  branches = []
+                  # Stash
+                  stashes = []
+                  # Modes
+                  mode = 'list'  # list, diff, commit_msg, commit_detail
+                  diff_lines = []
+                  diff_scroll = 0
+                  msg = ''
+                  msg_color = '33'
+                  # Commit input
+                  commit_buf = ''
+                  # Branch info
+                  branch_name = ''
+                  ahead_behind = ''
+
+              st = St()
+
+              def refresh_status():
+                  st.staged, st.modified, st.untracked = load_status()
+                  # Build flat file list with section markers
+                  st.all_files = []
+                  if st.staged:
+                      st.all_files.append({'type': 'header', 'label': 'Staged Changes'})
+                      for f in st.staged:
+                          st.all_files.append({'type': 'staged', 'entry': f})
+                  if st.modified:
+                      st.all_files.append({'type': 'header', 'label': 'Modified (unstaged)'})
+                      for f in st.modified:
+                          st.all_files.append({'type': 'modified', 'entry': f})
+                  if st.untracked:
+                      st.all_files.append({'type': 'header', 'label': 'Untracked'})
+                      for f in st.untracked:
+                          st.all_files.append({'type': 'untracked', 'entry': f})
+                  # Clamp selection
+                  if st.all_files:
+                      st.sel = min(st.sel, len(st.all_files) - 1)
+                      # Skip headers
+                      while st.sel < len(st.all_files) and st.all_files[st.sel]['type'] == 'header':
+                          st.sel += 1
+                      if st.sel >= len(st.all_files):
+                          st.sel = max(0, len(st.all_files) - 1)
+                  else:
+                      st.sel = 0
+
+              def refresh_branch_info():
+                  _, name, _ = run_git('branch', '--show-current')
+                  st.branch_name = name.strip()
+                  _, ab, _ = run_git('rev-list', '--left-right', '--count', 'HEAD...@{upstream}')
+                  parts = ab.strip().split()
+                  if len(parts) == 2:
+                      ahead, behind = parts
+                      info = []
+                      if int(ahead) > 0:
+                          info.append('+' + ahead)
+                      if int(behind) > 0:
+                          info.append('-' + behind)
+                      st.ahead_behind = ' '.join(info)
+                  else:
+                      st.ahead_behind = ''
+
+              def refresh_all():
+                  refresh_status()
+                  refresh_branch_info()
+
+              def refresh_tab():
+                  if st.tab == 0:
+                      refresh_status()
+                  elif st.tab == 1:
+                      st.commits = load_log()
+                  elif st.tab == 2:
+                      st.branches = load_branches()
+                  elif st.tab == 3:
+                      st.stashes = load_stash()
+
+              # ========== Rendering ==========
+              def render():
+                  width, height = get_size()
+                  out = []
+
+                  # Header
+                  branch_str = st.branch_name
+                  if st.ahead_behind:
+                      branch_str += ' [' + st.ahead_behind + ']'
+                  hdr = ' GIT: ' + os.path.basename(repo_root) + '  (' + branch_str + ') '
+                  out.append('\033[1;1H\033[K\033[7;1m' + hdr.ljust(width) + '\033[0m')
+
+                  # Tabs
+                  tab_str = ''
+                  for i, t in enumerate(TABS):
+                      if i == st.tab:
+                          tab_str += '\033[1;7m [' + t + '] \033[0m'
+                      else:
+                          tab_str += ' \033[90m' + t + '\033[0m '
+                  out.append('\033[2;1H\033[K ' + tab_str)
+                  out.append('\033[3;1H\033[K\033[90m' + ('-' * width) + '\033[0m')
+
+                  if st.mode == 'commit_msg':
+                      render_commit_input(out, width, height)
+                  elif st.mode == 'diff':
+                      render_diff(out, width, height)
+                  elif st.mode == 'commit_detail':
+                      render_commit_detail(out, width, height)
+                  elif st.tab == 0:
+                      render_status(out, width, height)
+                  elif st.tab == 1:
+                      render_log(out, width, height)
+                  elif st.tab == 2:
+                      render_branch_list(out, width, height)
+                  elif st.tab == 3:
+                      render_stash_list(out, width, height)
+
+                  # Status message
+                  out.append('\033[' + str(height-2) + ';1H\033[K\033[90m' + ('-' * width) + '\033[0m')
+                  out.append('\033[' + str(height-1) + ';1H\033[K')
+                  if st.msg:
+                      out.append(' \033[' + st.msg_color + ';1m' + st.msg[:width-2] + '\033[0m')
+
+                  # Footer
+                  if st.mode == 'diff':
+                      foot = ' [b] Back  [j/k] Scroll  [Space] PageDn  [q] Quit '
+                  elif st.mode == 'commit_msg':
+                      foot = ' Type message, Enter to commit, Esc to cancel '
+                  elif st.mode == 'commit_detail':
+                      foot = ' [b] Back  [j/k] Scroll  [q] Quit '
+                  elif st.tab == 0:
+                      foot = ' [j/k] Nav  [Enter] Diff  [s] Stage/Unstage  [a] StageAll  [u] UnstageAll  [c] Commit  [Tab] Switch  [q] Quit '
+                  elif st.tab == 1:
+                      foot = ' [j/k] Nav  [Enter] Detail  [Tab] Switch  [q] Quit '
+                  elif st.tab == 2:
+                      foot = ' [j/k] Nav  [Enter] Checkout  [Tab] Switch  [q] Quit '
+                  elif st.tab == 3:
+                      foot = ' [j/k] Nav  [p] Pop  [a] Apply  [d] Drop  [Tab] Switch  [q] Quit '
+                  else:
+                      foot = ' [Tab] Switch  [q] Quit '
+                  out.append('\033[' + str(height) + ';1H\033[K\033[7m' + foot[:width].ljust(width) + '\033[0m')
+
+                  sys.stdout.write(''.join(out))
+                  sys.stdout.flush()
+
+              def render_status(out, width, height):
+                  vis = height - 7
+                  if not st.all_files:
+                      out.append('\033[5;4H\033[32mWorking tree clean.\033[0m')
+                      for i in range(1, vis):
+                          out.append('\033[' + str(5+i) + ';1H\033[K')
+                      return
+
+                  for i in range(vis):
+                      row = 4 + i
+                      out.append('\033[' + str(row) + ';1H\033[K')
+                      idx = st.scroll + i
+                      if idx >= len(st.all_files):
+                          continue
+
+                      item = st.all_files[idx]
+                      if item['type'] == 'header':
+                          out.append(' \033[1;4m' + item['label'] + '\033[0m')
+                      else:
+                          e = item['entry']
+                          if item['type'] == 'staged':
+                              icon = '\033[1;32m+ \033[0m'
+                              color = '32'
+                          elif item['type'] == 'modified':
+                              icon = '\033[1;33m~ \033[0m'
+                              color = '33'
+                          else:
+                              icon = '\033[1;90m? \033[0m'
+                              color = '90'
+
+                          status_char = e['x'] + e['y']
+                          line = icon + '\033[' + color + 'm' + e['path'] + '\033[0m  \033[90m[' + status_char.strip() + ']\033[0m'
+
+                          if idx == st.sel:
+                              out.append('\033[7m ' + icon + e['path'] + ' [' + status_char.strip() + '] \033[0m')
+                          else:
+                              out.append(' ' + line)
+
+              def render_log(out, width, height):
+                  vis = height - 7
+                  if not st.commits:
+                      out.append('\033[5;4H\033[90mNo commits.\033[0m')
+                      return
+
+                  hash_w = 8
+                  date_w = 14
+                  auth_w = 16
+                  subj_w = width - hash_w - date_w - auth_w - 8
+
+                  for i in range(vis):
+                      row = 4 + i
+                      out.append('\033[' + str(row) + ';1H\033[K')
+                      idx = st.scroll + i
+                      if idx >= len(st.commits):
+                          continue
+
+                      c = st.commits[idx]
+                      refs = ''
+                      if c['refs']:
+                          refs = ' \033[1;33m(' + c['refs'][:20] + ')\033[0m'
+
+                      line = ' \033[36m' + c['hash'][:7].ljust(hash_w) + '\033[0m'
+                      line += '\033[90m' + c['date'][:date_w].ljust(date_w) + '\033[0m '
+                      line += c['author'][:auth_w].ljust(auth_w) + ' '
+                      line += c['subject'][:subj_w] + refs
+
+                      if idx == st.sel:
+                          # Selected - use reverse video with plain text
+                          plain = c['hash'][:7].ljust(hash_w) + c['date'][:date_w].ljust(date_w) + ' ' + c['author'][:auth_w].ljust(auth_w) + ' ' + c['subject'][:subj_w]
+                          if c['refs']:
+                              plain += ' (' + c['refs'][:20] + ')'
+                          out.append('\033[7m ' + plain[:width-2] + ' \033[0m')
+                      else:
+                          out.append(line)
+
+              def render_branch_list(out, width, height):
+                  vis = height - 7
+                  if not st.branches:
+                      out.append('\033[5;4H\033[90mNo branches.\033[0m')
+                      return
+
+                  for i in range(vis):
+                      row = 4 + i
+                      out.append('\033[' + str(row) + ';1H\033[K')
+                      idx = st.scroll + i
+                      if idx >= len(st.branches):
+                          continue
+
+                      br = st.branches[idx]
+                      cur = '\033[1;32m* \033[0m' if br['current'] else '  '
+                      name_color = '32' if br['current'] else ('31' if br['name'].startswith('origin/') else '0')
+                      up = ''
+                      if br['upstream']:
+                          up = ' \033[90m-> ' + br['upstream'] + '\033[0m'
+
+                      if idx == st.sel:
+                          plain = ('* ' if br['current'] else '  ') + br['name'] + ' ' + br['hash'] + ' ' + br['subject'][:40]
+                          out.append('\033[7m' + plain[:width] + '\033[0m')
+                      else:
+                          out.append(cur + '\033[' + name_color + 'm' + br['name'] + '\033[0m \033[90m' + br['hash'] + '\033[0m ' + br['subject'][:40] + up)
+
+              def render_stash_list(out, width, height):
+                  vis = height - 7
+                  if not st.stashes:
+                      out.append('\033[5;4H\033[90mNo stashes.\033[0m')
+                      return
+
+                  for i in range(vis):
+                      row = 4 + i
+                      out.append('\033[' + str(row) + ';1H\033[K')
+                      idx = st.scroll + i
+                      if idx >= len(st.stashes):
+                          continue
+
+                      line = st.stashes[idx]
+                      if idx == st.sel:
+                          out.append('\033[7m ' + line[:width-2] + ' \033[0m')
+                      else:
+                          out.append(' ' + line[:width-2])
+
+              def render_diff(out, width, height):
+                  vis = height - 7
+                  for i in range(vis):
+                      row = 4 + i
+                      out.append('\033[' + str(row) + ';1H\033[K')
+                      idx = st.diff_scroll + i
+                      if idx >= len(st.diff_lines):
+                          continue
+                      line = st.diff_lines[idx]
+                      if line.startswith('+') and not line.startswith('+++'):
+                          out.append('\033[32m' + line[:width-1] + '\033[0m')
+                      elif line.startswith('-') and not line.startswith('---'):
+                          out.append('\033[31m' + line[:width-1] + '\033[0m')
+                      elif line.startswith('@@'):
+                          out.append('\033[36m' + line[:width-1] + '\033[0m')
+                      elif line.startswith('diff ') or line.startswith('index '):
+                          out.append('\033[1m' + line[:width-1] + '\033[0m')
+                      else:
+                          out.append(line[:width-1])
+
+                  if not st.diff_lines:
+                      out.append('\033[5;4H\033[90mNo diff to show.\033[0m')
+
+              def render_commit_input(out, width, height):
+                  out.append('\033[5;3H\033[1mCommit Message:\033[0m')
+                  out.append('\033[7;3H\033[K' + st.commit_buf + '\033[7m \033[0m')
+                  # Show staged files
+                  out.append('\033[9;3H\033[90mStaged files:\033[0m')
+                  for i, f in enumerate(st.staged[:height-13]):
+                      out.append('\033[' + str(10+i) + ';5H\033[K\033[32m+ ' + f['path'] + '\033[0m')
+                  for i in range(10 + len(st.staged[:height-13]), height - 2):
+                      out.append('\033[' + str(i) + ';1H\033[K')
+
+              def render_commit_detail(out, width, height):
+                  vis = height - 7
+                  for i in range(vis):
+                      row = 4 + i
+                      out.append('\033[' + str(row) + ';1H\033[K')
+                      idx = st.diff_scroll + i
+                      if idx >= len(st.diff_lines):
+                          continue
+                      line = st.diff_lines[idx]
+                      if line.startswith('+') and not line.startswith('+++'):
+                          out.append('\033[32m' + line[:width-1] + '\033[0m')
+                      elif line.startswith('-') and not line.startswith('---'):
+                          out.append('\033[31m' + line[:width-1] + '\033[0m')
+                      elif line.startswith('@@'):
+                          out.append('\033[36m' + line[:width-1] + '\033[0m')
+                      else:
+                          out.append(line[:width-1])
+
+              # ========== Actions ==========
+              def stage_file(entry):
+                  rc, _, err = run_git('add', '--', entry['path'])
+                  if rc == 0:
+                      st.msg = 'Staged: ' + entry['path']
+                      st.msg_color = '32'
+                  else:
+                      st.msg = 'Stage failed: ' + err[:60]
+                      st.msg_color = '31'
+                  refresh_status()
+
+              def unstage_file(entry):
+                  rc, _, err = run_git('restore', '--staged', '--', entry['path'])
+                  if rc == 0:
+                      st.msg = 'Unstaged: ' + entry['path']
+                      st.msg_color = '33'
+                  else:
+                      st.msg = 'Unstage failed: ' + err[:60]
+                      st.msg_color = '31'
+                  refresh_status()
+
+              def stage_all():
+                  rc, _, err = run_git('add', '-A')
+                  if rc == 0:
+                      st.msg = 'Staged all changes'
+                      st.msg_color = '32'
+                  else:
+                      st.msg = 'Stage all failed: ' + err[:60]
+                      st.msg_color = '31'
+                  refresh_status()
+
+              def unstage_all():
+                  rc, _, err = run_git('restore', '--staged', '.')
+                  if rc == 0:
+                      st.msg = 'Unstaged all'
+                      st.msg_color = '33'
+                  else:
+                      st.msg = 'Unstage failed: ' + err[:60]
+                      st.msg_color = '31'
+                  refresh_status()
+
+              def do_commit(message):
+                  if not message.strip():
+                      st.msg = 'Empty commit message, cancelled'
+                      st.msg_color = '33'
+                      return
+                  rc, out, err = run_git('commit', '-m', message)
+                  if rc == 0:
+                      st.msg = 'Committed: ' + message[:50]
+                      st.msg_color = '32'
+                  else:
+                      st.msg = 'Commit failed: ' + (err or out)[:60]
+                      st.msg_color = '31'
+                  refresh_status()
+
+              def checkout_branch(name):
+                  # Don't checkout remote tracking refs directly
+                  local_name = name
+                  if name.startswith('origin/'):
+                      local_name = name[7:]
+                  rc, _, err = run_git('checkout', local_name)
+                  if rc == 0:
+                      st.msg = 'Switched to: ' + local_name
+                      st.msg_color = '32'
+                      refresh_branch_info()
+                  else:
+                      st.msg = 'Checkout failed: ' + err[:60]
+                      st.msg_color = '31'
+                  st.branches = load_branches()
+
+              def stash_pop(idx=0):
+                  rc, _, err = run_git('stash', 'pop', 'stash@{' + str(idx) + '}')
+                  if rc == 0:
+                      st.msg = 'Popped stash@{' + str(idx) + '}'
+                      st.msg_color = '32'
+                  else:
+                      st.msg = 'Pop failed: ' + err[:60]
+                      st.msg_color = '31'
+                  st.stashes = load_stash()
+                  refresh_status()
+
+              def stash_apply(idx=0):
+                  rc, _, err = run_git('stash', 'apply', 'stash@{' + str(idx) + '}')
+                  if rc == 0:
+                      st.msg = 'Applied stash@{' + str(idx) + '}'
+                      st.msg_color = '32'
+                  else:
+                      st.msg = 'Apply failed: ' + err[:60]
+                      st.msg_color = '31'
+                  refresh_status()
+
+              def stash_drop(idx=0):
+                  rc, _, err = run_git('stash', 'drop', 'stash@{' + str(idx) + '}')
+                  if rc == 0:
+                      st.msg = 'Dropped stash@{' + str(idx) + '}'
+                      st.msg_color = '33'
+                  else:
+                      st.msg = 'Drop failed: ' + err[:60]
+                      st.msg_color = '31'
+                  st.stashes = load_stash()
+
+              # ========== Input ==========
+              def list_len():
+                  if st.tab == 0:
+                      return len(st.all_files)
+                  elif st.tab == 1:
+                      return len(st.commits)
+                  elif st.tab == 2:
+                      return len(st.branches)
+                  elif st.tab == 3:
+                      return len(st.stashes)
+                  return 0
+
+              def move_up():
+                  if st.sel > 0:
+                      st.sel -= 1
+                      # Skip headers in status view
+                      if st.tab == 0 and st.all_files and st.all_files[st.sel]['type'] == 'header':
+                          if st.sel > 0:
+                              st.sel -= 1
+                  _, h = get_size()
+                  vis = max(1, h - 7)
+                  if st.sel < st.scroll:
+                      st.scroll = st.sel
+
+              def move_down():
+                  mx = list_len() - 1
+                  if st.sel < mx:
+                      st.sel += 1
+                      if st.tab == 0 and st.sel < len(st.all_files) and st.all_files[st.sel]['type'] == 'header':
+                          if st.sel < mx:
+                              st.sel += 1
+                  _, h = get_size()
+                  vis = max(1, h - 7)
+                  if st.sel >= st.scroll + vis:
+                      st.scroll = st.sel - vis + 1
+
+              def handle_input(c):
+                  # Commit message mode
+                  if st.mode == 'commit_msg':
+                      if c == '\x1b':
+                          st.mode = 'list'
+                          st.commit_buf = ''
+                          st.msg = 'Commit cancelled'
+                          st.msg_color = '33'
+                      elif c in ('\r', '\n'):
+                          do_commit(st.commit_buf)
+                          st.mode = 'list'
+                          st.commit_buf = ''
+                      elif c == '\x7f' or c == '\b':
+                          st.commit_buf = st.commit_buf[:-1]
+                      elif c == '\x03':
+                          st.mode = 'list'
+                          st.commit_buf = ''
+                      elif c.isprintable():
+                          st.commit_buf += c
+                      return True
+
+                  # Diff / detail scroll mode
+                  if st.mode in ('diff', 'commit_detail'):
+                      if c == 'q' or c == '\x03':
+                          return False
+                      if c == 'b' or c == '\x1b':
+                          if c == '\x1b':
+                              if select.select([fd], [], [], 0.05)[0]:
+                                  os.read(fd, 1)  # consume [
+                                  c3 = os.read(fd, 1).decode('latin-1')
+                                  if c3 == 'A':
+                                      st.diff_scroll = max(0, st.diff_scroll - 1)
+                                  elif c3 == 'B':
+                                      st.diff_scroll += 1
+                                  return True
+                          st.mode = 'list'
+                          st.diff_scroll = 0
+                          sys.stdout.write('\033[2J')
+                          return True
+                      if c == 'j':
+                          st.diff_scroll += 1
+                      elif c == 'k':
+                          st.diff_scroll = max(0, st.diff_scroll - 1)
+                      elif c == ' ':
+                          _, h = get_size()
+                          st.diff_scroll += h - 7
+                      elif c == 'b':
+                          _, h = get_size()
+                          st.diff_scroll = max(0, st.diff_scroll - (h - 7))
+                      return True
+
+                  # Normal list mode
+                  if c == 'q' or c == '\x03':
+                      return False
+
+                  if c == '\x1b':
+                      if select.select([fd], [], [], 0.05)[0]:
+                          c2 = os.read(fd, 1).decode('latin-1')
+                          if c2 == '[':
+                              c3 = os.read(fd, 1).decode('latin-1')
+                              if c3 == 'A':
+                                  move_up()
+                              elif c3 == 'B':
+                                  move_down()
+                              elif c3 == 'Z':
+                                  # Shift+Tab
+                                  st.tab = (st.tab - 1) % len(TABS)
+                                  st.sel = 0
+                                  st.scroll = 0
+                                  refresh_tab()
+                                  st.msg = ''
+                                  sys.stdout.write('\033[2J')
+                      return True
+
+                  if c == '\t':
+                      st.tab = (st.tab + 1) % len(TABS)
+                      st.sel = 0
+                      st.scroll = 0
+                      refresh_tab()
+                      st.msg = ''
+                      sys.stdout.write('\033[2J')
+                  elif c == 'j':
+                      move_down()
+                  elif c == 'k':
+                      move_up()
+                  elif c == 'g':
+                      st.sel = 0
+                      st.scroll = 0
+                  elif c == 'G':
+                      st.sel = max(0, list_len() - 1)
+                      _, h = get_size()
+                      vis = max(1, h - 7)
+                      st.scroll = max(0, st.sel - vis + 1)
+                  elif c in ('\r', '\n'):
+                      handle_enter()
+                  elif c == 's' and st.tab == 0:
+                      handle_stage_toggle()
+                  elif c == 'a' and st.tab == 0:
+                      stage_all()
+                  elif c == 'u' and st.tab == 0:
+                      unstage_all()
+                  elif c == 'c' and st.tab == 0:
+                      if st.staged:
+                          st.mode = 'commit_msg'
+                          st.commit_buf = ''
+                          st.msg = ''
+                          sys.stdout.write('\033[2J')
+                      else:
+                          st.msg = 'Nothing staged to commit'
+                          st.msg_color = '33'
+                  elif c == 'r' and st.tab == 0:
+                      # Refresh
+                      refresh_all()
+                      st.msg = 'Refreshed'
+                      st.msg_color = '36'
+                  elif c == 'p' and st.tab == 3:
+                      if st.stashes:
+                          stash_pop(st.sel)
+                  elif c == 'a' and st.tab == 3:
+                      if st.stashes:
+                          stash_apply(st.sel)
+                  elif c == 'd' and st.tab == 3:
+                      if st.stashes:
+                          stash_drop(st.sel)
+
+                  return True
+
+              def handle_enter():
+                  if st.tab == 0:
+                      # Show diff for selected file
+                      if st.all_files and st.sel < len(st.all_files):
+                          item = st.all_files[st.sel]
+                          if item['type'] == 'header':
+                              return
+                          e = item['entry']
+                          is_staged = item['type'] == 'staged'
+                          st.diff_lines = load_diff(e['path'], staged=is_staged)
+                          if not st.diff_lines:
+                              # Try unstaged diff
+                              st.diff_lines = load_diff(e['path'], staged=False)
+                          if not st.diff_lines:
+                              st.msg = 'No diff for: ' + e['path']
+                              st.msg_color = '33'
+                              return
+                          st.mode = 'diff'
+                          st.diff_scroll = 0
+                          sys.stdout.write('\033[2J')
+                  elif st.tab == 1:
+                      # Show commit detail
+                      if st.commits and st.sel < len(st.commits):
+                          c = st.commits[st.sel]
+                          _, detail, _ = run_git('show', '--stat', '--format=fuller', c['hash'])
+                          st.diff_lines = detail.splitlines()
+                          st.mode = 'commit_detail'
+                          st.diff_scroll = 0
+                          sys.stdout.write('\033[2J')
+                  elif st.tab == 2:
+                      # Checkout branch
+                      if st.branches and st.sel < len(st.branches):
+                          br = st.branches[st.sel]
+                          if not br['current']:
+                              checkout_branch(br['name'])
+                  elif st.tab == 3:
+                      # Show stash diff
+                      if st.stashes and st.sel < len(st.stashes):
+                          _, detail, _ = run_git('stash', 'show', '-p', 'stash@{' + str(st.sel) + '}')
+                          st.diff_lines = detail.splitlines()
+                          st.mode = 'diff'
+                          st.diff_scroll = 0
+                          sys.stdout.write('\033[2J')
+
+              def handle_stage_toggle():
+                  if not st.all_files or st.sel >= len(st.all_files):
+                      return
+                  item = st.all_files[st.sel]
+                  if item['type'] == 'header':
+                      return
+                  e = item['entry']
+                  if item['type'] == 'staged':
+                      unstage_file(e)
+                  else:
+                      stage_file(e)
+
+              # ========== Main Loop ==========
+              refresh_all()
+              refresh_tab()
+
+              fd = sys.stdin.fileno()
+              old_settings = termios.tcgetattr(fd)
+
+              try:
+                  tty.setcbreak(fd)
+                  sys.stdout.write('\033[?25l')
+                  sys.stdout.write('\033[2J')
+                  render()
+
+                  while True:
+                      c = os.read(fd, 1).decode('latin-1')
+                      if not handle_input(c):
+                          break
+                      render()
+
+              finally:
+                  termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                  sys.stdout.write('\033[?25h')
+                  sys.stdout.write('\033[2J\033[H')
+                  sys.stdout.flush()
+
+              context['output'] = 'Git TUI closed.'
