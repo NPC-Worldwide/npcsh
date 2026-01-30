@@ -112,7 +112,7 @@ def get_package_data_patterns():
 
 setup(
     name="npcsh",
-    version="1.1.20",
+    version="1.1.21",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
