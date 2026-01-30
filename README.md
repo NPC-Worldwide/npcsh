@@ -49,12 +49,14 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
     /nql                                   # Database query TUI
     ```
     <p align="center">
-        <img src="gh_images/Screenshot%20from%202026-01-29%2015-02-52.png" alt="Web search results", width=400>
-        <img src="gh_images/kg_facts_viewer.png" alt="Knowledge Graph TUI", width=400>
+        <img src="gh_images/Screenshot%20from%202026-01-29%2015-02-52.png" alt="Web search results", width=600>
     </p>
     <p align="center">
-        <img src="gh_images/nql_menu.png" alt="NQL data browser", width=400>
-        <img src="gh_images/nql_table.png" alt="NQL table viewer", width=400>
+        <img src="gh_images/kg_facts_viewer.png" alt="Knowledge Graph TUI", width=500>
+    </p>
+    <p align="center">
+        <img src="gh_images/nql_menu.png" alt="NQL data browser", width=500>
+        <img src="gh_images/nql_table.png" alt="NQL table viewer", width=500>
     </p>
 
   - **Computer Use**
@@ -69,7 +71,7 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
     /vixynt
     ```
     <p align="center">
-        <img src="gh_images/vixynt.png" alt="Vixynt Image Creation Studio", width=400>
+        <img src="gh_images/vixynt.png" alt="Vixynt Image Creation Studio", width=500>
     </p>
 
   - Generate images directly
@@ -77,7 +79,7 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
     /vixynt 'generate an image of a rabbit eating ham in the brink of dawn' model='gpt-image-1' provider='openai'
     ```
       <p align="center">
-        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/rabbit.PNG" alt="a rabbit eating ham in the bring of dawn", width=250>
+        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/rabbit.PNG" alt="a rabbit eating ham in the bring of dawn", width=350>
       </p>
   - **Generate Videos**
 
@@ -92,7 +94,7 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
     ```
 
       <p align="center">
-        <img src="https://raw.githubusercontent.com/NPC-Worldwide/npcsh/main/test_data/hatridingdog.gif" alt="video of a hat riding a dog", width=250>
+        <img src="https://raw.githubusercontent.com/NPC-Worldwide/npcsh/main/test_data/hatridingdog.gif" alt="video of a hat riding a dog", width=350>
       </p> 
 
   - **Serve an NPC Team**
@@ -173,7 +175,7 @@ When an NPC is invoked, they can only use the jinxs assigned to them. This creat
 - `frederic` has generation tools (vixynt, roll, sample)
 
 <p align="center">
-    <img src="gh_images/team_npc.png" alt="NPC team browser", width=600>
+    <img src="gh_images/team_npc.png" alt="NPC team browser", width=700>
 </p>
 
 The forenpc (orchestrator) can delegate to any team member based on their specialization.
@@ -213,8 +215,8 @@ The `/delegate` jinx sends a task to another NPC with automatic review and feedb
 The `/alicanto` mode runs multi-agent deep research — generates hypotheses, assigns persona-based sub-agents, runs iterative tool-calling loops, and synthesizes findings.
 
 <p align="center">
-    <img src="gh_images/alicanto.png" alt="Alicanto deep research mode", width=400>
-    <img src="gh_images/alicanto_2.png" alt="Alicanto execution phase", width=400>
+    <img src="gh_images/alicanto.png" alt="Alicanto deep research mode", width=500>
+    <img src="gh_images/alicanto_2.png" alt="Alicanto execution phase", width=500>
 </p>
 
 ## Convening Multi-NPC Discussions
@@ -262,7 +264,7 @@ This generates two views:
 Shared jinxs (like `python` used by 7 NPCs) appear with thicker connection bundles, helping you identify common capabilities and potential consolidation opportunities.
 
 <p align="center">
-    <img src="gh_images/teamviz.png" alt="Team structure visualization", width=600>
+    <img src="gh_images/teamviz.png" alt="Team structure visualization", width=700>
 </p>
 
 # NQL - SQL Models with AI Functions
@@ -433,7 +435,7 @@ The NPC responds using their persona and available jinxs, then control returns t
 | `kadiefa` | Creative generation | vixynt |
 
 <p align="center">
-    <img src="gh_images/npc_menu.png" alt="NPC menu", width=600>
+    <img src="gh_images/npc_menu.png" alt="NPC menu", width=700>
 </p>
 
 # Jinxs (Macros/Tools)
@@ -493,25 +495,43 @@ npc sample "a sunset over mountains"
 
 Most commands launch full-screen TUIs — just type and interact. For CLI usage with `npc`, common flags include `--model (-mo)`, `--provider (-pr)`, `--npc (-np)`, and `--temperature (-t)`. Run `npc --help` for the full list.
 
-### `/wander` — Exploratory thinking with temperature shifts. `/guac` — Python REPL with LLM code gen, live variable inspector.
+### `/wander` — Creative Exploration
+Wander mode shifts the model's temperature up and down as it explores a problem, producing divergent ideas followed by convergent synthesis. The live TUI dashboard shows the current temperature, accumulated thoughts, and a running summary.
+
 <p align="center">
-    <img src="gh_images/wander.png" alt="Wander TUI", width=400>
-    <img src="gh_images/guac_session.png" alt="Guac Python REPL", width=400>
+    <img src="gh_images/wander.png" alt="Wander TUI", width=500>
 </p>
 
-### `/arxiv` — Browse, search, and read arXiv papers with abstract previews.
+### `/guac` — Interactive Python REPL
+Guac is an LLM-powered Python REPL with a live variable inspector, DataFrame viewer, and inline code execution. Describe what you want in natural language and the model writes and runs the code. Variables persist across turns.
+
 <p align="center">
-    <img src="gh_images/arxiv_search.png" alt="ArXiv search", width=400>
-    <img src="gh_images/arxiv_paper.png" alt="ArXiv paper view", width=400>
-</p>
-<p align="center">
-    <img src="gh_images/arxiv_abs.png" alt="ArXiv abstract view", width=600>
+    <img src="gh_images/guac_session.png" alt="Guac Python REPL", width=500>
 </p>
 
-### `/reattach` — Resume previous conversations. `/models` — Browse and set active models.
+### `/arxiv` — Paper Browser
+Browse, search, and read arXiv papers from the terminal. The TUI shows search results, full paper metadata, and rendered abstracts with j/k navigation and Enter to drill in.
+
 <p align="center">
-    <img src="gh_images/Screenshot%20from%202026-01-29%2014-43-20.png" alt="Reattach session browser", width=400>
-    <img src="gh_images/models.png" alt="Models browser", width=400>
+    <img src="gh_images/arxiv_search.png" alt="ArXiv search", width=500>
+    <img src="gh_images/arxiv_paper.png" alt="ArXiv paper view", width=500>
+</p>
+<p align="center">
+    <img src="gh_images/arxiv_abs.png" alt="ArXiv abstract view", width=700>
+</p>
+
+### `/reattach` — Session Browser
+Resume previous conversation sessions. The TUI lists past sessions with timestamps and previews — select one to pick up where you left off.
+
+<p align="center">
+    <img src="gh_images/Screenshot%20from%202026-01-29%2014-43-20.png" alt="Reattach session browser", width=500>
+</p>
+
+### `/models` — Model Browser
+Browse all available models across providers (Ollama, OpenAI, Anthropic, etc.), see which are currently active, and set new defaults interactively.
+
+<p align="center">
+    <img src="gh_images/models.png" alt="Models browser", width=500>
 </p>
 
 # Memory & Knowledge Graph
@@ -543,7 +563,7 @@ The TUI provides:
 - **Session stats** — tracks approvals/rejections during session
 
 <p align="center">
-    <img src="gh_images/Screenshot%20from%202026-01-29%2016-03-08.png" alt="Memory Browser TUI", width=600>
+    <img src="gh_images/Screenshot%20from%202026-01-29%2016-03-08.png" alt="Memory Browser TUI", width=700>
 </p>
 
 ### Knowledge Graph
@@ -562,11 +582,11 @@ The `/kg` command opens an interactive browser for exploring the knowledge graph
 The TUI browser has 5 tabs: **Facts**, **Concepts**, **Links**, **Search**, and **Graph** — navigate with Tab, j/k, and Enter to drill into details.
 
 <p align="center">
-    <img src="gh_images/kg_facts_viewer.png" alt="Knowledge Graph Facts", width=400>
-    <img src="gh_images/kg_links.png" alt="Knowledge Graph Links", width=400>
+    <img src="gh_images/kg_facts_viewer.png" alt="Knowledge Graph Facts", width=500>
+    <img src="gh_images/kg_links.png" alt="Knowledge Graph Links", width=500>
 </p>
 <p align="center">
-    <img src="gh_images/kg_viewer.png" alt="Knowledge Graph Viewer", width=600>
+    <img src="gh_images/kg_viewer.png" alt="Knowledge Graph Viewer", width=700>
 </p>
 
 **Evolution operations** (via `/kg sleep` or `/sleep`):
@@ -784,12 +804,12 @@ npc_team/
 ```
 
 <p align="center">
-    <img src="gh_images/team_ui.png" alt="Team config browser", width=400>
-    <img src="gh_images/jinx_menu.png" alt="Jinx browser", width=400>
+    <img src="gh_images/team_ui.png" alt="Team config browser", width=500>
+    <img src="gh_images/jinx_menu.png" alt="Jinx browser", width=500>
 </p>
 <p align="center">
-    <img src="gh_images/jinx_folder_viewer.png" alt="Jinx folder viewer", width=400>
-    <img src="gh_images/jinx_ui.png" alt="Jinx detail view", width=400>
+    <img src="gh_images/jinx_folder_viewer.png" alt="Jinx folder viewer", width=500>
+    <img src="gh_images/jinx_ui.png" alt="Jinx detail view", width=500>
 </p>
 
 ## Contributing
