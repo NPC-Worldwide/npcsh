@@ -5,36 +5,24 @@
 
 # npcsh
 
-The NPC shell (`npcsh`) makes the most of multi-modal LLMs and agents through a powerful set of simple slash  commands and novel interactive modes, all from the comfort of the command line. Build teams of agents and schedule them on jobs, engineer context, and design custom interaction modes and Jinja Execution templates (Jinxs for you and your agents to invoke, all managed scalably for organizations of any size through the NPC  data layer.
+The NPC shell (`npcsh`) makes the most of multi-modal LLMs and agents through a powerful set of simple slash commands and novel interactive modes, all from the comfort of the command line. Build teams of agents and schedule them on jobs, engineer context, and design custom interaction modes and Jinja Execution templates (Jinxs) for you and your agents to invoke, all managed scalably for organizations of any size through the NPC data layer.
 
 To get started:
-For users who want to mainly use models through APIs (`ollama`, `gemini`, `kimi`, `grok`, `deepseek`, `anthropic`, `openai`, `mistral`, or any others provided by litellm )
 ```bash
-pip install 'npcsh[lite]' 
-```
-For users who want to use and fine-tune local models (this installs `diffusers`/`transformers`/`torch` stack so it is big):
+# API providers (ollama, gemini, kimi, grok, deepseek, anthropic, openai, mistral, etc.)
+pip install 'npcsh[lite]'
 
-```bash
+# Local models (diffusers/transformers/torch — large install)
 pip install 'npcsh[local]'
-```
 
-
-For users who want to use the voice mode `yap` (see also the OS-specific installation instructions for installing needed system audio  libraries)
-```bash
+# Voice mode (see OS-specific audio library instructions below)
 pip install 'npcsh[yap]'
+
+# Everything
+pip install 'npcsh[all]'
 ```
 
-Once installed: run
-```bash
-npcsh
-```
-and you will enter the NPC shell. 
-
-If you do not have any local models
-
-
-
-Additionally, the pip installation includes the following CLI tools available in bash: `npc` cli, `wander`, `spool`, `yap`, and `nql`. Bin jinxs in `npc_team/jinxs/bin/` are automatically registered as CLI commands. 
+Once installed, run `npcsh` to enter the NPC shell. The pip installation also provides the CLI tools `npc`, `wander`, `spool`, `yap`, and `nql` in your shell. Bin jinxs in `npc_team/jinxs/bin/` are automatically registered as additional CLI commands.
 
 
 # Usage
@@ -61,10 +49,14 @@ Additionally, the pip installation includes the following CLI tools available in
     /nql                                   # Database query TUI
     ```
     <p align="center">
-        <img src="gh_images/kg_facts_viewer.png" alt="Knowledge Graph TUI", width=600>
+        <img src="gh_images/Screenshot%20from%202026-01-29%2015-02-52.png" alt="Web search results", width=400>
+        <img src="gh_images/kg_facts_viewer.png" alt="Knowledge Graph TUI", width=400>
     </p>
-    
-    
+    <p align="center">
+        <img src="gh_images/nql_menu.png" alt="NQL data browser", width=400>
+        <img src="gh_images/nql_table.png" alt="NQL table viewer", width=400>
+    </p>
+
   - **Computer Use**
 
     ```bash
@@ -76,6 +68,10 @@ Additionally, the pip installation includes the following CLI tools available in
     ```bash
     /vixynt
     ```
+    <p align="center">
+        <img src="gh_images/vixynt.png" alt="Vixynt Image Creation Studio", width=400>
+    </p>
+
   - Generate images directly
     ```bash
     /vixynt 'generate an image of a rabbit eating ham in the brink of dawn' model='gpt-image-1' provider='openai'
@@ -129,14 +125,6 @@ Additionally, the pip installation includes the following CLI tools available in
     /build target=cli outdir=./bin
     /build target=static outdir=./site
     ```
-  - **Visualize Team Structure**:
-    ```bash
-    npc teamviz save=team_structure.png
-    ```
-    Generates network and ordered views showing NPCs, jinxs, and their relationships.
-    <p align="center">
-        <img src="gh_images/teamviz.png" alt="Team structure visualization", width=600>
-    </p>
 
 # NPC Data Layer
 
@@ -225,7 +213,8 @@ The `/delegate` jinx sends a task to another NPC with automatic review and feedb
 The `/alicanto` mode runs multi-agent deep research — generates hypotheses, assigns persona-based sub-agents, runs iterative tool-calling loops, and synthesizes findings.
 
 <p align="center">
-    <img src="gh_images/alicanto.png" alt="Alicanto deep research mode", width=600>
+    <img src="gh_images/alicanto.png" alt="Alicanto deep research mode", width=400>
+    <img src="gh_images/alicanto_2.png" alt="Alicanto execution phase", width=400>
 </p>
 
 ## Convening Multi-NPC Discussions
@@ -271,6 +260,10 @@ This generates two views:
 - **Ordered view**: NPCs on left, jinxs grouped by category on right
 
 Shared jinxs (like `python` used by 7 NPCs) appear with thicker connection bundles, helping you identify common capabilities and potential consolidation opportunities.
+
+<p align="center">
+    <img src="gh_images/teamviz.png" alt="Team structure visualization", width=600>
+</p>
 
 # NQL - SQL Models with AI Functions
 
@@ -396,11 +389,6 @@ models/
 
 Run `nql` to execute the entire pipeline—base models first, then insights that depend on them.
 
-<p align="center">
-    <img src="gh_images/nql_menu.png" alt="NQL menu", width=400>
-    <img src="gh_images/nql_table.png" alt="NQL table viewer", width=400>
-</p>
-
 # Working with NPCs (Agents)
 
 NPCs are AI agents with distinct personas, models, and tool sets. You can interact with them in two ways:
@@ -460,64 +448,38 @@ Jinxs are reusable tools that users and agents can invoke. They're activated wit
 npc sample "a sunset over mountains"
 ```
 
-## Jinx Commands
-
-### Interactive TUI Modes
-
-Most modes launch a full-screen terminal interface. Just type the command and interact.
+## All Commands
 
 | Command | Description |
 |---------|-------------|
-| `/alicanto` | Multi-agent deep research — hypothesis generation, persona-based sub-agents, iterative paper writing |
-| `/corca` | MCP-powered agentic shell — tabbed TUI with chat, tool management, server controls |
+| `/alicanto` | Multi-agent deep research — hypotheses, persona sub-agents, paper writing |
+| `/corca` | MCP-powered agentic shell — chat, tool management, server controls |
 | `/convene` | Multi-NPC structured discussion with live trains of thought |
 | `/spool` | Chat session with fresh context, file attachments, and RAG |
 | `/pti` | Pardon-the-interruption reasoning mode |
 | `/plonk` | GUI automation with vision |
 | `/wander` | Exploratory thinking with temperature shifts |
-| `/yap` | Voice chat TUI — continuous VAD listening, auto-transcribe, text-to-speech |
-| `/guac` | Interactive Python REPL with LLM-powered code generation |
-| `/kg` | Knowledge graph browser — facts, concepts, links, search, graph view |
+| `/yap` | Voice chat — continuous VAD listening, auto-transcribe, TTS |
+| `/guac` | Interactive Python REPL with LLM code generation |
+| `/kg` | Knowledge graph browser — facts, concepts, links, search, graph |
+| `/kg sleep` | Evolve knowledge graph through consolidation |
+| `/kg dream` | Creative synthesis across KG domains |
 | `/memories` | Memory browser — browse, approve, reject, filter by status |
-| `/nql` | Database query interface for NQL SQL models |
-| `/papers` | Academic paper search and browsing |
+| `/nql` | Database browser and NQL SQL model runner |
+| `/papers` | Multi-platform research paper browser |
 | `/arxiv` | ArXiv paper browser |
 | `/git` | Git integration TUI |
 | `/build` | Build team to deployable format (flask, docker, cli, static) |
 | `/team` | Team config browser — context, NPCs, jinxs |
 | `/config_tui` | Interactive config editor |
 | `/reattach` | Resume previous conversation sessions |
-
-<p align="center">
-    <img src="gh_images/wander.png" alt="Wander TUI", width=400>
-    <img src="gh_images/guac_session.png" alt="Guac Python REPL", width=400>
-</p>
-<p align="center">
-    <img src="gh_images/arxiv_search.png" alt="ArXiv search", width=400>
-    <img src="gh_images/arxiv_paper.png" alt="ArXiv paper view", width=400>
-</p>
-
-### Orchestration & Research
-| Command | Description |
-|---------|-------------|
 | `/delegate` | Delegate task to NPC with review loop |
 | `/web_search` | Web search |
 | `/db_search` | Database search |
 | `/file_search` | File search |
-| `/kg sleep` | Evolve knowledge graph through consolidation |
-| `/kg dream` | Creative synthesis across KG domains |
-| `/sleep` | Alias for `/kg sleep` |
-
-### Generation
-| Command | Description |
-|---------|-------------|
 | `/vixynt` | Generate/edit images |
 | `/roll` | Generate videos |
 | `/sample` | Context-free LLM prompt |
-
-### System & Config
-| Command | Description |
-|---------|-------------|
 | `/serve` | Serve NPC team as API with OpenAI-compatible endpoints |
 | `/compile` | Compile NPC profiles |
 | `/set` | Set config values — `/set model gemma3:4b`, `/set provider ollama` |
@@ -528,10 +490,31 @@ Most modes launch a full-screen terminal interface. Just type the command and in
 | `/cmd` | Switch to command mode |
 | `/switch` | Switch NPC |
 | `/sync` | Sync npc_team files from repo to home |
-    
-Most modes are interactive TUIs — just launch them and use keyboard controls. For CLI usage with `npc`, common flags include `--model (-mo)`, `--provider (-pr)`, `--npc (-np)`, and `--temperature (-t)`. Run `npc --help` for the full list.
 
-## Memory & Knowledge Graph
+Most commands launch full-screen TUIs — just type and interact. For CLI usage with `npc`, common flags include `--model (-mo)`, `--provider (-pr)`, `--npc (-np)`, and `--temperature (-t)`. Run `npc --help` for the full list.
+
+### `/wander` — Exploratory thinking with temperature shifts. `/guac` — Python REPL with LLM code gen, live variable inspector.
+<p align="center">
+    <img src="gh_images/wander.png" alt="Wander TUI", width=400>
+    <img src="gh_images/guac_session.png" alt="Guac Python REPL", width=400>
+</p>
+
+### `/arxiv` — Browse, search, and read arXiv papers with abstract previews.
+<p align="center">
+    <img src="gh_images/arxiv_search.png" alt="ArXiv search", width=400>
+    <img src="gh_images/arxiv_paper.png" alt="ArXiv paper view", width=400>
+</p>
+<p align="center">
+    <img src="gh_images/arxiv_abs.png" alt="ArXiv abstract view", width=600>
+</p>
+
+### `/reattach` — Resume previous conversations. `/models` — Browse and set active models.
+<p align="center">
+    <img src="gh_images/Screenshot%20from%202026-01-29%2014-43-20.png" alt="Reattach session browser", width=400>
+    <img src="gh_images/models.png" alt="Models browser", width=400>
+</p>
+
+# Memory & Knowledge Graph
 
 `npcsh` maintains a memory lifecycle system that allows agents to learn and grow from past interactions. Memories progress through stages and can be incorporated into a knowledge graph for advanced retrieval.
 
@@ -582,6 +565,9 @@ The TUI browser has 5 tabs: **Facts**, **Concepts**, **Links**, **Search**, and 
     <img src="gh_images/kg_facts_viewer.png" alt="Knowledge Graph Facts", width=400>
     <img src="gh_images/kg_links.png" alt="Knowledge Graph Links", width=400>
 </p>
+<p align="center">
+    <img src="gh_images/kg_viewer.png" alt="Knowledge Graph Viewer", width=600>
+</p>
 
 **Evolution operations** (via `/kg sleep` or `/sleep`):
 - **prune** — Remove redundant or low-value facts
@@ -599,28 +585,20 @@ export NPCSH_BUILD_KG=1
 export NPCSH_DB_PATH=~/npcsh_history.db
 ```
 
-## Read the Docs
-To see more about how to use the jinxs and modes in the NPC Shell, read the docs at [npc-shell.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/)
+Full documentation: [npc-shell.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/)
 
-
-## Inference Capabilities
-- `npcsh` works with local and enterprise LLM providers through its LiteLLM integration, allowing users to run inference from Ollama, LMStudio, vLLM, MLX, OpenAI, Anthropic, Gemini, and Deepseek, making it a versatile tool for both simple commands and sophisticated AI-driven tasks. 
+`npcsh` works with local and enterprise LLM providers through LiteLLM — Ollama, LMStudio, vLLM, MLX, OpenAI, Anthropic, Gemini, Deepseek, and more.
 
 ## Incognide
-Incognide is a desktop workspace environment for integrating LLMs into your workflows in an organized and seamless manner. See the source code for Incognide [here](https://github.com/npc-worldwide/incognide). Download the executables at [our website](https://enpisi.com/downloads). For the most up to date development version, you can use Incognide by invoking it in npcsh 
 
-```
-/incognide
-```
-which will download and set up and serve the Incognide application within your `~/.npcsh` folder. It requires `npm` and `node` to work, and of course npcpy !
+[Incognide](https://github.com/npc-worldwide/incognide) is a desktop workspace environment for integrating LLMs into your workflows. [Download executables](https://enpisi.com/downloads) or run `/incognide` in npcsh to install and serve it locally (requires `npm` and `node`).
 
-## Mailing List and Community
-Interested to stay in the loop and to hear the latest and greatest about `npcpy`, `npcsh`, and Incognide? Be sure to sign up for the [newsletter](https://forms.gle/n1NzQmwjsV4xv1B2A)!
+## Community & Support
 
-[Join the discord to discuss ideas for npc tools](https://discord.gg/VvYVT5YC)
-## Support
-If you appreciate the work here, [consider supporting NPC Worldwide with a monthly donation](https://buymeacoffee.com/npcworldwide), [buying NPC-WW themed merch](https://enpisi.com/shop), [using and subscribing to Lavanzaro](lavanzaro.com),s or hiring us to help you explore how to use the NPC Toolkit and AI tools to help your business or research team, please reach out to info@npcworldwi.de .
-
+- [Newsletter](https://forms.gle/n1NzQmwjsV4xv1B2A) — latest updates on `npcpy`, `npcsh`, and Incognide
+- [Discord](https://discord.gg/VvYVT5YC) — discuss ideas for NPC tools
+- [Buy us a coffee](https://buymeacoffee.com/npcworldwide) | [Merch](https://enpisi.com/shop) | [Lavanzaro](https://lavanzaro.com)
+- For consulting: info@npcworldwi.de
 
 ## Installation
 `npcsh` is available on PyPI and can be installed using pip. Before installing, make sure you have the necessary dependencies installed on your system. Below are the instructions for installing such dependencies on Linux, Mac, and Windows. If you find any other dependencies that are needed, please let us know so we can update the installation instructions to be more accommodating.
@@ -637,10 +615,6 @@ sudo apt-get install alsa-base alsa-utils
 sudo apt-get install libcairo2-dev
 sudo apt-get install libgirepository1.0-dev
 sudo apt-get install ffmpeg
-
-# for triggers
-sudo apt install inotify-tools
-
 
 #And if you don't have ollama installed, use this:
 curl -fsSL https://ollama.com/install.sh | sh
@@ -672,10 +646,6 @@ pip install 'npcsh[all]'
 brew install portaudio
 brew install ffmpeg
 brew install pygobject3
-
-# for triggers
-brew install inotify-tools
-
 
 brew install ollama
 brew services start ollama
@@ -789,59 +759,41 @@ export PERPLEXITY_API_KEY='your_perplexity_key'
 
  Individual npcs can also be set to use different models and providers by setting the `model` and `provider` keys in the npc files.
 
- Once initialized and set up, you will find the following in your `~/.npcsh` directory:
-```bash
-~/.npcsh/
-├── npc_team/              # Global NPC team
-│   ├── jinxs/
-│   │   ├── modes/         # Interactive TUI modes (alicanto, corca, kg, build, yap, etc.)
-│   │   ├── lib/
-│   │   │   ├── core/      # Core tools (python, sh, sql, edit_file, load_file, delegate, etc.)
-│   │   │   │   └── search/  # Search tools (web_search, db_search, file_search)
-│   │   │   ├── utils/     # Utility jinxs (set, compile, serve, teamviz, chat, cmd, etc.)
-│   │   │   ├── browser/   # Browser automation (browser_action, screenshot, etc.)
-│   │   │   └── computer_use/  # Computer use (click, key_press, screenshot, trigger, etc.)
-│   │   └── incognide/     # Incognide desktop workspace jinxs
-│   ├── models/            # NQL SQL models
-│   ├── assembly_lines/    # Workflow pipelines
-│   ├── sibiji.npc         # Orchestrator NPC
-│   ├── corca.npc          # Coding specialist
-│   ├── plonk.npc          # Browser automation
-│   ├── ...                # Other NPCs
-│   ├── mcp_server.py      # MCP server for tool integration
-│   └── npcsh.ctx          # Team context (sets forenpc, team name)
+ Once initialized, the global team lives in `~/.npcsh/npc_team/`. You can also create a project-specific team by adding an `npc_team/` directory to any project — npcsh picks it up automatically and overlays it on the global team.
+
+```
+npc_team/
+├── jinxs/
+│   ├── modes/            # TUI modes (alicanto, corca, kg, yap, etc.)
+│   ├── lib/
+│   │   ├── core/         # Core tools (python, sh, sql, edit_file, delegate, etc.)
+│   │   │   └── search/   # Search tools (web_search, db_search, file_search)
+│   │   ├── utils/        # Utility jinxs (set, compile, serve, teamviz, etc.)
+│   │   ├── browser/      # Browser automation (browser_action, screenshot, etc.)
+│   │   └── computer_use/ # Computer use (click, key_press, screenshot, etc.)
+│   └── incognide/        # Incognide desktop workspace jinxs
+├── models/               # NQL SQL models
+│   ├── base/             # Base statistics models
+│   └── insights/         # Models with nql.* AI functions
+├── assembly_lines/       # Workflow pipelines
+├── sibiji.npc            # Orchestrator NPC
+├── corca.npc             # Coding specialist
+├── ...                   # Other NPCs
+├── mcp_server.py         # MCP server for tool integration
+└── npcsh.ctx             # Team context (sets forenpc, team name)
 ```
 
 <p align="center">
     <img src="gh_images/team_ui.png" alt="Team config browser", width=400>
     <img src="gh_images/jinx_menu.png" alt="Jinx browser", width=400>
 </p>
-For cases where you wish to set up a project specific set of NPCs, jinxs, and assembly lines, add a `npc_team` directory to your project and `npcsh` should be able to pick up on its presence, like so:
-```bash
-./npc_team/            # Project-specific NPCs
-├── jinxs/             # Project jinxs
-│   ├── modes/         # Interactive TUI modes
-│   └── lib/           # Library jinxs organized by category
-│       ├── core/      # Core tools (python, sh, sql, edit_file, delegate, etc.)
-│       │   └── search/  # Search tools (web_search, db_search, file_search)
-│       ├── utils/     # Utility jinxs (set, compile, serve, etc.)
-│       ├── browser/   # Browser automation
-│       └── computer_use/  # Computer use tools
-├── models/            # NQL SQL models for AI-powered data pipelines
-│   ├── base/          # Base statistics models
-│   └── insights/      # Models with nql.* AI functions
-├── assembly_lines/    # Agentic Workflows
-│   └── example.line
-├── example1.npc       # Example NPC
-├── example2.npc       # Example NPC
-└── team.ctx           # Team context file
-
-
-```
+<p align="center">
+    <img src="gh_images/jinx_folder_viewer.png" alt="Jinx folder viewer", width=400>
+    <img src="gh_images/jinx_ui.png" alt="Jinx detail view", width=400>
+</p>
 
 ## Contributing
 Contributions are welcome! Please submit issues and pull requests on the GitHub repository.
-
 
 ## License
 This project is licensed under the MIT License.
