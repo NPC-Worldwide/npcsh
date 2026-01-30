@@ -1,0 +1,578 @@
+jinx_name: papers
+description: Multi-platform research paper browser with tabs for arXiv, Semantic Scholar, OpenReview, and Wikipedia
+interactive: true
+inputs:
+- query: ""
+- limit: 10
+- text: "false"
+
+steps:
+  - name: search_and_browse
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import subprocess
+      import urllib.request
+      import urllib.parse
+      import xml.etree.ElementTree as ET
+      import textwrap
+      import json
+      import time
+
+      def get_terminal_size():
+          try:
+              size = os.get_terminal_size()
+              return size.columns, size.lines
+          except:
+              return 80, 24
+
+      # ── Source fetchers ──────────────────────────────────────────
+
+      def fetch_arxiv(query, limit):
+          papers = []
+          try:
+              search_query = "all:" + query
+              url = "http://export.arxiv.org/api/query?search_query=" + urllib.parse.quote(search_query, safe=':+') + "&start=0&max_results=" + str(limit) + "&sortBy=relevance&sortOrder=descending"
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  data = response.read().decode('utf-8')
+              root = ET.fromstring(data)
+              ns = {'atom': 'http://www.w3.org/2005/Atom'}
+              for entry in root.findall('atom:entry', ns):
+                  title = entry.find('atom:title', ns).text.strip().replace('\n', ' ')
+                  abstract = entry.find('atom:summary', ns).text.strip()
+                  published = entry.find('atom:published', ns).text[:10]
+                  authors = [a.find('atom:name', ns).text for a in entry.findall('atom:author', ns)]
+                  arxiv_id = entry.find('atom:id', ns).text
+                  aid = arxiv_id.split('/')[-1]
+                  pdf_link = arxiv_id.replace('/abs/', '/pdf/') + '.pdf'
+                  primary_cat = entry.find('{http://arxiv.org/schemas/atom}primary_category')
+                  cat = primary_cat.get('term') if primary_cat is not None else ''
+                  papers.append({
+                      'title': title, 'authors': authors, 'abstract': abstract,
+                      'year': published[:4], 'date': published, 'url': arxiv_id,
+                      'pdf': pdf_link, 'aid': aid, 'category': cat,
+                      'citations': None, 'venue': 'arXiv ' + cat,
+                      'source': 'arXiv'
+                  })
+          except Exception as e:
+              papers.append({'title': f'[arXiv error: {e}]', 'authors': [], 'abstract': '', 'year': '', 'date': '', 'url': '', 'pdf': '', 'aid': '', 'category': '', 'citations': None, 'venue': '', 'source': 'arXiv'})
+          return papers
+
+      def fetch_semantic_scholar(query, limit):
+          papers = []
+          api_key = os.environ.get('S2_API_KEY')
+          try:
+              import requests
+              url = "https://api.semanticscholar.org/graph/v1/paper/search"
+              headers = {"x-api-key": api_key} if api_key else {}
+              params = {"query": query, "limit": limit, "fields": "title,abstract,authors,year,citationCount,url,venue,openAccessPdf"}
+              response = requests.get(url, headers=headers, params=params, timeout=30)
+              response.raise_for_status()
+              for p in response.json().get('data', []):
+                  pdf_info = p.get('openAccessPdf') or {}
+                  papers.append({
+                      'title': p.get('title', ''), 'authors': [a.get('name', '') for a in p.get('authors', [])],
+                      'abstract': p.get('abstract') or '', 'year': str(p.get('year') or ''),
+                      'date': str(p.get('year') or ''), 'url': p.get('url', ''),
+                      'pdf': pdf_info.get('url', ''), 'aid': '', 'category': '',
+                      'citations': p.get('citationCount', 0), 'venue': p.get('venue', ''),
+                      'source': 'S2'
+                  })
+          except Exception as e:
+              papers.append({'title': f'[S2 error: {e}]', 'authors': [], 'abstract': '', 'year': '', 'date': '', 'url': '', 'pdf': '', 'aid': '', 'category': '', 'citations': None, 'venue': '', 'source': 'S2'})
+          return papers
+
+      def fetch_openreview(query, limit):
+          papers = []
+          try:
+              import requests
+              url = "https://api2.openreview.net/notes/search"
+              params = {"query": query, "limit": limit, "content": "all"}
+              response = requests.get(url, params=params, timeout=30)
+              response.raise_for_status()
+              for note in response.json().get('notes', []):
+                  content = note.get('content', {})
+                  title_field = content.get('title', {})
+                  title = title_field.get('value', '') if isinstance(title_field, dict) else str(title_field)
+                  abstract_field = content.get('abstract', {})
+                  abstract = abstract_field.get('value', '') if isinstance(abstract_field, dict) else str(abstract_field)
+                  authors_field = content.get('authors', {})
+                  authors = authors_field.get('value', []) if isinstance(authors_field, dict) else (authors_field if isinstance(authors_field, list) else [])
+                  venue_field = content.get('venue', {})
+                  venue = venue_field.get('value', '') if isinstance(venue_field, dict) else str(venue_field) if venue_field else ''
+                  forum = note.get('forum', note.get('id', ''))
+                  cdate = note.get('cdate') or note.get('tcdate') or 0
+                  year = time.strftime('%Y', time.gmtime(cdate / 1000)) if cdate else ''
+                  papers.append({
+                      'title': title, 'authors': authors if isinstance(authors, list) else [],
+                      'abstract': abstract, 'year': year, 'date': year,
+                      'url': f'https://openreview.net/forum?id={forum}',
+                      'pdf': f'https://openreview.net/pdf?id={forum}',
+                      'aid': forum, 'category': '', 'citations': None,
+                      'venue': venue, 'source': 'OpenReview'
+                  })
+          except Exception as e:
+              papers.append({'title': f'[OpenReview error: {e}]', 'authors': [], 'abstract': '', 'year': '', 'date': '', 'url': '', 'pdf': '', 'aid': '', 'category': '', 'citations': None, 'venue': '', 'source': 'OpenReview'})
+          return papers
+
+      def fetch_wikipedia(query, limit):
+          papers = []
+          try:
+              url = "https://en.wikipedia.org/w/api.php"
+              params = {"action": "query", "list": "search", "srsearch": query, "srlimit": limit, "format": "json", "srprop": "snippet|timestamp|wordcount"}
+              req = urllib.request.Request(url + "?" + urllib.parse.urlencode(params), headers={"User-Agent": "npcsh/1.0"})
+              with urllib.request.urlopen(req, timeout=15) as response:
+                  data = json.loads(response.read().decode('utf-8'))
+              for r in data.get('query', {}).get('search', []):
+                  import re
+                  snippet = re.sub(r'<[^>]+>', '', r.get('snippet', ''))
+                  title = r.get('title', '')
+                  pageid = r.get('pageid', '')
+                  papers.append({
+                      'title': title, 'authors': ['Wikipedia'],
+                      'abstract': snippet, 'year': r.get('timestamp', '')[:4],
+                      'date': r.get('timestamp', '')[:10],
+                      'url': f'https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(" ", "_"))}',
+                      'pdf': '', 'aid': str(pageid), 'category': '',
+                      'citations': r.get('wordcount'), 'venue': 'Wikipedia',
+                      'source': 'Wikipedia'
+                  })
+          except Exception as e:
+              papers.append({'title': f'[Wikipedia error: {e}]', 'authors': [], 'abstract': '', 'year': '', 'date': '', 'url': '', 'pdf': '', 'aid': '', 'category': '', 'citations': None, 'venue': '', 'source': 'Wikipedia'})
+          return papers
+
+      # ── PDF terminal rendering (from arxiv) ─────────────────────
+
+      def render_pdf_terminal(pdf_path, width=80):
+          lines = []
+          try:
+              result = subprocess.run(['pdftotext', '-nopgbrk', pdf_path, '-'],
+                                       capture_output=True, text=True, timeout=30)
+              if result.returncode == 0:
+                  for line in result.stdout.split('\n'):
+                      cleaned = line.strip()
+                      if cleaned:
+                          lines.append(cleaned[:width])
+                      elif lines and lines[-1] != '':
+                          lines.append('')
+          except Exception as e:
+              lines.append('[Text extraction failed: ' + str(e) + ']')
+          return lines
+
+      # ── Main ────────────────────────────────────────────────────
+
+      query = context.get('query', '').strip()
+      limit = int(context.get('limit', 10) or 10)
+      text_only = str(context.get('text', 'false')).lower() in ('true', '1', 'yes')
+
+      if text_only and query:
+          all_papers = fetch_arxiv(query, limit) + fetch_semantic_scholar(query, limit)
+          results = []
+          for i, p in enumerate(all_papers, 1):
+              auth = ', '.join(p['authors'][:3])
+              if len(p['authors']) > 3:
+                  auth += ' et al.'
+              results.append(f"{i}. [{p['source']}] {p['title']} ({p['year']})")
+              results.append(f"   Authors: {auth}")
+              if p['abstract']:
+                  results.append(f"   Abstract: {p['abstract'][:200]}...")
+              results.append(f"   URL: {p['url']}")
+              results.append("")
+          context['output'] = f"Found {len(all_papers)} papers:\n\n" + "\n".join(results)
+      else:
+          # ── Interactive TUI ──────────────────────────────────────
+
+          TABS = [
+              {'name': 'arXiv', 'key': '1', 'fetch': fetch_arxiv, 'color': '\033[33m'},
+              {'name': 'S2', 'key': '2', 'fetch': fetch_semantic_scholar, 'color': '\033[34m'},
+              {'name': 'OpenReview', 'key': '3', 'fetch': fetch_openreview, 'color': '\033[35m'},
+              {'name': 'Wikipedia', 'key': '4', 'fetch': fetch_wikipedia, 'color': '\033[32m'},
+          ]
+
+          # Fetch all sources
+          tab_data = {}
+          for tab in TABS:
+              tab_data[tab['name']] = None  # lazy load
+
+          active_tab = 0
+          selected = 0
+          scroll = 0
+          mode = 'search' if not query else 'list'
+          search_buf = query or ''
+          detail_scroll = 0
+          pdf_scroll = 0
+          pdf_lines = []
+          sort_mode = 'relevance'
+
+          width, height = get_terminal_size()
+
+          fd = sys.stdin.fileno()
+          old_settings = termios.tcgetattr(fd)
+
+          state = {'query': query}
+
+          def do_search(q):
+              state['query'] = q
+              for name in tab_data:
+                  tab_data[name] = None
+
+          def get_papers():
+              if not state['query']:
+                  return []
+              name = TABS[active_tab]['name']
+              if tab_data[name] is None:
+                  sys.stdout.write(f'\033[{height // 2};1H\033[K  Loading {name}...')
+                  sys.stdout.flush()
+                  tab_data[name] = TABS[active_tab]['fetch'](state['query'], limit)
+                  sys.stdout.write('\033[2J\033[H')
+              return tab_data[name]
+
+          def sort_papers(papers, key):
+              if key == 'date':
+                  return sorted(papers, key=lambda p: p.get('date') or '', reverse=True)
+              elif key == 'citations':
+                  return sorted(papers, key=lambda p: p.get('citations') or 0, reverse=True)
+              elif key == 'author':
+                  return sorted(papers, key=lambda p: (p['authors'][0] if p['authors'] else '').lower())
+              return papers
+
+          def draw_tabs(width):
+              """Draw tab bar."""
+              parts = []
+              for i, tab in enumerate(TABS):
+                  name = tab['name']
+                  if i == active_tab:
+                      parts.append(f"\033[7;1m {tab['key']}:{name} \033[0m")
+                  else:
+                      parts.append(f"\033[2m {tab['key']}:{name} \033[0m")
+              return ''.join(parts)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              sys.stdout.write('\033[2J\033[H')
+
+              while True:
+                  width, height = get_terminal_size()
+                  list_height = height - 6
+                  papers = get_papers()
+                  if sort_mode != 'relevance':
+                      papers = sort_papers(papers[:], sort_mode)
+
+                  sys.stdout.write('\033[H')
+
+                  # Tab bar
+                  tab_bar = draw_tabs(width)
+                  if mode == 'search':
+                      search_info = ''
+                  elif state['query']:
+                      search_info = f"  \033[2m\"{state['query']}\" ({len(papers)} results) [sort:{sort_mode}]\033[0m"
+                  else:
+                      search_info = ''
+                  sys.stdout.write(tab_bar + search_info + '\033[K\n')
+
+                  tab_color = TABS[active_tab]['color']
+
+                  if mode == 'search':
+                      # Search prompt screen
+                      sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+                      mid = height // 3
+                      for i in range(height - 3):
+                          sys.stdout.write(f'\033[{3+i};1H\033[K')
+                      sys.stdout.write(f'\033[{mid};1H')
+                      sys.stdout.write(f'  \033[1mSearch research papers across platforms\033[0m\n')
+                      sys.stdout.write(f'\033[{mid+1};1H\033[K')
+                      sys.stdout.write(f'  \033[2marXiv  ·  Semantic Scholar  ·  OpenReview  ·  Wikipedia\033[0m\n')
+                      sys.stdout.write(f'\033[{mid+3};1H\033[K')
+                      sys.stdout.write(f'\033[?25h')  # show cursor for typing
+                      sys.stdout.write(f'  \033[1m>\033[0m {search_buf}\033[K')
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[7m Type query and press Enter  ·  q to quit \033[0m')
+
+                  elif mode == 'list':
+                      # Clamp selection
+                      if papers:
+                          selected = max(0, min(selected, len(papers) - 1))
+                      if selected < scroll:
+                          scroll = selected
+                      elif selected >= scroll + list_height:
+                          scroll = selected - list_height + 1
+
+                      # Column header
+                      cite_label = "CITE" if TABS[active_tab]['name'] in ('S2',) else "CAT " if TABS[active_tab]['name'] == 'arXiv' else "    "
+                      col = f" {'YEAR':<5} {cite_label:<6} {'AUTHORS':<24} {'TITLE'}"
+                      sys.stdout.write(f'\033[90m{col[:width]}\033[0m\n')
+                      sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+
+                      for i in range(list_height):
+                          idx = scroll + i
+                          sys.stdout.write(f'\033[{4+i};1H\033[K')
+                          if idx >= len(papers):
+                              continue
+                          p = papers[idx]
+                          year = (p.get('year') or '?')[:5]
+                          if TABS[active_tab]['name'] == 'S2':
+                              cite = str(p.get('citations') or '-')[:6]
+                          elif TABS[active_tab]['name'] == 'arXiv':
+                              cite = (p.get('category') or '')[:6]
+                          else:
+                              cite = ''
+                          cite = cite[:6]
+                          auth_names = [a.split()[-1] if ' ' in a else a for a in p.get('authors', [])[:3]]
+                          auth = ', '.join(auth_names)
+                          if len(p.get('authors', [])) > 3:
+                              auth += '..'
+                          auth = auth[:24]
+                          title = (p.get('title') or '')[:width - 40]
+
+                          line = f" {year:<5} {cite:<6} {auth:<24} {title}"
+                          line = line[:width - 1]
+
+                          if idx == selected:
+                              sys.stdout.write(f'\033[7;1m>{line}\033[0m')
+                          else:
+                              sys.stdout.write(f' {line}')
+
+                      # Footer
+                      sys.stdout.write(f'\033[{height-1};1H\033[K\033[90m{"─" * width}\033[0m')
+                      pos = f'[{selected+1}/{len(papers)}]' if papers else '[0/0]'
+                      footer = f' j/k:Nav  Enter:Detail  o:Open  p:PDF  d:DL  v:View  s:Sort  Tab:Next  1-4:Jump  /:Search  q:Quit {pos} '
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[7m{footer[:width]}\033[0m')
+
+                  elif mode == 'detail':
+                      p = papers[selected] if papers else {}
+                      sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+
+                      lines = []
+                      lines.append(f'\033[1mTitle:\033[0m {p.get("title", "")}')
+                      lines.append('')
+                      auth_str = ', '.join(p.get('authors', []))
+                      lines.append(f'\033[1mAuthors ({len(p.get("authors", []))}):\033[0m {auth_str}')
+                      lines.append(f'\033[1mYear:\033[0m {p.get("year", "?")}  \033[1mVenue:\033[0m {p.get("venue", "")}')
+                      if p.get('category'):
+                          lines.append(f'\033[1mCategory:\033[0m {p["category"]}')
+                      if p.get('citations') is not None:
+                          lines.append(f'\033[1mCitations:\033[0m {p["citations"]}')
+                      lines.append(f'\033[1mURL:\033[0m {p.get("url", "")}')
+                      if p.get('pdf'):
+                          lines.append(f'\033[1mPDF:\033[0m {p["pdf"]}')
+                      lines.append('')
+                      lines.append('\033[1mAbstract:\033[0m')
+                      wrapped = textwrap.wrap(p.get('abstract', ''), width=width - 4)
+                      lines.extend(wrapped)
+
+                      for i in range(list_height + 1):
+                          idx = detail_scroll + i
+                          sys.stdout.write(f'\033[{3+i};1H\033[K')
+                          if idx < len(lines):
+                              sys.stdout.write('  ' + lines[idx][:width - 4])
+
+                      sys.stdout.write(f'\033[{height-1};1H\033[K\033[90m{"─" * width}\033[0m')
+                      footer = ' j/k:Scroll  b:Back  o:Browser  p:PDF  d:Download  v:TermView  q:Quit '
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[7m{footer[:width]}\033[0m')
+
+                  elif mode == 'pdfview':
+                      p = papers[selected] if papers else {}
+                      header = f" PDF: {p.get('title', '')[:width-8]} "
+                      sys.stdout.write(f'\033[7;1m{header[:width].ljust(width)}\033[0m\n')
+                      sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+
+                      view_height = height - 4
+                      for i in range(view_height):
+                          idx = pdf_scroll + i
+                          sys.stdout.write(f'\033[{3+i};1H\033[K')
+                          if idx < len(pdf_lines):
+                              sys.stdout.write('  ' + pdf_lines[idx][:width - 4])
+
+                      sys.stdout.write(f'\033[{height-1};1H\033[K\033[90m{"─" * width}\033[0m')
+                      pct = int((pdf_scroll / max(1, len(pdf_lines) - view_height)) * 100) if len(pdf_lines) > view_height else 100
+                      footer = f' j/k/PgDn/PgUp:Scroll  b:Back  q:Quit  [{pct}%] '
+                      sys.stdout.write(f'\033[{height};1H\033[K\033[7m{footer[:width]}\033[0m')
+
+                  sys.stdout.flush()
+
+                  # ── Input ──────────────────────────────────────
+                  c = sys.stdin.read(1)
+
+                  # Search mode input
+                  if mode == 'search':
+                      if c in ('\r', '\n'):
+                          if search_buf.strip():
+                              do_search(search_buf.strip())
+                              mode = 'list'
+                              selected = 0
+                              scroll = 0
+                              sys.stdout.write('\033[?25l')
+                              sys.stdout.write('\033[2J\033[H')
+                      elif c in ('q', '\x03') and not search_buf:
+                          context['output'] = ''
+                          break
+                      elif c == '\x1b':
+                          context['output'] = ''
+                          break
+                      elif c == '\x7f' or c == '\b':
+                          search_buf = search_buf[:-1]
+                      elif c.isprintable():
+                          search_buf += c
+                      continue
+
+                  if c == '\x1b':
+                      c2 = sys.stdin.read(1)
+                      if c2 == '[':
+                          c3 = sys.stdin.read(1)
+                          if c3 == 'A':  # Up
+                              if mode == 'list' and selected > 0:
+                                  selected -= 1
+                              elif mode in ('detail',) and detail_scroll > 0:
+                                  detail_scroll -= 1
+                              elif mode == 'pdfview' and pdf_scroll > 0:
+                                  pdf_scroll -= 1
+                          elif c3 == 'B':  # Down
+                              if mode == 'list' and papers and selected < len(papers) - 1:
+                                  selected += 1
+                              elif mode == 'detail':
+                                  detail_scroll += 1
+                              elif mode == 'pdfview':
+                                  pdf_scroll += 1
+                          elif c3 == 'Z':  # Shift+Tab - prev tab
+                              active_tab = (active_tab - 1) % len(TABS)
+                              selected = 0
+                              scroll = 0
+                              sort_mode = 'relevance'
+                              mode = 'list'
+                              sys.stdout.write('\033[2J\033[H')
+                          elif c3 == '5':  # Page Up
+                              sys.stdin.read(1)
+                              if mode == 'pdfview':
+                                  pdf_scroll = max(0, pdf_scroll - (height - 6))
+                          elif c3 == '6':  # Page Down
+                              sys.stdin.read(1)
+                              if mode == 'pdfview':
+                                  pdf_scroll += height - 6
+                      else:
+                          # Bare Esc
+                          if mode == 'pdfview':
+                              mode = 'detail'
+                              sys.stdout.write('\033[2J\033[H')
+                          elif mode == 'detail':
+                              mode = 'list'
+                              sys.stdout.write('\033[2J\033[H')
+                          else:
+                              context['output'] = f"Searched: {state['query']}"
+                              break
+                      continue
+
+                  if c == '\t':  # Tab - next tab
+                      active_tab = (active_tab + 1) % len(TABS)
+                      selected = 0
+                      scroll = 0
+                      sort_mode = 'relevance'
+                      mode = 'list'
+                      sys.stdout.write('\033[2J\033[H')
+                  elif c in ('1', '2', '3', '4'):
+                      new_tab = int(c) - 1
+                      if new_tab != active_tab:
+                          active_tab = new_tab
+                          selected = 0
+                          scroll = 0
+                          sort_mode = 'relevance'
+                          mode = 'list'
+                          sys.stdout.write('\033[2J\033[H')
+                  elif c == 'q' or c == '\x03':
+                      context['output'] = f"Searched: {state['query']}"
+                      break
+                  elif c == 'k':
+                      if mode == 'list' and selected > 0:
+                          selected -= 1
+                      elif mode == 'detail' and detail_scroll > 0:
+                          detail_scroll -= 1
+                      elif mode == 'pdfview' and pdf_scroll > 0:
+                          pdf_scroll -= 1
+                  elif c == 'j':
+                      if mode == 'list' and papers and selected < len(papers) - 1:
+                          selected += 1
+                      elif mode == 'detail':
+                          detail_scroll += 1
+                      elif mode == 'pdfview':
+                          pdf_scroll += 1
+                  elif c in ('\r', '\n') and mode == 'list' and papers:
+                      mode = 'detail'
+                      detail_scroll = 0
+                      sys.stdout.write('\033[2J\033[H')
+                  elif c == 'b':
+                      if mode == 'pdfview':
+                          mode = 'detail'
+                          sys.stdout.write('\033[2J\033[H')
+                      elif mode == 'detail':
+                          mode = 'list'
+                          sys.stdout.write('\033[2J\033[H')
+                  elif c == 'o' and papers:
+                      p = papers[selected]
+                      try:
+                          subprocess.Popen(['xdg-open', p['url']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                      except:
+                          pass
+                  elif c == 'p' and papers:
+                      p = papers[selected]
+                      if p.get('pdf'):
+                          try:
+                              subprocess.Popen(['xdg-open', p['pdf']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                          except:
+                              pass
+                  elif c == 'd' and papers:
+                      p = papers[selected]
+                      if p.get('pdf'):
+                          aid = (p.get('aid') or p.get('title', 'paper')[:30]).replace('/', '_').replace(' ', '_')
+                          filename = aid + '.pdf'
+                          filepath = os.path.join(os.getcwd(), filename)
+                          try:
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m Downloading {filename}... \033[0m')
+                              sys.stdout.flush()
+                              urllib.request.urlretrieve(p['pdf'], filepath)
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[42;30m Saved: {filepath} \033[0m')
+                              sys.stdout.flush()
+                              time.sleep(1)
+                          except Exception as e:
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[41;37m Download failed: {str(e)[:50]} \033[0m')
+                              sys.stdout.flush()
+                              time.sleep(2)
+                  elif c == 'v' and papers:
+                      p = papers[selected]
+                      if p.get('pdf'):
+                          import tempfile
+                          try:
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m Fetching PDF... \033[0m')
+                              sys.stdout.flush()
+                              with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+                                  tmp_path = tmp.name
+                                  urllib.request.urlretrieve(p['pdf'], tmp_path)
+                              pdf_lines = render_pdf_terminal(tmp_path, width - 4)
+                              os.unlink(tmp_path)
+                              mode = 'pdfview'
+                              pdf_scroll = 0
+                              sys.stdout.write('\033[2J\033[H')
+                          except Exception as e:
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[41;37m PDF view failed: {str(e)[:50]} \033[0m')
+                              sys.stdout.flush()
+                              time.sleep(2)
+                  elif c == 's' and mode == 'list':
+                      # Cycle sort modes
+                      cycle = ['relevance', 'date', 'citations', 'author']
+                      idx = cycle.index(sort_mode) if sort_mode in cycle else 0
+                      sort_mode = cycle[(idx + 1) % len(cycle)]
+                      selected = 0
+                      scroll = 0
+                      sys.stdout.write('\033[2J\033[H')
+                  elif c == '/' and mode == 'list':
+                      # New search
+                      mode = 'search'
+                      search_buf = ''
+                      sys.stdout.write('\033[2J\033[H')
+
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+              sys.stdout.write('\033[?25h')
+              sys.stdout.write('\033[2J\033[H')
+              sys.stdout.flush()
