@@ -337,22 +337,34 @@ steps:
           chat_h = h - 2 - input_h
 
           all_lines = []
+          _asst_pw = len(npc_name) + 2  # "name: "
+          _cont_pw = _asst_pw  # continuation indent matches
           for role, text in ui.chat_log:
-              text_w = w - 6
               if role == 'user':
-                  wrapped = wrap_text(text, text_w)
+                  tw = w - 6
+                  wrapped = wrap_text(text, tw)
                   for i, l in enumerate(wrapped):
                       prefix = f'{BOLD}you:{RST} ' if i == 0 else '     '
                       all_lines.append(f'{prefix}{l}')
               elif role == 'assistant':
-                  wrapped = wrap_text(text, text_w)
+                  tw = w - _asst_pw - 1
+                  wrapped = wrap_text(text, tw)
+                  pad = ' ' * _asst_pw
                   for i, l in enumerate(wrapped):
-                      prefix = f'{PURPLE}{BOLD}{npc_name}:{RST} ' if i == 0 else '     '
+                      prefix = f'{PURPLE}{BOLD}{npc_name}:{RST} ' if i == 0 else pad
                       all_lines.append(f'{prefix}{l}')
               elif role == 'info':
-                  all_lines.append(f'  {TURQ}ℹ {text}{RST}')
+                  tw = w - 5
+                  wrapped = wrap_text(text, tw)
+                  for i, l in enumerate(wrapped):
+                      prefix = f'  {TURQ}ℹ ' if i == 0 else '    '
+                      all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
               elif role == 'error':
-                  all_lines.append(f'  {RED}✗ {text}{RST}')
+                  tw = w - 5
+                  wrapped = wrap_text(text, tw)
+                  for i, l in enumerate(wrapped):
+                      prefix = f'  {RED}✗ ' if i == 0 else '    '
+                      all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
 
           if ui.recording:
               bar_w = int(ui.rec_elapsed / ui.rec_duration * 20)
@@ -378,7 +390,7 @@ steps:
               li = scroll + i
               buf.append(f'\033[{y};1H\033[K')
               if li < len(all_lines):
-                  buf.append(all_lines[li][:w])
+                  buf.append(all_lines[li])
 
           # Input area
           div_y = 2 + chat_h
