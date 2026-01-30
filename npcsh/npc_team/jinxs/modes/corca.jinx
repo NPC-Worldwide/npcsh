@@ -375,27 +375,45 @@ steps:
 
           # Format chat lines
           all_lines = []
+          _asst_pw = len(_npc_name) + 2  # "name: "
           for role, text in ui.chat_log:
-              text_w = w - 6
               if role == 'user':
-                  wrapped = wrap_text(text, text_w)
+                  tw = w - 6
+                  wrapped = wrap_text(text, tw)
                   for i, l in enumerate(wrapped):
                       prefix = f'{BOLD}you:{RST} ' if i == 0 else '     '
                       all_lines.append(f'{prefix}{l}')
               elif role == 'assistant':
-                  wrapped = wrap_text(text, text_w)
+                  tw = w - _asst_pw - 1
+                  wrapped = wrap_text(text, tw)
+                  pad = ' ' * _asst_pw
                   for i, l in enumerate(wrapped):
-                      prefix = f'{TURQ}{BOLD}{_npc_name}:{RST} ' if i == 0 else '     '
+                      prefix = f'{TURQ}{BOLD}{_npc_name}:{RST} ' if i == 0 else pad
                       all_lines.append(f'{prefix}{l}')
               elif role == 'tool_call':
-                  all_lines.append(f'  {ORANGE}⚡ {text}{RST}')
+                  tw = w - 5
+                  wrapped = wrap_text(text, tw)
+                  for i, l in enumerate(wrapped):
+                      prefix = f'  {ORANGE}⚡ ' if i == 0 else '    '
+                      all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
               elif role == 'tool_result':
-                  truncated = text[:w - 8]
-                  all_lines.append(f'  {DIM}→ {truncated}{RST}')
+                  tw = w - 5
+                  wrapped = wrap_text(text, tw)
+                  for i, l in enumerate(wrapped):
+                      prefix = f'  {DIM}→ ' if i == 0 else '    '
+                      all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
               elif role == 'info':
-                  all_lines.append(f'  {TURQ}ℹ {text}{RST}')
+                  tw = w - 5
+                  wrapped = wrap_text(text, tw)
+                  for i, l in enumerate(wrapped):
+                      prefix = f'  {TURQ}ℹ ' if i == 0 else '    '
+                      all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
               elif role == 'error':
-                  all_lines.append(f'  \033[31m✗ {text}{RST}')
+                  tw = w - 5
+                  wrapped = wrap_text(text, tw)
+                  for i, l in enumerate(wrapped):
+                      prefix = f'  \033[31m✗ ' if i == 0 else '    '
+                      all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
 
           if ui.thinking:
               sp = SPINNERS[ui.spinner_frame % len(SPINNERS)]
@@ -412,7 +430,7 @@ steps:
               li = scroll + i
               buf.append(f'\033[{y};1H\033[K')
               if li < len(all_lines):
-                  buf.append(all_lines[li][:w])
+                  buf.append(all_lines[li])
 
           # Input area
           div_y = 2 + chat_h

@@ -1,0 +1,44 @@
+jinx_name: chat
+description: Simple chat mode - LLM conversation without tool execution
+inputs:
+- query: null
+- model: null
+- provider: null
+- stream: true
+
+steps:
+  - name: chat_response
+    engine: python
+    code: |
+      from npcpy.llm_funcs import get_llm_response
+
+      npc = context.get('npc')
+      messages = context.get('messages', [])
+      query = context.get('query', '')
+      stream = context.get('stream', True)
+
+      model = context.get('model') or (npc.model if npc else None)
+      provider = context.get('provider') or (npc.provider if npc else None)
+
+      if not query:
+          context['output'] = ''
+          context['messages'] = messages
+      else:
+          response = get_llm_response(
+              query,
+              model=model,
+              provider=provider,
+              npc=npc,
+              stream=stream,
+              messages=messages
+          )
+
+          context['output'] = response.get('response', '')
+          context['messages'] = response.get('messages', messages)
+
+          # Track usage
+          if 'usage' in response and npc and hasattr(npc, 'shared_context'):
+              usage = response['usage']
+              npc.shared_context['session_input_tokens'] += usage.get('input_tokens', 0)
+              npc.shared_context['session_output_tokens'] += usage.get('output_tokens', 0)
+              npc.shared_context['turn_count'] += 1
