@@ -1,5 +1,6 @@
 jinx_name: yap
-description: Voice chat mode - speech-to-text input, text-to-speech output
+description: Voice chat TUI - speech-to-text input, text-to-speech output
+interactive: true
 inputs:
   - model: null
   - provider: null
@@ -8,18 +9,14 @@ inputs:
   - files: null
 
 steps:
-  - name: yap_repl
+  - name: yap_tui
     engine: python
     code: |
-      import os
-      import sys
-      import time
-      import tempfile
-      import threading
-      import queue
+      import os, sys, tty, termios, time, tempfile, threading, queue
+      import select as _sel
       from termcolor import colored
 
-      # Audio imports with graceful fallback
+      # Audio imports
       try:
           import torch
           import pyaudio
@@ -32,10 +29,8 @@ steps:
               transcribe_recording, convert_mp3_to_wav
           )
           AUDIO_AVAILABLE = True
-      except ImportError as e:
+      except ImportError:
           AUDIO_AVAILABLE = False
-          print(colored(f"Audio dependencies not available: {e}", "yellow"))
-          print("Install with: pip install npcsh[audio]")
 
       from npcpy.llm_funcs import get_llm_response
       from npcpy.npc_sysenv import get_system_message, render_markdown
@@ -46,10 +41,9 @@ steps:
       team = context.get('team')
       messages = context.get('messages', [])
       files = context.get('files')
-      tts_model = context.get('tts_model', 'kokoro')
-      voice = context.get('voice', 'af_heart')
+      tts_model_name = context.get('tts_model', 'kokoro')
+      voice_name = context.get('voice', 'af_heart')
 
-      # Resolve npc if it's a string (npc name) rather than NPC object
       if isinstance(npc, str) and team:
           npc = team.get(npc) if hasattr(team, 'get') else None
       elif isinstance(npc, str):
@@ -57,53 +51,24 @@ steps:
 
       model = context.get('model') or (npc.model if npc and hasattr(npc, 'model') else None)
       provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') else None)
-
-      print("""
-      ██╗   ██╗ █████╗ ██████╗
-      ╚██╗ ██╔╝██╔══██╗██╔══██╗
-       ╚████╔╝ ███████║██████╔╝
-        ╚██╔╝  ██╔══██║██╔═══╝
-         ██║   ██║  ██║██║
-         ╚═╝   ╚═╝  ╚═╝╚═╝
-
-      Voice Chat Mode
-      """)
-
       npc_name = npc.name if npc else "yap"
-      print(f"Entering yap mode (NPC: {npc_name}). Type '/yq' to exit.")
 
-      if not AUDIO_AVAILABLE:
-          print(colored("Audio not available. Falling back to text mode.", "yellow"))
+      # ================================================================
+      #  Non-interactive fallback
+      # ================================================================
+      if not sys.stdin.isatty():
+          context['output'] = "Yap requires an interactive terminal."
+          context['messages'] = messages
+          exit()
 
-      # Load files for RAG context
-      loaded_chunks = {}
-      if files:
-          if isinstance(files, str):
-              files = [f.strip() for f in files.split(',')]
-          for file_path in files:
-              file_path = os.path.expanduser(file_path)
-              if os.path.exists(file_path):
-                  try:
-                      chunks = load_file_contents(file_path)
-                      loaded_chunks[file_path] = chunks
-                      print(colored(f"Loaded: {file_path}", "green"))
-                  except Exception as e:
-                      print(colored(f"Error loading {file_path}: {e}", "red"))
-
-      # System message for concise voice responses
-      sys_msg = get_system_message(npc) if npc else "You are a helpful assistant."
-      sys_msg += "\n\nProvide brief responses of 1-2 sentences unless asked for more detail. Keep responses clear and conversational for voice."
-
-      if not messages or messages[0].get("role") != "system":
-          messages.insert(0, {"role": "system", "content": sys_msg})
-
-      # Audio state
+      # ================================================================
+      #  Audio models
+      # ================================================================
       vad_model = None
       whisper_model = None
 
       if AUDIO_AVAILABLE:
           try:
-              # Load VAD model for voice activity detection
               vad_model, _ = torch.hub.load(
                   repo_or_dir="snakers4/silero-vad",
                   model="silero_vad",
@@ -112,67 +77,111 @@ steps:
                   verbose=False
               )
               vad_model.to('cpu')
-              print(colored("VAD model loaded.", "green"))
-
-              # Load Whisper for STT
+          except Exception:
+              pass
+          try:
               whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
-              print(colored("Whisper model loaded.", "green"))
-          except Exception as e:
-              print(colored(f"Error loading audio models: {e}", "red"))
+          except Exception:
               AUDIO_AVAILABLE = False
 
-      def speak_text(text, tts_model='kokoro', voice='af_heart'):
-          """Convert text to speech and play it"""
-          if not AUDIO_AVAILABLE:
-              return
-
-          try:
-              # Use gTTS as fallback
-              tts = gTTS(text=text, lang='en')
-              with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as f:
-                  tts.save(f.name)
-                  wav_path = convert_mp3_to_wav(f.name)
-
-              # Play audio
-              import subprocess
-              if sys.platform == 'darwin':
-                  subprocess.run(['afplay', wav_path], check=True)
-              elif sys.platform == 'linux':
-                  subprocess.run(['aplay', wav_path], check=True)
-              else:
-                  # Windows
-                  import winsound
-                  winsound.PlaySound(wav_path, winsound.SND_FILENAME)
-
-              for _p in [f.name, wav_path]:
+      # ================================================================
+      #  File loading for RAG
+      # ================================================================
+      loaded_chunks = {}
+      if files:
+          if isinstance(files, str):
+              files = [f.strip() for f in files.split(',')]
+          for fp in files:
+              fp = os.path.expanduser(fp)
+              if os.path.exists(fp):
                   try:
-                      os.remove(_p)
-                  except:
+                      loaded_chunks[fp] = load_file_contents(fp)
+                  except Exception:
                       pass
-          except Exception as e:
-              print(colored(f"TTS error: {e}", "red"))
 
+      # System message
+      sys_msg = get_system_message(npc) if npc else "You are a helpful assistant."
+      sys_msg += "\n\nProvide brief responses of 1-2 sentences unless asked for more detail. Keep responses clear and conversational for voice."
+      if not messages or messages[0].get("role") != "system":
+          messages.insert(0, {"role": "system", "content": sys_msg})
+
+      # ================================================================
+      #  State
+      # ================================================================
+      class UI:
+          tab = 0           # 0=chat, 1=settings
+          TAB_NAMES = ['Chat', 'Settings']
+
+          # chat
+          chat_log = []     # [(role, text)]
+          chat_scroll = -1
+          input_buf = ""
+          thinking = False
+          spinner_frame = 0
+          recording = False
+          rec_elapsed = 0.0
+          transcribing = False
+          speaking = False
+
+          # settings
+          set_sel = 0
+          tts_enabled = AUDIO_AVAILABLE
+          auto_speak = True
+          rec_duration = 5
+          editing = False
+          edit_buf = ""
+          edit_key = ""
+
+      ui = UI()
+
+      # ================================================================
+      #  Helpers
+      # ================================================================
+      def sz():
+          try:
+              s = os.get_terminal_size()
+              return s.columns, s.lines
+          except:
+              return 80, 24
+
+      TURQ = '\033[38;2;64;224;208m'
+      PURPLE = '\033[38;2;180;130;255m'
+      ORANGE = '\033[38;2;255;165;0m'
+      GREEN = '\033[32m'
+      DIM = '\033[90m'
+      BOLD = '\033[1m'
+      REV = '\033[7m'
+      RST = '\033[0m'
+      RED = '\033[31m'
+      SPINNERS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
+      def wrap_text(text, width):
+          lines = []
+          for line in text.split('\n'):
+              while len(line) > width:
+                  lines.append(line[:width])
+                  line = line[width:]
+              lines.append(line)
+          return lines
+
+      # ================================================================
+      #  Audio functions
+      # ================================================================
       def record_audio(duration=5):
-          """Record audio from microphone"""
           if not AUDIO_AVAILABLE:
               return None
-
           try:
               p = pyaudio.PyAudio()
               stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
-
-              print(colored("Recording...", "cyan"), end='', flush=True)
               frames = []
-              for _ in range(0, int(RATE / CHUNK * duration)):
-                  data = stream.read(CHUNK)
+              total_chunks = int(RATE / CHUNK * duration)
+              for i in range(total_chunks):
+                  data = stream.read(CHUNK, exception_on_overflow=False)
                   frames.append(data)
-              print(colored(" Done.", "cyan"))
-
+                  ui.rec_elapsed = (i + 1) / total_chunks * duration
               stream.stop_stream()
               stream.close()
               p.terminate()
-
-              # Save to temp file
               with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
                   wf = wave.open(f.name, 'wb')
                   wf.setnchannels(CHANNELS)
@@ -182,94 +191,414 @@ steps:
                   wf.close()
                   return f.name
           except Exception as e:
-              print(colored(f"Recording error: {e}", "red"))
+              ui.chat_log.append(('error', f'Recording error: {e}'))
               return None
 
       def transcribe_audio(audio_path):
-          """Transcribe audio to text using Whisper"""
           if not whisper_model or not audio_path:
               return ""
-
           try:
               segments, _ = whisper_model.transcribe(audio_path, beam_size=5)
-              text = " ".join([seg.text for seg in segments])
-              try:
-                  os.remove(audio_path)
-              except:
-                  pass
-              return text.strip()
+              text = " ".join([seg.text for seg in segments]).strip()
+              try: os.remove(audio_path)
+              except: pass
+              return text
           except Exception as e:
-              print(colored(f"Transcription error: {e}", "red"))
+              ui.chat_log.append(('error', f'Transcribe error: {e}'))
               return ""
 
-      # REPL loop
-      while True:
+      def speak_text(text):
+          if not AUDIO_AVAILABLE or not ui.tts_enabled:
+              return
           try:
-              # Voice input or text input
-              if AUDIO_AVAILABLE:
-                  prompt_str = f"{npc_name}:yap> [Press Enter to speak, or type] "
+              ui.speaking = True
+              tts = gTTS(text=text, lang='en')
+              with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as f:
+                  tts.save(f.name)
+                  wav_path = convert_mp3_to_wav(f.name)
+              import subprocess
+              if sys.platform == 'darwin':
+                  subprocess.run(['afplay', wav_path], check=True, timeout=30)
+              elif sys.platform == 'linux':
+                  subprocess.run(['aplay', wav_path], check=True, timeout=30,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+              for _p in [f.name, wav_path]:
+                  try: os.remove(_p)
+                  except: pass
+          except Exception as e:
+              ui.chat_log.append(('error', f'TTS error: {e}'))
+          finally:
+              ui.speaking = False
+
+      # ================================================================
+      #  Chat send
+      # ================================================================
+      def send_message(text):
+          ui.chat_log.append(('user', text))
+          ui.thinking = True
+          ui.chat_scroll = -1
+
+          def worker():
+              try:
+                  current_prompt = text
+                  if loaded_chunks:
+                      ctx_content = ""
+                      for fn, chunks in loaded_chunks.items():
+                          full = "\n".join(chunks)
+                          ret = rag_search(text, full, similarity_threshold=0.3)
+                          if ret:
+                              ctx_content += f"\n{ret}\n"
+                      if ctx_content:
+                          current_prompt += f"\n\nContext:{ctx_content}"
+
+                  resp = get_llm_response(
+                      current_prompt, model=model, provider=provider,
+                      messages=messages, stream=False, npc=npc
+                  )
+                  messages[:] = resp.get('messages', messages)
+                  response_text = str(resp.get('response', ''))
+                  if response_text:
+                      ui.chat_log.append(('assistant', response_text))
+                      if ui.auto_speak and ui.tts_enabled:
+                          speak_text(response_text)
+              except Exception as e:
+                  ui.chat_log.append(('error', str(e)))
+              ui.thinking = False
+
+          threading.Thread(target=worker, daemon=True).start()
+
+      def do_voice_record():
+          ui.recording = True
+          ui.rec_elapsed = 0.0
+          ui.chat_scroll = -1
+
+          def worker():
+              audio_path = record_audio(ui.rec_duration)
+              ui.recording = False
+              if not audio_path:
+                  ui.chat_log.append(('info', 'No audio captured.'))
+                  return
+              ui.transcribing = True
+              text = transcribe_audio(audio_path)
+              ui.transcribing = False
+              if text:
+                  ui.chat_log.append(('info', f'Heard: "{text}"'))
+                  send_message(text)
               else:
-                  prompt_str = f"{npc_name}:yap> "
+                  ui.chat_log.append(('info', 'Could not transcribe audio.'))
 
-              user_input = input(prompt_str).strip()
+          threading.Thread(target=worker, daemon=True).start()
 
-              if user_input.lower() == "/yq":
-                  print("Exiting yap mode.")
-                  break
+      # ================================================================
+      #  Rendering
+      # ================================================================
+      def render():
+          w, h = sz()
+          buf = ['\033[H']
 
-              # Empty input = record audio
-              if not user_input and AUDIO_AVAILABLE:
-                  audio_path = record_audio(5)
-                  if audio_path:
-                      user_input = transcribe_audio(audio_path)
-                      if user_input:
-                          print(colored(f"You said: {user_input}", "cyan"))
-                      else:
-                          print(colored("Could not transcribe audio.", "yellow"))
-                          continue
+          # Tab bar
+          tabs = ''
+          for i, name in enumerate(ui.TAB_NAMES):
+              if i == ui.tab:
+                  tabs += f' {REV}{BOLD} {name} {RST} '
+              else:
+                  tabs += f' {DIM} {name} {RST} '
+
+          mic = ''
+          if ui.recording:
+              mic = f'{RED}● REC {ui.rec_elapsed:.1f}s{RST}'
+          elif ui.transcribing:
+              mic = f'{ORANGE}● transcribing...{RST}'
+          elif ui.speaking:
+              mic = f'{GREEN}● speaking...{RST}'
+          elif ui.thinking:
+              sp = SPINNERS[ui.spinner_frame % len(SPINNERS)]
+              mic = f'{ORANGE}{sp} thinking...{RST}'
+
+          audio_st = f'{"🎤" if AUDIO_AVAILABLE else "🔇"}' if ui.tts_enabled else '🔇'
+          right = f'{npc_name} | {audio_st} | {model or "?"}@{provider or "?"}'
+          pad = w - 12 - len(right) - 20
+          header = f'{PURPLE}YAP{RST} {tabs}{" " * max(0, pad)}{mic}  {DIM}{right}{RST}'
+          buf.append(f'\033[1;1H{REV} {header[:w-2].ljust(w-2)} {RST}')
+
+          if ui.tab == 0:
+              render_chat(buf, w, h)
+          elif ui.tab == 1:
+              render_settings(buf, w, h)
+
+          sys.stdout.write(''.join(buf))
+          sys.stdout.flush()
+
+      def render_chat(buf, w, h):
+          input_h = 3
+          chat_h = h - 2 - input_h
+
+          all_lines = []
+          for role, text in ui.chat_log:
+              text_w = w - 6
+              if role == 'user':
+                  wrapped = wrap_text(text, text_w)
+                  for i, l in enumerate(wrapped):
+                      prefix = f'{BOLD}you:{RST} ' if i == 0 else '     '
+                      all_lines.append(f'{prefix}{l}')
+              elif role == 'assistant':
+                  wrapped = wrap_text(text, text_w)
+                  for i, l in enumerate(wrapped):
+                      prefix = f'{PURPLE}{BOLD}{npc_name}:{RST} ' if i == 0 else '     '
+                      all_lines.append(f'{prefix}{l}')
+              elif role == 'info':
+                  all_lines.append(f'  {TURQ}ℹ {text}{RST}')
+              elif role == 'error':
+                  all_lines.append(f'  {RED}✗ {text}{RST}')
+
+          if ui.recording:
+              bar_w = int(ui.rec_elapsed / ui.rec_duration * 20)
+              bar = '█' * bar_w + '░' * (20 - bar_w)
+              all_lines.append(f'  {RED}🎙 Recording [{bar}] {ui.rec_elapsed:.1f}/{ui.rec_duration}s{RST}')
+          elif ui.transcribing:
+              sp = SPINNERS[ui.spinner_frame % len(SPINNERS)]
+              all_lines.append(f'  {ORANGE}{sp} Transcribing...{RST}')
+          elif ui.thinking:
+              sp = SPINNERS[ui.spinner_frame % len(SPINNERS)]
+              all_lines.append(f'  {ORANGE}{sp} thinking...{RST}')
+          elif ui.speaking:
+              all_lines.append(f'  {GREEN}🔊 Speaking...{RST}')
+
+          # Scrolling
+          if ui.chat_scroll == -1:
+              scroll = max(0, len(all_lines) - chat_h)
+          else:
+              scroll = ui.chat_scroll
+
+          for i in range(chat_h):
+              y = 2 + i
+              li = scroll + i
+              buf.append(f'\033[{y};1H\033[K')
+              if li < len(all_lines):
+                  buf.append(all_lines[li][:w])
+
+          # Input area
+          div_y = 2 + chat_h
+          buf.append(f'\033[{div_y};1H\033[K{DIM}{"─" * w}{RST}')
+          input_y = div_y + 1
+          visible = ui.input_buf[-(w-4):] if len(ui.input_buf) > w - 4 else ui.input_buf
+          buf.append(f'\033[{input_y};1H\033[K {BOLD}>{RST} {visible}\033[?25h')
+
+          # Status bar
+          if AUDIO_AVAILABLE:
+              hints = 'Enter:Send  Ctrl+R:Record  PgUp/PgDn:Scroll  Tab:Settings  Ctrl+Q:Quit'
+          else:
+              hints = 'Enter:Send  PgUp/PgDn:Scroll  Tab:Settings  Ctrl+Q:Quit'
+          buf.append(f'\033[{h};1H\033[K{REV} {hints[:w-2].ljust(w-2)} {RST}')
+
+      def render_settings(buf, w, h):
+          settings = [
+              ('tts_enabled', 'TTS Enabled', 'On' if ui.tts_enabled else 'Off'),
+              ('auto_speak', 'Auto-Speak', 'On' if ui.auto_speak else 'Off'),
+              ('rec_duration', 'Record Duration', f'{ui.rec_duration}s'),
+              ('voice', 'Voice', voice_name),
+              ('tts_model', 'TTS Model', tts_model_name),
+          ]
+
+          buf.append(f'\033[3;3H{BOLD}Voice Settings{RST}')
+          buf.append(f'\033[4;3H{DIM}{"─" * (w - 6)}{RST}')
+
+          y = 6
+          for i, (key, label, val) in enumerate(settings):
+              if ui.editing and ui.edit_key == key:
+                  buf.append(f'\033[{y};3H{ORANGE}{label}:{RST} {REV} {ui.edit_buf}_ {RST}')
+              elif i == ui.set_sel:
+                  buf.append(f'\033[{y};3H{REV} {label}: {val} {RST}')
+              else:
+                  buf.append(f'\033[{y};3H {BOLD}{label}:{RST} {val}')
+              y += 2
+
+          y += 1
+          buf.append(f'\033[{y};3H{DIM}Audio: {"Available" if AUDIO_AVAILABLE else "Not available"}{RST}')
+          y += 1
+          if loaded_chunks:
+              buf.append(f'\033[{y};3H{DIM}Files loaded: {len(loaded_chunks)}{RST}')
+          y += 1
+          buf.append(f'\033[{y};3H{DIM}Whisper: {"Loaded" if whisper_model else "Not loaded"}{RST}')
+
+          for cy in range(y + 1, h - 1):
+              buf.append(f'\033[{cy};1H\033[K')
+
+          if ui.editing:
+              buf.append(f'\033[{h};1H\033[K{REV} Enter:Save  Esc:Cancel {RST}')
+          else:
+              buf.append(f'\033[{h};1H\033[K{REV} j/k:Navigate  Space:Toggle  e:Edit  Tab:Chat  Ctrl+Q:Quit {RST}')
+
+      # ================================================================
+      #  Input handling
+      # ================================================================
+      def handle_key(c, fd):
+          if c == '\t':
+              if not ui.editing:
+                  ui.tab = (ui.tab + 1) % 2
+              return True
+          if c == '\x11':  # Ctrl+Q
+              return False
+          if c == '\x03':  # Ctrl+C
+              return True
+
+          # Escape sequences
+          if c == '\x1b':
+              if _sel.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
+                  if c2 == '[':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'A':  # Up
+                          if ui.tab == 0: _chat_scroll_up()
+                          elif ui.tab == 1 and not ui.editing and ui.set_sel > 0: ui.set_sel -= 1
+                      elif c3 == 'B':  # Down
+                          if ui.tab == 0: _chat_scroll_down()
+                          elif ui.tab == 1 and not ui.editing and ui.set_sel < 4: ui.set_sel += 1
+                      elif c3 == '5':  # PgUp
+                          os.read(fd, 1)
+                          if ui.tab == 0: _chat_page_up()
+                      elif c3 == '6':  # PgDn
+                          os.read(fd, 1)
+                          if ui.tab == 0: _chat_page_down()
+                  elif c2 == 'O':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'P': ui.tab = 0  # F1
+                      elif c3 == 'Q': ui.tab = 1  # F2
                   else:
-                      continue
+                      # bare Esc
+                      if ui.tab == 1 and ui.editing:
+                          ui.editing = False
+                          ui.edit_buf = ""
+              else:
+                  if ui.tab == 1 and ui.editing:
+                      ui.editing = False
+                      ui.edit_buf = ""
+              return True
 
-              if not user_input:
-                  continue
+          if ui.tab == 0:
+              return handle_chat(c, fd)
+          elif ui.tab == 1:
+              return handle_settings(c, fd)
+          return True
 
-              # Add RAG context if files loaded
-              current_prompt = user_input
-              if loaded_chunks:
-                  context_content = ""
-                  for filename, chunks in loaded_chunks.items():
-                      full_text = "\n".join(chunks)
-                      retrieved = rag_search(user_input, full_text, similarity_threshold=0.3)
-                      if retrieved:
-                          context_content += f"\n{retrieved}\n"
-                  if context_content:
-                      current_prompt += f"\n\nContext:{context_content}"
+      def _chat_scroll_up():
+          _, h = sz()
+          chat_h = h - 5
+          if ui.chat_scroll == -1:
+              ui.chat_scroll = max(0, len(ui.chat_log) * 2 - chat_h - 1)
+          ui.chat_scroll = max(0, ui.chat_scroll - 1)
 
-              # Get response
-              resp = get_llm_response(
-                  current_prompt,
-                  model=model,
-                  provider=provider,
-                  messages=messages,
-                  stream=False,  # Don't stream for voice
-                  npc=npc
-              )
+      def _chat_scroll_down():
+          ui.chat_scroll = -1 if ui.chat_scroll == -1 else ui.chat_scroll + 1
 
-              messages = resp.get('messages', messages)
-              response_text = str(resp.get('response', ''))
+      def _chat_page_up():
+          _, h = sz()
+          chat_h = h - 5
+          if ui.chat_scroll == -1:
+              ui.chat_scroll = max(0, len(ui.chat_log) * 2 - chat_h - chat_h)
+          else:
+              ui.chat_scroll = max(0, ui.chat_scroll - chat_h)
 
-              # Display and speak response
-              print(colored(f"{npc_name}: ", "green") + response_text)
+      def _chat_page_down():
+          ui.chat_scroll = -1
 
-              if AUDIO_AVAILABLE:
-                  speak_text(response_text, tts_model, voice)
+      def handle_chat(c, fd):
+          if ui.recording or ui.transcribing:
+              return True  # ignore input while recording
 
-          except KeyboardInterrupt:
-              print("\nUse '/yq' to exit or continue.")
-              continue
-          except EOFError:
-              print("\nExiting yap mode.")
-              break
+          # Ctrl+R = record voice
+          if c == '\x12':  # Ctrl+R
+              if AUDIO_AVAILABLE and not ui.thinking:
+                  do_voice_record()
+              return True
+
+          if ui.thinking:
+              return True
+
+          if c in ('\r', '\n'):
+              text = ui.input_buf.strip()
+              ui.input_buf = ""
+              if text:
+                  send_message(text)
+              return True
+
+          if c == '\x7f' or c == '\x08':
+              ui.input_buf = ui.input_buf[:-1]
+              return True
+
+          if c >= ' ' and c <= '~':
+              ui.input_buf += c
+              ui.chat_scroll = -1
+              return True
+
+          return True
+
+      def handle_settings(c, fd):
+          SETTINGS_KEYS = ['tts_enabled', 'auto_speak', 'rec_duration', 'voice', 'tts_model']
+
+          if ui.editing:
+              if c in ('\r', '\n'):
+                  val = ui.edit_buf.strip()
+                  if ui.edit_key == 'rec_duration':
+                      try: ui.rec_duration = max(1, min(30, int(val)))
+                      except: pass
+                  ui.editing = False
+                  ui.edit_buf = ""
+              elif c == '\x7f' or c == '\x08':
+                  ui.edit_buf = ui.edit_buf[:-1]
+              elif c >= ' ' and c <= '~':
+                  ui.edit_buf += c
+              return True
+
+          if c == 'j' and ui.set_sel < len(SETTINGS_KEYS) - 1:
+              ui.set_sel += 1
+          elif c == 'k' and ui.set_sel > 0:
+              ui.set_sel -= 1
+          elif c == ' ':
+              key = SETTINGS_KEYS[ui.set_sel]
+              if key == 'tts_enabled':
+                  ui.tts_enabled = not ui.tts_enabled
+              elif key == 'auto_speak':
+                  ui.auto_speak = not ui.auto_speak
+          elif c == 'e':
+              key = SETTINGS_KEYS[ui.set_sel]
+              if key == 'rec_duration':
+                  ui.editing = True
+                  ui.edit_key = key
+                  ui.edit_buf = str(ui.rec_duration)
+          return True
+
+      # ================================================================
+      #  Welcome
+      # ================================================================
+      ui.chat_log.append(('info', f'YAP voice chat. NPC: {npc_name}.'))
+      if AUDIO_AVAILABLE:
+          ui.chat_log.append(('info', 'Audio ready. Ctrl+R to record, or type text.'))
+      else:
+          ui.chat_log.append(('info', 'Audio not available. Text mode only.'))
+      if loaded_chunks:
+          ui.chat_log.append(('info', f'{len(loaded_chunks)} files loaded for context.'))
+
+      # ================================================================
+      #  Main loop
+      # ================================================================
+      fd = sys.stdin.fileno()
+      old_settings = termios.tcgetattr(fd)
+      try:
+          tty.setcbreak(fd)
+          sys.stdout.write('\033[?25l\033[2J')
+          running = True
+          while running:
+              render()
+              if ui.thinking or ui.recording or ui.transcribing or ui.speaking:
+                  ui.spinner_frame += 1
+              if _sel.select([fd], [], [], 0.15)[0]:
+                  c = os.read(fd, 1).decode('latin-1')
+                  running = handle_key(c, fd)
+      finally:
+          termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+          sys.stdout.write('\033[?25h\033[2J\033[H')
+          sys.stdout.flush()
 
       context['output'] = "Exited yap mode."
       context['messages'] = messages

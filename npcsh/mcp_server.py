@@ -1,8 +1,16 @@
 
 """
-Enhanced MCP server that incorporates functionality from npcpy.routes, 
+Enhanced MCP server that incorporates functionality from npcpy.routes,
 npcpy.llm_funcs, and npcpy.npc_compiler as tools.
 """
+
+# When run as a subprocess, Python adds the script directory to sys.path[0].
+# Since this file lives inside the npcsh package, that shadows the package
+# (npcsh.py is found instead of the npcsh/ package). Remove it.
+import sys as _sys, os as _os
+_script_dir = _os.path.dirname(_os.path.abspath(__file__))
+if _script_dir in _sys.path:
+    _sys.path.remove(_script_dir)
 
 import os
 import subprocess
