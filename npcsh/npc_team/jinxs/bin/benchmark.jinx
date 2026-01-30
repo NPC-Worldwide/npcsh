@@ -23,7 +23,7 @@ steps:
       if not model:
           model = npc.model if npc and npc.model else ""
       if not provider:
-          provider = npc.provider if npc and npc.provider else "anthropic"
+          provider = npc.provider if npc and npc.provider else ""
 
       try:
           from npcsh.benchmark import BenchmarkRunner, run_benchmark
@@ -56,7 +56,7 @@ steps:
           output += "\n### Usage:\n"
           output += "```\n"
           output += "/benchmark action=quick\n"
-          output += "/benchmark action=run model=gpt-4o provider=openai\n"
+          output += "/benchmark action=run model=<model> provider=<provider>\n"
           output += "/benchmark action=list\n"
           output += "```\n"
 

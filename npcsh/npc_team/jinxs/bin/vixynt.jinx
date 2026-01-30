@@ -157,7 +157,7 @@ steps:
                       out_file = base + ("_" + str(i) if len(images_list) > 1 else "") + ext
                   else:
                       os.makedirs(img_dir, exist_ok=True)
-                      out_file = os.path.join(img_dir, "image_" + datetime.now().strftime('%Y%m%d_%H%M%S') + "_" + str(i) + ".png")
+                      out_file = os.path.join(img_dir, "vixynt_" + datetime.now().strftime('%Y%m%d_%H%M%S') + "_" + str(i) + ".png")
                   image.save(out_file)
                   saved.append(out_file)
                   ui.gallery.insert(0, {"path": out_file, "prompt": ui.prompt, "timestamp": os.path.basename(out_file)})
