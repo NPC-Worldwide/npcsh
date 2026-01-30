@@ -213,16 +213,19 @@ steps:
           try:
               ui.speaking = True
               tts = gTTS(text=text, lang='en')
-              with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as f:
-                  tts.save(f.name)
-                  wav_path = convert_mp3_to_wav(f.name)
+              mp3_f = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
+              mp3_path = mp3_f.name
+              mp3_f.close()
+              tts.save(mp3_path)
+              wav_path = mp3_path.replace('.mp3', '.wav')
+              convert_mp3_to_wav(mp3_path, wav_path)
               import subprocess
               if sys.platform == 'darwin':
                   subprocess.run(['afplay', wav_path], check=True, timeout=30)
               elif sys.platform == 'linux':
                   subprocess.run(['aplay', wav_path], check=True, timeout=30,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-              for _p in [f.name, wav_path]:
+              for _p in [mp3_path, wav_path]:
                   try: os.remove(_p)
                   except: pass
           except Exception as e:
