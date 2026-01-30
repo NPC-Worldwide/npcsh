@@ -119,15 +119,21 @@ steps:
           thinking = False
           spinner_frame = 0
           recording = False
-          rec_elapsed = 0.0
+          rec_seconds = 0.0
           transcribing = False
           speaking = False
+
+          # VAD listening
+          listening = AUDIO_AVAILABLE  # auto-listen by default
+          listen_stop = False          # signal to stop listener thread
 
           # settings
           set_sel = 0
           tts_enabled = AUDIO_AVAILABLE
           auto_speak = True
-          rec_duration = 5
+          vad_threshold = 0.4     # speech probability threshold
+          silence_timeout = 1.5   # seconds of silence before cut
+          min_speech = 0.3        # minimum speech duration to process
           editing = False
           edit_buf = ""
           edit_key = ""
@@ -167,33 +173,6 @@ steps:
       # ================================================================
       #  Audio functions
       # ================================================================
-      def record_audio(duration=5):
-          if not AUDIO_AVAILABLE:
-              return None
-          try:
-              p = pyaudio.PyAudio()
-              stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
-              frames = []
-              total_chunks = int(RATE / CHUNK * duration)
-              for i in range(total_chunks):
-                  data = stream.read(CHUNK, exception_on_overflow=False)
-                  frames.append(data)
-                  ui.rec_elapsed = (i + 1) / total_chunks * duration
-              stream.stop_stream()
-              stream.close()
-              p.terminate()
-              with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-                  wf = wave.open(f.name, 'wb')
-                  wf.setnchannels(CHANNELS)
-                  wf.setsampwidth(p.get_sample_size(FORMAT))
-                  wf.setframerate(RATE)
-                  wf.writeframes(b''.join(frames))
-                  wf.close()
-                  return f.name
-          except Exception as e:
-              ui.chat_log.append(('error', f'Recording error: {e}'))
-              return None
-
       def transcribe_audio(audio_path):
           if not whisper_model or not audio_path:
               return ""
@@ -233,6 +212,127 @@ steps:
           finally:
               ui.speaking = False
 
+      def save_frames_to_wav(frames, sample_width):
+          f = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+          path = f.name
+          f.close()
+          wf = wave.open(path, 'wb')
+          wf.setnchannels(CHANNELS)
+          wf.setsampwidth(sample_width)
+          wf.setframerate(RATE)
+          wf.writeframes(b''.join(frames))
+          wf.close()
+          return path
+
+      # ================================================================
+      #  VAD continuous listener
+      # ================================================================
+      def vad_listener_loop():
+          """Background thread: continuously monitors mic, detects speech via
+          VAD, records until silence, then transcribes and sends."""
+          try:
+              p = pyaudio.PyAudio()
+              sw = p.get_sample_size(FORMAT)
+              stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE,
+                              input=True, frames_per_buffer=CHUNK)
+          except Exception as e:
+              ui.chat_log.append(('error', f'Mic open failed: {e}'))
+              ui.listening = False
+              return
+
+          chunk_dur = CHUNK / RATE  # duration of one chunk in seconds
+
+          while not ui.listen_stop:
+              # Skip if busy
+              if ui.thinking or ui.speaking or ui.transcribing:
+                  time.sleep(0.1)
+                  continue
+              if not ui.listening:
+                  time.sleep(0.1)
+                  continue
+
+              # Read a chunk and run VAD
+              try:
+                  data = stream.read(CHUNK, exception_on_overflow=False)
+              except Exception:
+                  time.sleep(0.05)
+                  continue
+
+              audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+              if len(audio_np) != CHUNK:
+                  continue
+
+              try:
+                  tensor = torch.from_numpy(audio_np)
+                  prob = vad_model(tensor, RATE).item()
+              except Exception:
+                  continue
+
+              if prob < ui.vad_threshold:
+                  continue
+
+              # Speech detected — start collecting frames
+              ui.recording = True
+              ui.rec_seconds = 0.0
+              ui.chat_scroll = -1
+              speech_frames = [data]
+              speech_dur = chunk_dur
+              silence_dur = 0.0
+
+              while not ui.listen_stop:
+                  try:
+                      data = stream.read(CHUNK, exception_on_overflow=False)
+                  except Exception:
+                      break
+
+                  speech_frames.append(data)
+                  speech_dur += chunk_dur
+                  ui.rec_seconds = speech_dur
+
+                  audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+                  try:
+                      tensor = torch.from_numpy(audio_np)
+                      prob = vad_model(tensor, RATE).item()
+                  except Exception:
+                      prob = 0.0
+
+                  if prob < ui.vad_threshold:
+                      silence_dur += chunk_dur
+                  else:
+                      silence_dur = 0.0
+
+                  if silence_dur >= ui.silence_timeout:
+                      break
+
+                  # Safety: max 60 seconds
+                  if speech_dur > 60.0:
+                      break
+
+              ui.recording = False
+
+              # Only process if enough speech
+              if speech_dur - silence_dur < ui.min_speech:
+                  continue
+
+              # Transcribe
+              ui.transcribing = True
+              audio_path = save_frames_to_wav(speech_frames, sw)
+              text = transcribe_audio(audio_path)
+              ui.transcribing = False
+
+              if text and text.strip():
+                  ui.chat_log.append(('info', f'Heard: "{text}"'))
+                  ui.chat_scroll = -1
+                  send_message(text)
+
+          # Cleanup
+          try:
+              stream.stop_stream()
+              stream.close()
+              p.terminate()
+          except Exception:
+              pass
+
       # ================================================================
       #  Chat send
       # ================================================================
@@ -270,28 +370,6 @@ steps:
 
           threading.Thread(target=worker, daemon=True).start()
 
-      def do_voice_record():
-          ui.recording = True
-          ui.rec_elapsed = 0.0
-          ui.chat_scroll = -1
-
-          def worker():
-              audio_path = record_audio(ui.rec_duration)
-              ui.recording = False
-              if not audio_path:
-                  ui.chat_log.append(('info', 'No audio captured.'))
-                  return
-              ui.transcribing = True
-              text = transcribe_audio(audio_path)
-              ui.transcribing = False
-              if text:
-                  ui.chat_log.append(('info', f'Heard: "{text}"'))
-                  send_message(text)
-              else:
-                  ui.chat_log.append(('info', 'Could not transcribe audio.'))
-
-          threading.Thread(target=worker, daemon=True).start()
-
       # ================================================================
       #  Rendering
       # ================================================================
@@ -309,7 +387,7 @@ steps:
 
           mic = ''
           if ui.recording:
-              mic = f'{RED}● REC {ui.rec_elapsed:.1f}s{RST}'
+              mic = f'{RED}● REC {ui.rec_seconds:.1f}s{RST}'
           elif ui.transcribing:
               mic = f'{ORANGE}● transcribing...{RST}'
           elif ui.speaking:
@@ -317,8 +395,10 @@ steps:
           elif ui.thinking:
               sp = SPINNERS[ui.spinner_frame % len(SPINNERS)]
               mic = f'{ORANGE}{sp} thinking...{RST}'
+          elif ui.listening:
+              mic = f'{TURQ}● listening{RST}'
 
-          audio_st = f'{"🎤" if AUDIO_AVAILABLE else "🔇"}' if ui.tts_enabled else '🔇'
+          audio_st = '🎤' if ui.listening else ('🔇' if not AUDIO_AVAILABLE else '⏸')
           right = f'{npc_name} | {audio_st} | {model or "?"}@{provider or "?"}'
           pad = w - 12 - len(right) - 20
           header = f'{PURPLE}YAP{RST} {tabs}{" " * max(0, pad)}{mic}  {DIM}{right}{RST}'
@@ -367,9 +447,8 @@ steps:
                       all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
 
           if ui.recording:
-              bar_w = int(ui.rec_elapsed / ui.rec_duration * 20)
-              bar = '█' * bar_w + '░' * (20 - bar_w)
-              all_lines.append(f'  {RED}🎙 Recording [{bar}] {ui.rec_elapsed:.1f}/{ui.rec_duration}s{RST}')
+              secs = ui.rec_seconds
+              all_lines.append(f'  {RED}🎙 Recording... {secs:.1f}s{RST}')
           elif ui.transcribing:
               sp = SPINNERS[ui.spinner_frame % len(SPINNERS)]
               all_lines.append(f'  {ORANGE}{sp} Transcribing...{RST}')
@@ -401,7 +480,8 @@ steps:
 
           # Status bar
           if AUDIO_AVAILABLE:
-              hints = 'Enter:Send  Ctrl+R:Record  PgUp/PgDn:Scroll  Tab:Settings  Ctrl+Q:Quit'
+              ltog = 'Ctrl+L:Pause' if ui.listening else 'Ctrl+L:Listen'
+              hints = f'Enter:Send  {ltog}  PgUp/PgDn:Scroll  Tab:Settings  Ctrl+Q:Quit'
           else:
               hints = 'Enter:Send  PgUp/PgDn:Scroll  Tab:Settings  Ctrl+Q:Quit'
           buf.append(f'\033[{h};1H\033[K{REV} {hints[:w-2].ljust(w-2)} {RST}')
@@ -410,9 +490,9 @@ steps:
           settings = [
               ('tts_enabled', 'TTS Enabled', 'On' if ui.tts_enabled else 'Off'),
               ('auto_speak', 'Auto-Speak', 'On' if ui.auto_speak else 'Off'),
-              ('rec_duration', 'Record Duration', f'{ui.rec_duration}s'),
-              ('voice', 'Voice', voice_name),
-              ('tts_model', 'TTS Model', tts_model_name),
+              ('listening', 'Auto-Listen', 'On' if ui.listening else 'Off'),
+              ('silence_timeout', 'Silence Timeout', f'{ui.silence_timeout}s'),
+              ('vad_threshold', 'VAD Sensitivity', f'{ui.vad_threshold:.1f}'),
           ]
 
           buf.append(f'\033[3;3H{BOLD}Voice Settings{RST}')
@@ -518,13 +598,15 @@ steps:
           ui.chat_scroll = -1
 
       def handle_chat(c, fd):
-          if ui.recording or ui.transcribing:
-              return True  # ignore input while recording
+          # Ctrl+L = toggle listening
+          if c == '\x0c':  # Ctrl+L
+              if AUDIO_AVAILABLE:
+                  ui.listening = not ui.listening
+                  st = 'on' if ui.listening else 'off'
+                  ui.chat_log.append(('info', f'Listening {st}.'))
+              return True
 
-          # Ctrl+R = record voice
-          if c == '\x12':  # Ctrl+R
-              if AUDIO_AVAILABLE and not ui.thinking:
-                  do_voice_record()
+          if ui.recording or ui.transcribing:
               return True
 
           if ui.thinking:
