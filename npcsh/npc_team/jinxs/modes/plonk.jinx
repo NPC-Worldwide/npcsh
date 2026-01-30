@@ -40,8 +40,8 @@ steps:
       elif isinstance(npc, str):
           npc = None
 
-      vision_model = context.get('vmodel') or (npc.model if npc and hasattr(npc, 'model') else 'gpt-4o')
-      vision_provider = context.get('vprovider') or (npc.provider if npc and hasattr(npc, 'provider') else 'openai')
+      vision_model = context.get('vmodel') or (npc.model if npc and hasattr(npc, 'model') else None)
+      vision_provider = context.get('vprovider') or (npc.provider if npc and hasattr(npc, 'provider') else None)
       max_iterations = int(context.get('max_iterations', 10))
 
       system_name = platform.system()

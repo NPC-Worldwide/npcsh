@@ -1,18 +1,15 @@
 jinx_name: alicanto
-description: Deep research mode - multi-perspective exploration with gold insights and cliff warnings
+description: Deep research mode - multi-agent hypothesis exploration with approval-gated TUI pipeline
+interactive: true
 npc: forenpc
 inputs:
   - query: null
-  - num_npcs: 5
-  - depth: 3
+  - num_npcs: 3
   - model: null
   - provider: null
-  - max_steps: 20
-  - skip_research: true
-  - exploration: 0.3
-  - creativity: 0.5
+  - max_steps: 10
+  - num_cycles: 3
   - format: report
-  - browse: false
 
 steps:
   - name: alicanto_research
@@ -22,347 +19,1615 @@ steps:
       import sys
       import tty
       import termios
-      from termcolor import colored
+      import select as _sel
+      import json
+      import random
+      import threading
+      import time
+      import textwrap
+      import csv
+      import subprocess
+      import hashlib
+      from datetime import datetime
+      from dataclasses import dataclass, asdict, field
+      from typing import List, Dict, Any, Tuple
+      from pathlib import Path
 
       from npcpy.llm_funcs import get_llm_response
-      from npcpy.data.web import search_web
       from npcpy.npc_compiler import NPC
+
+      try:
+          from npcpy.data.web import search_web
+          WEB_AVAILABLE = True
+      except ImportError:
+          WEB_AVAILABLE = False
+
+      try:
+          from npcsh.wander import perform_single_wandering
+          WANDER_AVAILABLE = True
+      except ImportError:
+          WANDER_AVAILABLE = False
 
       npc = context.get('npc')
       team = context.get('team')
       messages = context.get('messages', [])
 
-      # Resolve npc if it's a string (npc name) rather than NPC object
       if isinstance(npc, str) and team:
           npc = team.get(npc) if hasattr(team, 'get') else None
       elif isinstance(npc, str):
-          npc = None  # Can't use string npc without team to resolve it
+          npc = None
 
-      # ========== TUI Helper Functions ==========
-      def get_terminal_size():
+      query = context.get('query')
+      num_npcs = int(context.get('num_npcs', 3))
+      max_steps = int(context.get('max_steps', 10))
+      num_cycles = int(context.get('num_cycles', 3))
+      output_format = context.get('format', 'report')
+
+      model = context.get('model') or (npc.model if npc and hasattr(npc, 'model') else None)
+      provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') else None)
+
+      # ========== Utility ==========
+      def get_size():
           try:
-              size = os.get_terminal_size()
-              return size.columns, size.lines
+              s = os.get_terminal_size()
+              return s.columns, s.lines
           except:
               return 80, 24
 
-      def research_tui_browser(result):
-          """Interactive TUI browser for research results"""
-          perspectives = result.get('perspectives', '').split('\n')
-          insights = result.get('insights', [])
-          gold = result.get('gold', [])
-          cliffs = result.get('cliffs', [])
-          report = result.get('report', '')
+      def wrap_text(text, width):
+          lines = []
+          for line in str(text).split('\n'):
+              if len(line) <= width:
+                  lines.append(line)
+              else:
+                  lines.extend(textwrap.wrap(line, width) or [''])
+          return lines
 
-          # Build tabs
-          tabs = ['Gold', 'Cliffs', 'Insights', 'Report']
-          current_tab = 0
+      def clamp(val, lo, hi):
+          return max(lo, min(val, hi))
 
-          width, height = get_terminal_size()
-          selected = 0
-          scroll = 0
-          list_height = height - 5
+      # ========== Data Classes (matching original) ==========
+      @dataclass
+      class ResearchStep:
+          step: int
+          thought: str
+          action: str
+          outcome: str
 
-          fd = sys.stdin.fileno()
-          old_settings = termios.tcgetattr(fd)
+      @dataclass
+      class SubAgentTrace:
+          hypothesis: str
+          agent_name: str
+          agent_persona: str
+          steps: List[ResearchStep] = field(default_factory=list)
+          final_files: Dict[str, str] = field(default_factory=dict)
+          was_successful: bool = False
+
+      @dataclass
+      class Paper:
+          title: str = ""
+          abstract: str = ""
+          introduction: List[str] = field(default_factory=list)
+          methods: List[str] = field(default_factory=list)
+          results: List[str] = field(default_factory=list)
+          discussion: List[str] = field(default_factory=list)
+
+      # ========== Tool Definitions (matching original) ==========
+      _work_dir = os.path.join(os.getcwd(), 'alicanto_output')
+      os.makedirs(_work_dir, exist_ok=True)
+      _orig_cwd = os.getcwd()
+      os.chdir(_work_dir)
+
+      def create_file(filename: str, content: str) -> str:
+          """Create a new file with the given content."""
+          filepath = os.path.abspath(filename)
+          if os.path.exists(filepath):
+              return f"Error: File '{filename}' already exists. Use append_to_file or replace_in_file to modify."
+          os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else '.', exist_ok=True)
+          with open(filepath, 'w') as f:
+              f.write(content)
+          return f"File '{filename}' created successfully."
+
+      def append_to_file(filename: str, content: str) -> str:
+          """Append content to an existing file."""
+          filepath = os.path.abspath(filename)
+          if not os.path.exists(filepath):
+              return f"Error: File '{filename}' not found. Use create_file first."
+          with open(filepath, 'a') as f:
+              f.write("\n" + content)
+          return f"Content appended to '{filename}'."
+
+      def replace_in_file(filename: str, old_content: str, new_content: str) -> str:
+          """Replace old_content with new_content in a file."""
+          filepath = os.path.abspath(filename)
+          if not os.path.exists(filepath):
+              return f"Error: File '{filename}' not found."
+          with open(filepath, 'r') as f:
+              file_contents = f.read()
+          file_contents = file_contents.replace(old_content, new_content)
+          with open(filepath, 'w') as f:
+              f.write(file_contents)
+          return f"Content in '{filename}' replaced."
+
+      def read_file(filename: str) -> str:
+          """Read and return the contents of a file."""
+          filepath = os.path.abspath(filename)
+          if not os.path.exists(filepath):
+              return f"Error: File '{filename}' not found."
+          with open(filepath, 'r') as f:
+              return f.read()
+
+      def list_files(directory: str = ".") -> str:
+          """List files in the current directory."""
+          try:
+              return "\n".join(os.listdir(directory))
+          except:
+              return "Error listing directory."
+
+      def execute_shell_command(command: str) -> str:
+          """Execute a shell command and return stdout/stderr."""
+          try:
+              result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
+              out = ""
+              if result.stdout:
+                  out += result.stdout
+              if result.stderr:
+                  out += result.stderr
+              return out[:3000] if out.strip() else "(no output)"
+          except subprocess.TimeoutExpired:
+              return "Command timed out (60s limit)"
+          except Exception as e:
+              return f"Error: {e}"
+
+      def _web_search_tool(query: str) -> str:
+          """Search the web for information."""
+          if not WEB_AVAILABLE:
+              return "Web search not available."
+          try:
+              results = search_web(query, num_results=5)
+              if not results:
+                  return "No results found."
+              if isinstance(results, list):
+                  out = []
+                  for r in results[:5]:
+                      if isinstance(r, dict):
+                          out.append(f"- {r.get('title', 'N/A')}: {str(r.get('content', r.get('snippet', '')))[:300]}")
+                      else:
+                          out.append(f"- {str(r)[:300]}")
+                  return "\n".join(out) if out else str(results)[:2000]
+              return str(results)[:2000]
+          except Exception as e:
+              return f"Search error: {e}"
+
+      # ========== File Provenance (matching original) ==========
+      @dataclass
+      class FileProvenance:
+          filename: str
+          step_history: List[Tuple[int, str, str, str]] = field(default_factory=list)
+
+      def get_filesystem_state() -> Dict[str, str]:
+          files = {}
+          for f in os.listdir("."):
+              if os.path.isfile(f):
+                  with open(f, 'rb') as fh:
+                      content = fh.read()
+                      files[f] = hashlib.md5(content).hexdigest()[:8]
+          return files
+
+      def summarize_step(thought, action, outcome, fs_before, fs_after,
+                         file_provenance, step_num, _model, _provider, _npc):
+          """Advisor compresses a major step and suggests next action."""
+          current_files = {}
+          for f in os.listdir("."):
+              if os.path.isfile(f):
+                  with open(f, 'rb') as fh:
+                      content = fh.read()
+                      current_files[f] = {'size': len(content), 'checksum': hashlib.md5(content).hexdigest()[:8]}
+
+          for f in fs_after:
+              if f not in file_provenance:
+                  file_provenance[f] = FileProvenance(filename=f)
+              if f not in fs_before:
+                  change = f"Created with {current_files.get(f, {}).get('size', '?')} bytes"
+                  file_provenance[f].step_history.append((step_num, "CREATED", fs_after[f], change))
+              elif fs_before.get(f) != fs_after[f]:
+                  change = f"Modified to {current_files.get(f, {}).get('size', '?')} bytes"
+                  file_provenance[f].step_history.append((step_num, "MODIFIED", fs_after[f], change))
+
+          provenance_summary = []
+          for filename, prov in file_provenance.items():
+              history = "; ".join([f"Step {s}: {a} ({c}) - {ch}" for s, a, c, ch in prov.step_history])
+              provenance_summary.append(f"{filename}: {history}")
+
+          prompt = f"""AGENT'S REASONING: {str(thought)[:1500]}
+
+      AGENT'S ACTION: {str(action)[:1000]}
+      AGENT'S CLAIMED OUTCOME: {str(outcome)[:1000]}
+
+      COMPLETE FILE PROVENANCE:
+      {chr(10).join(provenance_summary)}
+
+      CURRENT FILESYSTEM:
+      Files: {list(current_files.keys())}
+      Details: {current_files}
+
+      Explain plainly what happened and whether the actions produced any measurable effects.
+      If the agent thinks then it is likely time to direct it to carry out a specific action.
+
+      Return JSON with "summary" and "next_step" keys."""
 
           try:
-              tty.setcbreak(fd)
-              sys.stdout.write('\033[?25l')
-              sys.stdout.write('\033[2J\033[H')
+              response = get_llm_response(prompt, model=_model, provider=_provider, npc=_npc, format='json')
+              summary_data = response.get('response')
+              if isinstance(summary_data, str):
+                  summary_data = json.loads(summary_data)
+              if not isinstance(summary_data, dict):
+                  summary_data = {"summary": str(summary_data), "next_step": "Continue research."}
+          except:
+              summary_data = {"summary": "Step completed.", "next_step": "Continue research."}
+          return summary_data
 
-              while True:
-                  width, height = get_terminal_size()
-                  list_height = height - 5
+      # ========== Persona Generation (matching original) ==========
+      def save_persona_to_csv(persona_data):
+          csv_dir = os.path.expanduser("~/.npcsh/npc_team")
+          os.makedirs(csv_dir, exist_ok=True)
+          csv_path = os.path.join(csv_dir, "alicanto_personas.csv")
+          file_exists = os.path.exists(csv_path)
+          with open(csv_path, 'a', newline='') as csvfile:
+              fieldnames = ['name', 'birth_year', 'location', 'leader', 'interests',
+                           'worldview', 'approach', 'persona_text', 'created_at']
+              writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+              if not file_exists:
+                  writer.writeheader()
+              row = dict(persona_data)
+              if isinstance(row.get('interests'), list):
+                  row['interests'] = json.dumps(row['interests'])
+              row['created_at'] = datetime.now().isoformat()
+              writer.writerow(row)
 
-                  # Get current content
-                  if current_tab == 0:  # Gold
-                      items = gold if gold else ['No gold insights marked']
-                  elif current_tab == 1:  # Cliffs
-                      items = cliffs if cliffs else ['No cliff warnings marked']
-                  elif current_tab == 2:  # Insights
-                      items = [i[:200] for i in insights] if insights else ['No insights yet']
-                  else:  # Report
-                      items = report.split('\n') if report else ['No report generated']
+      def generate_one_persona(birth_year, _model, _provider, _npc):
+          """Generate a single persona for a given birth year (original algorithm)."""
+          teen_year = birth_year + 16
+          json_template = (
+              '{\n'
+              '  "name": "culturally appropriate full name for someone born in ' + str(birth_year) + '",\n'
+              '  "location": "specific city/region where they were born in ' + str(birth_year) + '",\n'
+              '  "leader": "who ruled their region when they were 16 years old in ' + str(teen_year) + '",\n'
+              '  "interests": ["3-5 specific interests/obsessions they had as a teenager in ' + str(teen_year) + '"],\n'
+              '  "worldview": "one sentence describing their fundamental perspective shaped by growing up in that era",\n'
+              '  "approach": "how their historical background influences their way of thinking"\n'
+              '}'
+          )
+          prompt = (
+              f"Generate a unique persona for someone born in {birth_year}. Return JSON:\n"
+              f"{json_template}\n\n"
+              f"Make this person feel real and historically grounded. Consider: technological context, "
+              f"cultural movements, economic conditions, wars, discoveries happening in {teen_year}."
+          )
+          response = get_llm_response(prompt, model=_model, provider=_provider, npc=_npc, format='json')
+          new_persona = response.get('response')
+          if isinstance(new_persona, str):
+              raw = new_persona
+              start = raw.find('{')
+              end = raw.rfind('}') + 1
+              if start >= 0 and end > start:
+                  raw = raw[start:end]
+              new_persona = json.loads(raw)
 
-                  if selected >= len(items):
-                      selected = max(0, len(items) - 1)
+          interests = new_persona.get('interests', [])
+          if isinstance(interests, list):
+              interests_str = ', '.join(interests)
+          else:
+              interests_str = str(interests)
 
-                  if selected < scroll:
-                      scroll = selected
-                  elif selected >= scroll + list_height:
-                      scroll = selected - list_height + 1
+          persona_text = (
+              f"You are {new_persona.get('name')}, born {birth_year} in {new_persona.get('location')}, "
+              f"came of age under {new_persona.get('leader')}. "
+              f"Your interests were: {interests_str}. "
+              f"{new_persona.get('worldview')} {new_persona.get('approach')}"
+          )
 
-                  sys.stdout.write('\033[H')
+          persona_data = {
+              'name': new_persona.get('name', f'Agent'),
+              'birth_year': birth_year,
+              'location': new_persona.get('location', 'Unknown'),
+              'leader': new_persona.get('leader', 'Unknown'),
+              'interests': new_persona.get('interests', []),
+              'worldview': new_persona.get('worldview', ''),
+              'approach': new_persona.get('approach', ''),
+              'persona_text': persona_text,
+          }
+          try:
+              save_persona_to_csv(persona_data)
+          except:
+              pass
+          return persona_data
 
-                  # Tab bar
-                  tab_bar = " "
-                  for i, tab in enumerate(tabs):
-                      if i == current_tab:
-                          tab_bar += f'\033[43;30;1m {tab} \033[0m '
-                      else:
-                          tab_bar += f'\033[90m {tab} \033[0m '
-                  sys.stdout.write(f'{tab_bar.ljust(width)}\n')
-                  sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+      # ========== Sub-Agent Trace (matching original) ==========
+      def run_sub_agent_trace(hypothesis, persona_data, user_query, _model, _provider, _max_steps, ui_state):
+          """Run one sub-agent trace matching original algorithm."""
+          agent_name = persona_data.get('name', 'Agent')
+          agent_persona = persona_data.get('persona_text', '')
 
-                  # Content
-                  for i in range(list_height):
-                      idx = scroll + i
-                      sys.stdout.write(f'\033[{3+i};1H\033[K')
-                      if idx >= len(items):
-                          continue
+          # wander wrapper for when agent is stuck
+          def wander_wrapper(problem_description: str) -> str:
+              """Get creative ideas when stuck using the wander exploration mode."""
+              if not WANDER_AVAILABLE:
+                  return "Wander not available. Try a different approach."
+              try:
+                  _, _, raw_brainstorm, _, _ = perform_single_wandering(
+                      problem=problem_description, npc=agent, model=_model, provider=_provider
+                  )
+                  return str(raw_brainstorm)
+              except Exception as e:
+                  return f"Wander failed: {e}"
 
-                      line = str(items[idx])[:width-2]
-                      if current_tab in [0, 1, 2] and idx == selected:
-                          sys.stdout.write(f'\033[7;1m>{line.ljust(width-2)}\033[0m')
-                      else:
-                          # Color gold/cliff markers
-                          if '[GOLD]' in line:
-                              sys.stdout.write(f'\033[33m {line}\033[0m')
-                          elif '[CLIFF]' in line:
-                              sys.stdout.write(f'\033[31m {line}\033[0m')
-                          else:
-                              sys.stdout.write(f' {line}')
+          tools = [create_file, append_to_file, replace_in_file, read_file,
+                   list_files, execute_shell_command, _web_search_tool, wander_wrapper]
 
-                  # Status bar
-                  sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
-                  counts = f"Gold: {len(gold)} | Cliffs: {len(cliffs)} | Insights: {len(insights)}"
-                  sys.stdout.write(f'\033[{height-1};1H\033[K {counts}'.ljust(width)[:width])
-                  sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m h/l:Tabs j/k:Nav Enter:View q:Quit [{selected+1}/{len(items)}] \033[0m')
+          agent = NPC(
+              name=agent_name.replace(' ', '_').lower(),
+              model=_model,
+              provider=_provider,
+              primary_directive=agent_persona,
+              tools=tools
+          )
 
-                  sys.stdout.flush()
+          trace = SubAgentTrace(hypothesis=hypothesis, agent_name=agent_name, agent_persona=agent_persona)
+          summarized_history = []
+          file_provenance = {}
+          created_files = set()
+          summary = {}
+          major_step = 0
 
-                  c = sys.stdin.read(1)
+          while major_step < _max_steps:
+              # Check for skip/quit
+              if ui_state.get('skip'):
+                  ui_state['skip'] = False
+                  ui_state['log'].append(f"\033[33m  Skipped by user\033[0m")
+                  break
+              while ui_state.get('paused'):
+                  time.sleep(0.2)
+                  if ui_state.get('skip'):
+                      break
 
-                  if c == '\x1b':
-                      c2 = sys.stdin.read(1)
-                      if c2 == '[':
-                          c3 = sys.stdin.read(1)
-                          if c3 == 'A' and selected > 0:
-                              selected -= 1
-                          elif c3 == 'B' and selected < len(items) - 1:
-                              selected += 1
-                          elif c3 == 'C':  # Right
-                              current_tab = (current_tab + 1) % len(tabs)
-                              selected = 0
-                              scroll = 0
-                          elif c3 == 'D':  # Left
-                              current_tab = (current_tab - 1) % len(tabs)
-                              selected = 0
-                              scroll = 0
-                      else:
-                          return
-                      continue
+              fs_before = get_filesystem_state()
 
-                  if c == 'q' or c == '\x03':
-                      return
-                  elif c == 'k' and selected > 0:
-                      selected -= 1
-                  elif c == 'j' and selected < len(items) - 1:
-                      selected += 1
-                  elif c == 'h':
-                      current_tab = (current_tab - 1) % len(tabs)
-                      selected = 0
-                      scroll = 0
-                  elif c == 'l':
-                      current_tab = (current_tab + 1) % len(tabs)
-                      selected = 0
-                      scroll = 0
-                  elif c in ('\r', '\n') and current_tab < 3:
-                      # Show full item
-                      item = items[selected] if selected < len(items) else ''
-                      print(f'\033[2J\033[H{item}\n\nPress any key to continue...')
-                      sys.stdout.flush()
-                      sys.stdin.read(1)
-                      sys.stdout.write('\033[2J\033[H')
+              provenance_summary = []
+              for filename, prov in file_provenance.items():
+                  history = "; ".join([f"Step {s}: {a} ({c}) - {ch}" for s, a, c, ch in prov.step_history])
+                  provenance_summary.append(f"{filename}: {history}")
 
-          finally:
-              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-              sys.stdout.write('\033[?25h')
-              sys.stdout.write('\033[2J\033[H')
-              sys.stdout.flush()
+              history_str = "\n".join(summarized_history)
+              next_step_text = f"This is the next step suggested by your advisor. : BEGIN NEXT_STEP: {summary.get('next_step')} END NEXT STEP" if summary else ""
 
-      query = context.get('query')
-      num_npcs = int(context.get('num_npcs', 5))
-      depth = int(context.get('depth', 3))
-      max_steps = int(context.get('max_steps', 20))
-      skip_research = context.get('skip_research', True)
-      exploration = float(context.get('exploration', 0.3))
-      creativity = float(context.get('creativity', 0.5))
-      output_format = context.get('format', 'report')
+              search_provider = os.environ.get('NPCSH_SEARCH_PROVIDER', 'duckduckgo')
+              initial_prompt = f"""Test the following hypothesis: '{hypothesis}' as related to the user query: '{user_query}'.
+      Only focus on your specific hypothesis, other agents are being tasked with other aspects of the problem.
 
-      # Handle case where npc might be a string (npc name) or NPC object
-      model = context.get('model') or (npc.model if npc and hasattr(npc, 'model') else 'gemini-1.5-pro')
-      provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') else 'gemini')
+      Use bash commands to carry out research through the execute_shell_command.
+      Adjust files with `replace_in_file` and use `read_file` and `list_files` to verify file states and file creation.
+      Create files with create_file()
 
-      if not query:
+      Test with execute_shell_command when needed
+      Get unstuck with wander_wrapper
+
+      When you have a definitive result, say RESEARCH_COMPLETE.
+
+      FILE PROVENANCE HISTORY:
+      {chr(10).join(provenance_summary)}
+
+      CURRENT FILES: {list(fs_before.keys())}
+
+      COMPLETE ACTION HISTORY:
+      BEGIN HISTORY
+      {history_str}
+      END HISTORY
+
+      What specific action will you take next to test your hypothesis?
+      AVAILABLE TOOLS: create_file, append_to_file, replace_in_file, read_file, list_files, execute_shell_command, wander_wrapper, _web_search_tool.
+
+      Do not repeat actions. Use `_web_search_tool` with provider of {search_provider} to look up items if you are struggling.
+
+      {next_step_text}
+
+      Your goal is to research. To set up experiments, create figures, and produce data outputs in csvs for verification and reproducibility."""
+
+              ui_state['log'].append(f"\033[90m  Major step {major_step + 1}\033[0m")
+
+              agent_messages = []
+              all_thoughts = []
+              all_actions = []
+              all_outcomes = []
+
+              for micro_step in range(5):
+                  if ui_state.get('skip'):
+                      break
+
+                  if micro_step == 0:
+                      current_prompt = initial_prompt
+                  else:
+                      current_prompt = "Continue your work. What's your next action?"
+
+                  try:
+                      response = agent.get_llm_response(
+                          current_prompt,
+                          messages=agent_messages,
+                          auto_process_tool_calls=True
+                      )
+                  except Exception as e:
+                      ui_state['log'].append(f"  \033[31mLLM error: {str(e)[:80]}\033[0m")
+                      break
+
+                  agent_messages = response.get('messages', [])
+                  thought = response.get('response')
+                  if thought is None:
+                      thought = ''
+                  else:
+                      all_thoughts.append(thought)
+                      preview = thought.replace('\n', ' ')[:120]
+                      ui_state['log'].append(f"  {preview}")
+
+                  if thought and "RESEARCH_COMPLETE" in thought.upper():
+                      ui_state['log'].append(f"  \033[32mRESEARCH_COMPLETE\033[0m")
+                      break
+
+                  if response.get('tool_results'):
+                      tool_results = response['tool_results']
+                      tool_names = []
+                      outcomes = []
+                      for res in tool_results:
+                          tname = res.get('tool_name', '?')
+                          tool_names.append(tname)
+                          args = res.get('arguments', {})
+                          if tname in ('create_file', 'append_to_file', 'replace_in_file'):
+                              fname = args.get('filename')
+                              if fname:
+                                  created_files.add(fname)
+                                  trace.was_successful = True
+                          outcomes.append(str(res.get('result', ''))[:200])
+
+                      ui_state['log'].append(f"  \033[36mTools: {', '.join(tool_names)}\033[0m")
+                      all_actions.append(", ".join([f"{r.get('tool_name')}({r.get('arguments', {})})" for r in tool_results]))
+                      all_outcomes.extend(outcomes)
+                  elif micro_step > 0 and not response.get('tool_calls'):
+                      break
+
+              fs_after = get_filesystem_state()
+              new_files = set(fs_after.keys()) - set(fs_before.keys())
+              if new_files:
+                  ui_state['log'].append(f"  \033[32mNew files: {list(new_files)}\033[0m")
+
+              combined_thought = " ".join(all_thoughts)
+              combined_action = " | ".join(filter(None, all_actions))
+              combined_outcome = " | ".join(filter(None, all_outcomes))
+
+              ui_state['log'].append(f"  \033[90mCompressing step...\033[0m")
+              summary = summarize_step(
+                  combined_thought, combined_action, combined_outcome,
+                  fs_before, fs_after, file_provenance,
+                  major_step + 1, _model, _provider, agent
+              )
+
+              summary_text = summary.get('summary', 'Step completed.')
+              next_text = summary.get('next_step', '')
+              ui_state['log'].append(f"  \033[32mSummary: {str(summary_text)[:120]}\033[0m")
+              if next_text:
+                  ui_state['log'].append(f"  \033[33mNext: {str(next_text)[:100]}\033[0m")
+
+              summarized_history.append(f"Step {major_step + 1}: {summary_text}")
+              trace.steps.append(ResearchStep(
+                  step=major_step + 1,
+                  thought=combined_thought,
+                  action=combined_action,
+                  outcome=combined_outcome
+              ))
+
+              if combined_thought and "RESEARCH_COMPLETE" in combined_thought.upper():
+                  break
+
+              major_step += 1
+
+          for filename in created_files:
+              if os.path.exists(filename):
+                  try:
+                      trace.final_files[filename] = read_file(filename)
+                  except:
+                      pass
+
+          return trace
+
+      # ========== Paper Writing (matching original) ==========
+      def write_paper(all_traces, user_query, _model, _provider, coordinator, ui_state):
+          """Iterative LaTeX paper building from compressed traces."""
+          ui_state['log'].append(f"\n\033[1;36m--- Writing Paper ---\033[0m")
+
+          # Compress traces for synthesis
+          compressed_summaries = []
+          for trace in all_traces:
+              steps_summary = []
+              for step in trace.steps[-3:]:
+                  thought_short = (step.thought[:100] + "...") if step.thought and len(step.thought) > 100 else (step.thought or "No thought")
+                  action_short = (step.action[:100] + "...") if step.action and len(step.action) > 100 else (step.action or "No action")
+                  steps_summary.append(f"Step {step.step}: {thought_short} | {action_short}")
+              compressed_summaries.append({
+                  "agent": trace.agent_name,
+                  "hypothesis": trace.hypothesis,
+                  "success": trace.was_successful,
+                  "key_steps": steps_summary,
+                  "files_created": list(trace.final_files.keys()),
+              })
+          compressed_research = json.dumps(compressed_summaries, indent=2)
+
+          author_list = [trace.agent_name for trace in all_traces]
+          author_string = ", ".join(author_list)
+
+          pct = chr(37)  # percent sign - avoid bare % in YAML
+          todo = lambda s: f"{pct} TODO: {s}"
+          initial_latex = (
+              "\\documentclass{article}\n"
+              "\\title{" + todo("TITLE") + "}\n"
+              "\\author{" + author_string + "}\n"
+              "\\date{\\today}\n"
+              "\\begin{document}\n"
+              "\\maketitle\n\n"
+              "\\begin{abstract}\n"
+              + todo("ABSTRACT") + "\n"
+              "\\end{abstract}\n\n"
+              "\\section{Introduction}\n"
+              + todo("INTRODUCTION") + "\n\n"
+              "\\section{Methods}\n"
+              + todo("METHODS") + "\n\n"
+              "\\section{Results}\n"
+              + todo("RESULTS") + "\n\n"
+              "\\section{Discussion}\n"
+              + todo("DISCUSSION") + "\n\n"
+              "\\end{document}"
+          )
+
+          create_file("paper.tex", initial_latex)
+          ui_state['log'].append(f"  Created paper.tex scaffold")
+
+          todo_sections = ["TITLE", "ABSTRACT", "INTRODUCTION", "METHODS", "RESULTS", "DISCUSSION"]
+
+          for section_round in range(len(todo_sections)):
+              current_paper = read_file("paper.tex")
+              sections_status = {s: "EMPTY" if (chr(37) + " TODO: " + s) in current_paper else "COMPLETE" for s in todo_sections}
+
+              next_section = None
+              for s in todo_sections:
+                  if sections_status[s] == "EMPTY":
+                      next_section = s
+                      break
+              if not next_section:
+                  ui_state['log'].append(f"  \033[32mAll sections complete\033[0m")
+                  break
+
+              ui_state['log'].append(f"  Writing section: {next_section}")
+
+              coord_messages = []
+              section_prompt = f"""You are writing a research paper about: "{user_query}"
+
+      Research data from sub-agents: {compressed_research[:3000]}
+
+      Current paper content:
+      {current_paper}
+
+      Your task: Complete the {next_section} section by replacing the "{chr(37)} TODO: {next_section}" marker with actual content.
+
+      Use replace_in_file to update the paper. Use _web_search_tool if you need more information.
+
+      Focus ONLY on the {next_section} section. Write 2-4 paragraphs of substantial academic content.
+
+      Available tools: replace_in_file, read_file, _web_search_tool"""
+
+              for micro in range(5):
+                  if micro == 0:
+                      cprompt = section_prompt
+                  else:
+                      cprompt = f"Continue working on the {next_section} section. What's your next action?"
+                  try:
+                      resp = coordinator.get_llm_response(
+                          cprompt, messages=coord_messages, auto_process_tool_calls=True
+                      )
+                      coord_messages = resp.get('messages', [])
+                      if resp.get('tool_results'):
+                          for tr in resp['tool_results']:
+                              ui_state['log'].append(f"    \033[36m{tr.get('tool_name', '?')}\033[0m")
+                  except:
+                      break
+
+          final_paper = read_file("paper.tex")
+          return final_paper
+
+      # ========== Sub-Agent Review Cycle ==========
+      def do_sub_agent_reviews(all_traces, paper_content, user_query, _model, _provider, cycle_num, ui_state):
+          """Each sub-agent reviews the paper and provides suggestions."""
+          ui_state['log'].append(f"\n\033[1;35m--- Cycle {cycle_num}: Sub-Agent Reviews ---\033[0m")
+          suggestions = []
+
+          for i, trace in enumerate(all_traces):
+              if ui_state.get('skip'):
+                  ui_state['skip'] = False
+                  break
+              while ui_state.get('paused'):
+                  time.sleep(0.2)
+                  if ui_state.get('skip'):
+                      break
+
+              agent_name = trace.agent_name
+              ui_state['log'].append(f"\n\033[36m  Reviewer: {agent_name}\033[0m")
+
+              # Build context of what this agent found
+              agent_findings = []
+              for step in trace.steps:
+                  if step.thought:
+                      agent_findings.append(f"Step {step.step}: {step.thought[:300]}")
+              findings_text = "\n".join(agent_findings[-5:])
+              files_text = ", ".join(trace.final_files.keys()) if trace.final_files else "(none)"
+
+              review_prompt = f"""You are {agent_name}, a research sub-agent. You previously investigated the hypothesis:
+      "{trace.hypothesis}"
+
+      Your key findings were:
+      {findings_text}
+
+      Files you created: {files_text}
+
+      Now review the following research paper written about the query: "{user_query}"
+
+      === PAPER ===
+      {paper_content[:4000]}
+      === END PAPER ===
+
+      Based on your expertise and findings, provide a critical review with specific suggestions:
+      1. Are your findings accurately represented?
+      2. What important findings or nuances are missing?
+      3. What claims need stronger evidence or qualification?
+      4. What additional analysis or experiments should be done?
+      5. Specific text improvements (cite sections by name).
+
+      Be concrete and specific. Reference sections (Introduction, Methods, Results, Discussion) directly."""
+
+              try:
+                  resp = get_llm_response(review_prompt, model=_model, provider=_provider, npc=None)
+                  review_text = resp.get('response', '')
+                  if review_text:
+                      suggestions.append({
+                          'agent': agent_name,
+                          'hypothesis': trace.hypothesis,
+                          'review': review_text,
+                      })
+                      preview = review_text.replace('\n', ' ')[:120]
+                      ui_state['log'].append(f"    {preview}")
+                  else:
+                      ui_state['log'].append(f"    \033[90m(empty review)\033[0m")
+              except Exception as e:
+                  ui_state['log'].append(f"    \033[31mReview error: {str(e)[:80]}\033[0m")
+
+          return suggestions
+
+      def revise_paper(paper_content, suggestions, user_query, coordinator, cycle_num, ui_state):
+          """Coordinator revises the paper based on sub-agent suggestions."""
+          ui_state['log'].append(f"\n\033[1;36m--- Cycle {cycle_num}: Revising Paper ---\033[0m")
+
+          # Format all suggestions
+          suggestions_text = ""
+          for s in suggestions:
+              suggestions_text += f"\n--- Review by {s['agent']} (Hypothesis: {s['hypothesis'][:80]}) ---\n"
+              suggestions_text += s['review'][:1500] + "\n"
+
+          # Write current paper to file for coordinator to edit
+          paper_path = os.path.abspath("paper.tex")
+          with open(paper_path, 'w') as f:
+              f.write(paper_content)
+
+          revision_prompt = f"""You are revising a research paper about: "{user_query}"
+
+      This is revision cycle {cycle_num}. Your sub-agents have reviewed the paper and provided suggestions.
+
+      CURRENT PAPER:
+      {paper_content[:4000]}
+
+      SUB-AGENT REVIEWS AND SUGGESTIONS:
+      {suggestions_text[:4000]}
+
+      Your task:
+      1. Read the reviews carefully
+      2. Incorporate valid suggestions using replace_in_file on paper.tex
+      3. Strengthen weak sections
+      4. Add missing findings or nuances
+      5. Improve clarity and academic rigor
+      6. Do NOT remove existing good content - only improve and add
+
+      Use replace_in_file to make targeted improvements to paper.tex.
+      Use read_file to check current state.
+
+      Available tools: replace_in_file, read_file, append_to_file, _web_search_tool"""
+
+          coord_messages = []
+          for micro in range(8):
+              if ui_state.get('skip'):
+                  break
+              if micro == 0:
+                  cprompt = revision_prompt
+              else:
+                  cprompt = "Continue revising the paper. What's your next improvement?"
+              try:
+                  resp = coordinator.get_llm_response(
+                      cprompt, messages=coord_messages, auto_process_tool_calls=True
+                  )
+                  coord_messages = resp.get('messages', [])
+                  response_text = resp.get('response', '')
+                  if resp.get('tool_results'):
+                      for tr in resp['tool_results']:
+                          ui_state['log'].append(f"    \033[36m{tr.get('tool_name', '?')}\033[0m")
+                  elif micro > 0 and not resp.get('tool_calls'):
+                      break
+              except Exception as e:
+                  ui_state['log'].append(f"    \033[31mRevision error: {str(e)[:80]}\033[0m")
+                  break
+
+          revised = read_file("paper.tex")
+          ui_state['log'].append(f"  \033[32mRevision cycle {cycle_num} complete\033[0m")
+          return revised
+
+      # ========== Trace Saving (matching original) ==========
+      def save_traces_csv(all_traces):
+          timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+          trace_dir = os.path.join(_work_dir, "alicanto_traces")
+          os.makedirs(trace_dir, exist_ok=True)
+          filepath = os.path.join(trace_dir, f"trace_{timestamp}.csv")
+          rows = []
+          for trace in all_traces:
+              for step in trace.steps:
+                  rows.append({
+                      "hypothesis": trace.hypothesis,
+                      "agent_name": trace.agent_name,
+                      "agent_persona": trace.agent_persona,
+                      "was_successful": trace.was_successful,
+                      "step": step.step,
+                      "thought": step.thought[:2000],
+                      "action": step.action[:1000],
+                      "outcome": step.outcome[:1000],
+                      "final_files": json.dumps(list(trace.final_files.keys())),
+                  })
+          if rows:
+              with open(filepath, 'w', newline='') as f:
+                  writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+                  writer.writeheader()
+                  writer.writerows(rows)
+          return filepath
+
+      # ========== Global State ==========
+      class AlicantoState:
+          def __init__(self):
+              self.phase = 0          # 0=query, 1=hypotheses, 2=personas, 3=execution, 4=review
+              self.auto_mode = False
+              self.query = query or ""
+              self.hypotheses = []    # list of hypothesis strings
+              self.personas = []      # list of persona dicts
+              self.traces = []        # list of SubAgentTrace
+              self.current_agent = -1
+              # UI state
+              self.sel = 0
+              self.scroll = 0
+              self.mode = 'normal'    # normal, edit
+              self.input_buf = ""
+              self.input_target = ""
+              self.status = ""
+              self.generating = False
+              self.error = ""
+              # Review state
+              self.review_tab = 0     # 0=agents, 1=insights, 2=files, 3=paper
+              self.starred = set()
+              self.paper = ""
+              self.all_insights = []
+              self.all_files = []     # [{name, agent, content}]
+              # Execution display
+              self.exec_log = []
+              self.exec_scroll = 0
+              self.exec_paused = False
+              self.exec_skip = False
+              self.current_cycle = 0
+              self.total_cycles = num_cycles
+              self.end_cycles = False
+              # Shared state for sub-agent communication
+              self.agent_ui = {'log': [], 'skip': False, 'paused': False}
+
+          @property
+          def phase_name(self):
+              return ["Query", "Hypotheses", "Personas", "Execution", "Review"][self.phase]
+
+      ui = AlicantoState()
+
+      # ========== Query Entry ==========
+      if not ui.query:
           if sys.stdin.isatty():
-              print("\033[1;36m ALICANTO - Deep Research Mode \033[0m")
+              print("\033[1;36m ALICANTO - Multi-Agent Research System \033[0m")
               print("\033[90mEnter your research query (or 'q' to quit):\033[0m")
               try:
-                  query = input("\033[33m> \033[0m").strip()
+                  ui.query = input("\033[33m> \033[0m").strip()
               except (EOFError, KeyboardInterrupt):
-                  query = ""
-              if not query or query.lower() == 'q':
+                  ui.query = ""
+              if not ui.query or ui.query.lower() == 'q':
+                  os.chdir(_orig_cwd)
                   context['output'] = "Alicanto cancelled."
                   context['messages'] = messages
                   exit()
           else:
+              os.chdir(_orig_cwd)
               context['output'] = """Usage: /alicanto <research query>
 
       Options:
-        --num-npcs N      Number of research perspectives (default: 5)
-        --depth N         Research depth (default: 3)
-        --max-steps N     Maximum research steps (default: 20)
-        --exploration F   Exploration factor 0-1 (default: 0.3)
-        --creativity F    Creativity factor 0-1 (default: 0.5)
-        --format FORMAT   Output: report|summary|full (default: report)
+        --num-npcs N        Number of sub-agents (default: 3)
+        --max-steps N       Max major steps per agent (default: 10)
+        --num-cycles N      Review/revision cycles (default: 3)
+        --model MODEL       LLM model
+        --provider PROVIDER LLM provider
 
       Example: /alicanto What are the latest advances in quantum computing?"""
               context['messages'] = messages
               exit()
 
-      print(f"""
-       █████╗ ██╗     ██╗ ██████╗ █████╗ ███╗   ██╗████████╗ ██████╗
-      ██╔══██╗██║     ██║██╔════╝██╔══██╗████╗  ██║╚══██╔══╝██╔═══██╗
-      ███████║██║     ██║██║     ███████║██╔██╗ ██║   ██║   ██║   ██║
-      ██╔══██║██║     ██║██║     ██╔══██║██║╚██╗██║   ██║   ██║   ██║
-      ██║  ██║███████╗██║╚██████╗██║  ██║██║ ╚████║   ██║   ╚██████╔╝
-      ╚═╝  ╚═╝╚══════╝╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝
-
-      Deep Research Mode
-      Query: {query}
-      Perspectives: {num_npcs} | Depth: {depth} | Max Steps: {max_steps}
-      """)
-
-      # Generate research perspectives
-      perspectives_prompt = f"""Generate {num_npcs} distinct research perspectives for investigating: "{query}"
-
-      For each perspective, provide:
-      1. Name (a descriptive title)
-      2. Approach (how this perspective would investigate)
-      3. Key questions to explore
-
-      Return as a numbered list."""
-
-      print(colored("Generating research perspectives...", "cyan"))
-      resp = get_llm_response(
-          perspectives_prompt,
-          model=model,
-          provider=provider,
-          npc=npc
-      )
-      perspectives = str(resp.get('response', ''))
-      print(perspectives)
-
-      # Conduct web research if not skipped
-      research_findings = ""
-      if not skip_research:
-          print(colored("\nConducting web research...", "cyan"))
+      # ========== Generation Functions ==========
+      def do_generate_hypotheses():
+          ui.status = "Generating hypotheses..."
+          ui.generating = True
+          ui.error = ""
           try:
-              search_results = search_web(query, n_results=5)
-              if search_results:
-                  research_findings = "\n\nWeb Research Findings:\n"
-                  for i, result in enumerate(search_results[:5], 1):
-                      title = result.get('title', 'No title')
-                      snippet = result.get('snippet', result.get('body', ''))[:200]
-                      research_findings += f"\n{i}. {title}\n   {snippet}...\n"
-                  print(colored(f"Found {len(search_results)} sources", "green"))
+              one_shot = '''
+      "example_input": "Investigate the impact of quantum annealing on protein folding.",
+      "example_output": {
+          "hypotheses": [
+              "Implementing a quantum annealer simulation for a small peptide chain will identify lower energy states faster than a classical simulated annealing approach.",
+              "The choice of qubit connectivity in the quantum annealer topology significantly impacts the final folded state accuracy for proteins with long-range interactions.",
+              "Encoding the protein residue interactions as a QUBO problem is feasible for structures up to 50 amino acids before qubit requirements become prohibitive."
+          ]
+      }'''
+              prompt = f"""Based on the following research topic, generate a list of {num_npcs} distinct, specific, and empirically testable hypotheses.
+
+      TOPIC: "{ui.query}"
+
+      Return a JSON object with a single key "hypotheses" which is a list of strings.
+
+      Here is an example of the expected input and output format:
+      {one_shot}
+
+      Return ONLY the JSON object."""
+
+              resp = get_llm_response(prompt, model=model, provider=provider, npc=npc, format='json')
+              result = resp.get('response')
+              if isinstance(result, str):
+                  raw = result
+                  start = raw.find('{')
+                  end = raw.rfind('}') + 1
+                  if start >= 0 and end > start:
+                      raw = raw[start:end]
+                  result = json.loads(raw)
+              if isinstance(result, dict):
+                  ui.hypotheses = result.get('hypotheses', [])
+              elif isinstance(result, list):
+                  ui.hypotheses = result
+              else:
+                  ui.hypotheses = [str(result)]
+
+              if not ui.hypotheses:
+                  ui.hypotheses = [f"Investigate: {ui.query}"]
           except Exception as e:
-              print(colored(f"Web search error: {e}", "yellow"))
+              ui.error = f"Hypothesis error: {e}"
+              ui.hypotheses = [f"Investigate: {ui.query}"]
+          ui.generating = False
+          ui.status = f"{len(ui.hypotheses)} hypotheses generated"
 
-      # Multi-step exploration from each perspective
-      all_insights = []
-      gold_insights = []  # Key valuable findings
-      cliff_warnings = []  # Potential pitfalls or caveats
+      def do_generate_personas():
+          ui.status = "Generating personas..."
+          ui.generating = True
+          ui.error = ""
+          n = len(ui.hypotheses)
+          ui.personas = []
+          for i in range(n):
+              birth_year = random.randint(-32665, 32665)
+              ui.status = f"Generating persona {i+1}/{n} (born {birth_year})..."
+              try:
+                  persona = generate_one_persona(birth_year, model, provider, npc)
+                  persona['hypothesis_idx'] = i
+                  ui.personas.append(persona)
+              except Exception as e:
+                  ui.personas.append({
+                      'name': f'Agent {i+1}', 'birth_year': birth_year,
+                      'location': 'Unknown', 'leader': 'Unknown',
+                      'interests': [], 'worldview': '', 'approach': '',
+                      'persona_text': f'You are Agent {i+1}, born {birth_year}.',
+                      'hypothesis_idx': i,
+                  })
+                  ui.error = f"Persona {i+1} error: {e}"
+          ui.generating = False
+          ui.status = f"{len(ui.personas)} personas generated"
 
-      for step in range(min(depth, max_steps)):
-          print(colored(f"\n--- Research Depth {step + 1}/{depth} ---", "cyan"))
+      def do_run_all_agents():
+          """Run all sub-agents serially, write paper, then iterate review cycles."""
+          ui.generating = True
+          ui.error = ""
+          ui.traces = []
+          ui.agent_ui = {'log': ui.exec_log, 'skip': False, 'paused': False}
 
-          explore_prompt = f"""Research query: "{query}"
+          # Create coordinator NPC for paper writing
+          def wander_wrapper_coord(problem_description: str) -> str:
+              """Get creative ideas when stuck."""
+              if not WANDER_AVAILABLE:
+                  return "Wander not available."
+              try:
+                  _, _, raw, _, _ = perform_single_wandering(
+                      problem=problem_description, npc=coordinator, model=model, provider=provider
+                  )
+                  return str(raw)
+              except Exception as e:
+                  return f"Wander failed: {e}"
 
-      Perspectives generated:
-      {perspectives}
+          coord_tools = [create_file, append_to_file, replace_in_file, read_file,
+                         list_files, execute_shell_command, _web_search_tool, wander_wrapper_coord]
 
-      {research_findings}
-
-      Previous insights: {all_insights[-3:] if all_insights else 'None yet'}
-
-      For depth level {step + 1}:
-      1. Explore deeper implications from each perspective
-      2. Identify GOLD insights (valuable, non-obvious findings) - mark with [GOLD]
-      3. Identify CLIFF warnings (pitfalls, caveats, risks) - mark with [CLIFF]
-      4. Connect insights across perspectives
-
-      Exploration factor: {exploration} (higher = more diverse exploration)
-      Creativity factor: {creativity} (higher = more novel connections)"""
-
-          resp = get_llm_response(
-              explore_prompt,
-              model=model,
-              provider=provider,
-              temperature=creativity,
-              npc=npc
+          coordinator = NPC(
+              name="Alicanto",
+              model=model, provider=provider,
+              primary_directive="You are Alicanto the mythical bird. You research topics iteratively by writing to LaTeX files and searching for more information.",
+              tools=coord_tools
           )
 
-          step_insights = str(resp.get('response', ''))
-          print(step_insights)
+          # ===== Cycle 1: Sub-agent experimentation =====
+          ui.current_cycle = 1
+          ui.exec_log.append(f"\n\033[1;33m{'='*50}\033[0m")
+          ui.exec_log.append(f"\033[1;33m  CYCLE 1/{num_cycles}: Sub-Agent Experimentation\033[0m")
+          ui.exec_log.append(f"\033[1;33m{'='*50}\033[0m")
 
-          # Extract gold and cliff markers
-          if '[GOLD]' in step_insights:
-              gold_insights.extend([line.strip() for line in step_insights.split('\n') if '[GOLD]' in line])
-          if '[CLIFF]' in step_insights:
-              cliff_warnings.extend([line.strip() for line in step_insights.split('\n') if '[CLIFF]' in line])
+          for i in range(len(ui.hypotheses)):
+              hyp = ui.hypotheses[i]
+              persona = ui.personas[i % len(ui.personas)]
+              ui.current_agent = i
+              ui.exec_log.append(f"\n\033[1;36m--- Agent {i+1}/{len(ui.hypotheses)}: {persona['name']} ---\033[0m")
+              ui.exec_log.append(f"  \033[90mHypothesis: {hyp[:100]}\033[0m")
+              ui.exec_log.append(f"  \033[90mBorn {persona['birth_year']} in {persona.get('location', '?')}\033[0m")
 
-          all_insights.append(step_insights)
+              ui.agent_ui['skip'] = ui.exec_skip
+              ui.agent_ui['paused'] = ui.exec_paused
 
-      # Generate final synthesis
-      print(colored("\n--- Synthesizing Research ---", "cyan"))
+              trace = run_sub_agent_trace(hyp, persona, ui.query, model, provider, max_steps, ui.agent_ui)
+              ui.traces.append(trace)
+              ui.exec_log.append(f"  \033[1;32mCompleted: {'SUCCESS' if trace.was_successful else 'no files'}, {len(trace.steps)} steps\033[0m")
 
-      synthesis_prompt = f"""Synthesize research on: "{query}"
+          # Save traces
+          try:
+              trace_path = save_traces_csv(ui.traces)
+              ui.exec_log.append(f"\n\033[90mTraces saved: {trace_path}\033[0m")
+          except Exception as e:
+              ui.exec_log.append(f"\n\033[31mTrace save error: {e}\033[0m")
 
-      All insights gathered:
-      {chr(10).join(all_insights)}
+          # ===== Cycle 1: Coordinator writes initial paper =====
+          ui.exec_log.append(f"\n\033[1;36m--- Coordinator: Writing Initial Paper ---\033[0m")
+          try:
+              ui.paper = write_paper(ui.traces, ui.query, model, provider, coordinator, ui.agent_ui)
+          except Exception as e:
+              ui.paper = f"Paper writing error: {e}"
+              ui.exec_log.append(f"  \033[31m{e}\033[0m")
 
-      Gold insights identified:
-      {chr(10).join(gold_insights) if gold_insights else 'None explicitly marked'}
+          # ===== Cycles 2..N: Review and revise =====
+          for cycle in range(2, num_cycles + 1):
+              if ui.end_cycles:
+                  ui.exec_log.append(f"\n\033[33mCycles ended early by user at cycle {cycle-1}\033[0m")
+                  break
 
-      Cliff warnings identified:
-      {chr(10).join(cliff_warnings) if cliff_warnings else 'None explicitly marked'}
+              ui.current_cycle = cycle
+              ui.exec_log.append(f"\n\033[1;33m{'='*50}\033[0m")
+              ui.exec_log.append(f"\033[1;33m  CYCLE {cycle}/{num_cycles}: Review & Revise\033[0m")
+              ui.exec_log.append(f"\033[1;33m{'='*50}\033[0m")
 
-      Generate a {output_format} that:
-      1. Summarizes key findings
-      2. Highlights the most valuable insights (gold)
-      3. Notes important caveats and risks (cliffs)
-      4. Provides actionable conclusions"""
+              # Sub-agents review the paper
+              suggestions = do_sub_agent_reviews(
+                  ui.traces, ui.paper, ui.query, model, provider, cycle, ui.agent_ui
+              )
 
-      resp = get_llm_response(
-          synthesis_prompt,
-          model=model,
-          provider=provider,
-          npc=npc
-      )
+              if not suggestions:
+                  ui.exec_log.append(f"\n\033[90mNo suggestions received, skipping revision\033[0m")
+                  continue
 
-      final_report = str(resp.get('response', ''))
-      print("\n" + "="*60)
-      print(colored("ALICANTO RESEARCH REPORT", "green", attrs=['bold']))
-      print("="*60)
-      print(final_report)
+              if ui.end_cycles:
+                  break
 
-      alicanto_result = {
-          'query': query,
-          'perspectives': perspectives,
-          'insights': all_insights,
-          'gold': gold_insights,
-          'cliffs': cliff_warnings,
-          'report': final_report
-      }
+              # Coordinator revises based on suggestions
+              ui.paper = revise_paper(
+                  ui.paper, suggestions, ui.query, coordinator, cycle, ui.agent_ui
+              )
 
-      context['output'] = final_report
+          ui.exec_log.append(f"\n\033[1;32m{'='*50}\033[0m")
+          ui.exec_log.append(f"\033[1;32m  All {ui.current_cycle} cycle(s) complete\033[0m")
+          ui.exec_log.append(f"\033[1;32m{'='*50}\033[0m")
+
+          # Collect insights and files
+          ui.all_insights = []
+          ui.all_files = []
+          for trace in ui.traces:
+              for step in trace.steps:
+                  if step.thought:
+                      ui.all_insights.append(f"[{trace.agent_name}] Step {step.step}: {step.thought[:300]}")
+              for fname, content in trace.final_files.items():
+                  ui.all_files.append({"name": fname, "agent": trace.agent_name, "content": content[:1000]})
+
+          ui.generating = False
+          ui.phase = 4
+          ui.sel = 0
+          ui.scroll = 0
+          ui.status = f"Research complete ({ui.current_cycle} cycles). Review results."
+
+      # ========== TUI Rendering ==========
+      def render_screen():
+          width, height = get_size()
+          out = []
+          out.append("\033[2J\033[H")
+
+          auto_badge = " \033[32m[AUTO]\033[0m" if ui.auto_mode else ""
+          phase_display = f" ALICANTO - Phase {ui.phase+1}: {ui.phase_name} "
+          out.append(f"\033[1;1H\033[7;1m{phase_display.ljust(width)}\033[0m")
+          out.append(f"\033[1;{width-20}H{auto_badge}")
+
+          if ui.phase == 0:
+              render_phase_query(out, width, height)
+          elif ui.phase == 1:
+              render_phase_hypotheses(out, width, height)
+          elif ui.phase == 2:
+              render_phase_personas(out, width, height)
+          elif ui.phase == 3:
+              render_phase_execution(out, width, height)
+          elif ui.phase == 4:
+              render_phase_review(out, width, height)
+
+          status_color = "\033[33m" if ui.generating else "\033[90m"
+          err_text = f"  \033[31m{ui.error}\033[0m" if ui.error else ""
+          out.append(f"\033[{height-1};1H\033[K{status_color}{ui.status}\033[0m{err_text}")
+
+          sys.stdout.write(''.join(out))
+          sys.stdout.flush()
+
+      def render_phase_query(out, width, height):
+          banner = [
+              "\033[36m █████╗ ██╗     ██╗ ██████╗ █████╗ ███╗   ██╗████████╗ ██████╗\033[0m",
+              "\033[36m██╔══██╗██║     ██║██╔════╝██╔══██╗████╗  ██║╚══██╔══╝██╔═══██╗\033[0m",
+              "\033[36m███████║██║     ██║██║     ███████║██╔██╗ ██║   ██║   ██║   ██║\033[0m",
+              "\033[36m██╔══██║██║     ██║██║     ██╔══██║██║╚██╗██║   ██║   ██║   ██║\033[0m",
+              "\033[36m██║  ██║███████╗██║╚██████╗██║  ██║██║ ╚████║   ██║   ╚██████╔╝\033[0m",
+              "\033[36m╚═╝  ╚═╝╚══════╝╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝\033[0m",
+          ]
+          for i, line in enumerate(banner):
+              out.append(f"\033[{3+i};3H{line}")
+
+          y = 3 + len(banner) + 2
+          out.append(f"\033[{y};3H\033[1mQuery:\033[0m {ui.query}")
+          out.append(f"\033[{y+1};3H\033[90mAgents: {num_npcs} | Max steps: {max_steps} | Cycles: {num_cycles} | Model: {model or 'default'} | Provider: {provider or 'default'}\033[0m")
+          out.append(f"\033[{height};1H\033[K\033[7m Enter:Continue  A:Auto-mode  q:Quit \033[0m".ljust(width))
+
+      def render_phase_hypotheses(out, width, height):
+          list_h = height - 6
+          n = len(ui.hypotheses)
+
+          if ui.mode == 'edit':
+              out.append(f"\033[3;1H\033[33mEditing hypothesis:\033[0m")
+              out.append(f"\033[4;1H\033[7m {ui.input_buf} \033[0m")
+              out.append(f"\033[{height};1H\033[K\033[7m Enter:Save  Esc:Cancel \033[0m".ljust(width))
+              return
+
+          out.append(f"\033[3;1H\033[1m Hypotheses ({n}) \033[90m{'─' * (width - 20)}\033[0m")
+
+          if ui.sel < ui.scroll:
+              ui.scroll = ui.sel
+          elif ui.sel >= ui.scroll + (list_h // 2):
+              ui.scroll = ui.sel - (list_h // 2) + 1
+
+          y = 4
+          for i in range(len(ui.hypotheses)):
+              if i < ui.scroll:
+                  continue
+              if y >= height - 3:
+                  break
+              h = ui.hypotheses[i]
+              selected = (i == ui.sel)
+              prefix = "\033[7m>" if selected else " "
+              out.append(f"\033[{y};1H\033[K{prefix} \033[1mH{i+1}\033[0m: {str(h)[:width-10]}")
+              if selected:
+                  out.append("\033[0m")
+              y += 1
+              if selected:
+                  for dl in wrap_text(h, width - 6)[1:4]:
+                      if y >= height - 3:
+                          break
+                      out.append(f"\033[{y};5H\033[K\033[90m{dl}\033[0m")
+                      y += 1
+              y += 1
+
+          while y < height - 2:
+              out.append(f"\033[{y};1H\033[K")
+              y += 1
+
+          gen = " (generating...)" if ui.generating else ""
+          out.append(f"\033[{height};1H\033[K\033[7m j/k:Nav  e:Edit  d:Delete  +:Add  r:Regen  Enter:Approve  A:Auto  q:Quit{gen} \033[0m".ljust(width))
+
+      def render_phase_personas(out, width, height):
+          list_h = height - 6
+          n = len(ui.personas)
+
+          if ui.mode == 'edit':
+              out.append(f"\033[3;1H\033[33mEditing {ui.input_target}:\033[0m")
+              out.append(f"\033[4;1H\033[7m {ui.input_buf} \033[0m")
+              out.append(f"\033[{height};1H\033[K\033[7m Enter:Save  Esc:Cancel \033[0m".ljust(width))
+              return
+
+          out.append(f"\033[3;1H\033[1m Personas ({n}) \033[90m{'─' * (width - 20)}\033[0m")
+
+          if ui.sel < ui.scroll:
+              ui.scroll = ui.sel
+          elif ui.sel >= ui.scroll + (list_h // 5):
+              ui.scroll = ui.sel - (list_h // 5) + 1
+
+          y = 4
+          for i in range(len(ui.personas)):
+              if i < ui.scroll:
+                  continue
+              if y >= height - 3:
+                  break
+              p = ui.personas[i]
+              selected = (i == ui.sel)
+              prefix = "\033[7m>" if selected else " "
+              hyp_idx = p.get('hypothesis_idx', 0)
+              hyp_text = ui.hypotheses[hyp_idx][:60] if hyp_idx < len(ui.hypotheses) else "?"
+
+              out.append(f"\033[{y};1H\033[K{prefix} \033[1m{p['name']}\033[0m  \033[90m(b.{p['birth_year']}, {p.get('location', '?')})\033[0m")
+              y += 1
+              if selected and y < height - 3:
+                  out.append(f"\033[{y};5H\033[K\033[90mLeader: {p.get('leader', '?')}\033[0m")
+                  y += 1
+                  interests = p.get('interests', [])
+                  if isinstance(interests, list):
+                      interests = ', '.join(interests)
+                  if y < height - 3:
+                      out.append(f"\033[{y};5H\033[K\033[90mInterests: {str(interests)[:width-20]}\033[0m")
+                      y += 1
+                  if y < height - 3:
+                      out.append(f"\033[{y};5H\033[K\033[90mWorldview: {p.get('worldview', '')[:width-20]}\033[0m")
+                      y += 1
+                  if y < height - 3:
+                      out.append(f"\033[{y};5H\033[K\033[36mHypothesis: {hyp_text}\033[0m")
+                      y += 1
+              y += 1
+
+          while y < height - 2:
+              out.append(f"\033[{y};1H\033[K")
+              y += 1
+
+          gen = " (generating...)" if ui.generating else ""
+          out.append(f"\033[{height};1H\033[K\033[7m j/k:Nav  e:Edit  r:Regen  s:Swap hyp  Enter:Launch  A:Auto  q:Quit{gen} \033[0m".ljust(width))
+
+      def render_phase_execution(out, width, height):
+          left_w = max(30, width // 3)
+          right_w = width - left_w - 1
+          panel_h = height - 4
+
+          out.append(f"\033[3;1H\033[36;1m Agent Info \033[90m{'─' * (left_w - 13)}\033[0m")
+
+          if 0 <= ui.current_agent < len(ui.personas):
+              p = ui.personas[ui.current_agent]
+              hi = p.get('hypothesis_idx', 0)
+              hyp = ui.hypotheses[hi] if hi < len(ui.hypotheses) else "?"
+              y = 4
+              out.append(f"\033[{y};2H\033[1m{p['name']}\033[0m"); y += 1
+              out.append(f"\033[{y};2H\033[90mb.{p['birth_year']}, {p.get('location', '?')[:left_w-10]}\033[0m"); y += 1
+              out.append(f"\033[{y};2H\033[90mLeader: {p.get('leader', '?')[:left_w-12]}\033[0m"); y += 1
+              interests = p.get('interests', [])
+              if isinstance(interests, list):
+                  interests = ', '.join(interests)
+              out.append(f"\033[{y};2H\033[90m{str(interests)[:left_w-4]}\033[0m"); y += 1
+              y += 1
+              out.append(f"\033[{y};2H\033[36mHypothesis:\033[0m"); y += 1
+              for hl in wrap_text(str(hyp), left_w - 4)[:3]:
+                  out.append(f"\033[{y};3H{hl[:left_w-4]}"); y += 1
+              y += 1
+              done = sum(1 for t in ui.traces if t)
+              out.append(f"\033[{y};2H\033[90mAgent {ui.current_agent+1}/{len(ui.hypotheses)}\033[0m"); y += 1
+              out.append(f"\033[{y};2H\033[90mDone: {done}\033[0m")
+          else:
+              out.append(f"\033[4;2H\033[90mWaiting...\033[0m")
+
+          out.append(f"\033[3;{left_w+1}H\033[33;1m Live Output \033[90m{'─' * (right_w - 14)}\033[0m")
+
+          log_h = panel_h - 1
+          total = len(ui.exec_log)
+          visible_start = max(0, total - log_h - ui.exec_scroll)
+
+          for i in range(log_h):
+              idx = visible_start + i
+              row = 4 + i
+              out.append(f"\033[{row};{left_w+1}H\033[K")
+              if 0 <= idx < total:
+                  out.append(f"\033[{row};{left_w+2}H{ui.exec_log[idx][:right_w-2]}")
+
+          pause_text = " \033[31m[PAUSED]\033[0m" if ui.exec_paused else ""
+          done_count = len(ui.traces)
+          cycle_text = f"[Cycle {ui.current_cycle}/{ui.total_cycles}] " if ui.current_cycle > 0 else ""
+          progress = f"{cycle_text}[Agent {ui.current_agent+1}/{len(ui.hypotheses)}] [Done: {done_count}]"
+          out.append(f"\033[{height-1};1H\033[K\033[90m{progress}\033[0m")
+          out.append(f"\033[{height};1H\033[K\033[7m s:Skip  p:Pause  x:End cycles  j/k:Scroll  q:Quit{pause_text} \033[0m".ljust(width))
+
+      def render_phase_review(out, width, height):
+          tabs = ['Agents', 'Insights', 'Files', 'Paper']
+          tab_bar = " "
+          for i, tab in enumerate(tabs):
+              if i == ui.review_tab:
+                  tab_bar += f'\033[43;30;1m {tab} \033[0m '
+              else:
+                  tab_bar += f'\033[90m {tab} \033[0m '
+          out.append(f"\033[3;1H{tab_bar}")
+          out.append(f"\033[4;1H\033[90m{'─' * width}\033[0m")
+
+          content_h = height - 7
+          content_lines = []
+
+          if ui.review_tab == 0:
+              for i, trace in enumerate(ui.traces):
+                  sel = (i == ui.sel)
+                  prefix = "\033[7m>" if sel else " "
+                  status = "\033[32mSUCCESS\033[0m" if trace.was_successful else "\033[90mno files\033[0m"
+                  content_lines.append(f"{prefix} \033[1m{trace.agent_name}\033[0m  [{status}]  Steps: {len(trace.steps)}  Files: {len(trace.final_files)}")
+                  if sel:
+                      content_lines.append(f"    \033[36mHypothesis: {trace.hypothesis[:width-20]}\033[0m")
+                      content_lines.append(f"    \033[90mPersona: {trace.agent_persona[:width-14]}\033[0m")
+                      if trace.final_files:
+                          content_lines.append(f"    \033[90mFiles: {', '.join(trace.final_files.keys())}\033[0m")
+                  content_lines.append("")
+
+          elif ui.review_tab == 1:
+              for i, insight in enumerate(ui.all_insights):
+                  sel = (i == ui.sel)
+                  starred = "★ " if i in ui.starred else "  "
+                  prefix = "\033[7m>" if sel else " "
+                  star_color = "\033[33m" if i in ui.starred else ""
+                  content_lines.append(f"{prefix}{star_color}{starred}{insight[:width-8]}\033[0m")
+
+          elif ui.review_tab == 2:
+              if not ui.all_files:
+                  content_lines.append("  No files created during research.")
+              for i, finfo in enumerate(ui.all_files):
+                  sel = (i == ui.sel)
+                  prefix = "\033[7m>" if sel else " "
+                  content_lines.append(f"{prefix} \033[1m{finfo['name']}\033[0m  \033[90m(by {finfo['agent']})\033[0m")
+                  if sel and finfo.get('content'):
+                      for pl in wrap_text(finfo['content'], width - 8)[:6]:
+                          content_lines.append(f"    \033[90m{pl}\033[0m")
+                  content_lines.append("")
+
+          elif ui.review_tab == 3:
+              if not ui.paper:
+                  content_lines.append("  No paper generated yet.")
+              else:
+                  content_lines = wrap_text(ui.paper, width - 4)
+
+          if ui.scroll > max(0, len(content_lines) - 1):
+              ui.scroll = max(0, len(content_lines) - 1)
+
+          for i in range(content_h):
+              idx = ui.scroll + i
+              row = 5 + i
+              out.append(f"\033[{row};1H\033[K")
+              if idx < len(content_lines):
+                  out.append(f"\033[{row};2H{content_lines[idx][:width-2]}")
+
+          if len(content_lines) > content_h and content_h > 0:
+              pct = ui.scroll / max(1, len(content_lines) - content_h)
+              pos = int(pct * (content_h - 1))
+              out.append(f"\033[{5+pos};{width}H\033[33m▐\033[0m")
+
+          gen = " (generating...)" if ui.generating else ""
+          out.append(f"\033[{height};1H\033[K\033[7m Tab/h/l:Tabs  j/k:Nav  s:Star  Enter:View  q:Quit{gen} \033[0m".ljust(width))
+
+      # ========== Input Handling ==========
+      def handle_input(c, fd):
+          if ui.mode == 'edit':
+              return handle_edit_input(c, fd)
+
+          if c == '\x1b':
+              if _sel.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
+                  if c2 == '[':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'A': nav_up()
+                      elif c3 == 'B': nav_down()
+                      elif c3 == 'C': nav_right()
+                      elif c3 == 'D': nav_left()
+              else:
+                  return False
+              return True
+
+          if c == 'q' or c == '\x03':
+              return False
+
+          if c == 'A' and ui.phase < 3:
+              ui.auto_mode = True
+              ui.status = "Auto mode enabled"
+              advance_phase()
+              return True
+
+          if ui.phase == 0:
+              return handle_phase0(c, fd)
+          elif ui.phase == 1:
+              return handle_phase1(c, fd)
+          elif ui.phase == 2:
+              return handle_phase2(c, fd)
+          elif ui.phase == 3:
+              return handle_phase3(c, fd)
+          elif ui.phase == 4:
+              return handle_phase4(c, fd)
+          return True
+
+      def handle_edit_input(c, fd):
+          if c == '\x1b':
+              if _sel.select([fd], [], [], 0.05)[0]:
+                  os.read(fd, 2)
+              ui.mode = 'normal'
+              ui.input_buf = ""
+              return True
+          if c in ('\r', '\n'):
+              save_edit()
+              ui.mode = 'normal'
+              return True
+          if c == '\x7f' or c == '\x08':
+              ui.input_buf = ui.input_buf[:-1]
+              return True
+          if c >= ' ' and c <= '~':
+              ui.input_buf += c
+          return True
+
+      def save_edit():
+          buf = ui.input_buf.strip()
+          if not buf:
+              return
+          target = ui.input_target
+          if target.startswith("hyp:"):
+              idx = int(target.split(":")[1])
+              if idx < len(ui.hypotheses):
+                  ui.hypotheses[idx] = buf
+          elif target == "new_hyp":
+              ui.hypotheses.append(buf)
+              ui.sel = len(ui.hypotheses) - 1
+          elif target.startswith("persona_name:"):
+              idx = int(target.split(":")[1])
+              if idx < len(ui.personas):
+                  ui.personas[idx]['name'] = buf
+
+      def nav_up():
+          if ui.sel > 0:
+              ui.sel -= 1
+      def nav_down():
+          mx = get_max_sel()
+          if ui.sel < mx:
+              ui.sel += 1
+      def nav_right():
+          if ui.phase == 4:
+              ui.review_tab = (ui.review_tab + 1) % 4
+              ui.sel = 0; ui.scroll = 0
+      def nav_left():
+          if ui.phase == 4:
+              ui.review_tab = (ui.review_tab - 1) % 4
+              ui.sel = 0; ui.scroll = 0
+
+      def get_max_sel():
+          if ui.phase == 1: return max(0, len(ui.hypotheses) - 1)
+          elif ui.phase == 2: return max(0, len(ui.personas) - 1)
+          elif ui.phase == 4:
+              if ui.review_tab == 0: return max(0, len(ui.traces) - 1)
+              elif ui.review_tab == 1: return max(0, len(ui.all_insights) - 1)
+              elif ui.review_tab == 2: return max(0, len(ui.all_files) - 1)
+          return 0
+
+      def handle_phase0(c, fd):
+          if c in ('\r', '\n'):
+              advance_phase()
+          return True
+
+      def handle_phase1(c, fd):
+          if c == 'j': nav_down()
+          elif c == 'k': nav_up()
+          elif c == 'e' and not ui.generating and ui.hypotheses:
+              ui.mode = 'edit'
+              ui.input_target = f"hyp:{ui.sel}"
+              ui.input_buf = ui.hypotheses[ui.sel] if ui.sel < len(ui.hypotheses) else ""
+          elif c == 'd' and not ui.generating and len(ui.hypotheses) > 1:
+              del ui.hypotheses[ui.sel]
+              ui.sel = clamp(ui.sel, 0, len(ui.hypotheses) - 1)
+          elif c == '+' and not ui.generating:
+              ui.mode = 'edit'
+              ui.input_target = "new_hyp"
+              ui.input_buf = ""
+          elif c == 'r' and not ui.generating:
+              threading.Thread(target=do_generate_hypotheses, daemon=True).start()
+          elif c in ('\r', '\n') and not ui.generating:
+              advance_phase()
+          return True
+
+      def handle_phase2(c, fd):
+          if c == 'j': nav_down()
+          elif c == 'k': nav_up()
+          elif c == 'e' and not ui.generating and ui.personas:
+              ui.mode = 'edit'
+              ui.input_target = f"persona_name:{ui.sel}"
+              ui.input_buf = ui.personas[ui.sel]['name'] if ui.sel < len(ui.personas) else ""
+          elif c == 'r' and not ui.generating:
+              threading.Thread(target=do_generate_personas, daemon=True).start()
+          elif c == 's' and not ui.generating and ui.personas:
+              p = ui.personas[ui.sel]
+              p['hypothesis_idx'] = (p['hypothesis_idx'] + 1) % len(ui.hypotheses)
+          elif c in ('\r', '\n') and not ui.generating:
+              advance_phase()
+          return True
+
+      def handle_phase3(c, fd):
+          if c == 's':
+              ui.exec_skip = True
+              ui.agent_ui['skip'] = True
+          elif c == 'p':
+              ui.exec_paused = not ui.exec_paused
+              ui.agent_ui['paused'] = ui.exec_paused
+              ui.status = "Paused" if ui.exec_paused else "Resumed"
+          elif c == 'x':
+              ui.end_cycles = True
+              ui.status = "Ending review cycles after current operation..."
+          elif c == 'j':
+              ui.exec_scroll = max(0, ui.exec_scroll - 1)
+          elif c == 'k':
+              ui.exec_scroll += 1
+          return True
+
+      def handle_phase4(c, fd):
+          if c == 'j': nav_down()
+          elif c == 'k': nav_up()
+          elif c == '\t' or c == 'l': nav_right()
+          elif c == 'h': nav_left()
+          elif c == 's' and ui.review_tab == 1 and ui.sel < len(ui.all_insights):
+              if ui.sel in ui.starred: ui.starred.discard(ui.sel)
+              else: ui.starred.add(ui.sel)
+          elif c in ('\r', '\n'):
+              show_full_item(fd)
+          return True
+
+      def show_full_item(fd):
+          content = ""
+          if ui.review_tab == 0 and ui.sel < len(ui.traces):
+              t = ui.traces[ui.sel]
+              content = f"Agent: {t.agent_name}\nHypothesis: {t.hypothesis}\nSuccess: {t.was_successful}\nPersona: {t.agent_persona}\n\n"
+              for s in t.steps:
+                  content += f"--- Step {s.step} ---\nThought: {s.thought[:500]}\nAction: {s.action[:300]}\nOutcome: {s.outcome[:300]}\n\n"
+              if t.final_files:
+                  content += f"Files: {', '.join(t.final_files.keys())}\n"
+          elif ui.review_tab == 1 and ui.sel < len(ui.all_insights):
+              content = ui.all_insights[ui.sel]
+          elif ui.review_tab == 2 and ui.sel < len(ui.all_files):
+              f = ui.all_files[ui.sel]
+              content = f"File: {f['name']}\nAgent: {f['agent']}\n\n{f.get('content', 'N/A')}"
+          elif ui.review_tab == 3:
+              content = ui.paper
+
+          if not content:
+              return
+
+          width, height = get_size()
+          lines = wrap_text(content, width - 4)
+          scroll = 0
+
+          sys.stdout.write('\033[2J\033[H')
+          while True:
+              sys.stdout.write('\033[H')
+              for i in range(height - 2):
+                  idx = scroll + i
+                  sys.stdout.write(f'\033[{i+1};1H\033[K')
+                  if idx < len(lines):
+                      sys.stdout.write(f'  {lines[idx][:width-4]}')
+              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll  q/Enter:Back  [{scroll+1}-{min(scroll+height-2, len(lines))}/{len(lines)}] \033[0m')
+              sys.stdout.flush()
+
+              c = os.read(fd, 1).decode('latin-1')
+              if c in ('q', '\r', '\n'):
+                  break
+              if c == '\x1b':
+                  if _sel.select([fd], [], [], 0.05)[0]:
+                      c2 = os.read(fd, 1).decode('latin-1')
+                      if c2 == '[':
+                          c3 = os.read(fd, 1).decode('latin-1')
+                          if c3 == 'A': scroll = max(0, scroll - 1)
+                          elif c3 == 'B': scroll = min(max(0, len(lines) - (height - 2)), scroll + 1)
+                  else:
+                      break
+              elif c == 'k': scroll = max(0, scroll - 1)
+              elif c == 'j': scroll = min(max(0, len(lines) - (height - 2)), scroll + 1)
+
+      def advance_phase():
+          if ui.phase == 0:
+              ui.phase = 1; ui.sel = 0; ui.scroll = 0; ui.error = ""
+              threading.Thread(target=do_generate_hypotheses, daemon=True).start()
+              if ui.auto_mode:
+                  threading.Thread(target=_auto_wait_then_advance, args=(1,), daemon=True).start()
+          elif ui.phase == 1:
+              ui.phase = 2; ui.sel = 0; ui.scroll = 0; ui.error = ""
+              threading.Thread(target=do_generate_personas, daemon=True).start()
+              if ui.auto_mode:
+                  threading.Thread(target=_auto_wait_then_advance, args=(2,), daemon=True).start()
+          elif ui.phase == 2:
+              ui.phase = 3; ui.sel = 0; ui.scroll = 0; ui.error = ""
+              threading.Thread(target=do_run_all_agents, daemon=True).start()
+
+      def _auto_wait_then_advance(expected_phase):
+          while ui.generating:
+              time.sleep(0.3)
+          if ui.phase == expected_phase and ui.auto_mode:
+              time.sleep(0.5)
+              advance_phase()
+
+      # ========== Main TUI Loop ==========
+      if not sys.stdin.isatty():
+          os.chdir(_orig_cwd)
+          context['output'] = "Alicanto requires an interactive terminal."
+          context['messages'] = messages
+          exit()
+
+      ui.phase = 0
+      ui.status = "Press Enter to begin, A for auto mode"
+
+      fd = sys.stdin.fileno()
+      old_settings = termios.tcgetattr(fd)
+
+      try:
+          tty.setcbreak(fd)
+          sys.stdout.write('\033[?25l')
+          sys.stdout.flush()
+          render_screen()
+
+          running = True
+          while running:
+              if ui.generating:
+                  if _sel.select([fd], [], [], 0.3)[0]:
+                      c = os.read(fd, 1).decode('latin-1')
+                      running = handle_input(c, fd)
+              else:
+                  if _sel.select([fd], [], [], 0.5)[0]:
+                      c = os.read(fd, 1).decode('latin-1')
+                      running = handle_input(c, fd)
+              # Sync agent_ui state
+              ui.agent_ui['skip'] = ui.exec_skip
+              ui.agent_ui['paused'] = ui.exec_paused
+              render_screen()
+
+      finally:
+          termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+          sys.stdout.write('\033[?25h')
+          sys.stdout.write('\033[2J\033[H')
+          sys.stdout.flush()
+          os.chdir(_orig_cwd)
+
+          if ui.traces:
+              print("\033[1;36m=== ALICANTO RESEARCH COMPLETE ===\033[0m\n")
+              print(f"Query: {ui.query}")
+              print(f"Agents: {len(ui.traces)}")
+              for i, trace in enumerate(ui.traces):
+                  status = "SUCCESS" if trace.was_successful else "no files"
+                  print(f"\n{i+1}. \033[1m{trace.agent_name}\033[0m [{status}]")
+                  print(f"   Hypothesis: {trace.hypothesis[:100]}")
+                  print(f"   Steps: {len(trace.steps)}  Files: {list(trace.final_files.keys())}")
+              if ui.paper:
+                  print(f"\n\033[1;32m--- Paper ---\033[0m")
+                  print(ui.paper[:2000])
+              print(f"\n\033[90mOutput directory: {_work_dir}\033[0m")
+
+      context['output'] = ui.paper or "Alicanto session ended."
       context['messages'] = messages
-      context['alicanto_result'] = alicanto_result
-
-      # Launch interactive browser automatically
-      if gold_insights or cliff_warnings or all_insights:
-          print(colored("\nLaunching results browser...", "cyan"))
-          research_tui_browser(alicanto_result)
+      context['alicanto_result'] = {
+          'query': ui.query,
+          'hypotheses': ui.hypotheses,
+          'personas': [{'name': p.get('name'), 'birth_year': p.get('birth_year'), 'persona_text': p.get('persona_text')} for p in ui.personas],
+          'traces': [{'agent': t.agent_name, 'hypothesis': t.hypothesis, 'success': t.was_successful, 'steps': len(t.steps), 'files': list(t.final_files.keys())} for t in ui.traces],
+          'paper': ui.paper,
+      }
