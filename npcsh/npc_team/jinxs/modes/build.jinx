@@ -1,0 +1,352 @@
+jinx_name: build
+description: Interactive TUI for building deployment artifacts from an NPC team
+interactive: true
+inputs:
+  - target: ""
+  - outdir: "./build"
+  - team: "~/.npcsh/npc_team"
+  - port: 5337
+  - cors: ""
+steps:
+  - name: build
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import select as _sel
+
+      _direct_target = (context.get('target') or '').strip().lower()
+      _direct = bool(_direct_target) or not sys.stdin.isatty()
+
+      if _direct:
+          # Direct build: target passed explicitly or non-interactive
+          try:
+              from npcpy.build_funcs import (
+                  build_flask_server as _bf,
+                  build_docker_compose as _bd,
+                  build_cli_executable as _bc,
+                  build_static_site as _bs,
+              )
+              _target = _direct_target or 'flask'
+              _builders = {'flask': _bf, 'docker': _bd, 'cli': _bc, 'static': _bs}
+              if _target not in _builders:
+                  context['output'] = f"Unknown target: {_target}. Available: {list(_builders.keys())}"
+              else:
+                  _cfg = {
+                      'team_path': os.path.abspath(os.path.expanduser(context.get('team') or '~/.npcsh/npc_team')),
+                      'output_dir': os.path.abspath(os.path.expanduser(context.get('outdir') or './build')),
+                      'target': _target,
+                      'port': int(context.get('port') or 5337),
+                      'cors_origins': [c.strip() for c in (context.get('cors') or '').split(',') if c.strip()] or None,
+                  }
+                  _r = _builders[_target](_cfg)
+                  context['output'] = _r.get('output', 'Build complete.')
+          except ImportError:
+              context['output'] = "Build functions not available. Install npcpy with build support."
+          except Exception as _e:
+              context['output'] = f"Build failed: {_e}"
+          context['messages'] = context.get('messages', [])
+          exit()
+
+      try:
+          from npcpy.build_funcs import (
+              build_flask_server,
+              build_docker_compose,
+              build_cli_executable,
+              build_static_site,
+          )
+          BUILD_AVAILABLE = True
+      except ImportError:
+          BUILD_AVAILABLE = False
+
+      if not BUILD_AVAILABLE:
+          context['output'] = "Build functions not available. Install npcpy with build support."
+          exit()
+
+      # ========== State ==========
+      class BuildState:
+          def __init__(self):
+              self.phase = 0  # 0=select target, 1=configure, 2=building, 3=result
+              self.sel = 0
+              self.targets = [
+                  {'key': 'flask',  'name': 'Flask Server',  'desc': 'Standalone Python web server with NPC API endpoints'},
+                  {'key': 'docker', 'name': 'Docker',        'desc': 'Containerized deployment with Dockerfile and docker-compose'},
+                  {'key': 'cli',    'name': 'CLI Scripts',   'desc': 'Per-NPC executable scripts for direct CLI usage'},
+                  {'key': 'static', 'name': 'Static Site',   'desc': 'HTML documentation page listing team NPCs'},
+              ]
+              self.config = {
+                  'outdir': os.path.expanduser(context.get('outdir') or './build'),
+                  'team': os.path.expanduser(context.get('team') or '~/.npcsh/npc_team'),
+                  'port': str(context.get('port') or 5337),
+                  'cors': context.get('cors') or '',
+              }
+              self.config_keys = ['outdir', 'team', 'port', 'cors']
+              self.config_labels = {'outdir': 'Output Dir', 'team': 'Team Path', 'port': 'Port', 'cors': 'CORS Origins'}
+              self.config_sel = 0
+              self.editing = False
+              self.edit_buf = ""
+              self.edit_key = ""
+              self.result = ""
+              self.error = ""
+              self.files_created = []
+
+      ui = BuildState()
+
+      # TUI mode: no target was passed, user picks interactively
+
+      # ========== Helpers ==========
+      def get_size():
+          try:
+              s = os.get_terminal_size()
+              return s.columns, s.lines
+          except:
+              return 80, 24
+
+      # ========== Rendering ==========
+      def render():
+          width, height = get_size()
+          out = []
+          out.append('\033[2J\033[H')
+
+          phase_names = ['Select Target', 'Configure', 'Building...', 'Complete']
+          header = f' NPC BUILD - {phase_names[ui.phase]} '
+          out.append(f'\033[1;1H\033[7;1m{header.ljust(width)}\033[0m')
+
+          if ui.phase == 0:
+              render_targets(out, width, height)
+          elif ui.phase == 1:
+              render_config(out, width, height)
+          elif ui.phase == 2:
+              render_building(out, width, height)
+          elif ui.phase == 3:
+              render_result(out, width, height)
+
+          if ui.error:
+              out.append(f'\033[{height-1};1H\033[K \033[31m{ui.error[:width-3]}\033[0m')
+
+          sys.stdout.write(''.join(out))
+          sys.stdout.flush()
+
+      def render_targets(out, width, height):
+          banner = [
+              '\033[33m ██████╗ ██╗   ██╗██╗██╗     ██████╗ \033[0m',
+              '\033[33m██╔══██╗██║   ██║██║██║     ██╔══██╗\033[0m',
+              '\033[33m██████╔╝██║   ██║██║██║     ██║  ██║\033[0m',
+              '\033[33m██╔══██╗██║   ██║██║██║     ██║  ██║\033[0m',
+              '\033[33m██████╔╝╚██████╔╝██║███████╗██████╔╝\033[0m',
+              '\033[33m╚═════╝  ╚═════╝ ╚═╝╚══════╝╚═════╝ \033[0m',
+          ]
+          for i, line in enumerate(banner):
+              out.append(f'\033[{3+i};3H{line}')
+
+          y = 3 + len(banner) + 1
+          out.append(f'\033[{y};3H\033[1mSelect a build target:\033[0m')
+          y += 2
+
+          for i, target in enumerate(ui.targets):
+              selected = (i == ui.sel)
+              if selected:
+                  out.append(f'\033[{y};2H\033[7;1m > {target["name"]:<20}\033[0m \033[7m{target["desc"][:width-28]}\033[0m')
+              else:
+                  out.append(f'\033[{y};2H   \033[1m{target["name"]:<20}\033[0m \033[90m{target["desc"][:width-28]}\033[0m')
+              y += 2
+
+          out.append(f'\033[{height};1H\033[K\033[7m j/k:Navigate  Enter:Select  q:Quit \033[0m'.ljust(width))
+
+      def render_config(out, width, height):
+          target = ui.targets[ui.sel]
+          out.append(f'\033[3;3H\033[1mTarget: \033[36m{target["name"]}\033[0m')
+          out.append(f'\033[4;3H\033[90m{target["desc"]}\033[0m')
+
+          out.append(f'\033[6;3H\033[1mConfiguration:\033[0m')
+
+          y = 8
+          for i, key in enumerate(ui.config_keys):
+              label = ui.config_labels[key]
+              val = ui.config[key]
+              selected = (i == ui.config_sel)
+
+              if ui.editing and key == ui.edit_key:
+                  out.append(f'\033[{y};3H\033[33m{label}:\033[0m \033[7m {ui.edit_buf}_ \033[0m')
+              elif selected:
+                  out.append(f'\033[{y};3H\033[7m {label}: {val} \033[0m')
+              else:
+                  out.append(f'\033[{y};3H \033[1m{label}:\033[0m {val}')
+              y += 2
+
+          # Show which configs are relevant for this target
+          y += 1
+          relevant = {'flask': ['outdir', 'team', 'port', 'cors'],
+                      'docker': ['outdir', 'team', 'port', 'cors'],
+                      'cli': ['outdir', 'team'],
+                      'static': ['outdir', 'team']}
+          rel = relevant.get(target['key'], ui.config_keys)
+          out.append(f'\033[{y};3H\033[90mRelevant for {target["name"]}: {", ".join(rel)}\033[0m')
+
+          if ui.editing:
+              out.append(f'\033[{height};1H\033[K\033[7m Enter:Save  Esc:Cancel \033[0m'.ljust(width))
+          else:
+              out.append(f'\033[{height};1H\033[K\033[7m j/k:Navigate  e:Edit  Enter:Build  Backspace:Back  q:Quit \033[0m'.ljust(width))
+
+      def render_building(out, width, height):
+          target = ui.targets[ui.sel]
+          mid = height // 2
+          out.append(f'\033[{mid};{width//2-10}H\033[33;1mBuilding {target["name"]}...\033[0m')
+
+      def render_result(out, width, height):
+          target = ui.targets[ui.sel]
+          y = 3
+          if ui.error:
+              out.append(f'\033[{y};3H\033[31;1mBuild Failed\033[0m')
+              y += 2
+              out.append(f'\033[{y};3H\033[31m{ui.error[:width-6]}\033[0m')
+          else:
+              out.append(f'\033[{y};3H\033[32;1mBuild Complete: {target["name"]}\033[0m')
+              y += 2
+              for line in ui.result.split('\n'):
+                  if y >= height - 3:
+                      break
+                  out.append(f'\033[{y};3H{line[:width-6]}')
+                  y += 1
+
+          out.append(f'\033[{height};1H\033[K\033[7m Enter:New Build  o:Open output dir  q:Quit \033[0m'.ljust(width))
+
+      # ========== Build Execution ==========
+      def do_build():
+          target = ui.targets[ui.sel]
+          config = {
+              'team_path': os.path.abspath(os.path.expanduser(ui.config['team'])),
+              'output_dir': os.path.abspath(os.path.expanduser(ui.config['outdir'])),
+              'target': target['key'],
+              'port': int(ui.config['port']),
+              'cors_origins': [c.strip() for c in ui.config['cors'].split(',') if c.strip()] or None,
+          }
+
+          builders = {
+              'flask': build_flask_server,
+              'docker': build_docker_compose,
+              'cli': build_cli_executable,
+              'static': build_static_site,
+          }
+
+          try:
+              result = builders[target['key']](config)
+              ui.result = result.get('output', 'Build complete.')
+              ui.error = ""
+          except Exception as e:
+              ui.error = str(e)
+              ui.result = ""
+
+          ui.phase = 3
+
+      # ========== Input ==========
+      def handle_input(c, fd):
+          if ui.editing:
+              return handle_edit(c, fd)
+
+          if c == '\x1b':
+              if _sel.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
+                  if c2 == '[':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'A': move_up()
+                      elif c3 == 'B': move_down()
+              return True
+
+          if c == 'q' or c == '\x03':
+              return False
+
+          if ui.phase == 0:
+              if c == 'j': move_down()
+              elif c == 'k': move_up()
+              elif c in ('\r', '\n'):
+                  ui.phase = 1
+                  ui.config_sel = 0
+          elif ui.phase == 1:
+              if c == 'j': move_down()
+              elif c == 'k': move_up()
+              elif c == 'e':
+                  key = ui.config_keys[ui.config_sel]
+                  ui.editing = True
+                  ui.edit_key = key
+                  ui.edit_buf = ui.config[key]
+              elif c == '\x7f' or c == '\x08':
+                  ui.phase = 0
+                  ui.config_sel = 0
+              elif c in ('\r', '\n'):
+                  ui.phase = 2
+                  render()
+                  do_build()
+          elif ui.phase == 3:
+              if c in ('\r', '\n'):
+                  ui.phase = 0
+                  ui.sel = 0
+                  ui.error = ""
+                  ui.result = ""
+              elif c == 'o':
+                  outdir = os.path.abspath(os.path.expanduser(ui.config['outdir']))
+                  if os.path.isdir(outdir):
+                      import subprocess
+                      try:
+                          subprocess.Popen(['xdg-open', outdir], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                      except:
+                          pass
+          return True
+
+      def handle_edit(c, fd):
+          if c == '\x1b':
+              if _sel.select([fd], [], [], 0.05)[0]:
+                  os.read(fd, 2)
+              ui.editing = False
+              ui.edit_buf = ""
+              return True
+          if c in ('\r', '\n'):
+              ui.config[ui.edit_key] = ui.edit_buf
+              ui.editing = False
+              return True
+          if c == '\x7f' or c == '\x08':
+              ui.edit_buf = ui.edit_buf[:-1]
+              return True
+          if c >= ' ' and c <= '~':
+              ui.edit_buf += c
+          return True
+
+      def move_up():
+          if ui.phase == 0:
+              ui.sel = max(0, ui.sel - 1)
+          elif ui.phase == 1:
+              ui.config_sel = max(0, ui.config_sel - 1)
+
+      def move_down():
+          if ui.phase == 0:
+              ui.sel = min(len(ui.targets) - 1, ui.sel + 1)
+          elif ui.phase == 1:
+              ui.config_sel = min(len(ui.config_keys) - 1, ui.config_sel + 1)
+
+      # ========== Main Loop ==========
+      fd = sys.stdin.fileno()
+      old_settings = termios.tcgetattr(fd)
+
+      try:
+          tty.setcbreak(fd)
+          sys.stdout.write('\033[?25l')
+          render()
+
+          running = True
+          while running:
+              if _sel.select([fd], [], [], 0.5)[0]:
+                  c = os.read(fd, 1).decode('latin-1')
+                  running = handle_input(c, fd)
+              render()
+      finally:
+          termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+          sys.stdout.write('\033[?25h\033[2J\033[H')
+          sys.stdout.flush()
+
+      if ui.result:
+          print(ui.result)
+
+      context['output'] = ui.result or 'Build cancelled.'
+      context['messages'] = context.get('messages', [])
