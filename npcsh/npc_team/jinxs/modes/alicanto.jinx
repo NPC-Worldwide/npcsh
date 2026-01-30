@@ -179,12 +179,14 @@ steps:
           except Exception as e:
               return f"Error: {e}"
 
+      _search_provider = os.environ.get('NPCSH_SEARCH_PROVIDER', 'perplexity')
+
       def _web_search_tool(query: str) -> str:
           """Search the web for information."""
           if not WEB_AVAILABLE:
               return "Web search not available."
           try:
-              results = search_web(query, num_results=5)
+              results = search_web(query, num_results=5, provider=_search_provider)
               if not results:
                   return "No results found."
               if isinstance(results, list):
@@ -401,7 +403,6 @@ steps:
               history_str = "\n".join(summarized_history)
               next_step_text = f"This is the next step suggested by your advisor. : BEGIN NEXT_STEP: {summary.get('next_step')} END NEXT STEP" if summary else ""
 
-              search_provider = os.environ.get('NPCSH_SEARCH_PROVIDER', 'duckduckgo')
               initial_prompt = f"""Test the following hypothesis: '{hypothesis}' as related to the user query: '{user_query}'.
       Only focus on your specific hypothesis, other agents are being tasked with other aspects of the problem.
 
@@ -427,7 +428,7 @@ steps:
       What specific action will you take next to test your hypothesis?
       AVAILABLE TOOLS: create_file, append_to_file, replace_in_file, read_file, list_files, execute_shell_command, wander_wrapper, _web_search_tool.
 
-      Do not repeat actions. Use `_web_search_tool` with provider of {search_provider} to look up items if you are struggling.
+      Do not repeat actions. Use `_web_search_tool` to look up items if you are struggling.
 
       {next_step_text}
 
