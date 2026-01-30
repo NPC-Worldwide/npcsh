@@ -38,13 +38,10 @@ Additionally, the pip installation includes the following CLI tools available in
 
 
 # Usage
-  - Get help with a task: 
+  - Get help with a task:
       ```bash
-      npcsh>can you help me identify what process is listening on port 5337? 
+      npcsh>can you help me identify what process is listening on port 5337?
       ```
-      <p align="center"> 
-        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/port5337.png" alt="example of running npcsh to check what processes are listening on port 5337", width=600>
-      </p>
 
   - Edit files
       ```bash
@@ -54,7 +51,9 @@ Additionally, the pip installation includes the following CLI tools available in
 
   - **Search & Knowledge**
     ```bash
-    /search "cerulean city" perplexity    # Web search
+    /web_search "cerulean city"            # Web search
+    /db_search "query"                     # Database search
+    /file_search "pattern"                 # File search
     /memories                              # Interactive memory browser TUI
     /kg                                    # Interactive knowledge graph TUI
     /kg sleep                              # Evolve the knowledge graph
@@ -62,7 +61,7 @@ Additionally, the pip installation includes the following CLI tools available in
     /nql                                   # Database query TUI
     ```
     <p align="center">
-        <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/search.gif" alt="example of search results", width=600>
+        <img src="gh_images/kg_facts_viewer.png" alt="Knowledge Graph TUI", width=600>
     </p>
     
     
@@ -117,9 +116,10 @@ Additionally, the pip installation includes the following CLI tools available in
     ```bash
     /ots
     ```
-  - **Use an mcp server**: make use of NPCs with MCP servers.
+  - **MCP-powered agentic shell**: full tabbed TUI with chat, tool management, and server controls.
     ```bash
-    /corca --mcp-server-path /path.to.server.py
+    /corca
+    /corca mcp_server_path=/path/to/server.py
     ```
 
   - **Build an NPC Team**: Generate deployment artifacts for your team.
@@ -134,6 +134,9 @@ Additionally, the pip installation includes the following CLI tools available in
     npc teamviz save=team_structure.png
     ```
     Generates network and ordered views showing NPCs, jinxs, and their relationships.
+    <p align="center">
+        <img src="gh_images/teamviz.png" alt="Team structure visualization", width=600>
+    </p>
 
 # NPC Data Layer
 
@@ -172,14 +175,18 @@ jinxs:
   - lib/core/python
   - lib/core/sh
   - lib/core/edit_file
-  - lib/core/search
+  - lib/core/load_file
 ```
 
 When an NPC is invoked, they can only use the jinxs assigned to them. This creates **specialization**:
-- `corca` has coding tools (python, sh, edit_file)
-- `plonk` has browser automation (browser_action, screenshot)
-- `alicanto` has research tools (arxiv, semantic_scholar, paper_search)
+- `corca` has coding tools (python, sh, edit_file, load_file)
+- `plonk` has browser automation (browser_action, screenshot, click)
+- `alicanto` has research tools (python, sh, load_file)
 - `frederic` has generation tools (vixynt, roll, sample)
+
+<p align="center">
+    <img src="gh_images/team_npc.png" alt="NPC team browser", width=600>
+</p>
 
 The forenpc (orchestrator) can delegate to any team member based on their specialization.
 
@@ -212,6 +219,14 @@ The `/delegate` jinx sends a task to another NPC with automatic review and feedb
    Iterate until
    task complete
 ```
+
+## Deep Research with Alicanto
+
+The `/alicanto` mode runs multi-agent deep research — generates hypotheses, assigns persona-based sub-agents, runs iterative tool-calling loops, and synthesizes findings.
+
+<p align="center">
+    <img src="gh_images/alicanto.png" alt="Alicanto deep research mode", width=600>
+</p>
 
 ## Convening Multi-NPC Discussions
 
@@ -381,6 +396,11 @@ models/
 
 Run `nql` to execute the entire pipeline—base models first, then insights that depend on them.
 
+<p align="center">
+    <img src="gh_images/nql_menu.png" alt="NQL menu", width=400>
+    <img src="gh_images/nql_table.png" alt="NQL table viewer", width=400>
+</p>
+
 # Working with NPCs (Agents)
 
 NPCs are AI agents with distinct personas, models, and tool sets. You can interact with them in two ways:
@@ -416,13 +436,17 @@ The NPC responds using their persona and available jinxs, then control returns t
 
 | NPC | Specialty | Key Jinxs |
 |-----|-----------|-----------|
-| `sibiji` | Orchestrator/coordinator | delegate, convene, search |
-| `corca` | Coding and development | python, sh, edit_file, search |
-| `plonk` | Browser/GUI automation | browser_action, screenshot, click |
-| `alicanto` | Research and analysis | arxiv, semantic_scholar, paper_search |
-| `frederic` | Math, physics, music | python, vixynt, roll, sample, wander |
-| `guac` | General assistant | python, sh, search |
-| `kadiefa` | Creative generation | vixynt, roll, wander |
+| `sibiji` | Orchestrator/coordinator | delegate, convene, python, sh |
+| `corca` | Coding and development | python, sh, edit_file, load_file |
+| `plonk` | Browser/GUI automation | browser_action, screenshot, click, key_press |
+| `alicanto` | Research and analysis | python, sh, load_file |
+| `frederic` | Math, physics, music | python, vixynt, roll, sample |
+| `guac` | General assistant | python, sh, edit_file, load_file |
+| `kadiefa` | Creative generation | vixynt |
+
+<p align="center">
+    <img src="gh_images/npc_menu.png" alt="NPC menu", width=600>
+</p>
 
 # Jinxs (Macros/Tools)
 
@@ -445,12 +469,13 @@ Most modes launch a full-screen terminal interface. Just type the command and in
 | Command | Description |
 |---------|-------------|
 | `/alicanto` | Multi-agent deep research — hypothesis generation, persona-based sub-agents, iterative paper writing |
+| `/corca` | MCP-powered agentic shell — tabbed TUI with chat, tool management, server controls |
 | `/convene` | Multi-NPC structured discussion with live trains of thought |
 | `/spool` | Chat session with fresh context, file attachments, and RAG |
 | `/pti` | Pardon-the-interruption reasoning mode |
 | `/plonk` | GUI automation with vision |
 | `/wander` | Exploratory thinking with temperature shifts |
-| `/yap` | Voice chat mode |
+| `/yap` | Voice chat TUI — continuous VAD listening, auto-transcribe, text-to-speech |
 | `/guac` | Interactive Python REPL with LLM-powered code generation |
 | `/kg` | Knowledge graph browser — facts, concepts, links, search, graph view |
 | `/memories` | Memory browser — browse, approve, reject, filter by status |
@@ -458,12 +483,27 @@ Most modes launch a full-screen terminal interface. Just type the command and in
 | `/papers` | Academic paper search and browsing |
 | `/arxiv` | ArXiv paper browser |
 | `/git` | Git integration TUI |
+| `/build` | Build team to deployable format (flask, docker, cli, static) |
+| `/team` | Team config browser — context, NPCs, jinxs |
+| `/config_tui` | Interactive config editor |
+| `/reattach` | Resume previous conversation sessions |
+
+<p align="center">
+    <img src="gh_images/wander.png" alt="Wander TUI", width=400>
+    <img src="gh_images/guac_session.png" alt="Guac Python REPL", width=400>
+</p>
+<p align="center">
+    <img src="gh_images/arxiv_search.png" alt="ArXiv search", width=400>
+    <img src="gh_images/arxiv_paper.png" alt="ArXiv paper view", width=400>
+</p>
 
 ### Orchestration & Research
 | Command | Description |
 |---------|-------------|
 | `/delegate` | Delegate task to NPC with review loop |
-| `/search` | Web/memory/knowledge graph search |
+| `/web_search` | Web search |
+| `/db_search` | Database search |
+| `/file_search` | File search |
 | `/kg sleep` | Evolve knowledge graph through consolidation |
 | `/kg dream` | Creative synthesis across KG domains |
 | `/sleep` | Alias for `/kg sleep` |
@@ -478,14 +518,16 @@ Most modes launch a full-screen terminal interface. Just type the command and in
 ### System & Config
 | Command | Description |
 |---------|-------------|
-| `/build` | Build team to deployable format (flask, docker, cli, static) |
 | `/serve` | Serve NPC team as API with OpenAI-compatible endpoints |
 | `/compile` | Compile NPC profiles |
 | `/set` | Set config values — `/set model gemma3:4b`, `/set provider ollama` |
 | `/teamviz` | Visualize team structure |
 | `/ots` | Screenshot analysis |
-| `/incognide` | Launch Incognide GUI |
-| `/trigger` | Set up system triggers |
+| `/models` | Browse available models |
+| `/chat` | Switch to chat mode |
+| `/cmd` | Switch to command mode |
+| `/switch` | Switch NPC |
+| `/sync` | Sync npc_team files from repo to home |
     
 Most modes are interactive TUIs — just launch them and use keyboard controls. For CLI usage with `npc`, common flags include `--model (-mo)`, `--provider (-pr)`, `--npc (-np)`, and `--temperature (-t)`. Run `npc --help` for the full list.
 
@@ -517,6 +559,10 @@ The TUI provides:
 - **Preview** — press Enter to see full memory content
 - **Session stats** — tracks approvals/rejections during session
 
+<p align="center">
+    <img src="gh_images/Screenshot%20from%202026-01-29%2016-03-08.png" alt="Memory Browser TUI", width=600>
+</p>
+
 ### Knowledge Graph
 
 The `/kg` command opens an interactive browser for exploring the knowledge graph:
@@ -531,6 +577,11 @@ The `/kg` command opens an interactive browser for exploring the knowledge graph
 ```
 
 The TUI browser has 5 tabs: **Facts**, **Concepts**, **Links**, **Search**, and **Graph** — navigate with Tab, j/k, and Enter to drill into details.
+
+<p align="center">
+    <img src="gh_images/kg_facts_viewer.png" alt="Knowledge Graph Facts", width=400>
+    <img src="gh_images/kg_links.png" alt="Knowledge Graph Links", width=400>
+</p>
 
 **Evolution operations** (via `/kg sleep` or `/sleep`):
 - **prune** — Remove redundant or low-value facts
@@ -743,31 +794,39 @@ export PERPLEXITY_API_KEY='your_perplexity_key'
 ~/.npcsh/
 ├── npc_team/              # Global NPC team
 │   ├── jinxs/
-│   │   ├── bin/           # CLI commands (wander, spool, yap, nql, vixynt, roll, sample)
-│   │   └── lib/           # Library jinxs by category
-│   │       ├── core/      # python, sh, sql, search, edit_file, load_file
-│   │       ├── browser/   # browser_action, screenshot
-│   │       ├── orchestration/  # delegate, convene
-│   │       └── research/  # arxiv, semantic_scholar, paper_search
+│   │   ├── modes/         # Interactive TUI modes (alicanto, corca, kg, build, yap, etc.)
+│   │   ├── lib/
+│   │   │   ├── core/      # Core tools (python, sh, sql, edit_file, load_file, delegate, etc.)
+│   │   │   │   └── search/  # Search tools (web_search, db_search, file_search)
+│   │   │   ├── utils/     # Utility jinxs (set, compile, serve, teamviz, chat, cmd, etc.)
+│   │   │   ├── browser/   # Browser automation (browser_action, screenshot, etc.)
+│   │   │   └── computer_use/  # Computer use (click, key_press, screenshot, trigger, etc.)
+│   │   └── incognide/     # Incognide desktop workspace jinxs
 │   ├── models/            # NQL SQL models
 │   ├── assembly_lines/    # Workflow pipelines
 │   ├── sibiji.npc         # Orchestrator NPC
 │   ├── corca.npc          # Coding specialist
 │   ├── plonk.npc          # Browser automation
 │   ├── ...                # Other NPCs
+│   ├── mcp_server.py      # MCP server for tool integration
 │   └── npcsh.ctx          # Team context (sets forenpc, team name)
 ```
+
+<p align="center">
+    <img src="gh_images/team_ui.png" alt="Team config browser", width=400>
+    <img src="gh_images/jinx_menu.png" alt="Jinx browser", width=400>
+</p>
 For cases where you wish to set up a project specific set of NPCs, jinxs, and assembly lines, add a `npc_team` directory to your project and `npcsh` should be able to pick up on its presence, like so:
 ```bash
 ./npc_team/            # Project-specific NPCs
 ├── jinxs/             # Project jinxs
-│   ├── bin/           # Standalone CLI commands (unique names, auto-registered)
-│   │   └── wander, spool, yap, nql, vixynt, roll, sample
+│   ├── modes/         # Interactive TUI modes
 │   └── lib/           # Library jinxs organized by category
-│       ├── core/      # Core utilities (python, sh, sql, search, etc.)
+│       ├── core/      # Core tools (python, sh, sql, edit_file, delegate, etc.)
+│       │   └── search/  # Search tools (web_search, db_search, file_search)
+│       ├── utils/     # Utility jinxs (set, compile, serve, etc.)
 │       ├── browser/   # Browser automation
-│       ├── orchestration/  # delegate, convene
-│       └── research/  # Research tools (arxiv, semantic_scholar)
+│       └── computer_use/  # Computer use tools
 ├── models/            # NQL SQL models for AI-powered data pipelines
 │   ├── base/          # Base statistics models
 │   └── insights/      # Models with nql.* AI functions
