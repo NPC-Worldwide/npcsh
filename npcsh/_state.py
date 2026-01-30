@@ -3444,9 +3444,9 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     command_history = CommandHistory(db_path)
 
     if not is_npcsh_initialized():
-        print("Initializing NPCSH...")
+        print("Setting up npcsh for first use...")
         initialize_base_npcs_if_needed(db_path)
-        print("NPCSH initialization complete. Restart or source ~/.npcshrc.")
+        print("Setup complete.")
 
     try:
         setup_readline()
@@ -3458,80 +3458,17 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     project_team_path = os.path.abspath(PROJECT_NPC_TEAM_PATH)
     global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
 
-    team_dir = None
-    default_forenpc_name = None
-    global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
     if not os.path.exists(global_team_path):
-        print("Global NPC team directory doesn't exist. Initializing...")
         initialize_base_npcs_if_needed(db_path)
     if os.path.exists(project_team_path):
         team_dir = project_team_path
         default_forenpc_name = "forenpc"
     else:
-        if not os.path.exists('.npcsh_global'):
-            try:
-                resp = input(f"No npc_team found in {os.getcwd()}. Create a new team here? [Y/n]: ").strip().lower()
-            except (KeyboardInterrupt, EOFError):
-                print("\nAborted.")
-                sys.exit(0)
-            if resp in ("", "y", "yes"):
-                team_dir = project_team_path
-                os.makedirs(team_dir, exist_ok=True)
-                default_forenpc_name = "forenpc"
-                try:
-                    forenpc_directive = input(
-                        f"Enter a primary directive for {default_forenpc_name} (default: 'You are the forenpc of the team...'): "
-                    ).strip() or "You are the forenpc of the team, coordinating activities between NPCs on the team, verifying that results from NPCs are high quality and can help to adequately answer user requests."
-                    forenpc_model = input("Enter a model for your forenpc (default: llama3.2): ").strip() or "llama3.2"
-                    forenpc_provider = input("Enter a provider for your forenpc (default: ollama): ").strip() or "ollama"
-                except (KeyboardInterrupt, EOFError):
-                    print("\nAborted.")
-                    sys.exit(0)
-
-                with open(os.path.join(team_dir, f"{default_forenpc_name}.npc"), "w") as f:
-                    yaml.dump({
-                        "name": default_forenpc_name, "primary_directive": forenpc_directive,
-                        "model": forenpc_model, "provider": forenpc_provider
-                    }, f)
-
-                ctx_path = os.path.join(team_dir, "team.ctx")
-                try:
-                    folder_context = input("Enter a short description for this project/team (optional): ").strip()
-                    team_ctx_data = {
-                        "forenpc": default_forenpc_name,
-                        "model": forenpc_model,
-                        "provider": forenpc_provider,
-                        "context": folder_context if folder_context else None
-                    }
-                    use_jinxs = input("Use global jinxs folder (g) or copy to this project (c)? [g/c, default: g]: ").strip().lower()
-                except (KeyboardInterrupt, EOFError):
-                    print("\nAborted.")
-                    sys.exit(0)
-                if use_jinxs == "c":
-                    global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
-                    if os.path.exists(global_jinxs_dir):
-                        # Create the 'jinxs' subfolder within the new team's directory
-                        destination_jinxs_dir = os.path.join(team_dir, "jinxs")
-                        os.makedirs(destination_jinxs_dir, exist_ok=True)
-                        shutil.copytree(global_jinxs_dir, destination_jinxs_dir, dirs_exist_ok=True)
-                else:
-                    team_ctx_data["use_global_jinxs"] = True
-                with open(ctx_path, "w") as f:
-                    yaml.dump(team_ctx_data, f)
-            else:
-                render_markdown('From now on, npcsh will assume you will use the global team when activating from this folder. \n If you change your mind and want to initialize a team, use /init from within npcsh, `npc init` or `rm .npcsh_global` from the current working directory.')
-                with open(".npcsh_global", "w") as f:
-                    pass
-                team_dir = global_team_path
-                default_forenpc_name = "sibiji"
-        else:
-            team_dir = global_team_path
-            default_forenpc_name = "sibiji"
-    
-    if team_dir is None:
+        # No project team in this directory - use global team.
+        # To create a project team, use /init from within npcsh or `npc init`.
         team_dir = global_team_path
         default_forenpc_name = "sibiji"
-    
+
     if not os.path.exists(team_dir):
         print(f"Creating team directory: {team_dir}")
         os.makedirs(team_dir, exist_ok=True)
@@ -3548,11 +3485,8 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     forenpc_name = team_ctx.get("forenpc", default_forenpc_name)
     if forenpc_name is None:
         forenpc_name = "sibiji"
-  
-    print('forenpc_name:', forenpc_name)
 
     forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
-    print('forenpc_path:', forenpc_path)
 
     team = Team(team_path=team_dir, db_conn=command_history.engine)
     

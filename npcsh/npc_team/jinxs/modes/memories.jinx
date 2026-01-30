@@ -1,0 +1,414 @@
+jinx_name: memories
+description: Interactive TUI for browsing and managing npcsh memories
+interactive: true
+inputs:
+  - scope: ""
+steps:
+  - name: memory_browser
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import select
+      import time
+      from datetime import datetime
+
+      if not sys.stdin.isatty():
+          context['output'] = "Memory browser requires an interactive terminal."
+
+      else:
+          from npcpy.memory.command_history import CommandHistory
+          from npcsh.config import NPCSH_DB_PATH
+          from sqlalchemy import text
+
+          db_path = os.path.expanduser(NPCSH_DB_PATH)
+          command_history = CommandHistory(db_path)
+
+          # ========== Discover actual status values from DB ==========
+          db_statuses = []
+          try:
+              with command_history.engine.connect() as conn:
+                  rows = conn.execute(text("SELECT DISTINCT status FROM memory_lifecycle ORDER BY status"))
+                  db_statuses = [r[0] for r in rows if r[0]]
+          except:
+              pass
+
+          # Build tabs: All + pending first, then rest
+          ordered = []
+          for s in db_statuses:
+              if 'pending' in s.lower():
+                  ordered.insert(0, s)
+              else:
+                  ordered.append(s)
+          tab_names = ['All'] + ordered
+          tab_filters = [None] + ordered
+
+          # ========== State ==========
+          class MemState:
+              tab = 0
+              tabs = tab_names
+              tab_filt = tab_filters
+              memories = []
+              sel = 0
+              scroll = 0
+              preview = False
+              msg = ""
+              msg_color = "33"
+              npc_filter = None
+              team_filter = None
+              approved_count = 0
+              rejected_count = 0
+
+          st = MemState()
+
+          # ========== Helpers ==========
+          def get_size():
+              try:
+                  s = os.get_terminal_size()
+                  return s.columns, s.lines
+              except:
+                  return 80, 24
+
+          def status_icon(sv):
+              if not sv:
+                  return '\033[90m?\033[0m'
+              s = sv.lower()
+              if 'approved' in s:
+                  return '\033[1;32m+\033[0m'
+              if 'edited' in s:
+                  return '\033[1;36m~\033[0m'
+              if 'rejected' in s:
+                  return '\033[1;31m-\033[0m'
+              if 'pending' in s:
+                  return '\033[1;33m*\033[0m'
+              return '\033[90m?\033[0m'
+
+          def status_color(sv):
+              if not sv:
+                  return '0'
+              s = sv.lower()
+              if 'approved' in s:
+                  return '32'
+              if 'edited' in s:
+                  return '36'
+              if 'rejected' in s:
+                  return '31'
+              if 'pending' in s:
+                  return '33'
+              return '0'
+
+          def load_memories():
+              st.memories = []
+              try:
+                  with command_history.engine.connect() as conn:
+                      sf = st.tab_filt[st.tab] if st.tab < len(st.tab_filt) else None
+                      q = "SELECT id, created_at, npc, team, directory_path, initial_memory, final_memory, status FROM memory_lifecycle"
+                      conds = []
+                      params = {}
+
+                      if sf:
+                          conds.append("status = :sf")
+                          params['sf'] = sf
+                      if st.npc_filter:
+                          conds.append("npc = :npc")
+                          params['npc'] = st.npc_filter
+                      if st.team_filter:
+                          conds.append("team = :team")
+                          params['team'] = st.team_filter
+
+                      if conds:
+                          q += " WHERE " + " AND ".join(conds)
+                      q += " ORDER BY created_at DESC LIMIT 200"
+
+                      result = conn.execute(text(q), params)
+                      for row in result:
+                          st.memories.append({
+                              'id': row[0],
+                              'created_at': row[1],
+                              'npc': row[2],
+                              'team': row[3],
+                              'scope': row[4] or '',
+                              'original': row[5],
+                              'final': row[6],
+                              'status': row[7]
+                          })
+              except Exception as e:
+                  st.msg = "DB Error: " + str(e)
+                  st.msg_color = "31"
+
+          def do_update(memory_id, new_status, final_mem=None):
+              """Update memory status in DB and reload list."""
+              try:
+                  command_history.update_memory_status(memory_id, new_status, final_mem)
+                  old_count = len(st.memories)
+                  old_sel = st.sel
+                  load_memories()
+                  new_count = len(st.memories)
+
+                  # Clamp selection
+                  if st.memories:
+                      st.sel = min(old_sel, len(st.memories) - 1)
+                  else:
+                      st.sel = 0
+
+                  # Fix scroll
+                  _, height = get_size()
+                  vis = max(1, height - 7)
+                  if st.sel < st.scroll:
+                      st.scroll = st.sel
+                  elif st.sel >= st.scroll + vis:
+                      st.scroll = st.sel - vis + 1
+
+                  return True
+              except Exception as e:
+                  st.msg = "UPDATE FAILED: " + str(e)
+                  st.msg_color = "31"
+                  return False
+
+          def format_date(dt_str):
+              if not dt_str:
+                  return "          "
+              try:
+                  if isinstance(dt_str, str):
+                      dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+                  else:
+                      dt = dt_str
+                  return dt.strftime('%m-%d %H:%M')
+              except:
+                  return str(dt_str)[:10]
+
+          # ========== Rendering ==========
+          def render():
+              width, height = get_size()
+              out = []
+
+              # Header with session stats
+              stats = ""
+              if st.approved_count or st.rejected_count:
+                  stats = "  [+" + str(st.approved_count) + " -" + str(st.rejected_count) + "]"
+              header = " MEMORIES (" + str(len(st.memories)) + ")" + stats + " "
+              out.append("\033[1;1H\033[K\033[7;1m" + header.ljust(width) + "\033[0m")
+
+              # Tabs
+              tab_str = ""
+              for i, tab in enumerate(st.tabs):
+                  if i == st.tab:
+                      tab_str += "\033[1;7m [" + tab + "] \033[0m"
+                  else:
+                      tab_str += " \033[90m" + tab + "\033[0m "
+              out.append("\033[2;1H\033[K " + tab_str)
+
+              # Separator
+              out.append("\033[3;1H\033[K\033[90m" + ("-" * width) + "\033[0m")
+
+              if st.preview and st.memories:
+                  render_preview(out, width, height)
+              else:
+                  render_list(out, width, height)
+
+              # Status bar
+              out.append("\033[" + str(height-2) + ";1H\033[K\033[90m" + ("-" * width) + "\033[0m")
+              out.append("\033[" + str(height-1) + ";1H\033[K")
+              if st.msg:
+                  out.append(" \033[" + st.msg_color + ";1m" + st.msg[:width-2] + "\033[0m")
+
+              # Footer
+              if st.preview:
+                  foot = " [Esc] Back  [a] Approve  [x] Reject  [j/k] Prev/Next  [q] Quit "
+              else:
+                  foot = " [Tab] Filter  [j/k] Nav  [Enter] Preview  [a] Approve  [x] Reject  [q] Quit "
+              out.append("\033[" + str(height) + ";1H\033[K\033[7m" + foot.ljust(width) + "\033[0m")
+
+              sys.stdout.write(''.join(out))
+              sys.stdout.flush()
+
+          def render_list(out, width, height):
+              vis_h = height - 7
+              if vis_h < 1:
+                  vis_h = 1
+
+              for i in range(vis_h):
+                  row = 4 + i
+                  out.append("\033[" + str(row) + ";1H\033[K")
+                  idx = st.scroll + i
+                  if idx >= len(st.memories):
+                      continue
+
+                  mem = st.memories[idx]
+                  icon = status_icon(mem['status'])
+                  date_str = format_date(mem['created_at'])
+                  npc_str = (mem['npc'] or '-')[:8]
+                  content = (mem['final'] or mem['original'] or '')[:width-35].replace('\n', ' ')
+
+                  line = icon + " " + date_str + " " + npc_str.ljust(9) + content
+
+                  if idx == st.sel:
+                      out.append("\033[7m " + line + " \033[0m")
+                  else:
+                      out.append(" " + line)
+
+              # Scroll indicator
+              if len(st.memories) > vis_h and vis_h > 0:
+                  total = max(1, len(st.memories) - vis_h)
+                  pct = int((st.scroll / total) * 100) if total > 0 else 0
+                  out.append("\033[4;" + str(width-6) + "H\033[90m[" + str(pct) + "%]\033[0m")
+
+              if not st.memories:
+                  out.append("\033[6;4H\033[90mNo memories found for this filter.\033[0m")
+                  out.append("\033[7;4H\033[90mTry switching tabs with Tab key.\033[0m")
+
+          def render_preview(out, width, height):
+              if not st.memories or st.sel >= len(st.memories):
+                  return
+
+              mem = st.memories[st.sel]
+
+              row = 4
+              sc = status_color(mem['status'])
+              out.append("\033[" + str(row) + ";1H\033[K\033[1m Memory #" + str(mem['id']) + "  \033[" + sc + "m[" + str(mem['status']) + "]\033[0m")
+              row += 1
+
+              out.append("\033[" + str(row) + ";1H\033[K\033[90m Date: " + format_date(mem['created_at']) + "  NPC: " + str(mem['npc'] or '-') + "  Team: " + str(mem['team'] or '-') + "\033[0m")
+              row += 1
+              out.append("\033[" + str(row) + ";1H\033[K\033[90m Scope: " + str(mem['scope'] or '-')[:60] + "\033[0m")
+              row += 1
+              out.append("\033[" + str(row) + ";1H\033[K")
+              row += 1
+
+              out.append("\033[" + str(row) + ";1H\033[K\033[1m Content:\033[0m")
+              row += 1
+
+              content = mem['final'] or mem['original'] or '(empty)'
+              for line in content.split('\n')[:height - row - 3]:
+                  out.append("\033[" + str(row) + ";1H\033[K   " + line[:width-5])
+                  row += 1
+
+              if mem['final'] and mem['original'] and mem['final'] != mem['original']:
+                  out.append("\033[" + str(row) + ";1H\033[K")
+                  row += 1
+                  out.append("\033[" + str(row) + ";1H\033[K\033[90;1m Original:\033[0m")
+                  row += 1
+                  for line in mem['original'].split('\n')[:3]:
+                      if row >= height - 3:
+                          break
+                      out.append("\033[" + str(row) + ";1H\033[K\033[90m   " + line[:width-5] + "\033[0m")
+                      row += 1
+
+              while row < height - 2:
+                  out.append("\033[" + str(row) + ";1H\033[K")
+                  row += 1
+
+          # ========== Input ==========
+          def handle_input(c):
+              if c == 'q' or c == '\x03':
+                  return False
+
+              if c == '\x1b':
+                  if select.select([fd], [], [], 0.05)[0]:
+                      c2 = os.read(fd, 1).decode('latin-1')
+                      if c2 == '[':
+                          c3 = os.read(fd, 1).decode('latin-1')
+                          if c3 == 'A':
+                              move_up()
+                          elif c3 == 'B':
+                              move_down()
+                          elif c3 == 'Z':
+                              # Shift+Tab = prev tab
+                              st.tab = (st.tab - 1) % len(st.tabs)
+                              st.sel = 0
+                              st.scroll = 0
+                              load_memories()
+                              st.msg = ""
+                  else:
+                      if st.preview:
+                          st.preview = False
+                  return True
+
+              if c == '\t':
+                  st.tab = (st.tab + 1) % len(st.tabs)
+                  st.sel = 0
+                  st.scroll = 0
+                  load_memories()
+                  st.msg = ""
+                  st.msg_color = "33"
+              elif c == 'k':
+                  move_up()
+              elif c == 'j':
+                  move_down()
+              elif c == '\r' or c == '\n' or c == 'p':
+                  if st.memories:
+                      st.preview = not st.preview
+              elif c == 'a':
+                  approve_current()
+              elif c == 'x':
+                  reject_current()
+
+              return True
+
+          def move_up():
+              st.sel = max(0, st.sel - 1)
+              if st.sel < st.scroll:
+                  st.scroll = st.sel
+              st.msg = ""
+
+          def move_down():
+              _, height = get_size()
+              vis = max(1, height - 7)
+              st.sel = min(max(0, len(st.memories) - 1), st.sel + 1)
+              if st.sel >= st.scroll + vis:
+                  st.scroll = st.sel - vis + 1
+              st.msg = ""
+
+          def approve_current():
+              if not st.memories or st.sel >= len(st.memories):
+                  st.msg = "No memory selected"
+                  st.msg_color = "33"
+                  return
+              mem = st.memories[st.sel]
+              final = mem.get('final') or mem.get('original')
+              if do_update(mem['id'], 'human-approved', final):
+                  st.approved_count += 1
+                  st.msg = "APPROVED #" + str(mem['id'])
+                  st.msg_color = "32"
+
+          def reject_current():
+              if not st.memories or st.sel >= len(st.memories):
+                  st.msg = "No memory selected"
+                  st.msg_color = "33"
+                  return
+              mem = st.memories[st.sel]
+              if do_update(mem['id'], 'human-rejected'):
+                  st.rejected_count += 1
+                  st.msg = "REJECTED #" + str(mem['id'])
+                  st.msg_color = "31"
+
+          # ========== Main Loop ==========
+          load_memories()
+
+          fd = sys.stdin.fileno()
+          old_settings = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              sys.stdout.write('\033[2J')
+              render()
+
+              while True:
+                  c = os.read(fd, 1).decode('latin-1')
+                  if not handle_input(c):
+                      break
+                  render()
+
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+              sys.stdout.write('\033[?25h')
+              sys.stdout.write('\033[2J\033[H')
+              sys.stdout.flush()
+
+          summary = "Memory browser closed."
+          if st.approved_count or st.rejected_count:
+              summary += " Session: " + str(st.approved_count) + " approved, " + str(st.rejected_count) + " rejected."
+          context['output'] = summary
