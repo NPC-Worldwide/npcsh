@@ -1,7 +1,11 @@
 jinx_name: kg
 description: Interactive knowledge graph browser - explore facts, concepts, and links
 interactive: true
-inputs: []
+inputs:
+  - action: ""
+  - dream: false
+  - backfill: false
+  - ops: ""
 steps:
   - name: kg_browser
     engine: python
@@ -12,7 +16,70 @@ steps:
       import termios
       import select
 
-      if not sys.stdin.isatty():
+      _kg_action = (context.get('action') or '').strip().lower()
+
+      if _kg_action in ('sleep', 'evolve', 'dream'):
+          # Route to KG evolution operations
+          import traceback
+          from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db
+          from npcpy.memory.knowledge_graph import kg_sleep_process, kg_dream_process, kg_backfill_from_memories
+
+          _npc = context.get('npc')
+          _team = context.get('team')
+          _msgs = context.get('messages', [])
+          _do_dream = _kg_action == 'dream' or str(context.get('dream', '')).lower() in ('true', '1', 'yes')
+          _do_backfill = str(context.get('backfill', '')).lower() in ('true', '1', 'yes')
+          _ops_str = context.get('ops', '')
+          _ops_config = [op.strip() for op in _ops_str.split(',') if op.strip()] if _ops_str else None
+
+          _model = (_npc.model if _npc and hasattr(_npc, 'model') else None) or (state.chat_model if state else 'llama3.2')
+          _provider = (_npc.provider if _npc and hasattr(_npc, 'provider') else None) or (state.chat_provider if state else 'ollama')
+
+          _team_name = _team.name if _team else '__none__'
+          _npc_name = _npc.name if _npc else '__none__'
+          _cur_path = os.getcwd()
+
+          try:
+              _db_path = os.getenv('NPCSH_DB_PATH', os.path.expanduser('~/npcsh_history.db'))
+              _ch = CommandHistory(_db_path)
+              _eng = _ch.engine
+
+              _result = ''
+              if _do_backfill:
+                  print('Backfilling from approved memories...')
+                  _stats = kg_backfill_from_memories(_eng, model=_model, provider=_provider, npc=_npc, get_concepts=True, dry_run=False)
+                  _result += f"Backfill: +{_stats['facts_after'] - _stats['facts_before']} facts, +{_stats['concepts_after'] - _stats['concepts_before']} concepts\n"
+
+              _kg = load_kg_from_db(_eng, _team_name, _npc_name, _cur_path)
+              if not _kg or not _kg.get('facts'):
+                  context['output'] = _result + 'Knowledge graph is empty. Use /kg backfill=true or have conversations first.'
+                  context['messages'] = _msgs
+                  _ch.close()
+                  exit()
+
+              _f0 = len(_kg.get('facts', []))
+              _c0 = len(_kg.get('concepts', []))
+              _label = 'Sleep'
+
+              _kg, _ = kg_sleep_process(existing_kg=_kg, model=_model, provider=_provider, npc=_npc, operations_config=_ops_config)
+
+              if _do_dream:
+                  _label += ' & Dream'
+                  _kg, _ = kg_dream_process(existing_kg=_kg, model=_model, provider=_provider, npc=_npc)
+
+              save_kg_to_db(_eng, _kg, _team_name, _npc_name, _cur_path)
+              _f1 = len(_kg.get('facts', []))
+              _c1 = len(_kg.get('concepts', []))
+              _result += f"{_label} complete. Facts: {_f0} -> {_f1} ({_f1-_f0:+}), Concepts: {_c0} -> {_c1} ({_c1-_c0:+})"
+              context['output'] = _result
+              context['messages'] = _msgs
+              _ch.close()
+          except Exception as e:
+              traceback.print_exc()
+              context['output'] = f'KG evolution error: {e}'
+              context['messages'] = _msgs
+
+      elif not sys.stdin.isatty():
           context['output'] = "KG browser requires an interactive terminal."
 
       else:

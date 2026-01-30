@@ -52,59 +52,46 @@ Additionally, the pip installation includes the following CLI tools available in
       ```
 
 
-  - **Search**
-    - search the web
+  - **Search & Knowledge**
     ```bash
-    /search "cerulean city" perplexity
-
+    /search "cerulean city" perplexity    # Web search
+    /memories                              # Interactive memory browser TUI
+    /kg                                    # Interactive knowledge graph TUI
+    /kg sleep                              # Evolve the knowledge graph
+    /kg dream                              # Creative synthesis across domains
+    /nql                                   # Database query TUI
     ```
     <p align="center">
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/search.gif" alt="example of search results", width=600>
     </p>
     
-    - search approved memories
-    ```bash
-    /search query="how to deploy python apps" memory=true
-    ```
-        
-    - search the knowledge graph
-
-    ```bash
-    /search query="user preferences for database" kg=true
-    ```
-        
-    - execute a RAG search across files
-
-    ```bash
-    /search --rag -f ~/docs/api.md,~/docs/config.yaml "authentication setup"
-    ```
-        
-    - brainblast search (searches many keyword combinations)
-
-    ```bash
-    /search query="git commands" brainblast=true
-    ```
-        
-    - web search with specific provider
-
-    ```bash
-    /search query="family vacations" sprovider="perplexity"
-    ```     
-
+    
   - **Computer Use**
 
     ```bash
     /plonk 'find out the latest news on cnn' gemma3:12b ollama
     ```
 
-  - **Generate Image**
+  - **Generate Images with Vixynt**
+
+    ```bash
+    /vixynt
+    ```
+  - Generate images directly
     ```bash
     /vixynt 'generate an image of a rabbit eating ham in the brink of dawn' model='gpt-image-1' provider='openai'
     ```
       <p align="center">
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/rabbit.PNG" alt="a rabbit eating ham in the bring of dawn", width=250>
       </p>
-  - **Generate Video**
+  - **Generate Videos**
+
+    ```bash
+    /roll
+    ```
+
+  - Generate videos directly
+
     ```bash
     /roll 'generate a video of a hat riding a dog' veo-3.1-fast-generate-preview  gemini
     ```
@@ -113,7 +100,7 @@ Additionally, the pip installation includes the following CLI tools available in
         <img src="https://raw.githubusercontent.com/NPC-Worldwide/npcsh/main/test_data/hatridingdog.gif" alt="video of a hat riding a dog", width=250>
       </p> 
 
-  - **Serve an NPC Team** (Agentic API Server)
+  - **Serve an NPC Team**
     ```bash
     /serve --port 5337 --cors='http://localhost:5137/'
     ```
@@ -135,31 +122,13 @@ Additionally, the pip installation includes the following CLI tools available in
     /corca --mcp-server-path /path.to.server.py
     ```
 
-  - **Build an NPC Team**:
-
-    ``` bash
-    npc build flask --output ./dist --port 5337
-    npc build docker --output ./deploy
-    npc build cli --output ./bin
-    npc build static --api_url https://api.example.com
-    ```
-
-  - **NQL - AI-Powered SQL Models**:
-    Run SQL models with embedded AI transformations using NPC agents:
+  - **Build an NPC Team**: Generate deployment artifacts for your team.
     ```bash
-    # List available models
-    nql show=1
-
-    # Run all models in dependency order
-    nql
-
-    # Run a specific model
-    nql model=daily_summary
-
-    # Schedule with cron (runs daily at 6am)
-    nql install_cron="0 6 * * *"
+    /build target=flask outdir=./dist port=5337
+    /build target=docker outdir=./deploy
+    /build target=cli outdir=./bin
+    /build target=static outdir=./site
     ```
-
   - **Visualize Team Structure**:
     ```bash
     npc teamviz save=team_structure.png
@@ -457,81 +426,68 @@ The NPC responds using their persona and available jinxs, then control returns t
 
 # Jinxs (Macros/Tools)
 
-Jinxs are reusable tools that NPCs can invoke. They're activated with `/<jinx_name> ...` in npcsh or via the `npc` CLI in bash. For converting any `/<command>` in npcsh to bash, replace `/` with `npc `:
+Jinxs are reusable tools that users and agents can invoke. They're activated with `/<jinx_name> ...` in npcsh or via the `npc` CLI in bash. For converting any `/<command>` in npcsh to bash, replace `/` with `npc `:
 
 ```bash
 # In npcsh:
-/vixynt "a sunset over mountains"
+/sample "tell me a story about a sunset over the mountains"
 
 # In bash:
-npc vixynt "a sunset over mountains"
+npc sample "a sunset over mountains"
 ```
 
 ## Jinx Commands
 
+### Interactive TUI Modes
+
+Most modes launch a full-screen terminal interface. Just type the command and interact.
+
+| Command | Description |
+|---------|-------------|
+| `/alicanto` | Multi-agent deep research — hypothesis generation, persona-based sub-agents, iterative paper writing |
+| `/convene` | Multi-NPC structured discussion with live trains of thought |
+| `/spool` | Chat session with fresh context, file attachments, and RAG |
+| `/pti` | Pardon-the-interruption reasoning mode |
+| `/plonk` | GUI automation with vision |
+| `/wander` | Exploratory thinking with temperature shifts |
+| `/yap` | Voice chat mode |
+| `/guac` | Interactive Python REPL with LLM-powered code generation |
+| `/kg` | Knowledge graph browser — facts, concepts, links, search, graph view |
+| `/memories` | Memory browser — browse, approve, reject, filter by status |
+| `/nql` | Database query interface for NQL SQL models |
+| `/papers` | Academic paper search and browsing |
+| `/arxiv` | ArXiv paper browser |
+| `/git` | Git integration TUI |
+
 ### Orchestration & Research
 | Command | Description |
 |---------|-------------|
-| `/alicanto` | Deep research with multiple perspectives. Usage: `/alicanto 'query' --num-npcs 3 --depth 2` |
-| `/convene` | Multi-NPC structured discussion. Usage: `/convene "topic" --npcs corca,guac --rounds 3` |
-| `/delegate` | Delegate task to NPC with review loop. Usage: `/delegate npc_name=corca task="..." max_iterations=5` |
-| `/search` | Web/memory/knowledge graph search. Usage: `/search 'query' --sprovider perplexity` |
+| `/delegate` | Delegate task to NPC with review loop |
+| `/search` | Web/memory/knowledge graph search |
+| `/kg sleep` | Evolve knowledge graph through consolidation |
+| `/kg dream` | Creative synthesis across KG domains |
+| `/sleep` | Alias for `/kg sleep` |
 
 ### Generation
 | Command | Description |
 |---------|-------------|
-| `/vixynt` | Generate/edit images. Usage: `/vixynt 'description' --igmodel gpt-image-1 --igprovider openai` |
-| `/roll` | Generate videos. Usage: `/roll 'description' --vgmodel veo-3.1-fast-generate-preview --vgprovider gemini` |
-| `/sample` | Context-free LLM prompt. Usage: `/sample 'question' -m gpt-4o-mini --temp 0.7` |
-
-### Modes & Sessions
-| Command | Description |
-|---------|-------------|
-| `/spool` | Interactive chat with fresh context/RAG. Usage: `/spool --attachments 'file1,file2' -n corca` |
-| `/yap` | Voice chat mode. Usage: `/yap -n frederic` |
-| `/pti` | Pardon-the-interruption reasoning mode. Usage: `/pti` |
-| `/plonk` | GUI automation with vision. Usage: `/plonk 'click the submit button'` |
-| `/wander` | Exploratory thinking with temperature shifts. Usage: `/wander 'query' --model deepseek-r1:32b` |
-
-### Data & Analytics
-| Command | Description |
-|---------|-------------|
-| `/nql` | Run NQL SQL models. Usage: `/nql show=1`, `/nql model=daily_summary` |
-| `/teamviz` | Visualize team structure. Usage: `/teamviz save=output.png` |
-| `/ots` | Screenshot analysis. Usage: `/ots` then select area |
-| `/sleep` | Evolve knowledge graph. Usage: `/sleep --ops link_facts,deepen` |
-| `/kg_search` | Search knowledge graph with multiple modes. Usage: `/kg_search query mode=hybrid depth=2` |
-| `/mem_search` | Search approved memories. Usage: `/mem_search query status=approved top_k=10` |
-| `/mem_review` | Review pending memories interactively. Usage: `/mem_review limit=50` |
+| `/vixynt` | Generate/edit images |
+| `/roll` | Generate videos |
+| `/sample` | Context-free LLM prompt |
 
 ### System & Config
 | Command | Description |
 |---------|-------------|
-| `/build` | Build team to deployable format. Usage: `/build docker --output ./deploy` |
-| `/serve` | Full agentic server with NPC management, jinx controls, and OpenAI-compatible endpoints. Usage: `/serve --port 5337` |
-| `/compile` | Compile NPC profiles. Usage: `/compile path/to/npc` |
-| `/init` | Initialize NPC project. Usage: `/init` |
-| `/set` | Set config values. Usage: `/set model gemma3:4b`, `/set provider ollama` |
-| `/help` | Show help. Usage: `/help` |
-| `/jinxs` | List available jinxs. Usage: `/jinxs` |
-| `/incognide` | Launch Incognide GUI. Usage: `/incognide` |
-| `/trigger` | Set up system triggers. Usage: `/trigger 'description' -m gemma3:27b` |
+| `/build` | Build team to deployable format (flask, docker, cli, static) |
+| `/serve` | Serve NPC team as API with OpenAI-compatible endpoints |
+| `/compile` | Compile NPC profiles |
+| `/set` | Set config values — `/set model gemma3:4b`, `/set provider ollama` |
+| `/teamviz` | Visualize team structure |
+| `/ots` | Screenshot analysis |
+| `/incognide` | Launch Incognide GUI |
+| `/trigger` | Set up system triggers |
     
-    ## Common Command-Line Flags:
-    
-    ```
-    Flag              Shorthand    | Flag              Shorthand    | Flag              Shorthand    | Flag              Shorthand   
-    ------------------------------ | ------------------------------ | ------------------------------ | ------------------------------
-    --attachments     (-a)         | --height          (-h)         | --num_npcs        (-num_n)     | --team            (-tea)      
-    --config_dir      (-con)       | --igmodel         (-igm)       | --output_file     (-o)         | --temperature     (-t)      
-    --cors            (-cor)       | --igprovider      (-igp)       | --plots_dir       (-pl)        | --top_k                       
-    --creativity      (-cr)        | --lang            (-l)         | --port            (-po)        | --top_p                       
-    --depth           (-d)         | --max_tokens      (-ma)        | --provider        (-pr)        | --vmodel          (-vm)       
-    --emodel          (-em)        | --messages        (-me)        | --refresh_period  (-re)        | --vprovider       (-vp)       
-    --eprovider       (-ep)        | --model           (-mo)        | --rmodel          (-rm)        | --width           (-w)        
-    --exploration     (-ex)        | --npc             (-np)        | --rprovider       (-rp)        |                               
-    --format          (-f)         | --num_frames      (-num_f)     | --sprovider       (-s)         |                               
-    ```
+Most modes are interactive TUIs — just launch them and use keyboard controls. For CLI usage with `npc`, common flags include `--model (-mo)`, `--provider (-pr)`, `--npc (-np)`, and `--temperature (-t)`. Run `npc --help` for the full list.
 
 ## Memory & Knowledge Graph
 
@@ -547,67 +503,40 @@ Memories are extracted from conversations and follow this lifecycle:
 4. **human-edited** - Modified by user before approval
 5. **skipped** - Deferred for later review
 
-### Memory Commands
+### Memories
+
+The `/memories` command opens an interactive TUI for browsing, reviewing, and managing memories:
 
 ```bash
-# Search through approved memories
-/mem_search python                      # Keyword search
-/mem_search python status=approved      # Filter by status
-/mem_search python top_k=20             # Limit results
-
-# Review pending memories interactively
-/mem_review                             # Review with default limit
-/mem_review limit=50                    # Review more at once
+/memories
 ```
+
+The TUI provides:
+- **Tab-based filtering** — switch between All, Pending, Approved, Rejected, etc.
+- **Approve/Reject** — press `a` to approve, `x` to reject
+- **Preview** — press Enter to see full memory content
+- **Session stats** — tracks approvals/rejections during session
 
 ### Knowledge Graph
 
-The knowledge graph stores facts and concepts extracted from approved memories, enabling semantic search and reasoning. Facts are linked to concepts, allowing traversal-based discovery.
+The `/kg` command opens an interactive browser for exploring the knowledge graph:
 
 ```bash
-# Keyword search
-/kg_search python                       # Simple keyword match
-
-# Semantic similarity search
-/kg_search python mode=embedding        # Find semantically similar facts
-
-# Graph traversal search
-/kg_search python mode=link depth=3     # Traverse graph links
-
-# Hybrid search (combines methods)
-/kg_search python mode=all              # All methods combined
-
-# Explore concepts
-/kg_search type=concepts                # List all concepts
-/kg_search concept="Machine Learning"   # Explore a specific concept
+/kg                     # Browse facts, concepts, links, search, graph view
+/kg sleep               # Evolve KG through consolidation
+/kg dream               # Creative synthesis across domains
+/kg evolve              # Alias for sleep
+/kg sleep backfill=true # Import approved memories first, then evolve
+/kg sleep ops=prune,deepen,abstract  # Specific operations
 ```
 
-### Knowledge Graph Evolution
+The TUI browser has 5 tabs: **Facts**, **Concepts**, **Links**, **Search**, and **Graph** — navigate with Tab, j/k, and Enter to drill into details.
 
-The `/sleep` command evolves the knowledge graph through consolidation, abstraction, and creative synthesis:
-
-```bash
-# Basic sleep (consolidation)
-/sleep
-
-# Import approved memories first, then evolve
-/sleep backfill=true
-
-# Dream mode - creative synthesis across domains
-/sleep dream=true
-
-# Combined backfill and dream
-/sleep backfill=true dream=true
-
-# Specific operations
-/sleep ops=prune,deepen,abstract
-```
-
-**Operations:**
-- **prune** - Remove redundant or low-value facts
-- **deepen** - Add detail to existing facts
-- **abstract** - Create higher-level generalizations
-- **link** - Connect related facts and concepts
+**Evolution operations** (via `/kg sleep` or `/sleep`):
+- **prune** — Remove redundant or low-value facts
+- **deepen** — Add detail to existing facts
+- **abstract** — Create higher-level generalizations
+- **link** — Connect related facts and concepts
 
 ### Environment Variables
 

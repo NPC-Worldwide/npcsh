@@ -27,5 +27,4 @@ jinxs:
   - lib/core/python
   - lib/core/edit_file
   - lib/core/load_file
-  - lib/core/search
     

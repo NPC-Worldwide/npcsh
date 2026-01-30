@@ -67,6 +67,7 @@ steps:
 
       model = context.get('model') or (npc.model if npc and hasattr(npc, 'model') else None)
       provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') else None)
+      _alicanto_directive = (npc.primary_directive if npc and hasattr(npc, 'primary_directive') else "") or ""
 
       # ========== Utility ==========
       def get_size():
@@ -207,17 +208,25 @@ steps:
 
       def search_papers(query: str, limit: int = 10) -> str:
           """Search Semantic Scholar for academic papers. Returns titles, authors, year, citation count, abstracts, and URLs."""
-          if not _s2_api_key:
-              return "Semantic Scholar API key not set (S2_API_KEY). Use _web_search_tool instead."
+          s2_url = "https://api.semanticscholar.org/graph/v1/paper/search"
+          params = {
+              "query": query,
+              "limit": min(limit, 20),
+              "fields": "title,abstract,authors,year,citationCount,url,tldr,venue"
+          }
           try:
-              url = "https://api.semanticscholar.org/graph/v1/paper/search"
-              headers = {"x-api-key": _s2_api_key}
-              params = {
-                  "query": query,
-                  "limit": min(limit, 20),
-                  "fields": "title,abstract,authors,year,citationCount,url,tldr,venue"
-              }
-              resp = _requests.get(url, headers=headers, params=params, timeout=30)
+              # Try with API key first if available
+              if _s2_api_key:
+                  resp = _requests.get(s2_url, headers={"x-api-key": _s2_api_key}, params=params, timeout=30)
+                  if resp.status_code == 403:
+                      # Key expired/revoked, fall back to unauthenticated
+                      resp = _requests.get(s2_url, params=params, timeout=30)
+              else:
+                  resp = _requests.get(s2_url, params=params, timeout=30)
+              if resp.status_code == 429:
+                  # Rate limited, wait and retry once
+                  time.sleep(1.5)
+                  resp = _requests.get(s2_url, params=params, timeout=30)
               resp.raise_for_status()
               papers = resp.json().get('data', [])
               if not papers:
@@ -420,7 +429,7 @@ steps:
               name=agent_name.replace(' ', '_').lower(),
               model=_model,
               provider=_provider,
-              primary_directive=agent_persona,
+              primary_directive=_alicanto_directive + "\n\n" + agent_persona,
               tools=tools
           )
 
@@ -430,6 +439,7 @@ steps:
           created_files = set()
           summary = {}
           major_step = 0
+          stall_count = 0  # consecutive steps with no filesystem change
 
           while major_step < _max_steps:
               # Check for skip/quit
@@ -452,36 +462,11 @@ steps:
               history_str = "\n".join(summarized_history)
               next_step_text = f"This is the next step suggested by your advisor. : BEGIN NEXT_STEP: {summary.get('next_step')} END NEXT STEP" if summary else ""
 
-              initial_prompt = f"""Test the following hypothesis: '{hypothesis}' as related to the user query: '{user_query}'.
-      Only focus on your specific hypothesis, other agents are being tasked with other aspects of the problem.
-
-      Use bash commands to carry out research through the execute_shell_command.
-      Adjust files with `replace_in_file` and use `read_file` and `list_files` to verify file states and file creation.
-      Create files with create_file()
-
-      Test with execute_shell_command when needed
-      Get unstuck with wander_wrapper
-
-      When you have a definitive result, say RESEARCH_COMPLETE.
-
-      FILE PROVENANCE HISTORY:
-      {chr(10).join(provenance_summary)}
-
-      CURRENT FILES: {list(fs_before.keys())}
-
-      COMPLETE ACTION HISTORY:
-      BEGIN HISTORY
+              initial_prompt = f"""Hypothesis: '{hypothesis}'
+      Query: '{user_query}'
+      Files: {list(fs_before.keys())}
       {history_str}
-      END HISTORY
-
-      What specific action will you take next to test your hypothesis?
-      AVAILABLE TOOLS: create_file, append_to_file, replace_in_file, read_file, list_files, execute_shell_command, wander_wrapper, _web_search_tool, search_papers.
-
-      Do not repeat actions. Use `search_papers` to find academic papers on Semantic Scholar. Use `_web_search_tool` for general web search.
-
-      {next_step_text}
-
-      Your goal is to research. To set up experiments, create figures, and produce data outputs in csvs for verification and reproducibility."""
+      {next_step_text}"""
 
               ui_state['log'].append(f"\033[90m  Major step {major_step + 1}\033[0m")
 
@@ -545,8 +530,16 @@ steps:
 
               fs_after = get_filesystem_state()
               new_files = set(fs_after.keys()) - set(fs_before.keys())
+              changed_files = {f for f in fs_after if fs_before.get(f) != fs_after.get(f)}
               if new_files:
                   ui_state['log'].append(f"  \033[32mNew files: {list(new_files)}\033[0m")
+                  stall_count = 0
+              elif changed_files:
+                  stall_count = 0
+              else:
+                  stall_count += 1
+                  if stall_count >= 3:
+                      ui_state['log'].append(f"  \033[33mStalled for {stall_count} steps, forcing wrap-up\033[0m")
 
               combined_thought = " ".join(all_thoughts)
               combined_action = " | ".join(filter(None, all_actions))
@@ -1021,7 +1014,7 @@ steps:
           coordinator = NPC(
               name="Alicanto",
               model=model, provider=provider,
-              primary_directive="You are Alicanto the mythical bird. You research topics iteratively by writing to LaTeX files and searching for more information.",
+              primary_directive=_alicanto_directive,
               tools=coord_tools
           )
 
