@@ -631,13 +631,16 @@ steps:
           return True
 
       def handle_settings(c, fd):
-          SETTINGS_KEYS = ['tts_enabled', 'auto_speak', 'rec_duration', 'voice', 'tts_model']
+          SETTINGS_KEYS = ['tts_enabled', 'auto_speak', 'listening', 'silence_timeout', 'vad_threshold']
 
           if ui.editing:
               if c in ('\r', '\n'):
                   val = ui.edit_buf.strip()
-                  if ui.edit_key == 'rec_duration':
-                      try: ui.rec_duration = max(1, min(30, int(val)))
+                  if ui.edit_key == 'silence_timeout':
+                      try: ui.silence_timeout = max(0.3, min(10.0, float(val)))
+                      except: pass
+                  elif ui.edit_key == 'vad_threshold':
+                      try: ui.vad_threshold = max(0.1, min(0.9, float(val)))
                       except: pass
                   ui.editing = False
                   ui.edit_buf = ""
@@ -657,12 +660,16 @@ steps:
                   ui.tts_enabled = not ui.tts_enabled
               elif key == 'auto_speak':
                   ui.auto_speak = not ui.auto_speak
+              elif key == 'listening':
+                  ui.listening = not ui.listening
+                  st = 'on' if ui.listening else 'off'
+                  ui.chat_log.append(('info', f'Listening {st}.'))
           elif c == 'e':
               key = SETTINGS_KEYS[ui.set_sel]
-              if key == 'rec_duration':
+              if key in ('silence_timeout', 'vad_threshold'):
                   ui.editing = True
                   ui.edit_key = key
-                  ui.edit_buf = str(ui.rec_duration)
+                  ui.edit_buf = str(ui.silence_timeout if key == 'silence_timeout' else ui.vad_threshold)
           return True
 
       # ================================================================
@@ -670,11 +677,18 @@ steps:
       # ================================================================
       ui.chat_log.append(('info', f'YAP voice chat. NPC: {npc_name}.'))
       if AUDIO_AVAILABLE:
-          ui.chat_log.append(('info', 'Audio ready. Ctrl+R to record, or type text.'))
+          ui.chat_log.append(('info', 'Listening for speech. Just start talking, or type text.'))
+          ui.chat_log.append(('info', 'Ctrl+L to pause/resume listening.'))
       else:
           ui.chat_log.append(('info', 'Audio not available. Text mode only.'))
       if loaded_chunks:
           ui.chat_log.append(('info', f'{len(loaded_chunks)} files loaded for context.'))
+
+      # Start VAD listener thread
+      _listener_thread = None
+      if AUDIO_AVAILABLE and vad_model is not None:
+          _listener_thread = threading.Thread(target=vad_listener_loop, daemon=True)
+          _listener_thread.start()
 
       # ================================================================
       #  Main loop
@@ -687,12 +701,13 @@ steps:
           running = True
           while running:
               render()
-              if ui.thinking or ui.recording or ui.transcribing or ui.speaking:
+              if ui.thinking or ui.recording or ui.transcribing or ui.speaking or ui.listening:
                   ui.spinner_frame += 1
               if _sel.select([fd], [], [], 0.15)[0]:
                   c = os.read(fd, 1).decode('latin-1')
                   running = handle_key(c, fd)
       finally:
+          ui.listen_stop = True
           termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
           sys.stdout.write('\033[?25h\033[2J\033[H')
           sys.stdout.flush()
