@@ -33,6 +33,8 @@ steps:
       from typing import List, Dict, Any, Tuple
       from pathlib import Path
 
+      import requests as _requests
+
       from npcpy.llm_funcs import get_llm_response
       from npcpy.npc_compiler import NPC
 
@@ -201,6 +203,53 @@ steps:
           except Exception as e:
               return f"Search error: {e}"
 
+      _s2_api_key = os.environ.get('S2_API_KEY', '')
+
+      def search_papers(query: str, limit: int = 10) -> str:
+          """Search Semantic Scholar for academic papers. Returns titles, authors, year, citation count, abstracts, and URLs."""
+          if not _s2_api_key:
+              return "Semantic Scholar API key not set (S2_API_KEY). Use _web_search_tool instead."
+          try:
+              url = "https://api.semanticscholar.org/graph/v1/paper/search"
+              headers = {"x-api-key": _s2_api_key}
+              params = {
+                  "query": query,
+                  "limit": min(limit, 20),
+                  "fields": "title,abstract,authors,year,citationCount,url,tldr,venue"
+              }
+              resp = _requests.get(url, headers=headers, params=params, timeout=30)
+              resp.raise_for_status()
+              papers = resp.json().get('data', [])
+              if not papers:
+                  return f"No papers found for: {query}"
+              out = []
+              for i, p in enumerate(papers, 1):
+                  title = p.get('title', 'No title')
+                  year = p.get('year', '?')
+                  cites = p.get('citationCount', 0)
+                  authors = ', '.join([a.get('name', '') for a in p.get('authors', [])[:3]])
+                  if len(p.get('authors', [])) > 3:
+                      authors += ' et al.'
+                  tldr = p.get('tldr', {}).get('text', '') if p.get('tldr') else ''
+                  abstract = (p.get('abstract') or '')[:200]
+                  paper_url = p.get('url', '')
+                  venue = p.get('venue', '')
+                  entry = f"{i}. {title} ({year}) [{cites} citations]"
+                  entry += f"\n   Authors: {authors}"
+                  if venue:
+                      entry += f"\n   Venue: {venue}"
+                  if tldr:
+                      entry += f"\n   TL;DR: {tldr}"
+                  elif abstract:
+                      entry += f"\n   Abstract: {abstract}..."
+                  entry += f"\n   URL: {paper_url}"
+                  out.append(entry)
+              return "\n\n".join(out)
+          except _requests.exceptions.RequestException as e:
+              return f"Semantic Scholar API error: {e}"
+          except Exception as e:
+              return f"Paper search error: {e}"
+
       # ========== File Provenance (matching original) ==========
       @dataclass
       class FileProvenance:
@@ -365,7 +414,7 @@ steps:
                   return f"Wander failed: {e}"
 
           tools = [create_file, append_to_file, replace_in_file, read_file,
-                   list_files, execute_shell_command, _web_search_tool, wander_wrapper]
+                   list_files, execute_shell_command, _web_search_tool, search_papers, wander_wrapper]
 
           agent = NPC(
               name=agent_name.replace(' ', '_').lower(),
@@ -426,9 +475,9 @@ steps:
       END HISTORY
 
       What specific action will you take next to test your hypothesis?
-      AVAILABLE TOOLS: create_file, append_to_file, replace_in_file, read_file, list_files, execute_shell_command, wander_wrapper, _web_search_tool.
+      AVAILABLE TOOLS: create_file, append_to_file, replace_in_file, read_file, list_files, execute_shell_command, wander_wrapper, _web_search_tool, search_papers.
 
-      Do not repeat actions. Use `_web_search_tool` to look up items if you are struggling.
+      Do not repeat actions. Use `search_papers` to find academic papers on Semantic Scholar. Use `_web_search_tool` for general web search.
 
       {next_step_text}
 
@@ -620,7 +669,7 @@ steps:
 
       Focus ONLY on the {next_section} section. Write 2-4 paragraphs of substantial academic content.
 
-      Available tools: replace_in_file, read_file, _web_search_tool"""
+      Available tools: replace_in_file, read_file, _web_search_tool, search_papers"""
 
               for micro in range(5):
                   if micro == 0:
@@ -744,7 +793,7 @@ steps:
       Use replace_in_file to make targeted improvements to paper.tex.
       Use read_file to check current state.
 
-      Available tools: replace_in_file, read_file, append_to_file, _web_search_tool"""
+      Available tools: replace_in_file, read_file, append_to_file, _web_search_tool, search_papers"""
 
           coord_messages = []
           for micro in range(8):
@@ -967,7 +1016,7 @@ steps:
                   return f"Wander failed: {e}"
 
           coord_tools = [create_file, append_to_file, replace_in_file, read_file,
-                         list_files, execute_shell_command, _web_search_tool, wander_wrapper_coord]
+                         list_files, execute_shell_command, _web_search_tool, search_papers, wander_wrapper_coord]
 
           coordinator = NPC(
               name="Alicanto",
