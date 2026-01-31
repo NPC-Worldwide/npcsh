@@ -208,11 +208,11 @@ steps:
                   act_record['text'] = txt
               elif action == 'key':
                   key = action_response.get('text', 'enter')
-                  perform_action({"type": "key", "key": key})
+                  perform_action({"type": "key", "keys": key})
                   act_record['key'] = key
               elif action == 'launch':
                   cmd = action_response.get('command', '')
-                  perform_action({"type": "launch", "command": cmd})
+                  perform_action({"type": "shell", "command": cmd})
                   act_record['command'] = cmd
                   time.sleep(2)
               elif action == 'wait':
