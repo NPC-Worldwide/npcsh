@@ -167,8 +167,26 @@ steps:
           except:
               return "Error listing directory."
 
-      def execute_shell_command(command: str) -> str:
-          """Execute a shell command and return stdout/stderr."""
+      def run_python(code: str) -> str:
+          """Execute Python code and return the output. This is your PRIMARY tool for data analysis, file processing, API calls, computations, and any programmatic work. Use this for: downloading data, parsing files, running analyses, making HTTP requests, processing CSVs/FITS/JSON, plotting, statistics, etc. The code runs in a fresh namespace with access to standard library and installed packages (numpy, pandas, astropy, requests, matplotlib, scipy, etc.)."""
+          import io as _io
+          _old_stdout = sys.stdout
+          _old_stderr = sys.stderr
+          _capture = _io.StringIO()
+          sys.stdout = _capture
+          sys.stderr = _capture
+          _ns = {'__builtins__': __builtins__}
+          try:
+              exec(code, _ns)
+          except Exception as _e:
+              print(f"Error: {type(_e).__name__}: {_e}")
+          finally:
+              sys.stdout = _old_stdout
+              sys.stderr = _old_stderr
+          return _capture.getvalue()[:5000] if _capture.getvalue().strip() else "(no output)"
+
+      def shell_command(command: str) -> str:
+          """Execute a shell command. ONLY use this for simple system tasks like installing packages (pip install), checking disk space, or listing system info. For ALL data work, analysis, file processing, HTTP requests, and computation, use run_python instead."""
           try:
               result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
               out = ""
@@ -422,8 +440,8 @@ steps:
               except Exception as e:
                   return f"Wander failed: {e}"
 
-          tools = [create_file, append_to_file, replace_in_file, read_file,
-                   list_files, execute_shell_command, _web_search_tool, search_papers, wander_wrapper]
+          tools = [run_python, create_file, append_to_file, replace_in_file, read_file,
+                   list_files, _web_search_tool, search_papers, shell_command, wander_wrapper]
 
           agent = NPC(
               name=agent_name.replace(' ', '_').lower(),
@@ -1008,8 +1026,8 @@ steps:
               except Exception as e:
                   return f"Wander failed: {e}"
 
-          coord_tools = [create_file, append_to_file, replace_in_file, read_file,
-                         list_files, execute_shell_command, _web_search_tool, search_papers, wander_wrapper_coord]
+          coord_tools = [run_python, create_file, append_to_file, replace_in_file, read_file,
+                         list_files, _web_search_tool, search_papers, shell_command, wander_wrapper_coord]
 
           coordinator = NPC(
               name="Alicanto",

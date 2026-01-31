@@ -123,7 +123,7 @@ steps:
           render_screen()
 
           try:
-              ss = capture_screenshot()
+              ss = capture_screenshot(full=True)
               if not ss or 'file_path' not in ss:
                   task['actions'].append({"action": "fail", "reason": "Screenshot failed"})
                   task['status'] = 'failed'
