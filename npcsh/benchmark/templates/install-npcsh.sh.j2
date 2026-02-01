@@ -12,10 +12,14 @@ if ! command -v pip &> /dev/null; then
     apt-get update && apt-get install -y python3-pip
 fi
 
-# Install npcsh with lite dependencies (API providers only, no local models)
-# Use --break-system-packages for PEP 668 compliance (Ubuntu 24.04+)
-echo "Installing npcsh[lite] + ollama..."
-pip install --quiet --break-system-packages npcsh[lite] ollama || pip install --quiet npcsh[lite] ollama
+# Upgrade pip first to handle modern packages and extras
+echo "Upgrading pip..."
+pip install --upgrade pip 2>/dev/null || pip install --break-system-packages --upgrade pip 2>/dev/null || true
+
+# Install npcsh + ollama client
+# Try with --break-system-packages first (PEP 668 / Ubuntu 24.04+), then without
+echo "Installing npcsh + ollama..."
+pip install --break-system-packages npcsh ollama 2>/dev/null || pip install npcsh ollama
 
 # Verify installation
 echo "Verifying npcsh installation..."

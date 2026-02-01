@@ -14,8 +14,10 @@ def main():
     parser.add_argument("--model", "-m", type=str, help="LLM model to use")
     parser.add_argument("--provider", "-p", type=str, help="LLM provider to use")
     parser.add_argument("--files", "-f", nargs="*", help="Files to load for RAG context")
-    parser.add_argument("--tts-model", type=str, default="kokoro", help="TTS model to use")
-    parser.add_argument("--voice", type=str, default="af_heart", help="Voice for TTS")
+    parser.add_argument("--tts-model", type=str, default="kokoro",
+                        help="TTS engine (kokoro, qwen3, elevenlabs, openai, gemini, gtts)")
+    parser.add_argument("--voice", type=str, default=None,
+                        help="Voice ID (engine-specific, e.g. af_heart for kokoro, ryan for qwen3)")
     args = parser.parse_args()
 
     # Setup shell to get team and default NPC
