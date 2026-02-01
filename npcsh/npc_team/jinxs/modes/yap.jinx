@@ -7,6 +7,7 @@ inputs:
   - tts_model: kokoro
   - voice: af_heart
   - files: null
+  - show_setup: false
 
 steps:
   - name: yap_tui
@@ -27,13 +28,13 @@ steps:
               FORMAT, CHANNELS, RATE, CHUNK,
               transcribe_recording, convert_mp3_to_wav
           )
-          from npcpy.gen.audio_gen import text_to_speech
+          from npcpy.gen.audio_gen import text_to_speech, get_available_engines, get_available_voices
           AUDIO_AVAILABLE = True
       except ImportError:
           AUDIO_AVAILABLE = False
 
       from npcpy.llm_funcs import get_llm_response
-      from npcpy.npc_sysenv import get_system_message, render_markdown
+      from npcpy.npc_sysenv import get_system_message, render_markdown, get_locally_available_models
       from npcpy.data.load import load_file_contents
       from npcpy.data.text import rag_search
 
@@ -42,7 +43,8 @@ steps:
       messages = context.get('messages', [])
       files = context.get('files')
       tts_model_name = context.get('tts_model', 'kokoro')
-      voice_name = context.get('voice', 'af_heart')
+      voice_name = context.get('voice') or None
+      show_setup = context.get('show_setup', False)
 
       if isinstance(npc, str) and team:
           npc = team.get(npc) if hasattr(team, 'get') else None
@@ -60,6 +62,285 @@ steps:
           context['output'] = "Yap requires an interactive terminal."
           context['messages'] = messages
           exit()
+
+      # ================================================================
+      #  Gather available options for setup/modal
+      # ================================================================
+      _all_engines = []
+      _engine_voices = {}
+      try:
+          _engines_info = get_available_engines()
+          for ename, einfo in _engines_info.items():
+              _all_engines.append(ename)
+              try:
+                  _engine_voices[ename] = [v['id'] if isinstance(v, dict) else str(v) for v in get_available_voices(ename)]
+              except Exception:
+                  _engine_voices[ename] = []
+      except Exception:
+          _all_engines = ['kokoro', 'qwen3', 'elevenlabs', 'openai', 'gemini', 'gtts']
+          _engine_voices = {e: [] for e in _all_engines}
+
+      if not _all_engines:
+          _all_engines = ['kokoro']
+
+      _all_models = []
+      _all_providers = []
+      try:
+          _local = get_locally_available_models(os.getcwd())
+          _seen_models = set()
+          _seen_providers = set()
+          for entry in _local:
+              m = entry.get('model', '') if isinstance(entry, dict) else str(entry)
+              p = entry.get('provider', '') if isinstance(entry, dict) else ''
+              if m and m not in _seen_models:
+                  _all_models.append(m)
+                  _seen_models.add(m)
+              if p and p not in _seen_providers:
+                  _all_providers.append(p)
+                  _seen_providers.add(p)
+      except Exception:
+          pass
+
+      if not _all_models:
+          _all_models = [model or 'gemma3:4b']
+      if not _all_providers:
+          _all_providers = [provider or 'ollama']
+
+      # Ensure current selections are in the lists
+      if tts_model_name not in _all_engines:
+          _all_engines.insert(0, tts_model_name)
+      if model and model not in _all_models:
+          _all_models.insert(0, model)
+      if provider and provider not in _all_providers:
+          _all_providers.insert(0, provider)
+
+      def _voices_for_engine(eng):
+          v = _engine_voices.get(eng, [])
+          if not v:
+              defaults = {'kokoro': ['af_heart'], 'qwen3': ['ryan'], 'elevenlabs': ['rachel'],
+                          'openai': ['alloy'], 'gemini': ['en-US-Standard-A'], 'gtts': ['en']}
+              v = defaults.get(eng, ['default'])
+          return v
+
+      # ================================================================
+      #  Setup screen
+      # ================================================================
+      def run_setup():
+          nonlocal tts_model_name, voice_name, model, provider
+
+          TURQ = '\033[38;2;64;224;208m'
+          PURPLE = '\033[38;2;180;130;255m'
+          ORANGE = '\033[38;2;255;165;0m'
+          GREEN = '\033[32m'
+          DIM = '\033[90m'
+          BOLD = '\033[1m'
+          REV = '\033[7m'
+          RST = '\033[0m'
+
+          def _sz():
+              try:
+                  s = os.get_terminal_size()
+                  return s.columns, s.lines
+              except:
+                  return 80, 24
+
+          # Setup state
+          fields = ['model', 'provider', 'engine', 'voice']
+          field_labels = {'model': 'LLM Model', 'provider': 'LLM Provider',
+                          'engine': 'TTS Engine', 'voice': 'Voice'}
+
+          model_idx = _all_models.index(model) if model in _all_models else 0
+          provider_idx = _all_providers.index(provider) if provider in _all_providers else 0
+          engine_idx = _all_engines.index(tts_model_name) if tts_model_name in _all_engines else 0
+          cur_voices = _voices_for_engine(_all_engines[engine_idx])
+          voice_idx = 0
+          if voice_name and voice_name in cur_voices:
+              voice_idx = cur_voices.index(voice_name)
+
+          field_options = {
+              'model': (_all_models, model_idx),
+              'provider': (_all_providers, provider_idx),
+              'engine': (_all_engines, engine_idx),
+              'voice': (cur_voices, voice_idx),
+          }
+
+          sel = 0  # 0-3 = fields, 4 = save default, 5 = dont show again
+          save_default = True
+          dont_show = False
+          total_rows = 6  # 4 fields + 2 checkboxes
+
+          def _get_val(f):
+              opts, idx = field_options[f]
+              return opts[idx] if opts else '?'
+
+          def _render_setup():
+              w, h = _sz()
+              box_w = min(50, w - 4)
+              box_h = 18
+              sx = max(1, (w - box_w) // 2)
+              sy = max(1, (h - box_h) // 2)
+
+              buf = ['\033[2J\033[H']
+
+              # Box border
+              buf.append(f'\033[{sy};{sx}H{PURPLE}{"─" * box_w}{RST}')
+              title = " YAP Voice Chat Setup "
+              tp = sx + (box_w - len(title)) // 2
+              buf.append(f'\033[{sy};{tp}H{BOLD}{PURPLE}{title}{RST}')
+
+              y = sy + 2
+              for i, f in enumerate(fields):
+                  opts, idx = field_options[f]
+                  val = opts[idx] if opts else '?'
+                  label = field_labels[f]
+                  lpad = sx + 2
+
+                  if i == sel:
+                      arrow_l = f'{TURQ}\u25c4{RST}'
+                      arrow_r = f'{TURQ}\u25ba{RST}'
+                      buf.append(f'\033[{y};{lpad}H{REV} {label}: {RST} {arrow_l} {BOLD}{val}{RST} {arrow_r}')
+                  else:
+                      buf.append(f'\033[{y};{lpad}H  {DIM}{label}:{RST} {val}')
+                  y += 2
+
+              # Separator
+              buf.append(f'\033[{y};{sx + 2}H{DIM}{"─" * (box_w - 4)}{RST}')
+              y += 1
+
+              # Checkboxes
+              ck_save = f'{GREEN}[x]{RST}' if save_default else '[ ]'
+              ck_dont = f'{GREEN}[x]{RST}' if dont_show else '[ ]'
+
+              if sel == 4:
+                  buf.append(f'\033[{y};{sx + 2}H{REV} {ck_save} Save as default {RST}')
+              else:
+                  buf.append(f'\033[{y};{sx + 2}H  {ck_save} Save as default')
+              y += 1
+
+              if sel == 5:
+                  buf.append(f'\033[{y};{sx + 2}H{REV} {ck_dont} Don\'t show again {RST}')
+              else:
+                  buf.append(f'\033[{y};{sx + 2}H  {ck_dont} Don\'t show again')
+              y += 2
+
+              # Hints
+              buf.append(f'\033[{y};{sx + 2}H{DIM}\u2191/\u2193:Navigate  \u2190/\u2192:Change  Space:Toggle  Enter:Start  Ctrl+Q:Quit{RST}')
+              y += 1
+              buf.append(f'\033[{y};{sx}H{PURPLE}{"─" * box_w}{RST}')
+
+              sys.stdout.write(''.join(buf))
+              sys.stdout.flush()
+
+          fd = sys.stdin.fileno()
+          old = termios.tcgetattr(fd)
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              running = True
+              while running:
+                  _render_setup()
+                  if _sel.select([fd], [], [], 0.1)[0]:
+                      c = os.read(fd, 1).decode('latin-1')
+                      if c == '\x11' or c == '\x03':  # Ctrl+Q / Ctrl+C
+                          termios.tcsetattr(fd, termios.TCSADRAIN, old)
+                          sys.stdout.write('\033[?25h\033[2J\033[H')
+                          sys.stdout.flush()
+                          context['output'] = "Setup cancelled."
+                          context['messages'] = messages
+                          exit()
+
+                      elif c == '\x1b':  # Escape sequence
+                          if _sel.select([fd], [], [], 0.05)[0]:
+                              c2 = os.read(fd, 1).decode('latin-1')
+                              if c2 == '[':
+                                  c3 = os.read(fd, 1).decode('latin-1')
+                                  if c3 == 'A':  # Up
+                                      sel = max(0, sel - 1)
+                                  elif c3 == 'B':  # Down
+                                      sel = min(total_rows - 1, sel + 1)
+                                  elif c3 == 'D':  # Left
+                                      if sel < 4:
+                                          f = fields[sel]
+                                          opts, idx = field_options[f]
+                                          if opts:
+                                              new_idx = (idx - 1) % len(opts)
+                                              field_options[f] = (opts, new_idx)
+                                              if f == 'engine':
+                                                  nv = _voices_for_engine(opts[new_idx])
+                                                  field_options['voice'] = (nv, 0)
+                                  elif c3 == 'C':  # Right
+                                      if sel < 4:
+                                          f = fields[sel]
+                                          opts, idx = field_options[f]
+                                          if opts:
+                                              new_idx = (idx + 1) % len(opts)
+                                              field_options[f] = (opts, new_idx)
+                                              if f == 'engine':
+                                                  nv = _voices_for_engine(opts[new_idx])
+                                                  field_options['voice'] = (nv, 0)
+
+                      elif c == 'k':
+                          sel = max(0, sel - 1)
+                      elif c == 'j':
+                          sel = min(total_rows - 1, sel + 1)
+                      elif c == 'h':
+                          if sel < 4:
+                              f = fields[sel]
+                              opts, idx = field_options[f]
+                              if opts:
+                                  new_idx = (idx - 1) % len(opts)
+                                  field_options[f] = (opts, new_idx)
+                                  if f == 'engine':
+                                      nv = _voices_for_engine(opts[new_idx])
+                                      field_options['voice'] = (nv, 0)
+                      elif c == 'l':
+                          if sel < 4:
+                              f = fields[sel]
+                              opts, idx = field_options[f]
+                              if opts:
+                                  new_idx = (idx + 1) % len(opts)
+                                  field_options[f] = (opts, new_idx)
+                                  if f == 'engine':
+                                      nv = _voices_for_engine(opts[new_idx])
+                                      field_options['voice'] = (nv, 0)
+                      elif c == ' ':
+                          if sel == 4:
+                              save_default = not save_default
+                          elif sel == 5:
+                              dont_show = not dont_show
+                      elif c in ('\r', '\n'):
+                          running = False
+
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old)
+              sys.stdout.write('\033[?25h\033[2J\033[H')
+              sys.stdout.flush()
+
+          # Apply selections
+          model = _get_val('model')
+          provider = _get_val('provider')
+          tts_model_name = _get_val('engine')
+          voice_name = _get_val('voice')
+
+          # Persist if requested
+          if save_default or dont_show:
+              from npcsh.config import set_npcsh_config_value
+              if save_default:
+                  set_npcsh_config_value("NPCSH_TTS_ENGINE", tts_model_name)
+                  set_npcsh_config_value("NPCSH_TTS_VOICE", voice_name)
+                  set_npcsh_config_value("NPCSH_CHAT_MODEL", model)
+                  set_npcsh_config_value("NPCSH_CHAT_PROVIDER", provider)
+              if dont_show:
+                  set_npcsh_config_value("NPCSH_YAP_SETUP_DONE", "1")
+
+      if show_setup:
+          run_setup()
+
+      # Set default voice if still None
+      if not voice_name:
+          defaults = {'kokoro': 'af_heart', 'qwen3': 'ryan', 'elevenlabs': 'rachel',
+                      'openai': 'alloy', 'gemini': 'en-US-Standard-A', 'gtts': 'en'}
+          voice_name = defaults.get(tts_model_name, 'default')
 
       # ================================================================
       #  Audio models
@@ -138,7 +419,27 @@ steps:
           edit_buf = ""
           edit_key = ""
 
+          # Modal state
+          modal_open = False
+          modal_sel = 0
+          modal_engine_idx = 0
+          modal_voice_idx = 0
+          modal_model_idx = 0
+          modal_provider_idx = 0
+          modal_save = False
+
       ui = UI()
+
+      # Initialize modal indices to current selections
+      if tts_model_name in _all_engines:
+          ui.modal_engine_idx = _all_engines.index(tts_model_name)
+      if model and model in _all_models:
+          ui.modal_model_idx = _all_models.index(model)
+      if provider and provider in _all_providers:
+          ui.modal_provider_idx = _all_providers.index(provider)
+      cur_v = _voices_for_engine(tts_model_name)
+      if voice_name in cur_v:
+          ui.modal_voice_idx = cur_v.index(voice_name)
 
       # ================================================================
       #  Helpers
@@ -159,7 +460,7 @@ steps:
       REV = '\033[7m'
       RST = '\033[0m'
       RED = '\033[31m'
-      SPINNERS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+      SPINNERS = ['\u280b', '\u2819', '\u2839', '\u2838', '\u283c', '\u2834', '\u2826', '\u2827', '\u2807', '\u280f']
 
       def wrap_text(text, width):
           lines = []
@@ -402,18 +703,18 @@ steps:
 
           mic = ''
           if ui.recording:
-              mic = f'{RED}● REC {ui.rec_seconds:.1f}s{RST}'
+              mic = f'{RED}\u25cf REC {ui.rec_seconds:.1f}s{RST}'
           elif ui.transcribing:
-              mic = f'{ORANGE}● transcribing...{RST}'
+              mic = f'{ORANGE}\u25cf transcribing...{RST}'
           elif ui.speaking:
-              mic = f'{GREEN}● speaking...{RST}'
+              mic = f'{GREEN}\u25cf speaking...{RST}'
           elif ui.thinking:
               sp = SPINNERS[ui.spinner_frame % len(SPINNERS)]
               mic = f'{ORANGE}{sp} thinking...{RST}'
           elif ui.listening:
-              mic = f'{TURQ}● listening{RST}'
+              mic = f'{TURQ}\u25cf listening{RST}'
 
-          audio_st = '🎤' if ui.listening else ('🔇' if not AUDIO_AVAILABLE else '⏸')
+          audio_st = '\U0001f3a4' if ui.listening else ('\U0001f507' if not AUDIO_AVAILABLE else '\u23f8')
           right = f'{npc_name} | {audio_st} | {model or "?"}@{provider or "?"}'
           pad = w - 12 - len(right) - 20
           header = f'{PURPLE}YAP{RST} {tabs}{" " * max(0, pad)}{mic}  {DIM}{right}{RST}'
@@ -423,6 +724,10 @@ steps:
               render_chat(buf, w, h)
           elif ui.tab == 1:
               render_settings(buf, w, h)
+
+          # Draw modal on top if open
+          if ui.modal_open:
+              render_modal(buf, w, h)
 
           sys.stdout.write(''.join(buf))
           sys.stdout.flush()
@@ -452,18 +757,18 @@ steps:
                   tw = w - 5
                   wrapped = wrap_text(text, tw)
                   for i, l in enumerate(wrapped):
-                      prefix = f'  {TURQ}ℹ ' if i == 0 else '    '
+                      prefix = f'  {TURQ}\u2139 ' if i == 0 else '    '
                       all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
               elif role == 'error':
                   tw = w - 5
                   wrapped = wrap_text(text, tw)
                   for i, l in enumerate(wrapped):
-                      prefix = f'  {RED}✗ ' if i == 0 else '    '
+                      prefix = f'  {RED}\u2717 ' if i == 0 else '    '
                       all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
 
           if ui.recording:
               secs = ui.rec_seconds
-              all_lines.append(f'  {RED}🎙 Recording... {secs:.1f}s{RST}')
+              all_lines.append(f'  {RED}\U0001f399 Recording... {secs:.1f}s{RST}')
           elif ui.transcribing:
               sp = SPINNERS[ui.spinner_frame % len(SPINNERS)]
               all_lines.append(f'  {ORANGE}{sp} Transcribing...{RST}')
@@ -471,7 +776,7 @@ steps:
               sp = SPINNERS[ui.spinner_frame % len(SPINNERS)]
               all_lines.append(f'  {ORANGE}{sp} thinking...{RST}')
           elif ui.speaking:
-              all_lines.append(f'  {GREEN}🔊 Speaking...{RST}')
+              all_lines.append(f'  {GREEN}\U0001f50a Speaking...{RST}')
 
           # Scrolling
           if ui.chat_scroll == -1:
@@ -488,7 +793,7 @@ steps:
 
           # Input area
           div_y = 2 + chat_h
-          buf.append(f'\033[{div_y};1H\033[K{DIM}{"─" * w}{RST}')
+          buf.append(f'\033[{div_y};1H\033[K{DIM}{"\u2500" * w}{RST}')
           input_y = div_y + 1
           visible = ui.input_buf[-(w-4):] if len(ui.input_buf) > w - 4 else ui.input_buf
           buf.append(f'\033[{input_y};1H\033[K {BOLD}>{RST} {visible}\033[?25h')
@@ -496,9 +801,9 @@ steps:
           # Status bar
           if AUDIO_AVAILABLE:
               ltog = 'Ctrl+L:Pause' if ui.listening else 'Ctrl+L:Listen'
-              hints = f'Enter:Send  {ltog}  PgUp/PgDn:Scroll  Tab:Settings  Ctrl+Q:Quit'
+              hints = f'Enter:Send  {ltog}  Ctrl+S:Settings  Tab:Settings  Ctrl+Q:Quit'
           else:
-              hints = 'Enter:Send  PgUp/PgDn:Scroll  Tab:Settings  Ctrl+Q:Quit'
+              hints = 'Enter:Send  Ctrl+S:Settings  Tab:Settings  Ctrl+Q:Quit'
           buf.append(f'\033[{h};1H\033[K{REV} {hints[:w-2].ljust(w-2)} {RST}')
 
       def render_settings(buf, w, h):
@@ -511,7 +816,7 @@ steps:
           ]
 
           buf.append(f'\033[3;3H{BOLD}Voice Settings{RST}')
-          buf.append(f'\033[4;3H{DIM}{"─" * (w - 6)}{RST}')
+          buf.append(f'\033[4;3H{DIM}{"\u2500" * (w - 6)}{RST}')
 
           y = 6
           for i, (key, label, val) in enumerate(settings):
@@ -526,6 +831,8 @@ steps:
           y += 1
           buf.append(f'\033[{y};3H{DIM}TTS Engine: {tts_model_name}  Voice: {voice_name or "default"}{RST}')
           y += 1
+          buf.append(f'\033[{y};3H{DIM}LLM: {model or "?"}@{provider or "?"}{RST}')
+          y += 1
           buf.append(f'\033[{y};3H{DIM}Audio: {"Available" if AUDIO_AVAILABLE else "Not available"}{RST}')
           y += 1
           if loaded_chunks:
@@ -539,12 +846,158 @@ steps:
           if ui.editing:
               buf.append(f'\033[{h};1H\033[K{REV} Enter:Save  Esc:Cancel {RST}')
           else:
-              buf.append(f'\033[{h};1H\033[K{REV} j/k:Navigate  Space:Toggle  e:Edit  Tab:Chat  Ctrl+Q:Quit {RST}')
+              buf.append(f'\033[{h};1H\033[K{REV} j/k:Navigate  Space:Toggle  e:Edit  Ctrl+S:Quick Switch  Tab:Chat  Ctrl+Q:Quit {RST}')
+
+      # ================================================================
+      #  Modal rendering and handling
+      # ================================================================
+      def render_modal(buf, w, h):
+          box_w = min(48, w - 4)
+          box_h = 16
+          sx = max(1, (w - box_w) // 2)
+          sy = max(1, (h - box_h) // 2)
+
+          # Clear box area
+          for y in range(sy, sy + box_h):
+              buf.append(f'\033[{y};{sx}H{" " * box_w}')
+
+          # Border
+          buf.append(f'\033[{sy};{sx}H{PURPLE}\u250c{"\u2500" * (box_w - 2)}\u2510{RST}')
+          for y in range(sy + 1, sy + box_h - 1):
+              buf.append(f'\033[{y};{sx}H{PURPLE}\u2502{RST}{" " * (box_w - 2)}{PURPLE}\u2502{RST}')
+          buf.append(f'\033[{sy + box_h - 1};{sx}H{PURPLE}\u2514{"\u2500" * (box_w - 2)}\u2518{RST}')
+
+          # Title
+          title = " Quick Settings "
+          tp = sx + (box_w - len(title)) // 2
+          buf.append(f'\033[{sy};{tp}H{BOLD}{PURPLE}{title}{RST}')
+
+          lpad = sx + 3
+          y = sy + 2
+
+          modal_fields = [
+              ('LLM Model', _all_models, ui.modal_model_idx),
+              ('Provider', _all_providers, ui.modal_provider_idx),
+              ('TTS Engine', _all_engines, ui.modal_engine_idx),
+              ('Voice', _voices_for_engine(_all_engines[ui.modal_engine_idx]), ui.modal_voice_idx),
+          ]
+
+          for i, (label, opts, idx) in enumerate(modal_fields):
+              val = opts[idx] if idx < len(opts) else '?'
+              if i == ui.modal_sel:
+                  al = f'{TURQ}\u25c4{RST}'
+                  ar = f'{TURQ}\u25ba{RST}'
+                  buf.append(f'\033[{y};{lpad}H{REV} {label}: {RST} {al} {BOLD}{val}{RST} {ar}')
+              else:
+                  buf.append(f'\033[{y};{lpad}H  {DIM}{label}:{RST} {val}')
+              y += 2
+
+          # Save checkbox
+          ck = f'{GREEN}[x]{RST}' if ui.modal_save else '[ ]'
+          if ui.modal_sel == 4:
+              buf.append(f'\033[{y};{lpad}H{REV} {ck} Save as default {RST}')
+          else:
+              buf.append(f'\033[{y};{lpad}H  {ck} Save as default')
+          y += 2
+
+          # Hints
+          buf.append(f'\033[{y};{lpad}H{DIM}\u2191\u2193:Nav \u2190\u2192:Change Spc:Toggle Enter:Apply Esc:Cancel{RST}')
+
+      def open_modal():
+          ui.modal_open = True
+          ui.modal_sel = 0
+          ui.modal_save = False
+          # Sync indices to current values
+          if tts_model_name in _all_engines:
+              ui.modal_engine_idx = _all_engines.index(tts_model_name)
+          if model and model in _all_models:
+              ui.modal_model_idx = _all_models.index(model)
+          if provider and provider in _all_providers:
+              ui.modal_provider_idx = _all_providers.index(provider)
+          cur_v = _voices_for_engine(_all_engines[ui.modal_engine_idx])
+          if voice_name in cur_v:
+              ui.modal_voice_idx = cur_v.index(voice_name)
+          else:
+              ui.modal_voice_idx = 0
+
+      def apply_modal():
+          nonlocal tts_model_name, voice_name, model, provider
+          model = _all_models[ui.modal_model_idx] if ui.modal_model_idx < len(_all_models) else model
+          provider = _all_providers[ui.modal_provider_idx] if ui.modal_provider_idx < len(_all_providers) else provider
+          tts_model_name = _all_engines[ui.modal_engine_idx] if ui.modal_engine_idx < len(_all_engines) else tts_model_name
+          cur_v = _voices_for_engine(tts_model_name)
+          voice_name = cur_v[ui.modal_voice_idx] if ui.modal_voice_idx < len(cur_v) else voice_name
+
+          ui.chat_log.append(('info', f'Settings: {model}@{provider}, TTS: {tts_model_name}/{voice_name}'))
+
+          if ui.modal_save:
+              from npcsh.config import set_npcsh_config_value
+              set_npcsh_config_value("NPCSH_TTS_ENGINE", tts_model_name)
+              set_npcsh_config_value("NPCSH_TTS_VOICE", voice_name)
+              set_npcsh_config_value("NPCSH_CHAT_MODEL", model)
+              set_npcsh_config_value("NPCSH_CHAT_PROVIDER", provider)
+              ui.chat_log.append(('info', 'Saved as defaults.'))
+
+          ui.modal_open = False
+
+      def handle_modal_key(c, fd):
+          if c == '\x1b':  # Esc
+              if _sel.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
+                  if c2 == '[':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'A':  # Up
+                          ui.modal_sel = max(0, ui.modal_sel - 1)
+                      elif c3 == 'B':  # Down
+                          ui.modal_sel = min(4, ui.modal_sel + 1)
+                      elif c3 == 'D':  # Left
+                          _modal_cycle(-1)
+                      elif c3 == 'C':  # Right
+                          _modal_cycle(1)
+                      return True
+              # bare Esc = close
+              ui.modal_open = False
+              return True
+
+          if c == 'k':
+              ui.modal_sel = max(0, ui.modal_sel - 1)
+          elif c == 'j':
+              ui.modal_sel = min(4, ui.modal_sel + 1)
+          elif c == 'h':
+              _modal_cycle(-1)
+          elif c == 'l':
+              _modal_cycle(1)
+          elif c == ' ':
+              if ui.modal_sel == 4:
+                  ui.modal_save = not ui.modal_save
+          elif c in ('\r', '\n'):
+              apply_modal()
+          elif c == '\x11':  # Ctrl+Q in modal just closes it
+              ui.modal_open = False
+          return True
+
+      def _modal_cycle(direction):
+          if ui.modal_sel == 0:
+              ui.modal_model_idx = (ui.modal_model_idx + direction) % len(_all_models)
+          elif ui.modal_sel == 1:
+              ui.modal_provider_idx = (ui.modal_provider_idx + direction) % len(_all_providers)
+          elif ui.modal_sel == 2:
+              ui.modal_engine_idx = (ui.modal_engine_idx + direction) % len(_all_engines)
+              # Reset voice index when engine changes
+              ui.modal_voice_idx = 0
+          elif ui.modal_sel == 3:
+              cur_v = _voices_for_engine(_all_engines[ui.modal_engine_idx])
+              if cur_v:
+                  ui.modal_voice_idx = (ui.modal_voice_idx + direction) % len(cur_v)
 
       # ================================================================
       #  Input handling
       # ================================================================
       def handle_key(c, fd):
+          # Modal intercepts all keys
+          if ui.modal_open:
+              return handle_modal_key(c, fd)
+
           if c == '\t':
               if not ui.editing:
                   ui.tab = (ui.tab + 1) % 2
@@ -552,6 +1005,9 @@ steps:
           if c == '\x11':  # Ctrl+Q
               return False
           if c == '\x03':  # Ctrl+C
+              return True
+          if c == '\x13':  # Ctrl+S = open settings modal
+              open_modal()
               return True
 
           # Escape sequences
@@ -693,11 +1149,12 @@ steps:
       #  Welcome
       # ================================================================
       ui.chat_log.append(('info', f'YAP voice chat. NPC: {npc_name}.'))
+      ui.chat_log.append(('info', f'TTS: {tts_model_name}/{voice_name}  LLM: {model or "?"}@{provider or "?"}'))
       if AUDIO_AVAILABLE:
           ui.chat_log.append(('info', 'Listening for speech. Just start talking, or type text.'))
-          ui.chat_log.append(('info', 'Ctrl+L to pause/resume listening.'))
+          ui.chat_log.append(('info', 'Ctrl+L to pause/resume listening. Ctrl+S to change settings.'))
       else:
-          ui.chat_log.append(('info', 'Audio not available. Text mode only.'))
+          ui.chat_log.append(('info', 'Audio not available. Text mode only. Ctrl+S to change settings.'))
       if loaded_chunks:
           ui.chat_log.append(('info', f'{len(loaded_chunks)} files loaded for context.'))
 
