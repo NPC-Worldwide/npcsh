@@ -1,9 +1,0 @@
-jinx_name: studio_focus_pane
-description: Focus/activate a specific pane in NPC Studio.
-inputs:
-- paneId: ""
-steps:
-  - name: frontend_action
-    engine: python
-    code: |
-      context['output'] = "Action executed by frontend"
