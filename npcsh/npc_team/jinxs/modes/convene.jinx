@@ -23,12 +23,47 @@ steps:
 
       from npcpy.llm_funcs import get_llm_response
 
+      # Helper to log jinx executions to DB
+      def _log_jinx(trigger_id, npc_name, inputs, output, status="success", error_msg=None):
+          try:
+              if state and hasattr(state, 'command_history') and state.command_history is not None and hasattr(state.command_history, 'save_jinx_execution'):
+                  _conv_id = getattr(state, 'conversation_id', None) or ''
+                  state.command_history.save_jinx_execution(
+                      triggering_message_id=f"{_conv_id}-{trigger_id}",
+                      conversation_id=_conv_id,
+                      npc_name=npc_name,
+                      jinx_name="convene",
+                      jinx_inputs=inputs,
+                      jinx_output=str(output) if output else "",
+                      status=status,
+                      team_name=state.team.name if state and hasattr(state, 'team') and state.team else None,
+                      error_message=error_msg,
+                  )
+          except Exception:
+              pass
+
       npc = context.get('npc')
       team = context.get('team')
       messages = context.get('messages', [])
 
-      model = context.get('model') or (npc.model if npc and hasattr(npc, 'model') else None)
-      provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') else None)
+      # Resolve model/provider: context → NPC → state → env → defaults
+      model = context.get('model') or (npc.model if npc and hasattr(npc, 'model') and npc.model else None)
+      if not model:
+          try:
+              model = state.chat_model if state and hasattr(state, 'chat_model') else None
+          except:
+              model = None
+      if not model:
+          model = os.environ.get('NPCSH_CHAT_MODEL', 'llama3.2')
+
+      provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') and npc.provider else None)
+      if not provider:
+          try:
+              provider = state.chat_provider if state and hasattr(state, 'chat_provider') else None
+          except:
+              provider = None
+      if not provider:
+          provider = os.environ.get('NPCSH_CHAT_PROVIDER', 'ollama')
 
       topic = context.get('topic', '')
       npcs_str = context.get('npcs', 'alicanto,corca,guac')
@@ -104,6 +139,9 @@ steps:
                                           npc=participant.get('npc') or npc, temperature=0.7)
                   contribution = str(resp.get('response', ''))
                   print(contribution)
+                  _log_jinx(f"convene-round-{round_num}-{name}", name,
+                            {"prompt": prompt, "type": "main", "round": round_num},
+                            contribution)
                   entry = {'round': round_num, 'speaker': name, 'contribution': contribution}
                   round_contributions.append(entry)
                   discussion_log.append(entry)
@@ -124,6 +162,9 @@ steps:
                                                npc=fp.get('npc') or npc, temperature=0.7)
                       fcontrib = str(fresp.get('response', ''))
                       print(f"  {fcontrib}")
+                      _log_jinx(f"convene-round-{round_num}-{fn}-followup", fn,
+                                {"prompt": fp_prompt, "type": "followup", "round": round_num, "responding_to": name},
+                                fcontrib)
                       discussion_log.append({'round': round_num, 'speaker': fn, 'contribution': fcontrib, 'type': 'followup'})
 
                       if random.random() < 0.6:
@@ -141,6 +182,9 @@ steps:
                                                    npc=rp.get('npc') or npc, temperature=0.7)
                           ccontrib = str(cresp.get('response', ''))
                           print(f"  {ccontrib}")
+                          _log_jinx(f"convene-round-{round_num}-{rn}-counter", rn,
+                                    {"prompt": cp, "type": "counter", "round": round_num, "responding_to": fn},
+                                    ccontrib)
                           discussion_log.append({'round': round_num, 'speaker': rn, 'contribution': ccontrib, 'type': 'counter'})
 
           print(colored(f"\n{'='*60}", "green"))
@@ -162,6 +206,10 @@ steps:
           sresp = get_llm_response(synth_prompt, model=model, provider=provider, npc=npc, temperature=0.4)
           synthesis = str(sresp.get('response', ''))
           print(synthesis)
+          _log_jinx(f"convene-synthesis", npc.name if npc and hasattr(npc, 'name') else "convener",
+                    {"prompt": synth_prompt, "type": "synthesis", "topic": topic,
+                     "participants": [n.strip() for n in npcs_str.split(',')], "rounds": num_rounds},
+                    synthesis)
 
           context['output'] = synthesis
           context['messages'] = messages
@@ -287,8 +335,14 @@ steps:
                       resp = get_llm_response(prompt, model=model, provider=provider,
                                               npc=participant.get('npc') or npc, temperature=0.7)
                       contribution = str(resp.get('response', ''))
+                      _log_jinx(f"convene-round-{round_num}-{name}", name,
+                                {"prompt": prompt, "type": "main", "round": round_num},
+                                contribution)
                   except Exception as e:
                       contribution = f'(Error: {e})'
+                      _log_jinx(f"convene-round-{round_num}-{name}", name,
+                                {"prompt": prompt, "type": "main", "round": round_num},
+                                contribution, status="error", error_msg=str(e))
 
                   # Add contribution lines
                   for line in wrap(contribution, 70):
@@ -323,8 +377,14 @@ steps:
                           fresp = get_llm_response(followup_prompt, model=model, provider=provider,
                                                    npc=followup_p.get('npc') or npc, temperature=0.7)
                           fcontrib = str(fresp.get('response', ''))
+                          _log_jinx(f"convene-round-{round_num}-{fn}-followup", fn,
+                                    {"prompt": followup_prompt, "type": "followup", "round": round_num, "responding_to": name},
+                                    fcontrib)
                       except Exception as e:
                           fcontrib = f'(Error: {e})'
+                          _log_jinx(f"convene-round-{round_num}-{fn}-followup", fn,
+                                    {"prompt": followup_prompt, "type": "followup", "round": round_num, "responding_to": name},
+                                    fcontrib, status="error", error_msg=str(e))
 
                       for line in wrap(fcontrib, 66):
                           ui.display_lines.append(f'    {line}')
@@ -359,8 +419,14 @@ steps:
                               cresp = get_llm_response(counter_prompt, model=model, provider=provider,
                                                        npc=resp_p.get('npc') or npc, temperature=0.7)
                               ccontrib = str(cresp.get('response', ''))
+                              _log_jinx(f"convene-round-{round_num}-{rn}-counter", rn,
+                                        {"prompt": counter_prompt, "type": "counter", "round": round_num, "responding_to": fn},
+                                        ccontrib)
                           except Exception as e:
                               ccontrib = f'(Error: {e})'
+                              _log_jinx(f"convene-round-{round_num}-{rn}-counter", rn,
+                                        {"prompt": counter_prompt, "type": "counter", "round": round_num, "responding_to": fn},
+                                        ccontrib, status="error", error_msg=str(e))
 
                           for line in wrap(ccontrib, 66):
                               ui.display_lines.append(f'    {line}')
@@ -397,8 +463,15 @@ steps:
               try:
                   sresp = get_llm_response(synth_prompt, model=model, provider=provider, npc=npc, temperature=0.4)
                   ui.synthesis = str(sresp.get('response', ''))
+                  _log_jinx(f"convene-synthesis", npc.name if npc and hasattr(npc, 'name') else "convener",
+                            {"prompt": synth_prompt, "type": "synthesis", "topic": topic,
+                             "participants": npc_names, "rounds": num_rounds},
+                            ui.synthesis)
               except Exception as e:
                   ui.synthesis = f'Synthesis error: {e}'
+                  _log_jinx(f"convene-synthesis", npc.name if npc and hasattr(npc, 'name') else "convener",
+                            {"type": "synthesis", "topic": topic},
+                            ui.synthesis, status="error", error_msg=str(e))
 
               for line in wrap(ui.synthesis, 70):
                   ui.display_lines.append(f'  {line}')

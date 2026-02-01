@@ -101,6 +101,16 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
         <img src="https://raw.githubusercontent.com/NPC-Worldwide/npcsh/main/test_data/hatridingdog.gif" alt="video of a hat riding a dog", width=350>
       </p> 
 
+  - **Multi-Agent Discussions**
+
+    ```bash
+    /convene "Is the universe a simulation?" npcs=alicanto,corca,guac rounds=3
+    ```
+    <p align="center">
+        <img src="gh_images/convene.png" alt="Convene — multi-NPC structured discussion" width=500>
+        <img src="gh_images/convene_convene.png" alt="Convene — live discussion view" width=500>
+    </p>
+
   - **Serve an NPC Team**
     ```bash
     /serve --port 5337 --cors='http://localhost:5137/'
