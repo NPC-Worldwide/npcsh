@@ -28,9 +28,9 @@ NPCSH_DEFAULT_MODE = os.environ.get("NPCSH_DEFAULT_MODE", "agent")
 NPCSH_VISION_MODEL = os.environ.get("NPCSH_VISION_MODEL", "gemma3:4b")
 NPCSH_VISION_PROVIDER = os.environ.get("NPCSH_VISION_PROVIDER", "ollama")
 NPCSH_IMAGE_GEN_MODEL = os.environ.get(
-    "NPCSH_IMAGE_GEN_MODEL", "runwayml/stable-diffusion-v1-5"
+    "NPCSH_IMAGE_GEN_MODEL", "x/z-image-turbo"
 )
-NPCSH_IMAGE_GEN_PROVIDER = os.environ.get("NPCSH_IMAGE_GEN_PROVIDER", "diffusers")
+NPCSH_IMAGE_GEN_PROVIDER = os.environ.get("NPCSH_IMAGE_GEN_PROVIDER", "ollama")
 NPCSH_VIDEO_GEN_MODEL = os.environ.get(
     "NPCSH_VIDEO_GEN_MODEL", "damo-vilab/text-to-video-ms-1.7b"
 )
