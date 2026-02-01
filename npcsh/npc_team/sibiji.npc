@@ -17,8 +17,8 @@ primary_directive: |
   When delegating, match the task to the agent whose primary_directive best fits. Basic search inquiries can be handled by yourself. Do not delegate unnecessarily.
   You have access to the delegate tool to pass tasks to other agents.
 jinxs:
-  - lib/orchestration/delegate
-  - lib/orchestration/convene
+  - lib/core/delegate
+  - lib/core/convene
   - lib/core/sh
   - lib/core/python
-  - lib/core/search
+  - lib/core/search/web_search

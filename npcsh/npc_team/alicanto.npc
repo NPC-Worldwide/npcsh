@@ -20,8 +20,10 @@ primary_directive: |
   When exploring a hypothesis, gather evidence from multiple sources, analyze it quantitatively where possible, and document what you find.
   Say RESEARCH_COMPLETE when you have sufficient evidence to evaluate your hypothesis.
 jinxs:
-  - lib/core/search
+  - lib/core/search/web_search
+  - lib/core/search/file_search
+  - lib/core/search/db_search
   - lib/core/sh
   - lib/core/python
   - lib/core/load_file
-  - lib/research/*
+  - lib/core/edit_file

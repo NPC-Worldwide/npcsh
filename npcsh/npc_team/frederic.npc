@@ -22,6 +22,5 @@ jinxs:
   - lib/core/sql
   - lib/core/sh
   - lib/core/load_file
-  - lib/core/search
-  - lib/gen/*
-  - bin/wander
+  - lib/core/search/web_search
+  - lib/core/edit_file

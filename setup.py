@@ -63,6 +63,7 @@ base_requirements = [
 api_requirements = [
     "anthropic",
     "openai",
+    "ollama", 
     "google-generativeai",
     "google-genai",
 ]

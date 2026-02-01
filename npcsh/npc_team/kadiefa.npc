@@ -18,4 +18,5 @@ primary_directive: |
   Use web search and browsing tools to discover new information.
 jinxs:
   - lib/core/python
-  - bin/wander
+  - lib/core/sh
+  - lib/core/search/web_search
