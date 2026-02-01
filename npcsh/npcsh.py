@@ -510,6 +510,7 @@ def main(npc_name: str = None) -> None:
         initial_state.npc = default_npc
 
     initial_state.team = team
+    initial_state.command_history = command_history
     if args.command:
          state = initial_state
          state.current_path = os.getcwd()

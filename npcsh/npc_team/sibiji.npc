@@ -18,7 +18,7 @@ primary_directive: |
   You have access to the delegate tool to pass tasks to other agents.
 jinxs:
   - lib/core/delegate
-  - lib/core/convene
+  - modes/convene
   - lib/core/sh
   - lib/core/python
   - lib/core/search/web_search
