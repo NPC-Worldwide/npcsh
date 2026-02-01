@@ -7,34 +7,217 @@ steps:
     engine: python
     code: |
       import json
+      import random
       from npcsh._state import CANONICAL_ARGS, get_argument_help
-      
+
+      USAGE_EXAMPLES = [
+          # ── Basic chat & modes ──
+          "what is the capital of France?",
+          "explain quantum entanglement in simple terms",
+          "summarize this paragraph: <paste text>",
+          "translate 'hello world' to Japanese",
+          "/chat  # switch to chat mode for back-and-forth conversation",
+          "/agent  # switch to agent mode (default, with tool use)",
+          "/cmd  # switch to command mode for direct shell interaction",
+          "compare Python and Rust for CLI tools",
+          "what are the SOLID principles?",
+          "explain the difference between threads and processes",
+          # ── Delegation with @npc ──
+          "@sibiji plan out a REST API for a todo app",
+          "@corca refactor this function to use async/await",
+          "@guac analyze this CSV and plot the trend",
+          "@plonk take a screenshot and describe what you see",
+          "@kadiefa review my git diff for security issues",
+          "@sibiji what NPCs are on this team and what do they do?",
+          "@guac run a quick linear regression on sales.csv",
+          "@corca write unit tests for the auth module",
+          "@plonk click the submit button on the form",
+          "@sibiji delegate a code review to the best NPC for the job",
+          # ── Pipelines ──
+          "list all python files | summarize what each one does",
+          "git diff | review this for bugs",
+          "cat README.md | rewrite this for a technical audience",
+          "ls -la | explain these file permissions",
+          "git log --oneline -20 | summarize recent changes",
+          "df -h | which disk is running low?",
+          "ps aux | find memory-heavy processes",
+          "cat requirements.txt | are there any outdated packages?",
+          "history | what have I been working on today?",
+          "env | which API keys are set?",
+          # ── Shell / system commands ──
+          "list all files in the current directory",
+          "find all TODO comments in this project",
+          "how much disk space is free?",
+          "what process is using port 8080?",
+          "create a new directory called 'experiments'",
+          "show me the last 50 lines of app.log",
+          "count lines of code in this project by language",
+          "check if docker is running",
+          "what's my current git branch?",
+          "show system memory usage",
+          # ── Code generation & editing ──
+          "write a Python script that downloads a webpage and extracts all links",
+          "create a bash script to back up my home directory",
+          "write a Dockerfile for a Flask app",
+          "generate a .gitignore for a Node.js project",
+          "write a regex to validate email addresses",
+          "create a Makefile for this C project",
+          "write a GitHub Actions workflow for CI",
+          "scaffold a FastAPI app with SQLAlchemy",
+          "write a Python decorator that retries on failure",
+          "create a shell script that monitors CPU usage",
+          # ── Slash commands: research & papers ──
+          "/arxiv search for recent papers on LLM agents",
+          "/papers analyze the methodology in this PDF",
+          "/alicanto deep-dive into transformer attention mechanisms",
+          "/arxiv find papers about retrieval augmented generation",
+          "/papers compare these two papers on reinforcement learning",
+          "/alicanto investigate multi-agent coordination strategies",
+          "/arxiv latest papers on code generation with LLMs",
+          "/papers summarize key findings from this conference proceedings",
+          "/alicanto explore the landscape of AI safety research",
+          "/arxiv search for graph neural network applications in biology",
+          # ── Slash commands: interactive modes ──
+          "/guac  # open interactive Python REPL with data tools",
+          "/wander  # creative exploration and brainstorming mode",
+          "/convene  # multi-NPC discussion on a topic",
+          "/plonk  # vision-based GUI automation",
+          "/git  # interactive git TUI for staging, diffs, commits",
+          "/spool  # isolated chat session with specific model",
+          "/pti  # reasoning REPL with interruptions",
+          "/yap  # voice-controlled agent loop",
+          "/vixynt  # image generation and editing",
+          "/roll  # video generation assistant",
+          # ── Slash commands: data & knowledge ──
+          "/kg  # browse the knowledge graph",
+          "/memories  # manage stored memories",
+          "/nql  # interactive database viewer",
+          "/sql SELECT * FROM messages LIMIT 10",
+          "/db_search find entries about authentication",
+          "/file_search *.py  # search for Python files",
+          "/web_search latest news on AI regulation",
+          "/kg  # explore facts, concepts, and relationships",
+          "/memories  # review and approve pending memories",
+          "/nql  # query and browse your conversation data",
+          # ── Slash commands: config & management ──
+          "/set model=claude-3-5-sonnet  # change the active model",
+          "/set provider=openai  # switch provider",
+          "/set mode=chat  # change default mode",
+          "/models  # list available models",
+          "/jinxs  # list available jinxs",
+          "/team  # manage your NPC team",
+          "/reattach  # rejoin a previous conversation",
+          "/usage  # check token usage and costs",
+          "/verbose  # enable verbose output",
+          "/shh  # quiet mode, less output",
+          # ── Browser & computer use ──
+          "/open_browser https://example.com",
+          "/browser_screenshot  # capture the current browser page",
+          "/browser_action click the login button",
+          "/screenshot  # take a screenshot of the desktop",
+          "/click 500 300  # click at screen coordinates",
+          "/type_text Hello World  # type text into focused app",
+          "/key_press enter  # press a key",
+          "/launch_app Terminal",
+          "/open_browser https://github.com  # open a URL",
+          "/browser_action scroll down and find the pricing section",
+          # ── File operations ──
+          "/load_file data.csv  # load a file into context",
+          "/edit_file app.py  # edit a file with AI assistance",
+          "/compress output.tar.gz src/  # compress files",
+          "/write_file notes.md  # write content to a file",
+          "read config.yaml and explain each setting",
+          "compare these two files and list the differences",
+          "refactor utils.py to use dataclasses instead of dicts",
+          "add type hints to all functions in this file",
+          "find and fix the bug in parser.py",
+          "add error handling to the database connection code",
+          # ── Building & deployment ──
+          "/build  # interactive build TUI",
+          "/compile  # compile NPC profiles",
+          "/serve  # start serving",
+          "/init  # initialize a new NPC project",
+          "/setup  # run setup wizard",
+          "/config_tui  # open configuration interface",
+          "/corca  # MCP-powered development agent",
+          "/build  # create deployment artifacts from your team",
+          "/compile sibiji  # compile a specific NPC profile",
+          "/sync  # synchronize team data",
+          # ── Conversation management ──
+          "/reattach  # browse and rejoin previous conversations",
+          "/set conversation_id=abc123  # switch to a specific conversation",
+          "/clear  # clear the screen",
+          "/exit  # quit npcsh",
+          "/help arxiv  # get detailed help on a specific command",
+          "/reattach  # pick up where you left off in a prior session",
+          "/spool -m gpt-4o  # isolated chat with a specific model",
+          "/convene discuss the pros and cons of microservices",
+          "/wander  # let the AI explore ideas freely",
+          "/team  # see and manage your NPC team members",
+          # ── Multi-step workflows ──
+          "analyze my codebase and suggest improvements",
+          "read all test files and identify gaps in coverage",
+          "review the git history and summarize what changed this week",
+          "find all API endpoints and document them",
+          "scan for security vulnerabilities in this project",
+          "profile this Python script and suggest optimizations",
+          "generate a changelog from the last 20 commits",
+          "create a project README based on the codebase",
+          "audit package.json for known CVEs",
+          "explain the architecture of this project to a new developer",
+          # ── Fun & creative ──
+          "write a haiku about programming",
+          "tell me a programming joke",
+          "explain recursion like I'm five",
+          "write a commit message for: fixed the thing that was broken",
+          "roast my code (paste code)",
+          "explain this error message: (paste error)",
+          "what's the most Pythonic way to flatten a nested list?",
+          "write ASCII art of a robot",
+          "create a fun loading message for a CLI tool",
+          "design a color scheme for a terminal app",
+      ]
+
       topic = context.get('topic')
-      
+
       if not topic:
-          output_lines = ["# Available Commands\n\n"]
-          
+          output_lines = ["# npcsh - Available Commands\n\n"]
+
+          output_lines.append("## Quick Start\n\n")
+          output_lines.append("- Type naturally to talk to your NPC\n")
+          output_lines.append("- Use `/command` for slash commands\n")
+          output_lines.append("- Use `@npc_name` to delegate to a specific NPC\n")
+          output_lines.append("- Use `|` to pipe output between stages\n")
+          output_lines.append("- Use `/reattach` to rejoin a previous conversation\n")
+          output_lines.append("- Press **Tab** to autocomplete commands and NPC names\n\n")
+
           all_jinxs = {}
           if hasattr(npc, 'team') and npc.team and hasattr(npc.team, 'jinxs_dict'):
               all_jinxs.update(npc.team.jinxs_dict)
           if hasattr(npc, 'jinxs_dict') and npc.jinxs_dict:
               all_jinxs.update(npc.jinxs_dict)
-          
+
           for cmd in sorted(all_jinxs.keys()):
               jinx_obj = all_jinxs[cmd]
               desc = getattr(jinx_obj, 'description', 'No description')
               output_lines.append(f"/{cmd} - {desc}\n\n")
-          
+
           arg_help_map = get_argument_help()
           if arg_help_map:
               output_lines.append("## Common Command-Line Flags\n\n")
               output_lines.append("The shortest unambiguous prefix works.\n")
-              
+
               for arg in sorted(CANONICAL_ARGS):
                   aliases = arg_help_map.get(arg, [])
                   alias_str = f"(-{min(aliases, key=len)})" if aliases else ""
                   output_lines.append(f"--{arg:<20} {alias_str}\n")
-          
+
+          output_lines.append("\n## Things to Try\n\n")
+          samples = random.sample(USAGE_EXAMPLES, min(3, len(USAGE_EXAMPLES)))
+          for i, example in enumerate(samples, 1):
+              output_lines.append(f"{i}. `{example}`\n")
+          output_lines.append(f"\n*Showing 3 of {len(USAGE_EXAMPLES)} examples — run `/help` again to see more.*\n")
+
           output = "".join(output_lines)
       else:
           jinx_obj = None
@@ -42,7 +225,7 @@ steps:
               jinx_obj = npc.team.jinxs_dict.get(topic)
           if not jinx_obj and hasattr(npc, 'jinxs_dict'):
               jinx_obj = npc.jinxs_dict.get(topic)
-          
+
           if jinx_obj:
               output = f"## Help for Jinx: `/{topic}`\n\n"
               output += f"- **Description**: {jinx_obj.description}\n"

@@ -1676,10 +1676,19 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
     try:
         import shutil
         term_width = shutil.get_terminal_size().columns
-    except json.JSONDecodeError:
+    except Exception:
         term_width = 80
 
+    # Track how many hint lines were drawn last time (for clearing on redraw)
+    _prev_hint_lines = 1
+
+    # Tab completion state
+    _tab_matches = []
+    _tab_index = -1
+    _tab_prefix = ""
+
     def draw():
+        nonlocal _prev_hint_lines
         # Calculate how many lines the input takes
         total_len = prompt_visible_len + len(buf)
         num_lines = (total_len // term_width) + 1
@@ -1693,18 +1702,21 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         for _ in range(num_lines - 1):
             sys.stdout.write('\033[A')
 
-        # Clear from cursor to end of screen (clears all wrapped lines + hint)
+        # Clear from cursor to end of screen (clears all wrapped lines + all hint lines below)
         sys.stdout.write('\033[J')
 
         # Print prompt and buffer
         sys.stdout.write(prompt + buf)
 
-        # Print hint on next line
-        sys.stdout.write('\n\033[K' + current_hint())
+        # Print hint on next line(s) - hint may contain newlines
+        hint = current_hint()
+        hint_line_count = hint.count('\n') + 1 if hint else 1
+        _prev_hint_lines = hint_line_count
+        sys.stdout.write('\n' + hint)
 
         # Now position cursor back to correct spot
         # Go back up to the line where cursor should be
-        lines_after_cursor = (total_len // term_width) - (cursor_total // term_width) + 1  # +1 for hint line
+        lines_after_cursor = (total_len // term_width) - (cursor_total // term_width) + hint_line_count
         for _ in range(lines_after_cursor):
             sys.stdout.write('\033[A')
 
@@ -1929,6 +1941,9 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                 if pos > 0:
                     buf = buf[:pos-1] + buf[pos:]
                     pos -= 1
+                    _tab_matches = []
+                    _tab_index = -1
+                    _tab_prefix = ""
                     draw()
 
             elif c == '\x03':  # Ctrl-C
@@ -1946,10 +1961,26 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                     buf = ""
                     pos = 0
                     pasted_content = None
-                    sys.stdout.write('\r\033[K')  # Clear current line
+                    _tab_matches = []
+                    _tab_index = -1
+                    _tab_prefix = ""
+                    # Clear all previous hint lines + current input
+                    sys.stdout.write('\r')
+                    for _ in range(_prev_hint_lines):
+                        sys.stdout.write('\033[B')
+                    sys.stdout.write('\033[J')  # Clear from cursor to end
+                    for _ in range(_prev_hint_lines):
+                        sys.stdout.write('\033[A')
+                    sys.stdout.write('\r\033[K')
                     sys.stdout.write('^C\n')
-                    # Redraw prompt
-                    sys.stdout.write(prompt + '\n' + current_hint() + '\033[A\r')
+                    # Redraw prompt with fresh hint
+                    hint = current_hint()
+                    _prev_hint_lines = hint.count('\n') + 1 if hint else 1
+                    sys.stdout.write(prompt + '\n' + hint)
+                    # Go back up past all hint lines
+                    for _ in range(_prev_hint_lines):
+                        sys.stdout.write('\033[A')
+                    sys.stdout.write('\r')
                     if prompt_visible_len > 0:
                         sys.stdout.write('\033[' + str(prompt_visible_len) + 'C')
                     sys.stdout.flush()
@@ -1986,8 +2017,55 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                     pos -= 1
                 draw()
 
-            elif c == '\t':  # Tab - do nothing for now
-                pass
+            elif c == '\t':  # Tab - inline completion
+                try:
+                    if _tab_matches and _tab_prefix == buf:
+                        # Subsequent Tab: cycle through matches
+                        _tab_index = (_tab_index + 1) % len(_tab_matches)
+                        buf = _tab_matches[_tab_index]
+                        pos = len(buf)
+                        draw()
+                    else:
+                        # First Tab: compute matches
+                        matches = []
+                        if buf.startswith('/'):
+                            cmds = _get_slash_commands_set(state, router, buf)
+                            matches = ['/' + c for c in sorted(cmds)]
+                        elif buf.startswith('@'):
+                            npcs = _get_npc_names_set(state, buf)
+                            matches = ['@' + n for n in sorted(npcs)]
+                        else:
+                            # File path completion for non-prefix input
+                            import glob as _glob
+                            pattern = buf + '*'
+                            matches = sorted(_glob.glob(pattern))
+
+                        if len(matches) == 1:
+                            # Exact single match - autocomplete with trailing space
+                            buf = matches[0] + ' '
+                            pos = len(buf)
+                            _tab_matches = []
+                            _tab_index = -1
+                            _tab_prefix = ""
+                            draw()
+                        elif len(matches) > 1:
+                            # Find longest common prefix
+                            common = matches[0]
+                            for m in matches[1:]:
+                                while not m.startswith(common):
+                                    common = common[:-1]
+                            if len(common) > len(buf):
+                                # Complete common prefix
+                                buf = common
+                                pos = len(buf)
+                            # Set up cycling state
+                            _tab_matches = matches
+                            _tab_index = -1
+                            _tab_prefix = buf
+                            draw()
+                except Exception:
+                    pass
+                continue
 
             elif c == '\x0f':  # Ctrl-O - show last tool call args
                 try:
@@ -2027,6 +2105,9 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
             elif c and ord(c) >= 32:  # Printable
                 buf = buf[:pos] + c + buf[pos:]
                 pos += 1
+                _tab_matches = []
+                _tab_index = -1
+                _tab_prefix = ""
                 draw()
 
     finally:
@@ -2035,9 +2116,9 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-def _get_slash_hints(state, router, prefix='/') -> str:
-    """Slash command hints - fits terminal width."""
-    cmds = {'help', 'set', 'agent', 'chat', 'cmd', 'sq', 'quit', 'exit', 'clear', 'npc'}
+def _get_slash_commands_set(state, router, prefix='/') -> set:
+    """Return the set of matching slash command names (without /)."""
+    cmds = {'help', 'set', 'agent', 'chat', 'cmd', 'sq', 'quit', 'exit', 'clear', 'npc', 'reattach'}
     if state and state.team and hasattr(state.team, 'jinxs_dict'):
         cmds.update(state.team.jinxs_dict.keys())
     if router and hasattr(router, 'jinx_routes'):
@@ -2045,32 +2126,49 @@ def _get_slash_hints(state, router, prefix='/') -> str:
     if len(prefix) > 1:
         f = prefix[1:].lower()
         cmds = {c for c in cmds if c.lower().startswith(f)}
+    return cmds
+
+
+def _layout_hints_multirow(items, term_width, style_fn) -> str:
+    """Lay out hint items across multiple rows that fit terminal width."""
+    if not items:
+        return ""
+    rows = []
+    current_row = []
+    current_len = 2  # leading spaces
+    for item in items:
+        needed = len(item) + 2  # item + spacing
+        if current_len + needed > term_width - 2 and current_row:
+            rows.append(current_row)
+            current_row = [item]
+            current_len = 2 + len(item) + 2
+        else:
+            current_row.append(item)
+            current_len += needed
+    if current_row:
+        rows.append(current_row)
+    return '\n'.join(style_fn('  ' + '  '.join(row)) for row in rows)
+
+
+def _get_slash_hints(state, router, prefix='/') -> str:
+    """Slash command hints - shows ALL commands across multiple rows."""
+    cmds = _get_slash_commands_set(state, router, prefix)
     if cmds:
-        # Get terminal width, default 80
         try:
             import shutil
             term_width = shutil.get_terminal_size().columns
         except Exception:
             term_width = 80
-
-        # Build hint string that fits in terminal
-        sorted_cmds = sorted(cmds)
-        hint_parts = []
-        current_len = 2  # leading spaces
-        for c in sorted_cmds:
-            item = '/' + c
-            if current_len + len(item) + 2 > term_width - 5:  # leave margin
-                break
-            hint_parts.append(item)
-            current_len += len(item) + 2
-
-        if hint_parts:
-            return colored('  ' + '  '.join(hint_parts), 'white', attrs=['dark'])
+        sorted_items = ['/' + c for c in sorted(cmds)]
+        return _layout_hints_multirow(
+            sorted_items, term_width,
+            lambda s: colored(s, 'white', attrs=['dark'])
+        )
     return ""
 
 
-def _get_npc_hints(state, prefix='@') -> str:
-    """NPC hints."""
+def _get_npc_names_set(state, prefix='@') -> set:
+    """Return the set of matching NPC names (without @)."""
     npcs = set()
     if state and state.team:
         if hasattr(state.team, 'npcs') and state.team.npcs:
@@ -2082,8 +2180,23 @@ def _get_npc_hints(state, prefix='@') -> str:
     if len(prefix) > 1:
         f = prefix[1:].lower()
         npcs = {n for n in npcs if n.lower().startswith(f)}
+    return npcs
+
+
+def _get_npc_hints(state, prefix='@') -> str:
+    """NPC hints - shows all NPCs across multiple rows."""
+    npcs = _get_npc_names_set(state, prefix)
     if npcs:
-        return colored('  ' + '  '.join('@' + n for n in sorted(npcs)), 'cyan')
+        try:
+            import shutil
+            term_width = shutil.get_terminal_size().columns
+        except Exception:
+            term_width = 80
+        sorted_items = ['@' + n for n in sorted(npcs)]
+        return _layout_hints_multirow(
+            sorted_items, term_width,
+            lambda s: colored(s, 'cyan')
+        )
     return ""
 
 
