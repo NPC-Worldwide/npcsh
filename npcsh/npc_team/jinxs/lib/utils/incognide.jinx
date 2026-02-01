@@ -1,0 +1,77 @@
+jinx_name: "incognide"
+description: "Start npc studio"
+inputs:
+- user_command: ""
+steps:
+  - name: "launch_npc_studio"
+    engine: "python"
+    code: |
+      import os
+      import subprocess
+      import sys
+      from pathlib import Path
+      import traceback
+      
+      NPC_STUDIO_DIR = Path.home() / ".npcsh" / "npc-studio"
+      
+      user_command = context.get('user_command')
+      output_messages = context.get('messages', [])
+      output_result = ""
+      
+      try:
+          if not NPC_STUDIO_DIR.exists():
+              os.makedirs(NPC_STUDIO_DIR.parent, exist_ok=True)
+              subprocess.check_call([
+                  "git", "clone",
+                  "https://github.com/npc-worldwide/npc-studio.git",
+                  str(NPC_STUDIO_DIR)
+              ])
+          else:
+              subprocess.check_call(
+                  ["git", "pull"],
+                  cwd=NPC_STUDIO_DIR
+              )
+          
+          subprocess.check_call(
+              ["npm", "install"], 
+              cwd=NPC_STUDIO_DIR
+          )
+          
+          req_file = NPC_STUDIO_DIR / "requirements.txt"
+          if req_file.exists():
+              subprocess.check_call([
+                  sys.executable, 
+                  "-m", 
+                  "pip", 
+                  "install", 
+                  "-r", 
+                  str(req_file)
+              ])
+          
+          backend = subprocess.Popen(
+              [sys.executable, "npc_studio_serve.py"],
+              cwd=NPC_STUDIO_DIR
+          )
+          
+          dev_server = subprocess.Popen(
+              ["npm", "run", "dev"],
+              cwd=NPC_STUDIO_DIR
+          )
+          
+          frontend = subprocess.Popen(
+              ["npm", "start"],
+              cwd=NPC_STUDIO_DIR
+          )
+          
+          output_result = (
+              f"NPC Studio started!\n"
+              f"Backend PID={backend.pid}, "
+              f"Dev Server PID={dev_server.pid}, "
+              f"Frontend PID={frontend.pid}"
+          )
+      except Exception as e:
+          traceback.print_exc()
+          output_result = f"Failed to start NPC Studio: {e}"
+      
+      context['output'] = output_result
+      context['messages'] = output_messages
