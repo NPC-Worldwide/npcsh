@@ -190,6 +190,8 @@ class ShellState:
     edit_approval: str = NPCSH_EDIT_APPROVAL
     # Pending file edits for approval
     pending_edits: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # Command history for jinx execution logging
+    command_history: Optional[Any] = None
 
     def get_model_for_command(self, model_type: str = "chat"):
         if model_type == "chat":
@@ -2701,15 +2703,45 @@ def execute_slash_command(command: str,
             'vmodel': state.vision_model, 'vprovider': state.vision_provider, 'rmodel': state.reasoning_model, 
             'rprovider': state.reasoning_provider, 'state': state
         }
+        import time as _time
+        _start = _time.monotonic()
+        _status = "success"
+        _error = None
         try:
             result = handler(command=command, **handler_kwargs)
-            if isinstance(result, dict): 
+            if isinstance(result, dict):
                 state.messages = result.get("messages", state.messages)
-            return state, result
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return state, {"output": colored(f"Error executing slash command '{command_name}': {e}", "red"), "messages": state.messages}
+            _status = "error"
+            _error = str(e)
+            result = {"output": colored(f"Error executing slash command '{command_name}': {e}", "red"), "messages": state.messages}
+
+        _duration_ms = int((_time.monotonic() - _start) * 1000)
+
+        # Log jinx execution to jinx_execution_log
+        if hasattr(state, 'command_history') and state.command_history is not None and hasattr(state.command_history, 'save_jinx_execution'):
+            try:
+                _npc_name = state.npc.name if isinstance(state.npc, NPC) else "npcsh"
+                _team_name = state.team.name if state.team else "npcsh"
+                _args = ' '.join(all_command_parts[1:]) if len(all_command_parts) > 1 else ''
+                state.command_history.save_jinx_execution(
+                    triggering_message_id=None,
+                    conversation_id=state.conversation_id,
+                    npc_name=_npc_name,
+                    jinx_name=command_name,
+                    jinx_inputs={"command": command, "args": _args},
+                    jinx_output=result.get('output', '') if isinstance(result, dict) else str(result)[:2000],
+                    status=_status,
+                    team_name=_team_name,
+                    error_message=_error,
+                    duration_ms=_duration_ms,
+                )
+            except Exception:
+                pass  # Don't fail command execution due to logging error
+
+        return state, result
     
     # Fallback for switching NPC by name
     if state.team and command_name in state.team.npcs:

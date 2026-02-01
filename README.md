@@ -62,10 +62,11 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
   - **Computer Use**
 
     ```bash
-    /plonk 'find out the latest news on cnn' gemma3:12b ollama
+    /plonk 
     ```
     <p align="center">
-        <img src="gh_images/plonk.png" alt="Plonk GUI automation TUI", width=500>
+        <img src="gh_images/plonk.png" alt="Plonk GUI automation TUI — task entry" width=500>
+        <img src="gh_images/plonk_task.png" alt="Plonk GUI automation — completed flight search task" width=500>
     </p>
 
   - **Generate Images with Vixynt**
@@ -99,6 +100,16 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
       <p align="center">
         <img src="https://raw.githubusercontent.com/NPC-Worldwide/npcsh/main/test_data/hatridingdog.gif" alt="video of a hat riding a dog", width=350>
       </p> 
+
+  - **Multi-Agent Discussions**
+
+    ```bash
+    /convene "Is the universe a simulation?" npcs=alicanto,corca,guac rounds=3
+    ```
+    <p align="center">
+        <img src="gh_images/convene.png" alt="Convene — multi-NPC structured discussion" width=500>
+        <img src="gh_images/convene_convene.png" alt="Convene — live discussion view" width=500>
+    </p>
 
   - **Serve an NPC Team**
     ```bash
