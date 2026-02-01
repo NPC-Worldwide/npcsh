@@ -136,26 +136,43 @@ steps:
               history_context = ""
               if task['actions']:
                   history_context = "\nPrevious actions:\n"
-                  for i, act in enumerate(task['actions'][-5:], 1):
+                  for i, act in enumerate(task['actions'][-8:], 1):
                       history_context += "  " + str(i) + ". " + act.get('action', '?')
                       if act.get('x'):
                           history_context += " at (" + str(act.get('x', '?')) + ", " + str(act.get('y', '?')) + ")"
+                      if act.get('text'):
+                          history_context += ' "' + act.get('text', '')[:50] + '"'
+                      if act.get('command'):
+                          history_context += ' [' + act.get('command', '')[:30] + ']'
                       history_context += " - " + act.get('reason', '') + "\n"
+                  # Detect repetition: if last 3 actions are the same type, warn
+                  recent = task['actions'][-3:]
+                  if len(recent) == 3 and all(a.get('action') == recent[0].get('action') for a in recent):
+                      history_context += "\n*** WARNING: You have repeated '" + recent[0].get('action', '?') + "' 3 times. "
+                      history_context += "This is NOT working. You MUST try a completely different approach. ***\n"
 
               prompt = "You are a GUI automation assistant. Analyze this screenshot and determine the next action.\n\n"
-              prompt += "IMPORTANT: Before taking new actions, VERIFY the current screenshot shows the expected result of your previous actions. "
-              prompt += "If the page is still loading or hasn't changed yet, use 'wait' with duration 2-3 seconds. "
-              prompt += "Do NOT blindly proceed — confirm each step worked before moving on.\n\n"
+              prompt += "CRITICAL RULES:\n"
+              prompt += "1. VERIFY: Check the screenshot BEFORE acting. Does it show the result of your last action? If not, wait.\n"
+              prompt += "2. NO REPEATS: If an action failed or had no effect, try a DIFFERENT approach. Never repeat the same action.\n"
+              prompt += "3. FULL TEXT: Always type the COMPLETE text in a single 'type' action. Never truncate or split text.\n"
+              prompt += "4. FOCUS FIRST: Before typing, make sure the target field is focused (click it or use keyboard shortcut).\n\n"
+              prompt += "KEYBOARD SHORTCUTS (use 'key' action with these):\n"
+              prompt += "- ctrl+l or F6: Focus browser address/search bar\n"
+              prompt += "- ctrl+a: Select all text in current field\n"
+              prompt += "- ctrl+t: New browser tab\n"
+              prompt += "- tab/shift+tab: Move between form fields\n"
+              prompt += "- escape: Close popups, cancel autocomplete\n\n"
               prompt += "TASK: " + task['text'] + "\n"
               prompt += history_context + "\n"
               prompt += "Available actions:\n"
-              prompt += "- click: Click at x,y coordinates (0-100 percentage of screen)\n"
-              prompt += "- type: Type text (use 'text' field)\n"
-              prompt += "- key: Press key like enter, tab, escape (use 'text' field)\n"
-              prompt += "- launch: Launch application (use 'command' field, e.g. " + app_examples + ")\n"
-              prompt += "- wait: Wait for 'duration' seconds (use when page is loading or UI hasn't updated)\n"
-              prompt += "- done: Task completed successfully\n"
-              prompt += "- fail: Task cannot be completed\n\n"
+              prompt += "- click: Click at x,y (0-100 % of screen). Fields: x, y\n"
+              prompt += "- type: Type text into focused field. Fields: text (MUST be complete text)\n"
+              prompt += "- key: Press key(s). Fields: text (e.g. 'enter', 'ctrl+l', 'tab', 'escape')\n"
+              prompt += "- launch: Launch application. Fields: command (e.g. " + app_examples + ")\n"
+              prompt += "- wait: Wait seconds. Fields: duration\n"
+              prompt += "- done: Task completed\n"
+              prompt += "- fail: Task impossible\n\n"
               prompt += "Respond with JSON, e.g.: " + json_schema_example
 
               ui.status = "Thinking... (iter " + str(ui.iteration) + "/" + str(ui.max_iter) + ")"
@@ -208,7 +225,12 @@ steps:
                   act_record['text'] = txt
               elif action == 'key':
                   key = action_response.get('text', 'enter')
-                  perform_action({"type": "key", "keys": key})
+                  # Detect combo keys like ctrl+l, ctrl+a, shift+tab
+                  if '+' in key:
+                      parts = [k.strip() for k in key.split('+')]
+                      perform_action({"type": "hotkey", "keys": parts})
+                  else:
+                      perform_action({"type": "key", "keys": key})
                   act_record['key'] = key
               elif action == 'launch':
                   cmd = action_response.get('command', '')
@@ -372,7 +394,7 @@ steps:
                   if a.get('x') is not None:
                       coords = "(" + str(a.get('x', '')) + "," + str(a.get('y', '')) + ") "
                   elif a.get('text'):
-                      coords = '"' + str(a['text'])[:15] + '" '
+                      coords = '"' + str(a['text'])[:40] + '" '
                   elif a.get('key'):
                       coords = '[' + str(a['key']) + '] '
                   elif a.get('command'):
