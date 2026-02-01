@@ -62,7 +62,7 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
   - **Computer Use**
 
     ```bash
-    /plonk 'find out the latest news on cnn' gemma3:12b ollama
+    /plonk 
     ```
     <p align="center">
         <img src="gh_images/plonk.png" alt="Plonk GUI automation TUI — task entry" width=500>
