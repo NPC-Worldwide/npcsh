@@ -14,8 +14,8 @@ fi
 
 # Install npcsh with lite dependencies (API providers only, no local models)
 # Use --break-system-packages for PEP 668 compliance (Ubuntu 24.04+)
-echo "Installing npcsh[lite]..."
-pip install --quiet --break-system-packages npcsh[lite] || pip install --quiet npcsh[lite]
+echo "Installing npcsh[lite] + ollama..."
+pip install --quiet --break-system-packages npcsh[lite] ollama || pip install --quiet npcsh[lite] ollama
 
 # Verify installation
 echo "Verifying npcsh installation..."

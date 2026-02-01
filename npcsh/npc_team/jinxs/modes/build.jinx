@@ -4,7 +4,7 @@ interactive: true
 inputs:
   - target: ""
   - outdir: "./build"
-  - team: "~/.npcsh/npc_team"
+  - team: "./npc_team"
   - port: 5337
   - cors: ""
 steps:
@@ -16,6 +16,28 @@ steps:
       import tty
       import termios
       import select as _sel
+
+      def _resolve_team_path(raw_team):
+          """Resolve team path: try given path first, then local ./npc_team, then global ~/.npcsh/npc_team."""
+          candidates = []
+          if raw_team:
+              candidates.append(os.path.abspath(os.path.expanduser(raw_team)))
+          local = os.path.abspath('./npc_team')
+          global_ = os.path.expanduser('~/.npcsh/npc_team')
+          if local not in candidates:
+              candidates.append(local)
+          if global_ not in candidates:
+              candidates.append(global_)
+          for p in candidates:
+              if os.path.isdir(p):
+                  if p != candidates[0] and candidates[0] != p:
+                      print(f"\033[33m⚠ Local team not found at {candidates[0]}, using {p}\033[0m")
+                  return p
+          raise FileNotFoundError(
+              f"No npc_team directory found. Searched:\n"
+              + "\n".join(f"  - {c}" for c in candidates)
+              + "\n\nCreate a local npc_team/ or ensure ~/.npcsh/npc_team exists."
+          )
 
       _direct_target = (context.get('target') or '').strip().lower()
       _direct = bool(_direct_target) or not sys.stdin.isatty()
@@ -35,7 +57,7 @@ steps:
                   context['output'] = f"Unknown target: {_target}. Available: {list(_builders.keys())}"
               else:
                   _cfg = {
-                      'team_path': os.path.abspath(os.path.expanduser(context.get('team') or '~/.npcsh/npc_team')),
+                      'team_path': _resolve_team_path(context.get('team')),
                       'output_dir': os.path.abspath(os.path.expanduser(context.get('outdir') or './build')),
                       'target': _target,
                       'port': int(context.get('port') or 5337),
@@ -76,9 +98,13 @@ steps:
                   {'key': 'cli',    'name': 'CLI Scripts',   'desc': 'Per-NPC executable scripts for direct CLI usage'},
                   {'key': 'static', 'name': 'Static Site',   'desc': 'HTML documentation page listing team NPCs'},
               ]
+              try:
+                  _resolved_team = _resolve_team_path(context.get('team'))
+              except FileNotFoundError:
+                  _resolved_team = os.path.expanduser(context.get('team') or './npc_team')
               self.config = {
                   'outdir': os.path.expanduser(context.get('outdir') or './build'),
-                  'team': os.path.expanduser(context.get('team') or '~/.npcsh/npc_team'),
+                  'team': _resolved_team,
                   'port': str(context.get('port') or 5337),
                   'cors': context.get('cors') or '',
               }
@@ -217,7 +243,7 @@ steps:
       def do_build():
           target = ui.targets[ui.sel]
           config = {
-              'team_path': os.path.abspath(os.path.expanduser(ui.config['team'])),
+              'team_path': _resolve_team_path(ui.config['team']),
               'output_dir': os.path.abspath(os.path.expanduser(ui.config['outdir'])),
               'target': target['key'],
               'port': int(ui.config['port']),

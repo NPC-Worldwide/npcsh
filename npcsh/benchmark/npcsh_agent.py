@@ -53,11 +53,11 @@ class NpcshAgent(BaseInstalledAgent):
         Returns:
             List of ExecInput commands to execute
         """
-        # Wrap the instruction with explicit jinx usage directions and retry logic
-        tool_instruction = f"""You have access to jinxs including edit_file (for writing/creating files), sh (for running shell commands), and python (for running Python code).
+        # Wrap the instruction with tool usage directions and retry logic
+        tool_instruction = f"""You have access to tools: edit_file (for writing/creating files), sh (for running shell commands), and python (for running Python code).
 
 IMPORTANT RULES:
-1. You MUST use these jinxs to complete the task. Do NOT just output code as text - use the edit_file jinx to actually write files to disk.
+1. You MUST call these tools using the function calling interface to complete the task. Do NOT write tool names as text - invoke them as function calls.
 2. After implementing a solution, you MUST verify it works by running any provided test scripts.
 3. If a test fails or produces an error, you MUST try a DIFFERENT approach. Do not give up.
 4. Keep trying different approaches until you succeed or have tried at least 10 different solutions.
@@ -66,13 +66,11 @@ IMPORTANT RULES:
 Task: {instruction}
 
 WORKFLOW:
-1. Implement your solution using edit_file and sh
+1. Call edit_file to write code files. Call sh to run commands.
 2. Run any test scripts mentioned in the task
 3. Check the output carefully - look for "PASS", "SUCCESS", "OK" or similar
 4. If the test failed, analyze why and try a completely different approach
-5. Repeat until the test passes
-
-Remember: Use edit_file to write code files. Use sh to run commands. VERIFY your solution works before concluding."""
+5. Repeat until the test passes"""
 
         escaped_instruction = shlex.quote(tool_instruction)
         model_name = self.model_name
@@ -146,8 +144,14 @@ Remember: Use edit_file to write code files. Use sh to run commands. VERIFY your
         # Using corca NPC which has edit_file tool for writing files
         # Using the npc CLI which supports single-command execution
         # NPCSH_DEFAULT_MODE=agent enables automatic tool execution
+        ollama_env = ""
+        if npcsh_provider == "ollama":
+            ollama_host = os.environ.get("OLLAMA_HOST", "http://host.docker.internal:11434")
+            ollama_env = f'OLLAMA_HOST="{ollama_host}" '
+
         npcsh_cmd = (
             f'{env_prefix}'
+            f'{ollama_env}'
             f'NPCSH_CHAT_MODEL="{model}" '
             f'NPCSH_CHAT_PROVIDER="{npcsh_provider}" '
             f'NPCSH_STREAM_OUTPUT=0 '
@@ -234,11 +238,11 @@ class NpcshAgentWithNpc(NpcshAgent):
 
     def create_run_agent_commands(self, instruction: str) -> list:
         """Create commands using a specific NPC."""
-        # Wrap the instruction with explicit jinx usage directions and retry logic
-        tool_instruction = f"""You have access to jinxs including edit_file (for writing/creating files), sh (for running shell commands), and python (for running Python code).
+        # Wrap the instruction with tool usage directions and retry logic
+        tool_instruction = f"""You have access to tools: edit_file (for writing/creating files), sh (for running shell commands), and python (for running Python code).
 
 IMPORTANT RULES:
-1. You MUST use these jinxs to complete the task. Do NOT just output code as text - use the edit_file jinx to actually write files to disk.
+1. You MUST call these tools using the function calling interface to complete the task. Do NOT write tool names as text - invoke them as function calls.
 2. After implementing a solution, you MUST verify it works by running any provided test scripts.
 3. If a test fails or produces an error, you MUST try a DIFFERENT approach. Do not give up.
 4. Keep trying different approaches until you succeed or have tried at least 10 different solutions.
@@ -247,13 +251,11 @@ IMPORTANT RULES:
 Task: {instruction}
 
 WORKFLOW:
-1. Implement your solution using edit_file and sh
+1. Call edit_file to write code files. Call sh to run commands.
 2. Run any test scripts mentioned in the task
 3. Check the output carefully - look for "PASS", "SUCCESS", "OK" or similar
 4. If the test failed, analyze why and try a completely different approach
-5. Repeat until the test passes
-
-Remember: Use edit_file to write code files. Use sh to run commands. VERIFY your solution works before concluding."""
+5. Repeat until the test passes"""
 
         escaped_instruction = shlex.quote(tool_instruction)
         model_name = self.model_name
@@ -309,8 +311,14 @@ Remember: Use edit_file to write code files. Use sh to run commands. VERIFY your
 
         # Use specific NPC with --npc flag
         # NPCSH_DEFAULT_MODE=agent enables automatic tool execution
+        ollama_env = ""
+        if npcsh_provider == "ollama":
+            ollama_host = os.environ.get("OLLAMA_HOST", "http://host.docker.internal:11434")
+            ollama_env = f'OLLAMA_HOST="{ollama_host}" '
+
         npcsh_cmd = (
             f'{env_prefix}'
+            f'{ollama_env}'
             f'NPCSH_CHAT_MODEL="{model}" '
             f'NPCSH_CHAT_PROVIDER="{npcsh_provider}" '
             f'NPCSH_STREAM_OUTPUT=0 '

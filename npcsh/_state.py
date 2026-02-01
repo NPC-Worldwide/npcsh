@@ -2537,19 +2537,16 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
     elif npc_obj and getattr(npc_obj, "tool_map", None):
         tool_map.update(npc_obj.tool_map)
 
-    # Jinx tools from NPC and Team
+    # Jinx tools from NPC only (NPC.jinxs_dict is already filtered by jinxs_spec
+    # during initialize_jinxs - don't add the full team catalog which overwhelms small models)
     aggregated_jinxs: Dict[str, Any] = {}
     if npc_obj and getattr(npc_obj, "jinxs_dict", None):
         aggregated_jinxs.update(npc_obj.jinxs_dict)
-    if state.team and isinstance(state.team, Team) and getattr(state.team, "jinxs_dict", None):
-        aggregated_jinxs.update({k: v for k, v in state.team.jinxs_dict.items() if k not in aggregated_jinxs})
 
     if aggregated_jinxs:
         jinx_catalog: Dict[str, Dict[str, Any]] = {}
         if npc_obj and getattr(npc_obj, "jinx_tool_catalog", None):
             jinx_catalog.update(npc_obj.jinx_tool_catalog or {})
-        if state.team and isinstance(state.team, Team) and getattr(state.team, "jinx_tool_catalog", None):
-            jinx_catalog.update(state.team.jinx_tool_catalog or {})
         if not jinx_catalog:
             jinx_catalog = build_jinx_tool_catalog(aggregated_jinxs)
 
@@ -2898,6 +2895,14 @@ def process_pipeline_command(
             tools_for_llm, tool_exec_map = collect_llm_tools(state)
             if not tools_for_llm:
                 tool_capable = False
+            else:
+                # Add tool guidance so model knows to use function calls
+                tool_names = [t['function']['name'] for t in tools_for_llm if 'function' in t]
+                info += (
+                    f"\nYou have access to these tools: {', '.join(tool_names)}. "
+                    f"You MUST use the function calling interface to invoke them. "
+                    f"Do NOT write tool names as text - call them as functions."
+                )
 
         npc_name = (
             state.npc.name 
