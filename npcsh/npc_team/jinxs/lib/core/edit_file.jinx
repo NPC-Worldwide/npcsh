@@ -4,7 +4,7 @@ description: Creates or edits a file. If the file does not exist, creates it wit
 inputs:
 - file_path
 - edit_instructions
-- backup: true
+- backup: false
 steps:
   - name: "edit_file"
     engine: "python"
