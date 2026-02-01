@@ -44,6 +44,9 @@ NPCSH_API_URL = os.environ.get("NPCSH_API_URL", None)
 NPCSH_SEARCH_PROVIDER = os.environ.get("NPCSH_SEARCH_PROVIDER", "duckduckgo")
 NPCSH_BUILD_KG = os.environ.get("NPCSH_BUILD_KG", "1") != "0"
 NPCSH_EDIT_APPROVAL = os.environ.get("NPCSH_EDIT_APPROVAL", "off")  # off, interactive, auto
+NPCSH_TTS_ENGINE = os.environ.get("NPCSH_TTS_ENGINE", "")
+NPCSH_TTS_VOICE = os.environ.get("NPCSH_TTS_VOICE", "")
+NPCSH_YAP_SETUP_DONE = os.environ.get("NPCSH_YAP_SETUP_DONE", "0") == "1"
 
 
 def get_shell_config_file() -> str:

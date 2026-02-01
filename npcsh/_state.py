@@ -278,6 +278,9 @@ CONFIG_KEY_MAP = {
     "buildkg": "NPCSH_BUILD_KG",
     "editapproval": "NPCSH_EDIT_APPROVAL",
     "approval": "NPCSH_EDIT_APPROVAL",
+    "ttsengine": "NPCSH_TTS_ENGINE",
+    "ttsvoice": "NPCSH_TTS_VOICE",
+    "yapsetup": "NPCSH_YAP_SETUP_DONE",
 }
 
 
@@ -2954,6 +2957,7 @@ def process_pipeline_command(
                     iteration = 0
                     max_iterations = 50  # Safety limit to prevent infinite loops
                     total_usage = {"input_tokens": 0, "output_tokens": 0}
+                    state._agent_nudges = 0  # Track continuation nudges
 
                     while iteration < max_iterations:
                         iteration += 1
@@ -2999,12 +3003,29 @@ def process_pipeline_command(
                                     else:
                                         render_markdown(tool_content)
 
-                        # Check if LLM made tool calls - if not, it's done
+                        # Check if LLM made tool calls - if not, consider re-prompting
                         tool_calls_made = isinstance(llm_result, dict) and llm_result.get("tool_calls")
                         if not tool_calls_made:
+                            # In agent mode, re-prompt to continue using tools
+                            if (state.current_mode == 'agent'
+                                    and iteration < max_iterations
+                                    and state._agent_nudges < 3):
+                                state._agent_nudges += 1
+                                state.messages.append({
+                                    "role": "user",
+                                    "content": (
+                                        "You have not yet completed the task. "
+                                        "Continue working by calling tools. "
+                                        "Use the function calling interface to invoke tools - "
+                                        "do NOT write tool calls as text."
+                                    )
+                                })
+                                continue
                             # LLM is done - no more tool calls
                             break
 
+                        # Reset nudge counter on successful tool use
+                        state._agent_nudges = 0
                         # Clear the prompt for continuation calls - context is in messages
                         full_llm_cmd = None
 
