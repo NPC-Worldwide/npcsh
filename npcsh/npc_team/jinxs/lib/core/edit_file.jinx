@@ -1,6 +1,6 @@
 jinx_name: edit_file
-description: Examines a file, determines what changes are needed, and applies those
-  changes.
+description: Creates or edits a file. If the file does not exist, creates it with
+  the specified content. If the file exists, examines it and applies changes.
 inputs:
 - file_path
 - edit_instructions
@@ -17,19 +17,42 @@ steps:
       edit_instructions = {{ edit_instructions | string | tojson }}
       backup_str = {{ backup | default("true") | string | tojson }}
       create_backup = backup_str.lower() not in ('false', 'no', '0', '')
-      
-    
-      with open(file_path, 'r') as f:
-          original_content = f.read()
-      
-    
-      if create_backup:
-          backup_path = file_path + ".bak"
-          with open(backup_path, 'w') as f:
-              f.write(original_content)
-      
-    
-      prompt = """You are a code editing assistant. Analyze this file and make the requested changes.
+
+      # Ensure parent directory exists
+      os.makedirs(os.path.dirname(file_path) or '.', exist_ok=True)
+
+      # If file doesn't exist, create it
+      if not os.path.exists(file_path):
+          prompt = """You are a code writing assistant. Create the content for a new file based on these instructions.
+
+        Instructions: """ + edit_instructions + """
+
+        Return a JSON object with:
+        1. "content": The full content to write to the file
+        2. "explanation": Brief explanation of what was created
+
+        Example response:
+        {"content": "print('hello world')", "explanation": "Created a Python hello world script"}
+        """
+          response = get_llm_response(prompt, model=npc.model, provider=npc.provider, npc=npc, format="json")
+          result = response.get("response", {})
+          content = result.get("content", edit_instructions)
+          explanation = result.get("explanation", "Created new file")
+
+          with open(file_path, 'w') as f:
+              f.write(content)
+
+          output = "Created " + file_path + "\n\n" + explanation
+      else:
+          with open(file_path, 'r') as f:
+              original_content = f.read()
+
+          if create_backup:
+              backup_path = file_path + ".bak"
+              with open(backup_path, 'w') as f:
+                  f.write(original_content)
+
+          prompt = """You are a code editing assistant. Analyze this file and make the requested changes.
 
         File content:
         """ + original_content + """
@@ -49,49 +72,48 @@ steps:
         Example response:
         {"modifications": [{"type": "replace", "original": "old code", "replacement": "new code"}], "explanation": "Updated the code"}
         """
-    
-      response = get_llm_response(prompt, model=npc.model, provider=npc.provider, npc=npc, format="json")
-      
-      result = response.get("response", {})
-      modifications = result.get("modifications", [])
-      explanation = result.get("explanation", "No explanation provided")
-      
-    
-      updated_content = original_content
-      changes_applied = 0
-      
-      for mod in modifications:
-          print(mod)
-          mod_type = mod.get("type")
-          
-          if mod_type == "replace":
-              original = mod.get("original")
-              replacement = mod.get("replacement")
-              if original in updated_content:
-                  updated_content = updated_content.replace(original, replacement)
-                  changes_applied += 1
-          
-          elif mod_type == "insert_after":
-              target = mod.get("target")
-              insertion = mod.get("insertion")
-              if target in updated_content:
-                  updated_content = updated_content.replace(target, target + insertion)
-                  changes_applied += 1
-          
-          elif mod_type == "insert_before":
-              target = mod.get("target")
-              insertion = mod.get("insertion")
-              if target in updated_content:
-                  updated_content = updated_content.replace(target, insertion + target)
-                  changes_applied += 1
-          
-          elif mod_type == "delete":
-              target = mod.get("target")
-              if target in updated_content:
-                  updated_content = updated_content.replace(target, "")
-                  changes_applied += 1
-      
-      with open(file_path, 'w') as f:
-          f.write(updated_content)
-      
-      output = "Applied " + str(changes_applied) + " changes to " + file_path + "\n\n" + explanation
+
+          response = get_llm_response(prompt, model=npc.model, provider=npc.provider, npc=npc, format="json")
+
+          result = response.get("response", {})
+          modifications = result.get("modifications", [])
+          explanation = result.get("explanation", "No explanation provided")
+
+          updated_content = original_content
+          changes_applied = 0
+
+          for mod in modifications:
+              print(mod)
+              mod_type = mod.get("type")
+
+              if mod_type == "replace":
+                  original = mod.get("original")
+                  replacement = mod.get("replacement")
+                  if original in updated_content:
+                      updated_content = updated_content.replace(original, replacement)
+                      changes_applied += 1
+
+              elif mod_type == "insert_after":
+                  target = mod.get("target")
+                  insertion = mod.get("insertion")
+                  if target in updated_content:
+                      updated_content = updated_content.replace(target, target + insertion)
+                      changes_applied += 1
+
+              elif mod_type == "insert_before":
+                  target = mod.get("target")
+                  insertion = mod.get("insertion")
+                  if target in updated_content:
+                      updated_content = updated_content.replace(target, insertion + target)
+                      changes_applied += 1
+
+              elif mod_type == "delete":
+                  target = mod.get("target")
+                  if target in updated_content:
+                      updated_content = updated_content.replace(target, "")
+                      changes_applied += 1
+
+          with open(file_path, 'w') as f:
+              f.write(updated_content)
+
+          output = "Applied " + str(changes_applied) + " changes to " + file_path + "\n\n" + explanation
