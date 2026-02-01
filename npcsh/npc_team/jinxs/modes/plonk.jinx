@@ -24,6 +24,25 @@ steps:
 
       from npcpy.llm_funcs import get_llm_response
 
+      # Helper to log jinx executions to DB
+      def _log_jinx(trigger_id, npc_name, inputs, output, status="success", error_msg=None):
+          try:
+              if state and hasattr(state, 'command_history') and state.command_history is not None and hasattr(state.command_history, 'save_jinx_execution'):
+                  _conv_id = getattr(state, 'conversation_id', None) or ''
+                  state.command_history.save_jinx_execution(
+                      triggering_message_id=f"{_conv_id}-{trigger_id}",
+                      conversation_id=_conv_id,
+                      npc_name=npc_name,
+                      jinx_name="plonk",
+                      jinx_inputs=inputs,
+                      jinx_output=str(output) if output else "",
+                      status=status,
+                      team_name=state.team.name if state and hasattr(state, 'team') and state.team else None,
+                      error_message=error_msg,
+                  )
+          except Exception:
+              pass
+
       try:
           from npcpy.data.image import capture_screenshot
           from npcpy.work.desktop import perform_action
@@ -193,21 +212,38 @@ steps:
                       action_response = json.loads(action_response)
                   except:
                       task['actions'].append({"action": "error", "reason": "Invalid JSON from model"})
+                      _log_jinx(f"plonk-task-{ui.current_task}-iter-{ui.iteration}",
+                                npc.name if npc and hasattr(npc, 'name') else "plonk",
+                                {"task": task['text'], "iteration": ui.iteration, "type": "analysis"},
+                                str(resp.get('response', '')), status="error", error_msg="Invalid JSON from model")
                       ui.status = "Bad response, retrying..."
                       return
 
               action = action_response.get('action', 'fail')
               reason = action_response.get('reason', '')
 
+              _npc_name = npc.name if npc and hasattr(npc, 'name') else "plonk"
+              _log_jinx(f"plonk-task-{ui.current_task}-iter-{ui.iteration}",
+                        _npc_name,
+                        {"task": task['text'], "iteration": ui.iteration, "screenshot": screenshot_path,
+                         "type": "analysis"},
+                        json.dumps(action_response))
+
               if action == 'done':
                   task['status'] = 'done'
                   task['actions'].append({"action": "done", "reason": reason})
+                  _log_jinx(f"plonk-task-{ui.current_task}-done", _npc_name,
+                            {"task": task['text'], "type": "task_complete", "total_actions": len(task['actions'])},
+                            reason)
                   advance_to_next_task()
                   return
 
               if action == 'fail':
                   task['status'] = 'failed'
                   task['actions'].append({"action": "fail", "reason": reason})
+                  _log_jinx(f"plonk-task-{ui.current_task}-fail", _npc_name,
+                            {"task": task['text'], "type": "task_failed", "total_actions": len(task['actions'])},
+                            reason, status="error", error_msg=reason)
                   advance_to_next_task()
                   return
 
@@ -258,6 +294,10 @@ steps:
 
           except Exception as e:
               task['actions'].append({"action": "error", "reason": str(e)})
+              _log_jinx(f"plonk-task-{ui.current_task}-iter-{ui.iteration}-error",
+                        npc.name if npc and hasattr(npc, 'name') else "plonk",
+                        {"task": task['text'] if task else "unknown", "iteration": ui.iteration, "type": "error"},
+                        str(e), status="error", error_msg=str(e))
               ui.status = "Error: " + str(e)[:40]
 
       def advance_to_next_task():
