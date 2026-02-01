@@ -16,10 +16,14 @@ fi
 echo "Upgrading pip..."
 pip install --upgrade pip 2>/dev/null || pip install --break-system-packages --upgrade pip 2>/dev/null || true
 
-# Install npcsh + ollama client
-# Try with --break-system-packages first (PEP 668 / Ubuntu 24.04+), then without
-echo "Installing npcsh + ollama..."
-pip install --break-system-packages npcsh ollama 2>/dev/null || pip install npcsh ollama
+# Install from local source (uploaded by agent setup)
+echo "Installing npcpy from local source..."
+if [ -d /src/npcpy ]; then
+    pip install --break-system-packages -e /src/npcpy 2>/dev/null || pip install -e /src/npcpy
+fi
+
+echo "Installing npcsh from local source..."
+pip install --break-system-packages -e /src/npcsh ollama 2>/dev/null || pip install -e /src/npcsh ollama
 
 # Verify installation
 echo "Verifying npcsh installation..."

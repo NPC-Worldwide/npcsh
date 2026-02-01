@@ -31,6 +31,9 @@ class NpcshAgent(BaseInstalledAgent):
 
     SUPPORTS_ATIF = True  # Agent Trajectory Interchange Format
 
+    # Root of the npcsh source tree (two levels up from this file)
+    _NPCSH_SRC = Path(__file__).resolve().parent.parent.parent
+
     def __init__(self, logs_dir: Path = None, model_name: str = None, logger=None, **kwargs):
         super().__init__(logs_dir=logs_dir, model_name=model_name, logger=logger, **kwargs)
 
@@ -42,6 +45,44 @@ class NpcshAgent(BaseInstalledAgent):
     def _install_agent_template_path(self) -> Path:
         """Path to the jinja template script for installing npcsh in the container."""
         return Path(__file__).parent / "templates" / "install-npcsh.sh.j2"
+
+    async def setup(self, environment) -> None:
+        """Upload local npcsh + npcpy source, then run install script."""
+        import shutil
+        import tempfile
+
+        npcsh_src = self._NPCSH_SRC
+        npcpy_src = npcsh_src.parent / "npcpy"
+
+        # Create /src in container
+        await environment.exec(command="mkdir -p /src")
+
+        # Copy source to temp dir excluding .git and caches
+        def _copy_clean(src, name):
+            tmp = Path(tempfile.mkdtemp()) / name
+            shutil.copytree(
+                src, tmp,
+                ignore=shutil.ignore_patterns(
+                    '.git', '__pycache__', '*.pyc', 'dist', 'build',
+                    '*.egg-info', 'jobs', 'dataset_cache',
+                ),
+            )
+            return tmp
+
+        clean_npcsh = _copy_clean(npcsh_src, "npcsh")
+        await environment.upload_dir(
+            source_dir=str(clean_npcsh),
+            target_dir="/src/npcsh",
+        )
+
+        if npcpy_src.exists():
+            clean_npcpy = _copy_clean(npcpy_src, "npcpy")
+            await environment.upload_dir(
+                source_dir=str(clean_npcpy),
+                target_dir="/src/npcpy",
+            )
+
+        await super().setup(environment)
 
     def create_run_agent_commands(self, instruction: str) -> list:
         """
