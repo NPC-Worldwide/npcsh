@@ -65,7 +65,8 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
     /plonk 'find out the latest news on cnn' gemma3:12b ollama
     ```
     <p align="center">
-        <img src="gh_images/plonk.png" alt="Plonk GUI automation TUI", width=500>
+        <img src="gh_images/plonk.png" alt="Plonk GUI automation TUI — task entry" width=500>
+        <img src="gh_images/plonk_task.png" alt="Plonk GUI automation — completed flight search task" width=500>
     </p>
 
   - **Generate Images with Vixynt**
