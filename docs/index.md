@@ -14,6 +14,7 @@
 ## Guides for NPC Shell programs
 - [NPC Shell](npcsh.md)
 - [NPC CLI ](api/npc_cli.md)
+- [Skills](skills.md) — Knowledge-content jinxs with progressive section disclosure
 - [Alicanto](alicanto.md)
 - [Guac](guac.md)
 - [PTI](pti.md)
