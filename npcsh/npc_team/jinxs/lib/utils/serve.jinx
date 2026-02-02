@@ -499,11 +499,11 @@ steps:
               elif ui.detail:
                   foot = " [j/k] Scroll  [q/Esc] Back "
               elif ui.tab == 0:
-                  foot = " [Tab] Switch  [j/k] Nav  [s] Start  [S] Stop  [r] Restart  [e] Edit  [p] Port  [K] Kill conflict  [q] Quit "
+                  foot = " [\xe2\x86\x90\xe2\x86\x92/Tab] Switch  [\xe2\x86\x91\xe2\x86\x93/jk] Nav  [s] Start  [S] Stop  [r] Restart  [e] Edit  [p] Port  [K] Kill  [q] Quit "
               elif ui.tab == 1:
-                  foot = " [Tab] Switch  [j/k] Nav  [Enter] Detail  [/] Search  [q] Quit "
+                  foot = " [\xe2\x86\x90\xe2\x86\x92/Tab] Switch  [\xe2\x86\x91\xe2\x86\x93/jk] Nav  [Enter] Detail  [/] Search  [q] Quit "
               elif ui.tab == 2:
-                  foot = " [Tab] Switch  [j/k] Nav  [c] Clear  [q] Quit "
+                  foot = " [\xe2\x86\x90\xe2\x86\x92/Tab] Switch  [\xe2\x86\x91\xe2\x86\x93/jk] Nav  [c] Clear  [q] Quit "
               out.append(wline(H, "\033[7m" + foot[:W].ljust(W) + "\033[0m"))
 
               sys.stdout.write(''.join(out))
@@ -678,15 +678,7 @@ steps:
               if c == 'q':
                   return False
               elif c == '\t':
-                  ui.tab = (ui.tab + 1) % len(ui.tabs)
-                  ui.sel = 0
-                  ui.scroll = 0
-                  ui.detail = False
-                  ui.search_query = ""
-                  ui.search_buf = ""
-                  ui.status = ""
-                  if ui.tab == 1:
-                      filter_endpoints()
+                  switch_tab(1)
               elif c == 'j':
                   nav_down()
               elif c == 'k':
@@ -757,6 +749,17 @@ steps:
                   ui.scroll = 0
                   ui.status = "Logs cleared"
 
+          def switch_tab(direction):
+              ui.tab = (ui.tab + direction) % len(ui.tabs)
+              ui.sel = 0
+              ui.scroll = 0
+              ui.detail = False
+              ui.search_query = ""
+              ui.search_buf = ""
+              ui.status = ""
+              if ui.tab == 1:
+                  filter_endpoints()
+
           def handle_esc():
               if select.select([fd], [], [], 0.05)[0]:
                   c2 = os.read(fd, 1).decode('latin-1')
@@ -766,17 +769,12 @@ steps:
                           nav_up()
                       elif c3 == 'B':
                           nav_down()
+                      elif c3 == 'C':
+                          switch_tab(1)
+                      elif c3 == 'D':
+                          switch_tab(-1)
                       elif c3 == 'Z':
-                          # Shift+Tab: go to previous tab
-                          ui.tab = (ui.tab - 1) % len(ui.tabs)
-                          ui.sel = 0
-                          ui.scroll = 0
-                          ui.detail = False
-                          ui.search_query = ""
-                          ui.search_buf = ""
-                          ui.status = ""
-                          if ui.tab == 1:
-                              filter_endpoints()
+                          switch_tab(-1)
               else:
                   if ui.search_query:
                       ui.search_query = ""
@@ -927,15 +925,6 @@ steps:
               sys.stdout.flush()
               render()
               while True:
-                  # Use 1-second timeout on Logs tab or when server is running (for uptime updates)
-                  if (ui.tab == 2 or server_running()) and not ui.detail and not ui.search_mode and not ui.input_mode and not ui.confirm_action:
-                      ready, _, _ = select.select([fd], [], [], 1.0)
-                      if not ready:
-                          render()
-                          continue
-                  else:
-                      ready, _, _ = select.select([fd], [], [], None)
-
                   c = os.read(fd, 1).decode('latin-1')
                   if not handle(c):
                       break
