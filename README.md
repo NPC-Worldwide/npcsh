@@ -943,8 +943,14 @@ export PERPLEXITY_API_KEY='your_perplexity_key'
 npc_team/
 ├── jinxs/
 │   ├── modes/            # TUI modes (alicanto, corca, kg, yap, etc.)
+│   ├── skills/           # Skills — knowledge-content jinxs
+│   │   ├── code-review/  # SKILL.md folder format
+│   │   │   └── SKILL.md
+│   │   ├── debugging/
+│   │   │   └── SKILL.md
+│   │   └── git-workflow.jinx  # .jinx format
 │   ├── lib/
-│   │   ├── core/         # Core tools (python, sh, sql, edit_file, delegate, etc.)
+│   │   ├── core/         # Core tools (python, sh, sql, skill, edit_file, delegate, etc.)
 │   │   │   └── search/   # Search tools (web_search, db_search, file_search)
 │   │   ├── utils/        # Utility jinxs (set, compile, serve, teamviz, etc.)
 │   │   ├── browser/      # Browser automation (browser_action, screenshot, etc.)
