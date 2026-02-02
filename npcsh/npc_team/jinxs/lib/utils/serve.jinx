@@ -1,26 +1,943 @@
-jinx_name: "serve"
-description: "Serve an NPC Team"
+jinx_name: serve
+description: NPC Server Dashboard - start, stop, and monitor the API server
+interactive: true
 inputs:
 - port: 5337
 - cors: ""
 steps:
-  - name: "start_flask_server"
-    engine: "python"
+  - name: serve_tui
+    engine: python
     code: |
-      from npcpy.serve import start_flask_server
-      
-      port = context.get('port')
-      cors_str = context.get('cors')
-      output_messages = context.get('messages', [])
+      import os
+      import sys
+      import time
+      import socket
+      import threading
+      import subprocess
+      import signal
 
-      cors_origins = None
-      if cors_str and cors_str.strip():
-          cors_origins = [origin.strip() for origin in cors_str.split(",")]
+      # ── one-shot fallback ────────────────────────────────────
+      if not sys.stdin.isatty():
+          from npcpy.serve import start_flask_server
 
-      start_flask_server(
-          port=int(port), # Ensure port is an integer
-          cors_origins=cors_origins,
-      )
+          port = context.get('port')
+          cors_str = context.get('cors')
+          output_messages = context.get('messages', [])
 
-      context['output'] = "NPC Team server started. Execution of this jinx will pause until the server is stopped."
-      context['messages'] = output_messages
+          cors_origins = None
+          if cors_str and cors_str.strip():
+              cors_origins = [origin.strip() for origin in cors_str.split(",")]
+
+          start_flask_server(
+              port=int(port),
+              cors_origins=cors_origins,
+          )
+          context['output'] = "NPC Team server started."
+          context['messages'] = output_messages
+
+      else:
+          import tty
+          import termios
+          import select
+          from collections import deque
+
+          # ── endpoint registry ───────────────────────────────
+          ENDPOINT_REGISTRY = [
+              # OpenAI Compatible
+              {'category': 'OpenAI Compatible', 'method': 'POST', 'path': '/v1/chat/completions', 'desc': 'OpenAI-compatible chat completions'},
+              {'category': 'OpenAI Compatible', 'method': 'GET', 'path': '/v1/models', 'desc': 'List available models (OpenAI format)'},
+              # Health
+              {'category': 'Health', 'method': 'GET', 'path': '/api/health', 'desc': 'Server health check'},
+              # Models
+              {'category': 'Models', 'method': 'GET', 'path': '/api/models', 'desc': 'List all available models'},
+              {'category': 'Models', 'method': 'GET', 'path': '/api/finetuned_models', 'desc': 'List fine-tuned models'},
+              {'category': 'Models', 'method': 'GET', 'path': '/api/instruction_models', 'desc': 'List instruction models'},
+              {'category': 'Models', 'method': 'GET', 'path': '/api/image_models', 'desc': 'List image generation models'},
+              {'category': 'Models', 'method': 'GET', 'path': '/api/video_models', 'desc': 'List video generation models'},
+              {'category': 'Models', 'method': 'GET', 'path': '/api/models/local/scan', 'desc': 'Scan for local models'},
+              {'category': 'Models', 'method': 'GET', 'path': '/api/models/hf/scan', 'desc': 'Scan HuggingFace models'},
+              {'category': 'Models', 'method': 'POST', 'path': '/api/ollama/pull', 'desc': 'Pull an Ollama model'},
+              {'category': 'Models', 'method': 'DELETE', 'path': '/api/ollama/delete', 'desc': 'Delete an Ollama model'},
+              # Knowledge Graph
+              {'category': 'Knowledge Graph', 'method': 'GET', 'path': '/api/kg/generations', 'desc': 'List KG generations'},
+              {'category': 'Knowledge Graph', 'method': 'GET', 'path': '/api/kg/graph', 'desc': 'Get full knowledge graph'},
+              {'category': 'Knowledge Graph', 'method': 'GET', 'path': '/api/kg/network-stats', 'desc': 'Network statistics'},
+              {'category': 'Knowledge Graph', 'method': 'GET', 'path': '/api/kg/cooccurrence', 'desc': 'Co-occurrence matrix'},
+              {'category': 'Knowledge Graph', 'method': 'GET', 'path': '/api/kg/centrality', 'desc': 'Node centrality scores'},
+              {'category': 'Knowledge Graph', 'method': 'GET', 'path': '/api/kg/search', 'desc': 'Search knowledge graph'},
+              {'category': 'Knowledge Graph', 'method': 'POST', 'path': '/api/kg/embed', 'desc': 'Embed content into KG'},
+              {'category': 'Knowledge Graph', 'method': 'GET', 'path': '/api/kg/search/semantic', 'desc': 'Semantic KG search'},
+              {'category': 'Knowledge Graph', 'method': 'GET', 'path': '/api/kg/facts', 'desc': 'List KG facts'},
+              {'category': 'Knowledge Graph', 'method': 'GET', 'path': '/api/kg/concepts', 'desc': 'List KG concepts'},
+              # Conversations
+              {'category': 'Conversations', 'method': 'GET', 'path': '/api/conversations', 'desc': 'List conversations'},
+              {'category': 'Conversations', 'method': 'GET', 'path': '/api/conversation/<id>/messages', 'desc': 'Get messages for conversation'},
+              {'category': 'Conversations', 'method': 'GET', 'path': '/api/conversation/<id>/branches', 'desc': 'Get conversation branches'},
+              {'category': 'Conversations', 'method': 'POST', 'path': '/api/stream', 'desc': 'Stream a chat response'},
+              # Memory
+              {'category': 'Conversations', 'method': 'GET', 'path': '/api/memory/list', 'desc': 'List stored memories'},
+              {'category': 'Conversations', 'method': 'POST', 'path': '/api/memory/add', 'desc': 'Add a memory'},
+              {'category': 'Conversations', 'method': 'DELETE', 'path': '/api/memory/delete', 'desc': 'Delete a memory'},
+              # Jinxs
+              {'category': 'Jinxs', 'method': 'GET', 'path': '/api/jinxs/available', 'desc': 'List available jinxs'},
+              {'category': 'Jinxs', 'method': 'POST', 'path': '/api/jinx/execute', 'desc': 'Execute a jinx'},
+              {'category': 'Jinxs', 'method': 'POST', 'path': '/api/jinx/test', 'desc': 'Test a jinx'},
+              {'category': 'Jinxs', 'method': 'POST', 'path': '/api/jinxs/save', 'desc': 'Save a jinx'},
+              {'category': 'Jinxs', 'method': 'GET', 'path': '/api/jinxs/global', 'desc': 'List global jinxs'},
+              {'category': 'Jinxs', 'method': 'GET', 'path': '/api/jinxs/project', 'desc': 'List project jinxs'},
+              # NPC Team
+              {'category': 'NPC Team', 'method': 'GET', 'path': '/api/npcsh/team', 'desc': 'Get team info'},
+              {'category': 'NPC Team', 'method': 'POST', 'path': '/api/npcsh/command', 'desc': 'Execute npcsh command'},
+              {'category': 'NPC Team', 'method': 'GET', 'path': '/api/context/current', 'desc': 'Get current context'},
+              {'category': 'NPC Team', 'method': 'POST', 'path': '/api/context/switch', 'desc': 'Switch context'},
+              # Settings
+              {'category': 'Settings', 'method': 'GET', 'path': '/api/settings/global', 'desc': 'Get global settings'},
+              {'category': 'Settings', 'method': 'POST', 'path': '/api/settings/global', 'desc': 'Update global settings'},
+              {'category': 'Settings', 'method': 'GET', 'path': '/api/settings/project', 'desc': 'Get project settings'},
+              {'category': 'Settings', 'method': 'POST', 'path': '/api/settings/project', 'desc': 'Update project settings'},
+              {'category': 'Settings', 'method': 'GET', 'path': '/api/last_used_in_npcsh', 'desc': 'Last used model in npcsh'},
+              {'category': 'Settings', 'method': 'GET', 'path': '/api/last_used_in_studio', 'desc': 'Last used model in studio'},
+              # Audio
+              {'category': 'Audio', 'method': 'POST', 'path': '/api/audio/tts', 'desc': 'Text to speech'},
+              {'category': 'Audio', 'method': 'POST', 'path': '/api/audio/stt', 'desc': 'Speech to text'},
+              {'category': 'Audio', 'method': 'GET', 'path': '/api/audio/stt/engines', 'desc': 'List STT engines'},
+              {'category': 'Audio', 'method': 'GET', 'path': '/api/audio/voices', 'desc': 'List available voices'},
+              # Media
+              {'category': 'Media', 'method': 'POST', 'path': '/api/generate_images', 'desc': 'Generate images'},
+              {'category': 'Media', 'method': 'POST', 'path': '/api/generate_video', 'desc': 'Generate video'},
+              {'category': 'Media', 'method': 'POST', 'path': '/api/text_predict', 'desc': 'Text prediction'},
+              {'category': 'Media', 'method': 'POST', 'path': '/api/generative_fill', 'desc': 'Generative fill on image'},
+              {'category': 'Media', 'method': 'POST', 'path': '/api/capture_screenshot', 'desc': 'Capture screenshot'},
+              # MCP
+              {'category': 'NPC Team', 'method': 'GET', 'path': '/api/mcp_tools', 'desc': 'List MCP tools'},
+              {'category': 'NPC Team', 'method': 'POST', 'path': '/api/mcp/server/start', 'desc': 'Start MCP server'},
+              {'category': 'NPC Team', 'method': 'POST', 'path': '/api/mcp/server/stop', 'desc': 'Stop MCP server'},
+              # Fine-tuning
+              {'category': 'Models', 'method': 'POST', 'path': '/api/finetune_diffusers', 'desc': 'Fine-tune diffusion model'},
+              {'category': 'Models', 'method': 'GET', 'path': '/api/finetune_status/<job_id>', 'desc': 'Get fine-tune job status'},
+              {'category': 'Models', 'method': 'POST', 'path': '/api/finetune_instruction', 'desc': 'Fine-tune instruction model'},
+              {'category': 'Models', 'method': 'POST', 'path': '/api/ml/train', 'desc': 'Train ML model'},
+              {'category': 'Models', 'method': 'POST', 'path': '/api/ml/predict', 'desc': 'ML prediction'},
+              # Studio
+              {'category': 'Media', 'method': 'POST', 'path': '/api/studio/action_result', 'desc': 'Get studio action result'},
+          ]
+
+          # ── server thread ──────────────────────────────────
+          class ServerThread:
+              def __init__(self, app, host, port):
+                  from werkzeug.serving import make_server
+                  self.srv = make_server(host, int(port), app)
+                  self.host = host
+                  self.port = int(port)
+                  self.thread = threading.Thread(target=self.srv.serve_forever, daemon=True)
+
+              def start(self):
+                  self.thread.start()
+
+              def stop(self):
+                  self.srv.shutdown()
+
+          # ── TUI state ──────────────────────────────────────
+          class TUIState:
+              def __init__(self):
+                  self.tab = 0
+                  self.tabs = ['Server', 'Endpoints', 'Logs']
+                  self.sel = 0
+                  self.scroll = 0
+                  self.search_mode = False
+                  self.search_buf = ""
+                  self.search_query = ""
+                  self.detail = False
+                  self.detail_lines = []
+                  self.detail_scroll = 0
+                  self.status = ""
+                  self.confirm_action = None
+                  self.input_mode = False
+                  self.input_buf = ""
+                  self.input_label = ""
+                  self.input_callback = None
+                  # Server state
+                  self.server_thread = None
+                  self.port = int(context.get('port', 5337))
+                  self.host = '0.0.0.0'
+                  self.cors = context.get('cors', '') or ''
+                  self.debug = False
+                  self.start_time = None
+                  self.conflict_info = ""
+                  # Server params for navigation
+                  self.params = ['port', 'host', 'cors', 'debug']
+                  # Endpoint list (built once)
+                  self.endpoints = list(ENDPOINT_REGISTRY)
+                  self.filtered_endpoints = list(ENDPOINT_REGISTRY)
+                  # Log buffer
+                  self.logs = deque(maxlen=500)
+                  self.log_hook_installed = False
+
+          ui = TUIState()
+
+          def term_size():
+              try:
+                  s = os.get_terminal_size()
+                  return s.columns, s.lines
+              except:
+                  return 80, 24
+
+          def run_cmd(cmd):
+              try:
+                  r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+                  return r.stdout.strip(), r.stderr.strip(), r.returncode
+              except Exception as e:
+                  return "", str(e), 1
+
+          # ── server helpers ────────────────────────────────
+          def is_port_in_use(port):
+              s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+              try:
+                  s.settimeout(1)
+                  result = s.connect_ex(('127.0.0.1', int(port)))
+                  return result == 0
+              finally:
+                  s.close()
+
+          def get_conflict_info(port):
+              out, _, rc = run_cmd("lsof -i :" + str(port) + " -P -n 2>/dev/null")
+              if rc == 0 and out:
+                  lines = out.strip().splitlines()
+                  if len(lines) > 1:
+                      parts = lines[1].split()
+                      if len(parts) >= 2:
+                          return "PID " + parts[1] + " (" + parts[0] + ")"
+              out2, _, rc2 = run_cmd("ss -tlnp 'sport = :" + str(port) + "' 2>/dev/null")
+              if rc2 == 0 and out2:
+                  for line in out2.splitlines()[1:]:
+                      if 'pid=' in line:
+                          import re
+                          m = re.search(r'pid=(\d+)', line)
+                          n = re.search(r'users:\(\("([^"]+)"', line)
+                          if m:
+                              info = "PID " + m.group(1)
+                              if n:
+                                  info += " (" + n.group(1) + ")"
+                              return info
+              return ""
+
+          def kill_conflict(port):
+              out, _, rc = run_cmd("lsof -t -i :" + str(port) + " 2>/dev/null")
+              if rc == 0 and out:
+                  pids = out.strip().splitlines()
+                  for pid in pids:
+                      try:
+                          os.kill(int(pid.strip()), signal.SIGTERM)
+                      except:
+                          pass
+                  ui.status = "Sent SIGTERM to port " + str(port) + " processes"
+                  ui.conflict_info = ""
+              else:
+                  ui.status = "Could not find process on port " + str(port)
+
+          def server_running():
+              return ui.server_thread is not None and ui.server_thread.thread.is_alive()
+
+          def uptime_str():
+              if not ui.start_time:
+                  return ""
+              elapsed = int(time.time() - ui.start_time)
+              h = elapsed // 3600
+              m = (elapsed % 3600) // 60
+              s = elapsed % 60
+              if h > 0:
+                  return str(h) + "h " + str(m) + "m " + str(s) + "s"
+              elif m > 0:
+                  return str(m) + "m " + str(s) + "s"
+              else:
+                  return str(s) + "s"
+
+          def install_log_hook(app):
+              if ui.log_hook_installed:
+                  return
+              ui.log_hook_installed = True
+
+              @app.after_request
+              def _log_request(response):
+                  req_time = time.strftime('%H:%M:%S')
+                  from flask import request as freq
+                  entry = {
+                      'time': req_time,
+                      'method': freq.method,
+                      'path': freq.path,
+                      'status': response.status_code,
+                  }
+                  ui.logs.append(entry)
+                  return response
+
+          def start_server():
+              if server_running():
+                  ui.status = "Server is already running"
+                  return
+
+              # Check port conflict
+              if is_port_in_use(ui.port):
+                  info = get_conflict_info(ui.port)
+                  ui.conflict_info = info
+                  ui.status = "Port " + str(ui.port) + " in use" + (" by " + info if info else "")
+                  return
+
+              try:
+                  from npcpy.serve import app, start_flask_server
+                  from npcpy.serve import CommandHistory
+
+                  cors_str = ui.cors
+                  cors_origins = None
+                  if cors_str and cors_str.strip():
+                      cors_origins = [origin.strip() for origin in cors_str.split(",")]
+
+                  # Configure the app like start_flask_server does
+                  app.registered_teams = {}
+                  app.registered_npcs = {}
+                  app.config['DB_PATH'] = ''
+                  app.config['user_npc_directory'] = None
+
+                  try:
+                      db_path = os.environ.get('INCOGNIDE_DB_PATH', os.path.expanduser("~/npcsh_history.db"))
+                      command_history = CommandHistory(db_path)
+                      app.command_history = command_history
+                      app.config['DB_PATH'] = db_path
+                      user_npc_dir = os.path.expanduser("~/.npcsh/npc_team")
+                      app.config['user_npc_directory'] = user_npc_dir
+                  except:
+                      pass
+
+                  if cors_origins:
+                      from flask_cors import CORS
+                      CORS(
+                          app,
+                          origins=cors_origins,
+                          allow_headers=["Content-Type", "Authorization"],
+                          methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+                          supports_credentials=True,
+                      )
+
+                  install_log_hook(app)
+
+                  ui.server_thread = ServerThread(app, ui.host, ui.port)
+                  ui.server_thread.start()
+                  ui.start_time = time.time()
+                  ui.conflict_info = ""
+                  ui.status = "Server started on port " + str(ui.port)
+              except Exception as e:
+                  ui.status = "Start failed: " + str(e)[:60]
+
+          def stop_server():
+              if not server_running():
+                  ui.status = "Server is not running"
+                  return
+              try:
+                  ui.server_thread.stop()
+                  ui.server_thread = None
+                  ui.start_time = None
+                  ui.status = "Server stopped"
+              except Exception as e:
+                  ui.status = "Stop failed: " + str(e)[:40]
+
+          def restart_server():
+              if server_running():
+                  stop_server()
+                  time.sleep(0.5)
+              start_server()
+
+          # ── param helpers ──────────────────────────────────
+          def get_param_value(idx):
+              p = ui.params[idx]
+              if p == 'port':
+                  return str(ui.port)
+              elif p == 'host':
+                  return ui.host
+              elif p == 'cors':
+                  return ui.cors if ui.cors else "(none)"
+              elif p == 'debug':
+                  return "on" if ui.debug else "off"
+              return ""
+
+          def set_param_value(idx, val):
+              p = ui.params[idx]
+              if p == 'port':
+                  try:
+                      ui.port = int(val)
+                      ui.status = "Port set to " + val
+                  except:
+                      ui.status = "Invalid port number"
+              elif p == 'host':
+                  ui.host = val
+                  ui.status = "Host set to " + val
+              elif p == 'cors':
+                  ui.cors = val
+                  ui.status = "CORS set to " + val
+              elif p == 'debug':
+                  ui.debug = val.lower() in ('on', 'true', '1', 'yes')
+                  ui.status = "Debug " + ("on" if ui.debug else "off")
+
+          # ── filter endpoints ───────────────────────────────
+          def filter_endpoints():
+              if ui.search_query:
+                  q = ui.search_query.lower()
+                  ui.filtered_endpoints = [e for e in ui.endpoints
+                      if q in e['path'].lower() or q in e['desc'].lower()
+                      or q in e['category'].lower() or q in e['method'].lower()]
+              else:
+                  ui.filtered_endpoints = list(ui.endpoints)
+
+          # ── rendering ──────────────────────────────────────
+          def wline(row, text):
+              return "\033[" + str(row) + ";1H\033[K" + text
+
+          def method_color(m):
+              m = m.upper()
+              if m == 'GET':
+                  return "\033[32m"
+              elif m == 'POST':
+                  return "\033[33m"
+              elif m == 'DELETE':
+                  return "\033[31m"
+              elif m == 'PUT':
+                  return "\033[34m"
+              return ""
+
+          def status_color(code):
+              if 200 <= code < 300:
+                  return "\033[32m"
+              elif 400 <= code < 500:
+                  return "\033[33m"
+              elif code >= 500:
+                  return "\033[31m"
+              return ""
+
+          def render():
+              W, H = term_size()
+              out = []
+              out.append("\033[H")
+
+              # ── header ──
+              hdr = " SERVE - NPC Server Dashboard "
+              out.append(wline(1, "\033[7;1m" + hdr.ljust(W) + "\033[0m"))
+
+              # ── tabs ──
+              tb = ""
+              for i, t in enumerate(ui.tabs):
+                  if i == ui.tab:
+                      tb += "\033[7;1m [" + t + "] \033[0m"
+                  else:
+                      tb += "  " + t + "  "
+              out.append(wline(2, " " + tb))
+
+              # ── separator + count ──
+              out.append(wline(3, "\033[90m" + ("-" * W) + "\033[0m"))
+
+              if ui.tab == 0:
+                  running = server_running()
+                  if running:
+                      info = "  \033[32mRunning\033[0m on \033[1m" + ui.host + ":" + str(ui.port) + "\033[0m"
+                      ut = uptime_str()
+                      if ut:
+                          info += "  |  uptime: " + ut
+                  else:
+                      info = "  \033[31mStopped\033[0m"
+                      if ui.conflict_info:
+                          info += "  |  \033[33mPort " + str(ui.port) + " conflict: " + ui.conflict_info + "\033[0m"
+                  out.append(wline(4, info))
+              elif ui.tab == 1:
+                  ct = len(ui.filtered_endpoints)
+                  total = len(ui.endpoints)
+                  if ui.search_query:
+                      info = "  " + str(ct) + " matching (of " + str(total) + ') | search: "' + ui.search_query + '"'
+                  else:
+                      info = "  " + str(total) + " endpoints"
+                  out.append(wline(4, info))
+              elif ui.tab == 2:
+                  info = "  " + str(len(ui.logs)) + " log entries"
+                  if server_running():
+                      info += "  |  \033[32mlive\033[0m"
+                  out.append(wline(4, info))
+
+              out.append(wline(5, "\033[90m" + ("-" * W) + "\033[0m"))
+
+              # ── body ──
+              body_start = 6
+              body_end = H - 3
+              body_h = max(1, body_end - body_start + 1)
+
+              if ui.detail:
+                  render_detail(out, W, body_start, body_h)
+              elif ui.input_mode:
+                  render_input(out, W, body_start, body_h)
+              elif ui.tab == 0:
+                  render_server(out, W, body_start, body_h)
+              elif ui.tab == 1:
+                  render_endpoints(out, W, body_start, body_h)
+              elif ui.tab == 2:
+                  render_logs(out, W, body_start, body_h)
+
+              # ── separator ──
+              out.append(wline(H - 2, "\033[90m" + ("-" * W) + "\033[0m"))
+
+              # ── status / search / confirm ──
+              if ui.confirm_action:
+                  out.append(wline(H - 1, " \033[33m" + ui.confirm_action[0] + " (y/n)?\033[0m"))
+              elif ui.search_mode:
+                  out.append(wline(H - 1, " \033[33m/\033[0m\033[1m" + ui.search_buf + "\033[0m\033[90m_\033[0m"))
+              elif ui.status:
+                  out.append(wline(H - 1, " \033[33m" + ui.status[:W-2] + "\033[0m"))
+              else:
+                  out.append(wline(H - 1, ""))
+
+              # ── footer ──
+              if ui.confirm_action:
+                  foot = " [y] Confirm  [n] Cancel "
+              elif ui.search_mode:
+                  foot = " [Enter] Apply  [Esc] Cancel "
+              elif ui.input_mode:
+                  foot = " Type value, [Enter] Submit  [Esc] Cancel "
+              elif ui.detail:
+                  foot = " [j/k] Scroll  [q/Esc] Back "
+              elif ui.tab == 0:
+                  foot = " [\xe2\x86\x90\xe2\x86\x92/Tab] Switch  [\xe2\x86\x91\xe2\x86\x93/jk] Nav  [s] Start  [S] Stop  [r] Restart  [e] Edit  [p] Port  [K] Kill  [q] Quit "
+              elif ui.tab == 1:
+                  foot = " [\xe2\x86\x90\xe2\x86\x92/Tab] Switch  [\xe2\x86\x91\xe2\x86\x93/jk] Nav  [Enter] Detail  [/] Search  [q] Quit "
+              elif ui.tab == 2:
+                  foot = " [\xe2\x86\x90\xe2\x86\x92/Tab] Switch  [\xe2\x86\x91\xe2\x86\x93/jk] Nav  [c] Clear  [q] Quit "
+              out.append(wline(H, "\033[7m" + foot[:W].ljust(W) + "\033[0m"))
+
+              sys.stdout.write(''.join(out))
+              sys.stdout.flush()
+
+          def render_server(out, W, start, body_h):
+              lines = []
+              for i, p in enumerate(ui.params):
+                  val = get_param_value(i)
+                  label = p.ljust(10)
+                  if i == ui.sel:
+                      lines.append(("\033[7m > " + label + " : " + val + " \033[0m", True))
+                  else:
+                      lines.append(("   " + "\033[1m" + label + "\033[0m : " + val, False))
+
+              # Extra info lines after params
+              lines.append(("", False))
+              running = server_running()
+              if running:
+                  lines.append(("   \033[1mURL\033[0m        : http://" + ui.host + ":" + str(ui.port), False))
+                  ut = uptime_str()
+                  if ut:
+                      lines.append(("   \033[1mUptime\033[0m     : " + ut, False))
+              else:
+                  if ui.conflict_info:
+                      lines.append(("   \033[33mPort conflict\033[0m: " + ui.conflict_info, False))
+                      lines.append(("   Press \033[1mK\033[0m to kill the conflicting process", False))
+                  else:
+                      # Check if port is in use
+                      lines.append(("   Press \033[1ms\033[0m to start the server", False))
+
+              if ui.cors and ui.cors.strip():
+                  lines.append(("   \033[1mCORS\033[0m       : " + ui.cors, False))
+
+              for r in range(body_h):
+                  row = start + r
+                  if r < len(lines):
+                      text = lines[r][0]
+                      is_sel = lines[r][1]
+                      if is_sel:
+                          out.append(wline(row, text[:W].ljust(W) if text.startswith("\033[7m") else text[:W]))
+                      else:
+                          out.append(wline(row, text[:W]))
+                  else:
+                      out.append(wline(row, ""))
+
+          def render_endpoints(out, W, start, body_h):
+              items = ui.filtered_endpoints
+              vis = items[ui.scroll:ui.scroll + body_h]
+              prev_cat = None
+              row_offset = 0
+
+              for r in range(body_h):
+                  row = start + r
+                  idx = r + ui.scroll
+                  if r >= len(vis):
+                      out.append(wline(row, ""))
+                      continue
+                  ep = vis[r]
+                  # Category header inline
+                  mc = method_color(ep['method'])
+                  method_str = mc + ep['method'].ljust(7) + "\033[0m"
+                  path_str = ep['path']
+                  desc_str = ep['desc']
+
+                  if idx == ui.sel:
+                      line = " > " + ep['method'].ljust(7) + " " + path_str
+                      remaining = W - len(line) - 3
+                      if remaining > 5:
+                          line += "  " + desc_str[:remaining]
+                      out.append(wline(row, "\033[7m" + line[:W].ljust(W) + "\033[0m"))
+                  else:
+                      cat_tag = ""
+                      if r == 0 or (r > 0 and vis[r-1]['category'] != ep['category']):
+                          cat_tag = "\033[90m[" + ep['category'] + "]\033[0m "
+                      base = "   " + method_str + " " + path_str
+                      remaining = W - 14 - len(ep['path'])
+                      if remaining > 5 and not cat_tag:
+                          base += "  \033[90m" + desc_str[:remaining] + "\033[0m"
+                      elif cat_tag:
+                          base = "   " + cat_tag + method_str + " " + path_str
+                      out.append(wline(row, base[:W + 40]))  # extra for ANSI codes
+
+              if not items:
+                  out.append(wline(start, "  \033[90mNo endpoints match.\033[0m"))
+                  for r in range(1, body_h):
+                      out.append(wline(start + r, ""))
+
+          def render_logs(out, W, start, body_h):
+              # Header row
+              hdr = "   Time      Method   Path                              Status"
+              out.append(wline(start, "\033[1m" + hdr[:W] + "\033[0m"))
+
+              log_list = list(ui.logs)
+              log_list.reverse()  # newest first
+              vis = log_list[ui.scroll:ui.scroll + body_h - 1]
+              for r in range(body_h - 1):
+                  row = start + 1 + r
+                  idx = r + ui.scroll
+                  if r >= len(vis):
+                      out.append(wline(row, ""))
+                      continue
+                  entry = vis[r]
+                  t = entry['time'].ljust(10)
+                  m = entry['method'].ljust(8)
+                  p = entry['path'][:34].ljust(34)
+                  sc = status_color(entry['status'])
+                  s = sc + str(entry['status']) + "\033[0m"
+
+                  if idx == ui.sel:
+                      line = " > " + entry['time'].ljust(10) + " " + entry['method'].ljust(8) + " " + entry['path'][:34].ljust(34) + " " + str(entry['status'])
+                      out.append(wline(row, "\033[7m" + line[:W].ljust(W) + "\033[0m"))
+                  else:
+                      out.append(wline(row, "   " + t + " " + m + " " + p + " " + s))
+
+              if not log_list:
+                  out.append(wline(start + 1, "  \033[90mNo log entries yet. Start the server and make requests.\033[0m"))
+                  for r in range(2, body_h):
+                      out.append(wline(start + r, ""))
+
+          def render_detail(out, W, start, body_h):
+              vis = ui.detail_lines[ui.detail_scroll:ui.detail_scroll + body_h]
+              for r in range(body_h):
+                  row = start + r
+                  if r < len(vis):
+                      out.append(wline(row, "  " + vis[r][:W-4]))
+                  else:
+                      out.append(wline(row, ""))
+
+          def render_input(out, W, start, body_h):
+              out.append(wline(start, ""))
+              out.append(wline(start + 1, "  \033[1m" + ui.input_label + "\033[0m"))
+              out.append(wline(start + 2, ""))
+              out.append(wline(start + 3, "  > \033[7m " + ui.input_buf + " \033[0m"))
+              for r in range(4, body_h):
+                  out.append(wline(start + r, ""))
+
+          # ── endpoint detail ──────────────────────────────
+          def show_endpoint_detail():
+              items = ui.filtered_endpoints
+              if not items or ui.sel >= len(items):
+                  return
+              ep = items[ui.sel]
+              ui.detail_lines = [
+                  "\033[1mEndpoint Detail\033[0m",
+                  "",
+                  "\033[1mCategory:\033[0m  " + ep['category'],
+                  "\033[1mMethod:\033[0m    " + ep['method'],
+                  "\033[1mPath:\033[0m      " + ep['path'],
+                  "\033[1mDesc:\033[0m      " + ep['desc'],
+                  "",
+              ]
+              if server_running():
+                  url = "http://" + ui.host + ":" + str(ui.port) + ep['path']
+                  ui.detail_lines.append("\033[1mFull URL:\033[0m  " + url)
+              ui.detail = True
+              ui.detail_scroll = 0
+
+          # ── input handling ────────────────────────────────
+          def handle(c):
+              if ui.confirm_action:
+                  return handle_confirm(c)
+              if ui.search_mode:
+                  return handle_search(c)
+              if ui.input_mode:
+                  return handle_text_input(c)
+              if ui.detail:
+                  return handle_detail(c)
+              if c == '\x1b':
+                  return handle_esc()
+
+              if c == 'q':
+                  return False
+              elif c == '\t':
+                  switch_tab(1)
+              elif c == 'j':
+                  nav_down()
+              elif c == 'k':
+                  nav_up()
+              elif c in ('\r', '\n'):
+                  do_enter()
+              elif c == '/':
+                  if ui.tab == 1:
+                      ui.search_mode = True
+                      ui.search_buf = ui.search_query
+                      ui.status = ""
+              # Tab-specific keys
+              elif ui.tab == 0:
+                  handle_server_key(c)
+              elif ui.tab == 2:
+                  handle_log_key(c)
+              return True
+
+          def handle_server_key(c):
+              if c == 's':
+                  start_server()
+              elif c == 'S':
+                  stop_server()
+              elif c == 'r':
+                  restart_server()
+              elif c == 'e':
+                  # Edit selected param
+                  p = ui.params[ui.sel]
+                  ui.input_mode = True
+                  ui.input_buf = get_param_value(ui.sel)
+                  if ui.input_buf == "(none)":
+                      ui.input_buf = ""
+                  ui.input_label = "Edit " + p + ":"
+                  idx = ui.sel
+                  def on_submit(val):
+                      set_param_value(idx, val)
+                  ui.input_callback = on_submit
+              elif c == 'p':
+                  # Quick edit port
+                  ui.input_mode = True
+                  ui.input_buf = str(ui.port)
+                  ui.input_label = "Set port:"
+                  def on_port(val):
+                      try:
+                          ui.port = int(val)
+                          ui.status = "Port set to " + val
+                          # Check if new port is in use
+                          if is_port_in_use(ui.port):
+                              info = get_conflict_info(ui.port)
+                              ui.conflict_info = info
+                              ui.status += " (in use" + (" by " + info if info else "") + ")"
+                          else:
+                              ui.conflict_info = ""
+                      except:
+                          ui.status = "Invalid port number"
+                  ui.input_callback = on_port
+              elif c == 'K':
+                  if ui.conflict_info or is_port_in_use(ui.port):
+                      if not ui.conflict_info:
+                          ui.conflict_info = get_conflict_info(ui.port) or "unknown"
+                      ui.confirm_action = ("Kill process on port " + str(ui.port) + " (" + ui.conflict_info + ")",
+                                          lambda: kill_conflict(ui.port))
+
+          def handle_log_key(c):
+              if c == 'c':
+                  ui.logs.clear()
+                  ui.sel = 0
+                  ui.scroll = 0
+                  ui.status = "Logs cleared"
+
+          def switch_tab(direction):
+              ui.tab = (ui.tab + direction) % len(ui.tabs)
+              ui.sel = 0
+              ui.scroll = 0
+              ui.detail = False
+              ui.search_query = ""
+              ui.search_buf = ""
+              ui.status = ""
+              if ui.tab == 1:
+                  filter_endpoints()
+
+          def handle_esc():
+              if select.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
+                  if c2 == '[':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'A':
+                          nav_up()
+                      elif c3 == 'B':
+                          nav_down()
+                      elif c3 == 'C':
+                          switch_tab(1)
+                      elif c3 == 'D':
+                          switch_tab(-1)
+                      elif c3 == 'Z':
+                          switch_tab(-1)
+              else:
+                  if ui.search_query:
+                      ui.search_query = ""
+                      ui.sel = 0
+                      ui.scroll = 0
+                      ui.status = "Search cleared"
+                      filter_endpoints()
+              return True
+
+          def handle_detail(c):
+              if c == '\x1b':
+                  if select.select([fd], [], [], 0.05)[0]:
+                      c2 = os.read(fd, 1).decode('latin-1')
+                      if c2 == '[':
+                          c3 = os.read(fd, 1).decode('latin-1')
+                          if c3 == 'A':
+                              ui.detail_scroll = max(0, ui.detail_scroll - 1)
+                          elif c3 == 'B':
+                              ui.detail_scroll += 1
+                  else:
+                      ui.detail = False
+                      ui.detail_scroll = 0
+                  return True
+              if c == 'q':
+                  ui.detail = False
+                  ui.detail_scroll = 0
+              elif c == 'j':
+                  ui.detail_scroll += 1
+              elif c == 'k':
+                  ui.detail_scroll = max(0, ui.detail_scroll - 1)
+              return True
+
+          def handle_confirm(c):
+              if c == 'y':
+                  cb = ui.confirm_action[1]
+                  ui.confirm_action = None
+                  cb()
+              elif c == 'n' or c == '\x1b':
+                  ui.confirm_action = None
+                  ui.status = "Cancelled"
+              return True
+
+          def handle_search(c):
+              if c == '\x1b':
+                  if select.select([fd], [], [], 0.05)[0]:
+                      c2 = os.read(fd, 1).decode('latin-1')
+                      if c2 == '[':
+                          os.read(fd, 1).decode('latin-1')
+                  else:
+                      ui.search_mode = False
+                      ui.search_buf = ""
+                      ui.status = "Search cancelled"
+              elif c in ('\r', '\n'):
+                  ui.search_mode = False
+                  ui.search_query = ui.search_buf
+                  ui.search_buf = ""
+                  ui.sel = 0
+                  ui.scroll = 0
+                  filter_endpoints()
+                  if ui.search_query:
+                      ui.status = 'Filter: "' + ui.search_query + '" (' + str(len(ui.filtered_endpoints)) + " results)"
+                  else:
+                      ui.status = "Search cleared"
+              elif c in ('\x7f', '\x08'):
+                  ui.search_buf = ui.search_buf[:-1]
+              elif c == '\x15':
+                  ui.search_buf = ""
+              elif 32 <= ord(c) <= 126:
+                  ui.search_buf += c
+              return True
+
+          def handle_text_input(c):
+              if c == '\x1b':
+                  if select.select([fd], [], [], 0.05)[0]:
+                      c2 = os.read(fd, 1).decode('latin-1')
+                      if c2 == '[':
+                          os.read(fd, 1).decode('latin-1')
+                  else:
+                      ui.input_mode = False
+                      ui.input_buf = ""
+                      ui.input_callback = None
+                      ui.status = "Cancelled"
+              elif c in ('\r', '\n'):
+                  val = ui.input_buf
+                  cb = ui.input_callback
+                  ui.input_mode = False
+                  ui.input_buf = ""
+                  ui.input_callback = None
+                  if cb and val.strip():
+                      cb(val)
+              elif c in ('\x7f', '\x08'):
+                  ui.input_buf = ui.input_buf[:-1]
+              elif c == '\x15':
+                  ui.input_buf = ""
+              elif 32 <= ord(c) <= 126:
+                  ui.input_buf += c
+              return True
+
+          def nav_up():
+              if ui.sel > 0:
+                  ui.sel -= 1
+                  if ui.sel < ui.scroll:
+                      ui.scroll = ui.sel
+              ui.status = ""
+
+          def nav_down():
+              _, H = term_size()
+              body_h = max(1, H - 8)
+              if ui.tab == 0:
+                  mx = max(0, len(ui.params) - 1)
+              elif ui.tab == 1:
+                  mx = max(0, len(ui.filtered_endpoints) - 1)
+              elif ui.tab == 2:
+                  body_h -= 1  # account for header row
+                  mx = max(0, len(ui.logs) - 1)
+              else:
+                  mx = 0
+              if ui.sel < mx:
+                  ui.sel += 1
+                  if ui.sel >= ui.scroll + body_h:
+                      ui.scroll = ui.sel - body_h + 1
+              ui.status = ""
+
+          def do_enter():
+              if ui.tab == 0:
+                  # Edit the selected parameter
+                  p = ui.params[ui.sel]
+                  ui.input_mode = True
+                  ui.input_buf = get_param_value(ui.sel)
+                  if ui.input_buf == "(none)":
+                      ui.input_buf = ""
+                  ui.input_label = "Edit " + p + ":"
+                  idx = ui.sel
+                  def on_submit(val):
+                      set_param_value(idx, val)
+                  ui.input_callback = on_submit
+              elif ui.tab == 1:
+                  show_endpoint_detail()
+
+          # ── main loop ──────────────────────────────────────
+          fd = sys.stdin.fileno()
+          old_attrs = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              sys.stdout.write('\033[2J\033[H')
+              sys.stdout.flush()
+              render()
+              while True:
+                  c = os.read(fd, 1).decode('latin-1')
+                  if not handle(c):
+                      break
+                  render()
+          finally:
+              # Stop server on exit
+              if server_running():
+                  try:
+                      ui.server_thread.stop()
+                  except:
+                      pass
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+              sys.stdout.write('\033[?25h\033[2J\033[H')
+              sys.stdout.flush()
+
+          context['output'] = "Serve dashboard closed."
