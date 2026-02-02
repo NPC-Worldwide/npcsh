@@ -1,5 +1,5 @@
 jinx_name: delegate
-description: Delegate a task to another NPC with review and feedback loop until completion. Choose the NPC whose directive best matches the task.
+description: ONLY for complex multi-step tasks. Sends a task to a specialist NPC who works on it with feedback until done. Do NOT use this for simple commands — use sh or python instead and answer directly.
 inputs:
 - npc_name:
       description: "Name of the NPC to delegate to"
