@@ -85,11 +85,14 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
       <p align="center">
         <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/rabbit.PNG" alt="a rabbit eating ham in the bring of dawn", width=350>
       </p>
-  - **Generate Videos**
+  - **Generate Videos with Roll**
 
     ```bash
     /roll
     ```
+    <p align="center">
+        <img src="gh_images/roll.png" alt="Roll Video Creation Studio" width=500>
+    </p>
 
   - Generate videos directly
 
@@ -487,14 +490,15 @@ npc sample "a sunset over mountains"
 | `/git` | Git integration TUI |
 | `/build` | Build team to deployable format (flask, docker, cli, static) |
 | `/team` | Team config browser — context, NPCs, jinxs |
-| `/config_tui` | Interactive config editor |
+| `/config` | Interactive config editor |
 | `/reattach` | Resume previous conversation sessions |
 | `/delegate` | Delegate task to NPC with review loop |
 | `/web_search` | Web search |
 | `/db_search` | Database search |
 | `/file_search` | File search |
 | `/vixynt` | Generate/edit images |
-| `/roll` | Generate videos |
+| `/roll` | Video creation studio |
+| `/crond` | System task manager (cron, daemons, processes) |
 | `/sample` | Context-free LLM prompt |
 | `/serve` | Serve NPC team as API with OpenAI-compatible endpoints |
 | `/compile` | Compile NPC profiles |
@@ -546,6 +550,44 @@ Browse all available models across providers (Ollama, OpenAI, Anthropic, etc.), 
 
 <p align="center">
     <img src="gh_images/models.png" alt="Models browser", width=500>
+</p>
+
+### `/roll` — Video Creation Studio
+Interactive TUI for generating videos with parameter controls. Edit prompt, model, provider, dimensions, and frame count, then generate. Includes a gallery browser for previously generated videos.
+
+```bash
+/roll                    # Open interactive TUI
+/roll "a sunset"         # Generate video directly (one-shot mode)
+```
+
+<p align="center">
+    <img src="gh_images/roll.png" alt="Roll Video Creation Studio" width=500>
+</p>
+
+### `/config` — Configuration Editor
+Interactive TUI for editing `~/.npcshrc` settings — models, providers, modes, and toggles. Navigate with j/k, edit text fields, toggle booleans, and cycle choices.
+
+```bash
+/config
+```
+
+<p align="center">
+    <img src="gh_images/config.png" alt="Config editor TUI" width=500>
+</p>
+
+### `/crond` — System Task Manager
+Multi-tab TUI for managing cron jobs, systemd user daemons, and system processes. Create new cron jobs and daemons using natural language, start/stop/restart services, kill processes, and monitor resource usage.
+
+```bash
+/crond
+```
+
+<p align="center">
+    <img src="gh_images/crond.png" alt="Crond Cron tab" width=500>
+    <img src="gh_images/crondaemon.png" alt="Crond Daemons tab" width=500>
+</p>
+<p align="center">
+    <img src="gh_images/cron_processes.png" alt="Crond Processes tab" width=500>
 </p>
 
 # Memory & Knowledge Graph
