@@ -87,7 +87,8 @@ steps:
           "/pti  # reasoning REPL with interruptions",
           "/yap  # voice-controlled agent loop",
           "/vixynt  # image generation and editing",
-          "/roll  # video generation assistant",
+          "/roll  # video generation studio",
+          "/crond  # system task manager (cron, daemons, processes)",
           # ── Slash commands: data & knowledge ──
           "/kg  # browse the knowledge graph",
           "/memories  # manage stored memories",
@@ -138,7 +139,7 @@ steps:
           "/serve  # start serving",
           "/init  # initialize a new NPC project",
           "/setup  # run setup wizard",
-          "/config_tui  # open configuration interface",
+          "/config  # open configuration interface",
           "/corca  # MCP-powered development agent",
           "/build  # create deployment artifacts from your team",
           "/compile sibiji  # compile a specific NPC profile",
