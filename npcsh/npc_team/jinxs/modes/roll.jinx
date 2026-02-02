@@ -1,65 +1,378 @@
 jinx_name: "roll"
-description: "Generate a video from a text prompt."
+description: "Video creation studio TUI - generate and manage videos with parameter controls"
+interactive: true
 inputs:
-- prompt: ""
-- vgmodel: ""
-- vgprovider: ""
-- num_frames: 125
-- width: 256
-- height: 256
-- output_path: "output.mp4"
+  - prompt: null
+  - model: null
+  - provider: null
+  - output_path: null
+  - num_frames: null
+  - width: null
+  - height: null
 steps:
-  - name: "generate_video"
+  - name: "roll_tui"
     engine: "python"
     code: |
-      import traceback
+      import os
+      import sys
+      import tty
+      import termios
+      import select
+      from datetime import datetime
+
       from npcpy.llm_funcs import gen_video
 
-      prompt = context.get('prompt')
-      num_frames = int(context.get('num_frames', 125))
-      width = int(context.get('width', 256))
-      height = int(context.get('height', 256))
-      output_path = context.get('output_path')
-      video_gen_model = context.get('vgmodel')
-      video_gen_provider = context.get('vgprovider')
-      output_messages = context.get('messages', [])
-      current_npc = context.get('npc')
+      npc = context.get('npc')
+      if isinstance(npc, str):
+          npc = None
 
-      if not prompt or not prompt.strip():
-          context['output'] = "Usage: /roll <your prompt>"
-          context['messages'] = output_messages
-          exit()
+      # ========== State ==========
+      class RollState:
+          def __init__(self):
+              self.prompt = ""
+              self.model = ""
+              self.provider = ""
+              self.width_val = 256
+              self.height_val = 256
+              self.num_frames = 125
+              self.output_path = ""
+              # UI state
+              self.params = ['prompt', 'model', 'provider', 'width', 'height', 'num_frames', 'output']
+              self.sel = 0
+              self.scroll = 0
+              self.mode = 'params'  # params, editing, gallery, generating
+              self.edit_buf = ""
+              self.edit_cursor = 0
+              self.status = "Ready"
+              self.gallery = []  # [{"path": str, "prompt": str, "timestamp": str}]
+              self.gallery_sel = 0
+              self.gallery_scroll = 0
 
-      if not video_gen_model and current_npc and current_npc.model:
-          video_gen_model = current_npc.model
-      if not video_gen_provider and current_npc and current_npc.provider:
-          video_gen_provider = current_npc.provider
+      ui = RollState()
 
-      if not video_gen_model:
-            video_gen_model = "stable-video-diffusion"
-      if not video_gen_provider:
-            video_gen_provider = "diffusers"
-
+      # Load from context
+      ui.prompt = str(context.get('prompt') or '')
+      ui.model = str(context.get('model') or os.getenv('NPCSH_VIDEO_GEN_MODEL', ''))
+      ui.provider = str(context.get('provider') or os.getenv('NPCSH_VIDEO_GEN_PROVIDER', ''))
+      if not ui.model and npc and hasattr(npc, 'model') and npc.model:
+          ui.model = npc.model
+      if not ui.provider and npc and hasattr(npc, 'provider') and npc.provider:
+          ui.provider = npc.provider
+      if not ui.model:
+          ui.model = "stable-video-diffusion"
+      if not ui.provider:
+          ui.provider = "diffusers"
       try:
-          result = gen_video(
-              prompt=prompt,
-              model=video_gen_model,
-              provider=video_gen_provider,
-              npc=current_npc,
-              num_frames=num_frames,
-              width=width,
-              height=height,
-              output_path=output_path,
-              **context.get('api_kwargs', {})
-          )
+          ui.width_val = int(context.get('width') or 256)
+      except:
+          pass
+      try:
+          ui.height_val = int(context.get('height') or 256)
+      except:
+          pass
+      try:
+          ui.num_frames = int(context.get('num_frames') or 125)
+      except:
+          pass
+      ui.output_path = str(context.get('output_path') or '')
 
-          if isinstance(result, dict):
-              context['output'] = result.get('output', 'Video generated.')
-              context['messages'] = result.get('messages', output_messages)
+      # Load existing gallery
+      vid_dir = os.path.expanduser("~/.npcsh/videos/")
+      if os.path.isdir(vid_dir):
+          for f in sorted(os.listdir(vid_dir), reverse=True)[:50]:
+              if f.lower().endswith(('.mp4', '.webm', '.avi', '.mov', '.mkv')):
+                  ui.gallery.append({"path": os.path.join(vid_dir, f), "prompt": "", "timestamp": f})
+
+      def get_size():
+          try:
+              s = os.get_terminal_size()
+              return s.columns, s.lines
+          except:
+              return 80, 24
+
+      def get_param_value(idx):
+          p = ui.params[idx]
+          if p == 'prompt': return ui.prompt
+          if p == 'model': return ui.model or '(default)'
+          if p == 'provider': return ui.provider or '(default)'
+          if p == 'width': return str(ui.width_val)
+          if p == 'height': return str(ui.height_val)
+          if p == 'num_frames': return str(ui.num_frames)
+          if p == 'output': return ui.output_path or '(auto)'
+          return ''
+
+      def set_param_value(idx, val):
+          p = ui.params[idx]
+          if p == 'prompt': ui.prompt = val
+          elif p == 'model': ui.model = val
+          elif p == 'provider': ui.provider = val
+          elif p == 'width':
+              try: ui.width_val = int(val)
+              except: pass
+          elif p == 'height':
+              try: ui.height_val = int(val)
+              except: pass
+          elif p == 'num_frames':
+              try: ui.num_frames = max(1, int(val))
+              except: pass
+          elif p == 'output': ui.output_path = val
+
+      def generate_videos():
+          ui.mode = 'generating'
+          ui.status = "Generating..."
+          render_screen()
+
+          if not ui.prompt:
+              ui.status = "Error: No prompt provided"
+              ui.mode = 'params'
+              return
+
+          try:
+              if ui.output_path and ui.output_path.strip():
+                  out_file = os.path.expanduser(ui.output_path)
+              else:
+                  os.makedirs(vid_dir, exist_ok=True)
+                  out_file = os.path.join(vid_dir, "roll_" + datetime.now().strftime('%Y%m%d_%H%M%S') + ".mp4")
+
+              result = gen_video(
+                  prompt=ui.prompt,
+                  model=ui.model or None,
+                  provider=ui.provider or None,
+                  npc=npc,
+                  num_frames=ui.num_frames,
+                  width=ui.width_val,
+                  height=ui.height_val,
+                  output_path=out_file,
+                  **context.get('api_kwargs', {})
+              )
+
+              if isinstance(result, dict):
+                  msg = result.get('output', 'Video generated.')
+              else:
+                  msg = str(result)
+
+              ui.gallery.insert(0, {"path": out_file, "prompt": ui.prompt, "timestamp": os.path.basename(out_file)})
+              ui.status = "Generated: " + os.path.basename(out_file)
+          except Exception as e:
+              ui.status = "Error: " + str(e)[:60]
+
+          ui.mode = 'params'
+
+      # ========== Rendering ==========
+      def render_screen():
+          width, height = get_size()
+          out = []
+          out.append("\033[H")
+
+          header = " ROLL - Video Creation Studio "
+          out.append("\033[1;1H\033[7;1m" + header.ljust(width) + "\033[0m")
+
+          if ui.mode in ('params', 'editing', 'generating'):
+              # Parameter panel
+              out.append("\033[3;1H\033[36;1m Parameters \033[90m" + ("-" * (width - 13)) + "\033[0m")
+
+              for i, p in enumerate(ui.params):
+                  row = 4 + i
+                  out.append("\033[" + str(row) + ";1H\033[K")
+                  label = p.capitalize() + ":"
+                  val = get_param_value(i)
+
+                  if ui.mode == 'editing' and i == ui.sel:
+                      line = "  " + label.ljust(14) + "\033[7m " + ui.edit_buf + " \033[0m"
+                  else:
+                      line = "  " + label.ljust(14) + val[:width - 18]
+
+                  if i == ui.sel and ui.mode != 'editing':
+                      out.append("\033[7m>" + line + "\033[0m")
+                  else:
+                      out.append(" " + line)
+
+              # Gallery preview
+              gallery_row = 4 + len(ui.params) + 1
+              out.append("\033[" + str(gallery_row) + ";1H\033[33;1m Gallery (" + str(len(ui.gallery)) + ") \033[90m" + ("-" * (width - 20)) + "\033[0m")
+
+              gallery_h = height - gallery_row - 4
+              for i in range(max(0, gallery_h)):
+                  idx = ui.gallery_scroll + i
+                  row = gallery_row + 1 + i
+                  out.append("\033[" + str(row) + ";1H\033[K")
+                  if idx >= len(ui.gallery):
+                      continue
+                  g = ui.gallery[idx]
+                  fname = os.path.basename(g['path'])[:width - 6]
+                  out.append("  " + fname)
+
+          elif ui.mode == 'gallery':
+              out.append("\033[3;1H\033[33;1m Gallery (" + str(len(ui.gallery)) + ") \033[90m" + ("-" * (width - 20)) + "\033[0m")
+
+              gallery_h = height - 6
+              for i in range(gallery_h):
+                  idx = ui.gallery_scroll + i
+                  row = 4 + i
+                  out.append("\033[" + str(row) + ";1H\033[K")
+                  if idx >= len(ui.gallery):
+                      continue
+                  g = ui.gallery[idx]
+                  fname = os.path.basename(g['path'])
+                  if idx == ui.gallery_sel:
+                      out.append("\033[7m> " + fname[:width-4] + "\033[0m")
+                  else:
+                      out.append("  " + fname[:width-4])
+
+          # Status + footer
+          out.append("\033[" + str(height-2) + ";1H\033[K\033[90m" + ("-" * width) + "\033[0m")
+          out.append("\033[" + str(height-1) + ";1H\033[K " + ui.status[:width-2])
+
+          if ui.mode == 'editing':
+              footer = " Type value, Enter:Confirm  Esc:Cancel "
+          elif ui.mode == 'gallery':
+              footer = " j/k:Nav  o:Open  b:Back  q:Quit "
+          elif ui.mode == 'generating':
+              footer = " Generating... "
           else:
-              context['output'] = str(result)
-              context['messages'] = output_messages
-      except Exception as e:
-          traceback.print_exc()
-          context['output'] = f"Error generating video: {e}"
-          context['messages'] = output_messages
+              footer = " j/k:Nav  e:Edit  Enter:Generate  g:Gallery  q:Quit "
+          out.append("\033[" + str(height) + ";1H\033[K\033[7m" + footer.ljust(width) + "\033[0m")
+
+          sys.stdout.write(''.join(out))
+          sys.stdout.flush()
+
+      # ========== Input Handling ==========
+      def handle_input(c, fd):
+          if ui.mode == 'editing':
+              return handle_edit(c, fd)
+          if ui.mode == 'gallery':
+              return handle_gallery(c, fd)
+
+          if c == '\x1b':
+              if select.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
+                  if c2 == '[':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'A':
+                          ui.sel = max(0, ui.sel - 1)
+                      elif c3 == 'B':
+                          ui.sel = min(len(ui.params) - 1, ui.sel + 1)
+              return True
+
+          if c == 'q':
+              return False
+          elif c == 'j':
+              ui.sel = min(len(ui.params) - 1, ui.sel + 1)
+          elif c == 'k':
+              ui.sel = max(0, ui.sel - 1)
+          elif c == 'e' or c in ('\r', '\n'):
+              if c in ('\r', '\n') and ui.sel == 0 and ui.prompt:
+                  # Enter on prompt with existing prompt = generate
+                  generate_videos()
+              else:
+                  ui.mode = 'editing'
+                  ui.edit_buf = get_param_value(ui.sel)
+                  if ui.edit_buf in ('(default)', '(auto)'):
+                      ui.edit_buf = ""
+                  ui.edit_cursor = len(ui.edit_buf)
+          elif c == 'g':
+              ui.mode = 'gallery'
+              ui.gallery_sel = 0
+              ui.gallery_scroll = 0
+          elif c == 'G':
+              generate_videos()
+
+          return True
+
+      def handle_edit(c, fd):
+          if c == '\x1b':
+              if select.select([fd], [], [], 0.05)[0]:
+                  os.read(fd, 2)
+              ui.mode = 'params'
+              return True
+
+          if c in ('\r', '\n'):
+              set_param_value(ui.sel, ui.edit_buf)
+              ui.mode = 'params'
+              return True
+
+          if c == '\x7f' or c == '\x08':
+              if ui.edit_cursor > 0:
+                  ui.edit_buf = ui.edit_buf[:ui.edit_cursor-1] + ui.edit_buf[ui.edit_cursor:]
+                  ui.edit_cursor -= 1
+          elif c >= ' ' and c <= '~':
+              ui.edit_buf = ui.edit_buf[:ui.edit_cursor] + c + ui.edit_buf[ui.edit_cursor:]
+              ui.edit_cursor += 1
+
+          return True
+
+      def handle_gallery(c, fd):
+          if c == '\x1b':
+              if select.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
+                  if c2 == '[':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'A':
+                          ui.gallery_sel = max(0, ui.gallery_sel - 1)
+                      elif c3 == 'B':
+                          ui.gallery_sel = min(max(0, len(ui.gallery) - 1), ui.gallery_sel + 1)
+              else:
+                  ui.mode = 'params'
+              return True
+
+          if c == 'q':
+              return False
+          elif c == 'b':
+              ui.mode = 'params'
+          elif c == 'j':
+              ui.gallery_sel = min(max(0, len(ui.gallery) - 1), ui.gallery_sel + 1)
+          elif c == 'k':
+              ui.gallery_sel = max(0, ui.gallery_sel - 1)
+          elif c == 'o' and ui.gallery:
+              import subprocess
+              path = ui.gallery[ui.gallery_sel]['path']
+              try:
+                  subprocess.Popen(['xdg-open', path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  ui.status = "Opened: " + os.path.basename(path)
+              except:
+                  ui.status = "Could not open video"
+
+          # Keep gallery_scroll in range
+          _, height = get_size()
+          gallery_h = height - 6
+          if ui.gallery_sel < ui.gallery_scroll:
+              ui.gallery_scroll = ui.gallery_sel
+          elif ui.gallery_sel >= ui.gallery_scroll + gallery_h:
+              ui.gallery_scroll = ui.gallery_sel - gallery_h + 1
+
+          return True
+
+      # ========== One-shot mode ==========
+      if ui.prompt and context.get('prompt'):
+          # If prompt provided via CLI args, generate immediately
+          generate_videos()
+          context['output'] = ui.status
+          context['messages'] = context.get('messages', [])
+
+      # ========== Main TUI Loop ==========
+      elif not sys.stdin.isatty():
+          context['output'] = "Roll requires an interactive terminal."
+      else:
+          fd = sys.stdin.fileno()
+          old_settings = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              sys.stdout.write('\033[2J')
+              render_screen()
+
+              running = True
+              while running:
+                  c = os.read(fd, 1).decode('latin-1')
+                  running = handle_input(c, fd)
+                  render_screen()
+
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+              sys.stdout.write('\033[?25h')
+              sys.stdout.write('\033[2J\033[H')
+              sys.stdout.flush()
+
+          context['output'] = ui.status
+          context['messages'] = context.get('messages', [])
