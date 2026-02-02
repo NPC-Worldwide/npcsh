@@ -1,0 +1,621 @@
+jinx_name: skills
+description: Interactive TUI for browsing, viewing, editing, and using skills
+interactive: true
+inputs: []
+steps:
+  - name: skills_browser
+    engine: python
+    code: |
+      import os
+      import sys
+      import tty
+      import termios
+      import select
+      import yaml
+      import re
+      import json
+      import base64
+      from pathlib import Path
+
+      if not sys.stdin.isatty():
+          context['output'] = "Skills browser requires an interactive terminal."
+
+      elif not state or not state.team:
+          context['output'] = "No team loaded."
+
+      else:
+          TEAM_DIR = Path(state.team.team_path)
+
+          class SkillData:
+              def __init__(self, name, description, sections, source_path, fmt):
+                  self.name = name
+                  self.description = description
+                  self.sections = sections  # dict of {section_name: content}
+                  self.source_path = source_path
+                  self.fmt = fmt  # 'md' or 'jinx'
+
+          class TUIState:
+              def __init__(self):
+                  self.tab = 0
+                  self.tabs = ['Skills', 'Sections', 'Content']
+                  self.sel = 0
+                  self.scroll = 0
+                  self.skills = []       # list of SkillData
+                  self.cur_skill = None  # currently selected SkillData
+                  self.sec_sel = 0       # section selection index
+                  self.sec_scroll = 0
+                  self.status = ""
+                  self.editing = False
+                  self.edit_buf = ""
+                  self.edit_lines = []   # for multiline content editing
+                  self.edit_line = 0     # current line in editor
+                  self.content_scroll = 0
+
+          ui = TUIState()
+
+          def term_size():
+              try:
+                  s = os.get_terminal_size()
+                  return s.columns, s.lines
+              except:
+                  return 80, 24
+
+          def parse_skill_md(path):
+              """Parse a SKILL.md file into name, description, sections."""
+              text = path.read_text()
+              frontmatter = {}
+              body = text
+              if text.startswith('---'):
+                  parts = text.split('---', 2)
+                  if len(parts) >= 3:
+                      try:
+                          frontmatter = yaml.safe_load(parts[1]) or {}
+                      except:
+                          pass
+                      body = parts[2]
+              name = frontmatter.get('name', path.parent.name)
+              desc = frontmatter.get('description', '')
+              sections = {}
+              current = None
+              buf = []
+              for line in body.splitlines():
+                  m = re.match(r'^##\s+(.+)', line)
+                  if m:
+                      if current:
+                          sections[current] = '\n'.join(buf).strip()
+                      current = m.group(1).strip()
+                      buf = []
+                  elif current is not None:
+                      buf.append(line)
+                  # skip lines before first ##
+              if current:
+                  sections[current] = '\n'.join(buf).strip()
+              return SkillData(name, desc, sections, str(path), 'md')
+
+          def parse_skill_jinx(path):
+              """Parse a .jinx skill file."""
+              try:
+                  data = yaml.safe_load(path.read_text()) or {}
+              except:
+                  return None
+              name = data.get('jinx_name', path.stem)
+              desc = data.get('description', '')
+              sections = {}
+              steps = data.get('steps', [])
+              for step in steps:
+                  if step.get('engine') == 'skill':
+                      raw = step.get('sections', {})
+                      if isinstance(raw, dict):
+                          sections = raw
+                      elif isinstance(raw, str):
+                          try:
+                              sections = json.loads(base64.b64decode(raw).decode('utf-8'))
+                          except:
+                              try:
+                                  sections = json.loads(raw)
+                              except:
+                                  pass
+                      break
+              if not sections:
+                  return None
+              return SkillData(name, desc, sections, str(path), 'jinx')
+
+          def load_skills():
+              ui.skills = []
+              # Scan jinxs directory for skills
+              jdir = TEAM_DIR / 'jinxs'
+              if not jdir.exists():
+                  return
+              for root, dirs, files in os.walk(str(jdir)):
+                  for fname in files:
+                      fpath = Path(root) / fname
+                      if fname == 'SKILL.md':
+                          try:
+                              sk = parse_skill_md(fpath)
+                              if sk:
+                                  ui.skills.append(sk)
+                          except:
+                              pass
+                      elif fname.endswith('.jinx'):
+                          try:
+                              sk = parse_skill_jinx(fpath)
+                              if sk:
+                                  ui.skills.append(sk)
+                          except:
+                              pass
+              # Also load from SKILLS_DIRECTORY if set
+              ctx_data = {}
+              for cf in TEAM_DIR.glob('*.ctx'):
+                  try:
+                      ctx_data = yaml.safe_load(cf.read_text()) or {}
+                  except:
+                      pass
+                  break
+              ext_dir = ctx_data.get('SKILLS_DIRECTORY')
+              if ext_dir:
+                  ext_path = Path(os.path.expanduser(ext_dir))
+                  if not ext_path.is_absolute():
+                      ext_path = TEAM_DIR / ext_path
+                  if ext_path.exists():
+                      for root, dirs, files in os.walk(str(ext_path)):
+                          for fname in files:
+                              fpath = Path(root) / fname
+                              if fname == 'SKILL.md':
+                                  try:
+                                      sk = parse_skill_md(fpath)
+                                      if sk:
+                                          ui.skills.append(sk)
+                                  except:
+                                      pass
+                              elif fname.endswith('.jinx'):
+                                  try:
+                                      sk = parse_skill_jinx(fpath)
+                                      if sk:
+                                          ui.skills.append(sk)
+                                  except:
+                                      pass
+              ui.skills.sort(key=lambda s: s.name)
+
+          def cur_sections():
+              if ui.cur_skill:
+                  return list(ui.cur_skill.sections.keys())
+              return []
+
+          def cur_content():
+              if ui.cur_skill:
+                  secs = cur_sections()
+                  if ui.sec_sel < len(secs):
+                      return ui.cur_skill.sections[secs[ui.sec_sel]]
+              return ""
+
+          def save_skill(skill):
+              """Save skill back to disk."""
+              p = Path(skill.source_path)
+              if skill.fmt == 'md':
+                  lines = ['---']
+                  if skill.description:
+                      lines.append(f'description: {skill.description}')
+                  lines.append('---')
+                  lines.append(f'# {skill.name}')
+                  lines.append('')
+                  for sec_name, sec_content in skill.sections.items():
+                      lines.append(f'## {sec_name}')
+                      lines.append(sec_content)
+                      lines.append('')
+                  p.write_text('\n'.join(lines))
+              elif skill.fmt == 'jinx':
+                  data = yaml.safe_load(p.read_text()) or {}
+                  for step in data.get('steps', []):
+                      if step.get('engine') == 'skill':
+                          step['sections'] = skill.sections
+                          break
+                  with open(p, 'w') as f:
+                      yaml.dump(data, f, default_flow_style=False)
+              ui.status = f"Saved {skill.name}"
+
+          # ── rendering ──────────────────────────────────────────
+          def w(row, col, text):
+              return f"\033[{row};1H\033[K\033[{row};{col}H{text}"
+
+          def wline(row, text):
+              return f"\033[{row};1H\033[K{text}"
+
+          def render():
+              W, H = term_size()
+              out = ["\033[H"]
+
+              # header
+              hdr = " Skills "
+              pad = '=' * W
+              out.append(wline(1, f"\033[7;1m{pad}\033[0m"))
+              out.append(f"\033[1;{max(1,(W - len(hdr)) // 2)}H\033[7;1m{hdr}\033[0m")
+
+              # tabs
+              tb = ""
+              for i, t in enumerate(ui.tabs):
+                  if i == ui.tab:
+                      tb += f"\033[7;1m [{t}] \033[0m"
+                  else:
+                      tb += f"  {t}  "
+              out.append(wline(2, f" {tb}"))
+              out.append(wline(3, f"\033[90m{'─' * W}\033[0m"))
+
+              body_start = 4
+              body_end = H - 3
+              body_h = body_end - body_start + 1
+
+              if ui.tab == 0:
+                  render_skills(out, W, body_start, body_h)
+              elif ui.tab == 1:
+                  render_sections(out, W, body_start, body_h)
+              else:
+                  render_content(out, W, body_start, body_h)
+
+              # separator
+              out.append(wline(H - 2, f"\033[90m{'─' * W}\033[0m"))
+
+              # status
+              if ui.status:
+                  out.append(wline(H - 1, f" \033[33m{ui.status[:W-2]}\033[0m"))
+              else:
+                  out.append(wline(H - 1, ""))
+
+              # footer
+              if ui.editing:
+                  foot = " [Enter] Next line  [Ctrl-D] Done  [Esc] Cancel  [Backspace] Delete"
+              elif ui.tab == 0:
+                  foot = " [Tab] Switch  [j/k] Nav  [Enter] View sections  [u] Use  [c] Critique  [q] Quit"
+              elif ui.tab == 1:
+                  foot = " [Tab] Switch  [j/k] Nav  [Enter] View content  [e] Edit  [u] Use  [q] Back"
+              else:
+                  foot = " [Tab] Switch  [j/k] Scroll  [e] Edit  [u] Use in convo  [s] Save  [q] Back"
+              out.append(wline(H, f"\033[7m{foot[:W].ljust(W)}\033[0m"))
+
+              sys.stdout.write(''.join(out))
+              sys.stdout.flush()
+
+          def render_skills(out, W, start, body_h):
+              vis = ui.skills[ui.scroll:ui.scroll + body_h]
+              for r in range(body_h):
+                  row = start + r
+                  i = r + ui.scroll
+                  if r >= len(vis):
+                      out.append(wline(row, ""))
+                      continue
+                  sk = vis[r]
+                  nsec = len(sk.sections)
+                  desc = sk.description[:W-35] if sk.description else ''
+                  desc = desc.replace('\n', ' ')
+                  tag = f"[{sk.fmt}]"
+                  if i == ui.sel:
+                      line = f"  > {sk.name:<18} {tag:<6} {nsec}s  {desc}"
+                      out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+                  else:
+                      out.append(wline(row, f"    {sk.name:<18} \033[90m{tag:<6} {nsec}s\033[0m  \033[36m{desc}\033[0m"))
+              if not ui.skills:
+                  out.append(wline(start, "  \033[90mNo skills found.\033[0m"))
+                  out.append(wline(start + 1, "  \033[90mAdd SKILL.md folders or .jinx files to jinxs/skills/\033[0m"))
+
+          def render_sections(out, W, start, body_h):
+              if not ui.cur_skill:
+                  out.append(wline(start, "  \033[90mNo skill selected.\033[0m"))
+                  for r in range(1, body_h):
+                      out.append(wline(start + r, ""))
+                  return
+              # skill header
+              out.append(wline(start, f"  \033[1m{ui.cur_skill.name}\033[0m  \033[90m({ui.cur_skill.fmt})\033[0m"))
+              if ui.cur_skill.description:
+                  d = ui.cur_skill.description[:W-4].replace('\n', ' ')
+                  out.append(wline(start + 1, f"  \033[36m{d}\033[0m"))
+              else:
+                  out.append(wline(start + 1, ""))
+              out.append(wline(start + 2, f"  \033[90m{'─' * (W - 4)}\033[0m"))
+              secs = cur_sections()
+              sec_start = start + 3
+              sec_h = body_h - 3
+              vis = secs[ui.sec_scroll:ui.sec_scroll + sec_h]
+              for r in range(sec_h):
+                  row = sec_start + r
+                  si = r + ui.sec_scroll
+                  if r >= len(vis):
+                      out.append(wline(row, ""))
+                      continue
+                  sname = vis[r]
+                  content = ui.cur_skill.sections[sname]
+                  preview = content.split('\n')[0][:W-30].replace('\n', ' ')
+                  if si == ui.sec_sel:
+                      line = f"  > {sname:<20} {preview}"
+                      out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+                  else:
+                      out.append(wline(row, f"    {sname:<20} \033[90m{preview}\033[0m"))
+              if not secs:
+                  out.append(wline(sec_start, "  \033[90mNo sections.\033[0m"))
+
+          def render_content(out, W, start, body_h):
+              if not ui.cur_skill:
+                  out.append(wline(start, "  \033[90mNo skill selected.\033[0m"))
+                  for r in range(1, body_h):
+                      out.append(wline(start + r, ""))
+                  return
+              secs = cur_sections()
+              sec_name = secs[ui.sec_sel] if ui.sec_sel < len(secs) else '?'
+              out.append(wline(start, f"  \033[1m{ui.cur_skill.name}\033[0m / \033[1m{sec_name}\033[0m"))
+              out.append(wline(start + 1, f"  \033[90m{'─' * (W - 4)}\033[0m"))
+
+              if ui.editing:
+                  # show edit buffer
+                  vis = ui.edit_lines[ui.content_scroll:ui.content_scroll + body_h - 2]
+                  for r in range(body_h - 2):
+                      row = start + 2 + r
+                      li = r + ui.content_scroll
+                      if r >= len(vis):
+                          out.append(wline(row, ""))
+                          continue
+                      line = vis[r]
+                      if li == ui.edit_line:
+                          out.append(wline(row, f"  \033[7m{line[:W-2].ljust(W-2)}\033[0m"))
+                      else:
+                          out.append(wline(row, f"  {line[:W-2]}"))
+              else:
+                  content = cur_content()
+                  lines = content.split('\n')
+                  vis = lines[ui.content_scroll:ui.content_scroll + body_h - 2]
+                  for r in range(body_h - 2):
+                      row = start + 2 + r
+                      if r >= len(vis):
+                          out.append(wline(row, ""))
+                          continue
+                      out.append(wline(row, f"  {vis[r][:W-2]}"))
+
+          # ── input handling ─────────────────────────────────────
+          def handle(c):
+              if ui.editing:
+                  return handle_edit(c)
+              if c == '\x1b':
+                  return handle_esc()
+              if c == 'q':
+                  if ui.tab > 0:
+                      ui.tab -= 1
+                      ui.status = ""
+                      if ui.tab == 0:
+                          ui.cur_skill = None
+                      ui.content_scroll = 0
+                  else:
+                      return False
+              elif c == '\t':
+                  if ui.tab == 0 and ui.cur_skill:
+                      ui.tab = 1
+                  elif ui.tab == 1:
+                      ui.tab = 2
+                      ui.content_scroll = 0
+                  elif ui.tab == 2:
+                      ui.tab = 0
+                      ui.content_scroll = 0
+                  ui.status = ""
+              elif c == 'k':
+                  nav_up()
+              elif c == 'j':
+                  nav_down()
+              elif c in ('\r', '\n'):
+                  do_enter()
+              elif c == 'e':
+                  do_edit()
+              elif c == 's':
+                  do_save()
+              elif c == 'u':
+                  do_use()
+                  return False  # exit TUI to show injected content
+              elif c == 'c':
+                  do_critique()
+                  return False  # exit TUI to run critique
+              return True
+
+          def handle_esc():
+              if select.select([fd], [], [], 0.05)[0]:
+                  c2 = os.read(fd, 1).decode('latin-1')
+                  if c2 == '[':
+                      c3 = os.read(fd, 1).decode('latin-1')
+                      if c3 == 'A':
+                          nav_up()
+                      elif c3 == 'B':
+                          nav_down()
+              else:
+                  if ui.tab > 0:
+                      ui.tab -= 1
+                      ui.status = ""
+                      if ui.tab == 0:
+                          ui.cur_skill = None
+                      ui.content_scroll = 0
+              return True
+
+          def handle_edit(c):
+              if c == '\x04':  # Ctrl-D: done editing
+                  finish_edit()
+              elif c == '\x1b':
+                  if select.select([fd], [], [], 0.05)[0]:
+                      c2 = os.read(fd, 1).decode('latin-1')
+                      if c2 == '[':
+                          c3 = os.read(fd, 1).decode('latin-1')
+                          if c3 == 'A':  # up
+                              ui.edit_line = max(0, ui.edit_line - 1)
+                              if ui.edit_line < ui.content_scroll:
+                                  ui.content_scroll = ui.edit_line
+                          elif c3 == 'B':  # down
+                              ui.edit_line = min(len(ui.edit_lines) - 1, ui.edit_line + 1)
+                              _, H = term_size()
+                              if ui.edit_line >= ui.content_scroll + H - 8:
+                                  ui.content_scroll = ui.edit_line - H + 9
+                  else:
+                      # bare Esc: cancel
+                      ui.editing = False
+                      ui.edit_lines = []
+                      ui.status = "Edit cancelled"
+              elif c in ('\r', '\n'):
+                  # insert new line after current
+                  ui.edit_lines.insert(ui.edit_line + 1, "")
+                  ui.edit_line += 1
+              elif c in ('\x7f', '\x08'):
+                  line = ui.edit_lines[ui.edit_line]
+                  if line:
+                      ui.edit_lines[ui.edit_line] = line[:-1]
+                  elif ui.edit_line > 0:
+                      ui.edit_lines.pop(ui.edit_line)
+                      ui.edit_line -= 1
+              elif 32 <= ord(c) <= 126:
+                  ui.edit_lines[ui.edit_line] += c
+              return True
+
+          def nav_up():
+              if ui.tab == 2:
+                  ui.content_scroll = max(0, ui.content_scroll - 1)
+              elif ui.tab == 1:
+                  ui.sec_sel = max(0, ui.sec_sel - 1)
+                  if ui.sec_sel < ui.sec_scroll:
+                      ui.sec_scroll = ui.sec_sel
+              else:
+                  ui.sel = max(0, ui.sel - 1)
+                  if ui.sel < ui.scroll:
+                      ui.scroll = ui.sel
+              ui.status = ""
+
+          def nav_down():
+              _, H = term_size()
+              body_h = H - 6
+              if ui.tab == 2:
+                  content = cur_content()
+                  maxs = max(0, len(content.split('\n')) - body_h + 2)
+                  ui.content_scroll = min(maxs, ui.content_scroll + 1)
+              elif ui.tab == 1:
+                  mx = max(0, len(cur_sections()) - 1)
+                  ui.sec_sel = min(mx, ui.sec_sel + 1)
+                  if ui.sec_sel >= ui.sec_scroll + body_h - 3:
+                      ui.sec_scroll = ui.sec_sel - body_h + 4
+              else:
+                  mx = max(0, len(ui.skills) - 1)
+                  ui.sel = min(mx, ui.sel + 1)
+                  if ui.sel >= ui.scroll + body_h:
+                      ui.scroll = ui.sel - body_h + 1
+              ui.status = ""
+
+          def do_enter():
+              if ui.tab == 0 and ui.skills:
+                  ui.cur_skill = ui.skills[ui.sel]
+                  ui.sec_sel = 0
+                  ui.sec_scroll = 0
+                  ui.tab = 1
+                  ui.status = ""
+              elif ui.tab == 1 and ui.cur_skill:
+                  ui.content_scroll = 0
+                  ui.tab = 2
+                  ui.status = ""
+
+          def do_edit():
+              if ui.tab == 2 and ui.cur_skill:
+                  content = cur_content()
+                  ui.edit_lines = content.split('\n')
+                  ui.edit_line = 0
+                  ui.content_scroll = 0
+                  ui.editing = True
+                  ui.status = "Editing — Ctrl-D to save, Esc to cancel"
+              elif ui.tab == 1 and ui.cur_skill:
+                  # enter content view for editing
+                  ui.tab = 2
+                  ui.content_scroll = 0
+                  content = cur_content()
+                  ui.edit_lines = content.split('\n')
+                  ui.edit_line = 0
+                  ui.editing = True
+                  ui.status = "Editing — Ctrl-D to save, Esc to cancel"
+
+          def finish_edit():
+              if ui.cur_skill:
+                  secs = cur_sections()
+                  if ui.sec_sel < len(secs):
+                      sec_name = secs[ui.sec_sel]
+                      ui.cur_skill.sections[sec_name] = '\n'.join(ui.edit_lines)
+                      ui.status = f"Updated {sec_name} — press 's' to save to disk"
+              ui.editing = False
+              ui.edit_lines = []
+
+          def do_save():
+              if ui.cur_skill:
+                  save_skill(ui.cur_skill)
+
+          def do_use():
+              """Inject skill content into conversation context."""
+              if not ui.cur_skill:
+                  ui.status = "No skill selected"
+                  return
+              secs = cur_sections()
+              if ui.tab == 2 and ui.sec_sel < len(secs):
+                  sec_name = secs[ui.sec_sel]
+                  content = ui.cur_skill.sections[sec_name]
+                  inject = f"[Skill: {ui.cur_skill.name}/{sec_name}]\n{content}"
+              elif ui.tab == 1 and ui.sec_sel < len(secs):
+                  sec_name = secs[ui.sec_sel]
+                  content = ui.cur_skill.sections[sec_name]
+                  inject = f"[Skill: {ui.cur_skill.name}/{sec_name}]\n{content}"
+              else:
+                  # inject all sections
+                  parts = []
+                  for sn, sc in ui.cur_skill.sections.items():
+                      parts.append(f"## {sn}\n{sc}")
+                  inject = f"[Skill: {ui.cur_skill.name}]\n" + '\n\n'.join(parts)
+              # Add as a system/context message
+              if state and hasattr(state, 'messages'):
+                  state.messages.append({
+                      'role': 'user',
+                      'content': f"Use the following skill guidelines:\n\n{inject}"
+                  })
+              context['output'] = f"Injected skill '{ui.cur_skill.name}' into conversation."
+
+          def do_critique():
+              """Queue a critique request for the current skill."""
+              if not ui.cur_skill:
+                  ui.status = "No skill selected"
+                  return
+              parts = []
+              for sn, sc in ui.cur_skill.sections.items():
+                  parts.append(f"## {sn}\n{sc}")
+              full = '\n\n'.join(parts)
+              prompt = (
+                  f"Review the following skill definition for '{ui.cur_skill.name}' "
+                  f"and provide constructive feedback. Check for:\n"
+                  f"- Completeness: are there missing sections or steps?\n"
+                  f"- Clarity: is the content clear and actionable?\n"
+                  f"- Consistency: do sections flow logically?\n"
+                  f"- Gaps: what edge cases or scenarios are not covered?\n\n"
+                  f"Skill description: {ui.cur_skill.description}\n\n"
+                  f"{full}"
+              )
+              if state and hasattr(state, 'messages'):
+                  state.messages.append({
+                      'role': 'user',
+                      'content': prompt
+                  })
+              context['output'] = f"Critiquing skill '{ui.cur_skill.name}'..."
+              context['messages'] = state.messages if state else []
+
+          # ── main loop ──────────────────────────────────────────
+          load_skills()
+          fd = sys.stdin.fileno()
+          old_attrs = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              sys.stdout.write('\033[2J\033[H')
+              sys.stdout.flush()
+              render()
+              while True:
+                  c = os.read(fd, 1).decode('latin-1')
+                  if not handle(c):
+                      break
+                  render()
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+              sys.stdout.write('\033[?25h\033[2J\033[H')
+              sys.stdout.flush()
+
+          if 'output' not in context:
+              context['output'] = "Skills browser closed."
