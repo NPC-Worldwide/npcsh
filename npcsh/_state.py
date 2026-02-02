@@ -2118,11 +2118,18 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
 
 def _get_slash_commands_set(state, router, prefix='/') -> set:
     """Return the set of matching slash command names (without /)."""
+    # Computer-use commands hidden from hints/tab-complete (still callable)
+    _HIDDEN_CMDS = {
+        'browser_action', 'browser_screenshot', 'click', 'close_browser',
+        'key_press', 'launch_app', 'open_browser', 'screenshot',
+        'trigger', 'type_text', 'wait',
+    }
     cmds = {'help', 'set', 'agent', 'chat', 'cmd', 'sq', 'quit', 'exit', 'clear', 'npc', 'reattach'}
     if state and state.team and hasattr(state.team, 'jinxs_dict'):
         cmds.update(state.team.jinxs_dict.keys())
     if router and hasattr(router, 'jinx_routes'):
         cmds.update(router.jinx_routes.keys())
+    cmds -= _HIDDEN_CMDS
     if len(prefix) > 1:
         f = prefix[1:].lower()
         cmds = {c for c in cmds if c.lower().startswith(f)}
@@ -2492,55 +2499,28 @@ def parse_generic_command_flags(parts: List[str]) -> Tuple[Dict[str, Any], List[
         
     return parsed_kwargs, positional_args
 
-def _ollama_supports_tools(model: str) -> Optional[bool]:
-    """
-    Best-effort check for tool-call support on an Ollama model by inspecting its template/metadata.
-    Mirrors the lightweight check used in the Flask serve path.
-    """
-
-
-    try:
-        details = ollama.show(model)
-        template = details.get("template") or ""
-        metadata = details.get("metadata") or {}
-        if any(token in template for token in ["{{- if .Tools", "{{- range .Tools", "{{- if .ToolCalls"]):
-            return True
-        if metadata.get("tools") or metadata.get("tool_calls"):
-            return True
-        return False
-    except Exception:
-        return None
-
-
 def model_supports_tool_calls(model: Optional[str], provider: Optional[str]) -> bool:
-    """
-    Decide whether to attempt tool-calling for the given model/provider.
-    Uses Ollama template inspection when possible and falls back to name heuristics.
-    """
+    """Check whether a model supports tool/function calling."""
     if not model:
         return False
 
     provider = (provider or "").lower()
-    model_lower = model.lower()
 
+    # Ollama: use the capabilities field from the model metadata
     if provider == "ollama":
-        ollama_support = _ollama_supports_tools(model)
-        if ollama_support is not None:
-            return ollama_support
+        try:
+            details = ollama.show(model)
+            caps = getattr(details, "capabilities", None) or []
+            return "tools" in caps
+        except Exception:
+            pass
 
-    toolish_markers = [
-        "gpt",
-        "claude",
-        "qwen",
-        "mistral",
-        "llama-3.1",
-        "llama3.1",
-        "llama-3.2",
-        "llama3.2",
-        "gemini",
-        "tool",
-    ]
-    return any(marker in model_lower for marker in toolish_markers)
+    # API providers: always support tools
+    if provider in ("anthropic", "openai", "gemini", "google", "deepseek", "groq", "openrouter"):
+        return True
+
+    # Unknown provider: assume yes
+    return True
 
 
 def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellState) -> Callable:
