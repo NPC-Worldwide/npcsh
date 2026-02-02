@@ -226,6 +226,21 @@
 
 
 
+- ## Skills: Knowledge-content jinxs
+
+    Skills are jinxs that serve instructional content. They live in `jinxs/skills/` and are invoked like any other slash command:
+
+    ```bash
+    /debugging                       # All sections
+    /debugging -s reproduce          # Just the reproduce section
+    /debugging -s list               # Available section names
+    /code-review -s correctness      # Correctness checklist
+    /git-workflow -s commits          # Commits section
+    ```
+
+    Skills are assigned to agents through the same `jinxs:` list in `.npc` files. See the [Skills guide](skills.md) for authoring details and the two supported formats (SKILL.md folders and .jinx files).
+
+
 - ## `/ots`: Over-the-shoulder screen shot analysis
 
     - Screenshot analysis:     
