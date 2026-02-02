@@ -1,0 +1,59 @@
+jinx_name: skill
+description: Constructs and serves a structured skill. Receives the full skill definition and returns the requested part. Do not call directly.
+inputs:
+- skill_name
+- skill_description
+- sections
+- scripts_json
+- references_json
+- assets_json
+- section
+steps:
+  - name: handle_skill
+    engine: python
+    code: |
+      import json as _json, base64 as _b64
+
+      _name = {{ skill_name | tojson }}
+      _desc = {{ skill_description | tojson }}
+      _sections_raw = {{ sections | tojson }}
+      if isinstance(_sections_raw, dict):
+          _sections = _sections_raw
+      elif isinstance(_sections_raw, str):
+          try:
+              _sections = _json.loads(_b64.b64decode(_sections_raw).decode('utf-8'))
+          except Exception:
+              _sections = _json.loads(_sections_raw)
+      else:
+          _sections = {}
+      _scripts = _json.loads({{ scripts_json | tojson }}) if {{ scripts_json | tojson }} else []
+      _references = _json.loads({{ references_json | tojson }}) if {{ references_json | tojson }} else []
+      _assets = _json.loads({{ assets_json | tojson }}) if {{ assets_json | tojson }} else []
+      _section = {{ section | tojson }} or 'all'
+      _section = _section.strip()
+
+      if _section == 'meta':
+          output = _json.dumps({
+              'name': _name,
+              'description': _desc,
+              'sections': list(_sections.keys()),
+              'scripts': _scripts,
+              'references': _references,
+              'assets': _assets,
+          }, indent=2)
+      elif _section == 'list':
+          output = 'Available sections: ' + ', '.join(_sections.keys())
+      elif _section == 'all':
+          _parts = []
+          for _k, _v in _sections.items():
+              _parts.append(f'## {_k}\n{_v.strip()}')
+          output = '\n\n'.join(_parts)
+      else:
+          if _section in _sections:
+              output = _sections[_section].strip()
+          else:
+              _matches = [_k for _k in _sections if _section.lower() in _k.lower()]
+              if _matches:
+                  output = _sections[_matches[0]].strip()
+              else:
+                  output = f"Section '{_section}' not found. Available sections: " + ', '.join(_sections.keys())

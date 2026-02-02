@@ -197,6 +197,108 @@ When an NPC is invoked, they can only use the jinxs assigned to them. This creat
 
 The forenpc (orchestrator) can delegate to any team member based on their specialization.
 
+## Skills — Knowledge Content for Agents
+
+Skills are jinxs that serve instructional content instead of executing code. They use the `skill.jinx` sub-jinx (just like code jinxs use `python.jinx` or `sh.jinx`) and return sections of methodology on demand.
+
+Because skills are jinxs, they're assigned to agents the same way — through the `jinxs:` list in `.npc` files:
+
+```yaml
+# reviewer.npc
+name: reviewer
+primary_directive: "You review code and provide feedback."
+jinxs:
+  - lib/core/sh
+  - lib/core/python
+  - skills/code-review
+  - skills/debugging
+```
+
+The agent sees `code-review` and `debugging` in its tool catalog alongside `sh` and `python`. When it encounters a review task, it calls the skill to get methodology, then uses `sh` or `python` to do the actual work.
+
+### Two Authoring Formats
+
+**SKILL.md folder** — a folder with a `SKILL.md` file (folder name = skill name):
+
+```
+jinxs/skills/debugging/
+  SKILL.md             # YAML frontmatter + ## sections
+  scripts/             # Optional
+  references/          # Optional
+```
+
+```markdown
+---
+description: Debugging methodology. Use when asked to debug or troubleshoot.
+---
+# Debugging
+
+## reproduce
+First, reproduce the bug consistently.
+Find the minimal reproduction case.
+
+## isolate
+Binary search through the codebase (git bisect).
+Comment out components to isolate the cause.
+
+## fix
+Fix the root cause, not the symptom.
+Add a test that fails without the fix.
+```
+
+**`.jinx` file** — a regular jinx with `engine: skill` steps:
+
+```yaml
+jinx_name: git-workflow
+description: "Git workflow best practices. [Sections: branching, commits, merging]"
+inputs:
+- section: all
+steps:
+  - engine: skill
+    skill_name: git-workflow
+    skill_description: Git workflow best practices.
+    sections:
+      branching: |
+        Use feature branches off main/develop.
+        Name branches: feature/, fix/, chore/
+      commits: |
+        Imperative summary under 72 chars.
+        One logical change per commit.
+      merging: |
+        Prefer squash merges for feature branches.
+        Delete branches after merging.
+    scripts_json: '[]'
+    references_json: '[]'
+    assets_json: '[]'
+    section: '{{section}}'
+```
+
+### Using Skills
+
+In npcsh, skills work as slash commands like any jinx:
+
+```bash
+/debugging                       # All sections
+/debugging -s reproduce          # Just the reproduce section
+/debugging -s list               # Available section names
+/code-review -s correctness      # Just the correctness section
+```
+
+In the agent loop, the agent calls skills automatically when relevant — requesting specific sections to minimize token usage (progressive disclosure).
+
+### Importing External Skills
+
+Add `SKILLS_DIRECTORY` to your `.ctx` file to load skills from an external directory:
+
+```yaml
+model: llama3.2
+provider: ollama
+forenpc: lead-dev
+SKILLS_DIRECTORY: ~/shared-skills
+```
+
+All `SKILL.md` folders and `.jinx` skill files in that directory are loaded alongside the team's own jinxs. This lets you maintain a single skills library shared across multiple teams.
+
 ## Delegation with Review Loop
 
 The `/delegate` jinx sends a task to another NPC with automatic review and feedback:

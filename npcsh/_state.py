@@ -3084,8 +3084,19 @@ def process_pipeline_command(
                     total_usage = {"input_tokens": 0, "output_tokens": 0}
                     state._agent_nudges = 0  # Track continuation nudges
 
+                    tool_calls_count = 0  # Track how many tool calls have been made
+
                     while iteration < max_iterations:
                         iteration += 1
+
+                        # After a tool has been called, force the model to generate a
+                        # text response on the NEXT iteration by setting tool_choice='none'.
+                        # This prevents models from endlessly repeating tool calls when
+                        # they already have the answer. For multi-step tasks, delegate
+                        # and convene jinxs have their own internal loops.
+                        iter_kwargs = dict(llm_kwargs)
+                        if tool_calls_count > 0:
+                            iter_kwargs["tool_choice"] = 'none'
 
                         llm_result = get_llm_response(
                             full_llm_cmd if iteration == 1 else None,  # Only pass prompt on first call
@@ -3097,7 +3108,7 @@ def process_pipeline_command(
                             stream=False,  # Don't stream intermediate calls
                             attachments=state.attachments if iteration == 1 else None,
                             context=info if iteration == 1 else None,
-                            **llm_kwargs,
+                            **iter_kwargs,
                         )
 
                         # Accumulate usage
@@ -3131,8 +3142,12 @@ def process_pipeline_command(
                         # Check if LLM made tool calls - if not, consider re-prompting
                         tool_calls_made = isinstance(llm_result, dict) and llm_result.get("tool_calls")
                         if not tool_calls_made:
-                            # In agent mode, re-prompt to continue using tools
+                            # In agent mode, nudge to use tools — but ONLY if no tools
+                            # have been called yet (model hasn't started working).
+                            # Once tools have been called and returned results,
+                            # the model should synthesize an answer, not call more tools.
                             if (state.current_mode == 'agent'
+                                    and tool_calls_count == 0
                                     and iteration < max_iterations
                                     and state._agent_nudges < 3):
                                 state._agent_nudges += 1
@@ -3149,7 +3164,8 @@ def process_pipeline_command(
                             # LLM is done - no more tool calls
                             break
 
-                        # Reset nudge counter on successful tool use
+                        # Track tool calls and reset nudge counter
+                        tool_calls_count += 1
                         state._agent_nudges = 0
                         # Clear the prompt for continuation calls - context is in messages
                         full_llm_cmd = None

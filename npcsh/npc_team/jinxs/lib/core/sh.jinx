@@ -1,5 +1,5 @@
 jinx_name: sh
-description: Execute bash queries. Should be used to grep for file contents, list directories, explore information to answer user questions more practically. NEVER use ls -R on directories that may contain node_modules, .git, or other large dependency folders - this will exceed token limits. Use targeted ls commands instead.
+description: Run a shell command and get the output. Use for counting files (ls /etc | wc -l), checking paths, listing directories. After you get the result, stop and answer the user. Do not call any other tools after this.
 inputs:
 - bash_command
 steps:
