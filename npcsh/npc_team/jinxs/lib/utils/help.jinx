@@ -136,7 +136,7 @@ steps:
           # ── Building & deployment ──
           "/build  # interactive build TUI",
           "/compile  # compile NPC profiles",
-          "/serve  # start serving",
+          "/serve  # server dashboard TUI (start, stop, logs, endpoints)",
           "/init  # initialize a new NPC project",
           "/setup  # run setup wizard",
           "/config  # open configuration interface",
