@@ -1,41 +1,531 @@
-jinx_name: "init"
-description: "Initialize NPC project"
+jinx_name: init
+description: Interactive TUI for initializing NPC projects with model detection and configuration
+interactive: true
 inputs:
-- directory: "."
-- templates: ""
-- context: ""
-- model: ""
-- provider: ""
+  - directory: ""
+  - templates: ""
+  - context: ""
+  - model: ""
+  - provider: ""
 steps:
-  - name: "initialize_project"
-    engine: "python"
+  - name: init_wizard
+    engine: python
     code: |
       import os
-      import traceback
-      from npcpy.npc_compiler import initialize_npc_project
-      
-      directory = context.get('directory')
-      templates = context.get('templates')
-      context_param = context.get('context') # Renamed to avoid conflict with Jinx context
-      model = context.get('model')
-      provider = context.get('provider')
-      output_messages = context.get('messages', [])
-      
-      output_result = ""
-      try:
-          initialize_npc_project(
-              directory=directory,
-              templates=templates,
-              context=context_param, # Use the renamed context parameter
-              model=model,
-              provider=provider
-          )
-          output_result = f"NPC project initialized in {os.path.abspath(directory)}."
-      except NameError:
-          output_result = "Init function (initialize_npc_project) not available."
-      except Exception as e:
-          traceback.print_exc()
-          output_result = f"Error initializing project: {e}"
-      
-      context['output'] = output_result
-      context['messages'] = output_messages
+      import sys
+      import tty
+      import termios
+      import select
+      from pathlib import Path
+
+      # Direct mode: if directory passed explicitly or non-interactive
+      _direct_dir = (context.get('directory') or '').strip()
+      _direct = bool(_direct_dir) or not sys.stdin.isatty()
+
+      if _direct:
+          from npcpy.npc_compiler import initialize_npc_project
+          try:
+              initialize_npc_project(
+                  directory=_direct_dir or '.',
+                  templates=context.get('templates'),
+                  context=context.get('context'),
+                  model=context.get('model'),
+                  provider=context.get('provider')
+              )
+              context['output'] = f"NPC project initialized in {os.path.abspath(_direct_dir or '.')}"
+          except Exception as e:
+              context['output'] = f"Error: {e}"
+          context['messages'] = context.get('messages', [])
+
+      else:
+          # ========== Detection Functions ==========
+          def detect_ollama_models():
+              models = []
+              try:
+                  import ollama
+                  result = ollama.list()
+                  for model in result.get('models', []):
+                      name = model.get('model', model.get('name', ''))
+                      if name:
+                          models.append(name)
+              except:
+                  pass
+              return models
+
+          def detect_lm_studio():
+              try:
+                  import requests
+                  resp = requests.get('http://localhost:1234/v1/models', timeout=2)
+                  if resp.status_code == 200:
+                      return [m.get('id', '') for m in resp.json().get('data', [])]
+              except:
+                  pass
+              return []
+
+          def detect_api_keys():
+              keys = {}
+              for key in ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'DEEPSEEK_API_KEY']:
+                  if os.environ.get(key):
+                      keys[key] = True
+              return keys
+
+          def get_cloud_models(api_keys):
+              models = []
+              if api_keys.get('ANTHROPIC_API_KEY'):
+                  models.extend([('anthropic', 'claude-sonnet-4-20250514'), ('anthropic', 'claude-3-5-haiku-20241022')])
+              if api_keys.get('GEMINI_API_KEY'):
+                  models.extend([('gemini', 'gemini-2.5-flash'), ('gemini', 'gemini-1.5-pro')])
+              if api_keys.get('DEEPSEEK_API_KEY'):
+                  models.extend([('deepseek', 'deepseek-chat')])
+              return models
+
+          # ========== State ==========
+          class InitState:
+              def __init__(self):
+                  self.phase = 0  # 0=dir, 1=detect, 2=model, 3=config, 4=confirm, 5=done
+                  self.sel = 0
+                  self.scroll = 0
+                  self.directory = os.path.abspath(context.get('directory') or './npc_project')
+                  self.editing = False
+                  self.edit_buf = ""
+                  self.edit_field = ""
+
+                  # Detection results
+                  self.ollama_models = []
+                  self.lm_studio_models = []
+                  self.cloud_models = []
+                  self.api_keys = {}
+                  self.all_models = []  # (provider, model) tuples
+
+                  # Config
+                  self.config = {
+                      'model': context.get('model') or '',
+                      'provider': context.get('provider') or '',
+                      'team_name': 'npc_team',
+                      'forenpc': 'forenpc',
+                      'context_desc': 'A team of AI agents',
+                  }
+                  self.config_keys = ['model', 'provider', 'team_name', 'forenpc', 'context_desc']
+                  self.config_labels = {
+                      'model': 'Default Model',
+                      'provider': 'Default Provider',
+                      'team_name': 'Team Directory',
+                      'forenpc': 'Coordinator NPC',
+                      'context_desc': 'Team Description',
+                  }
+                  self.config_sel = 0
+
+                  self.status = ""
+                  self.error = ""
+                  self.result = ""
+
+          ui = InitState()
+
+          # ========== Helpers ==========
+          def get_size():
+              try:
+                  s = os.get_terminal_size()
+                  return s.columns, s.lines
+              except:
+                  return 80, 24
+
+          def run_detection():
+              ui.status = "Detecting Ollama models..."
+              render()
+              ui.ollama_models = detect_ollama_models()
+
+              ui.status = "Checking LM Studio..."
+              render()
+              ui.lm_studio_models = detect_lm_studio()
+
+              ui.status = "Checking API keys..."
+              render()
+              ui.api_keys = detect_api_keys()
+              ui.cloud_models = get_cloud_models(ui.api_keys)
+
+              # Build all_models list
+              ui.all_models = []
+              for m in ui.ollama_models:
+                  ui.all_models.append(('ollama', m))
+              for m in ui.lm_studio_models:
+                  ui.all_models.append(('lm_studio', m))
+              ui.all_models.extend(ui.cloud_models)
+
+              # Set defaults if found
+              if ui.all_models and not ui.config['model']:
+                  ui.config['provider'], ui.config['model'] = ui.all_models[0]
+
+              total = len(ui.all_models)
+              ui.status = f"Found {total} models"
+
+          # ========== Rendering ==========
+          def render():
+              width, height = get_size()
+              out = []
+              out.append('\033[2J\033[H')
+
+              phase_names = ['Directory', 'Detecting...', 'Select Model', 'Configure', 'Confirm', 'Complete']
+              phase_icons = ['1', '2', '3', '4', '5', '*']
+
+              # Progress bar
+              progress = ''
+              for i, name in enumerate(phase_names[:-1]):
+                  if i < ui.phase:
+                      progress += f'\033[32m[{phase_icons[i]}]\033[0m '
+                  elif i == ui.phase:
+                      progress += f'\033[33;1m[{phase_icons[i]}]\033[0m '
+                  else:
+                      progress += f'\033[90m[{phase_icons[i]}]\033[0m '
+
+              header = ' NPC INIT '
+              out.append(f'\033[1;1H\033[7;1m{header.ljust(width)}\033[0m')
+              out.append(f'\033[2;2H{progress}')
+
+              if ui.phase == 0:
+                  render_directory(out, width, height)
+              elif ui.phase == 1:
+                  render_detecting(out, width, height)
+              elif ui.phase == 2:
+                  render_model_select(out, width, height)
+              elif ui.phase == 3:
+                  render_config(out, width, height)
+              elif ui.phase == 4:
+                  render_confirm(out, width, height)
+              elif ui.phase == 5:
+                  render_done(out, width, height)
+
+              if ui.error:
+                  out.append(f'\033[{height-1};1H\033[K\033[31m {ui.error[:width-3]}\033[0m')
+
+              sys.stdout.write(''.join(out))
+              sys.stdout.flush()
+
+          def render_directory(out, width, height):
+              banner = [
+                  '\033[36m ██╗███╗   ██╗██╗████████╗\033[0m',
+                  '\033[36m ██║████╗  ██║██║╚══██╔══╝\033[0m',
+                  '\033[36m ██║██╔██╗ ██║██║   ██║   \033[0m',
+                  '\033[36m ██║██║╚██╗██║██║   ██║   \033[0m',
+                  '\033[36m ██║██║ ╚████║██║   ██║   \033[0m',
+                  '\033[36m ╚═╝╚═╝  ╚═══╝╚═╝   ╚═╝   \033[0m',
+              ]
+              for i, line in enumerate(banner):
+                  out.append(f'\033[{4+i};3H{line}')
+
+              y = 4 + len(banner) + 2
+              out.append(f'\033[{y};3H\033[1mProject Directory:\033[0m')
+              y += 2
+
+              if ui.editing:
+                  out.append(f'\033[{y};3H\033[7m > {ui.edit_buf}_ \033[0m')
+              else:
+                  exists = os.path.exists(ui.directory)
+                  status = '\033[33m(exists)\033[0m' if exists else '\033[32m(will create)\033[0m'
+                  out.append(f'\033[{y};3H\033[7m > {ui.directory} \033[0m {status}')
+
+              y += 2
+              out.append(f'\033[{y};3H\033[90mThis will create:{"\033[0m"}')
+              y += 1
+              preview_dir = ui.edit_buf if ui.editing else ui.directory
+              out.append(f'\033[{y};5H\033[90m{preview_dir}/\033[0m')
+              out.append(f'\033[{y+1};5H\033[90m├── npc_team/\033[0m')
+              out.append(f'\033[{y+2};5H\033[90m│   ├── forenpc.npc\033[0m')
+              out.append(f'\033[{y+3};5H\033[90m│   ├── team.ctx\033[0m')
+              out.append(f'\033[{y+4};5H\033[90m│   ├── jinxs/\033[0m')
+              out.append(f'\033[{y+5};5H\033[90m│   └── tools/\033[0m')
+              out.append(f'\033[{y+6};5H\033[90m├── images/\033[0m')
+              out.append(f'\033[{y+7};5H\033[90m├── models/\033[0m')
+              out.append(f'\033[{y+8};5H\033[90m└── mcp_servers/\033[0m')
+
+              if ui.editing:
+                  out.append(f'\033[{height};1H\033[K\033[7m Enter:Confirm  Esc:Cancel \033[0m'.ljust(width))
+              else:
+                  out.append(f'\033[{height};1H\033[K\033[7m e:Edit  Enter:Next  q:Quit \033[0m'.ljust(width))
+
+          def render_detecting(out, width, height):
+              mid = height // 2
+              out.append(f'\033[{mid-1};3H\033[1mDetecting available models...\033[0m')
+              out.append(f'\033[{mid+1};3H\033[33m{ui.status}\033[0m')
+
+              y = mid + 3
+              # Show what we've found so far
+              if ui.ollama_models:
+                  out.append(f'\033[{y};5H\033[32m✓\033[0m Ollama: {len(ui.ollama_models)} models')
+                  y += 1
+              if ui.lm_studio_models:
+                  out.append(f'\033[{y};5H\033[32m✓\033[0m LM Studio: {len(ui.lm_studio_models)} models')
+                  y += 1
+              for key in ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'DEEPSEEK_API_KEY']:
+                  if ui.api_keys.get(key):
+                      short = key.replace('_API_KEY', '').lower()
+                      out.append(f'\033[{y};5H\033[32m✓\033[0m {short}')
+                      y += 1
+
+          def render_model_select(out, width, height):
+              y = 4
+              out.append(f'\033[{y};3H\033[1mSelect Default Model:\033[0m')
+              y += 1
+
+              # Show detection summary
+              out.append(f'\033[{y};3H\033[90mDetected: {len(ui.ollama_models)} ollama, {len(ui.lm_studio_models)} lm_studio, {len(ui.cloud_models)} cloud\033[0m')
+              y += 2
+
+              list_height = height - 10
+              visible = ui.all_models[ui.scroll:ui.scroll + list_height]
+
+              for i, (provider, model) in enumerate(visible):
+                  idx = ui.scroll + i
+                  row = y + i
+
+                  # Provider color
+                  pcolor = {'ollama': '\033[33m', 'lm_studio': '\033[35m', 'anthropic': '\033[34m',
+                            'gemini': '\033[32m', 'deepseek': '\033[36m'}.get(provider, '\033[37m')
+
+                  if idx == ui.sel:
+                      out.append(f'\033[{row};2H\033[7;1m > {model:<40} {pcolor}{provider}\033[0m\033[7m \033[0m')
+                  else:
+                      out.append(f'\033[{row};2H   {model:<40} {pcolor}{provider}\033[0m')
+
+              if not ui.all_models:
+                  out.append(f'\033[{y};3H\033[31mNo models found! Install Ollama or set API keys.\033[0m')
+                  out.append(f'\033[{y+2};3H\033[90mYou can still continue and configure manually.\033[0m')
+
+              out.append(f'\033[{height};1H\033[K\033[7m j/k:Navigate  Enter:Select  s:Skip  q:Quit \033[0m'.ljust(width))
+
+          def render_config(out, width, height):
+              y = 4
+              out.append(f'\033[{y};3H\033[1mConfigure Team:\033[0m')
+              y += 2
+
+              for i, key in enumerate(ui.config_keys):
+                  label = ui.config_labels[key]
+                  val = ui.config[key]
+                  row = y + i * 2
+
+                  if ui.editing and ui.edit_field == key:
+                      out.append(f'\033[{row};3H\033[33m{label}:\033[0m')
+                      out.append(f'\033[{row+1};5H\033[7m {ui.edit_buf}_ \033[0m')
+                  elif i == ui.config_sel:
+                      out.append(f'\033[{row};3H\033[1m{label}:\033[0m')
+                      out.append(f'\033[{row+1};5H\033[7m {val or "(not set)"} \033[0m')
+                  else:
+                      out.append(f'\033[{row};3H\033[90m{label}:\033[0m')
+                      out.append(f'\033[{row+1};5H {val or "\033[90m(not set)\033[0m"}')
+
+              if ui.editing:
+                  out.append(f'\033[{height};1H\033[K\033[7m Enter:Save  Esc:Cancel \033[0m'.ljust(width))
+              else:
+                  out.append(f'\033[{height};1H\033[K\033[7m j/k:Navigate  e:Edit  Enter:Next  Backspace:Back  q:Quit \033[0m'.ljust(width))
+
+          def render_confirm(out, width, height):
+              y = 4
+              out.append(f'\033[{y};3H\033[1mReady to Initialize:\033[0m')
+              y += 2
+
+              out.append(f'\033[{y};5H\033[1mDirectory:\033[0m {ui.directory}')
+              y += 1
+              out.append(f'\033[{y};5H\033[1mModel:\033[0m {ui.config["model"]} ({ui.config["provider"]})')
+              y += 1
+              out.append(f'\033[{y};5H\033[1mTeam:\033[0m {ui.config["team_name"]}')
+              y += 1
+              out.append(f'\033[{y};5H\033[1mCoordinator:\033[0m {ui.config["forenpc"]}')
+              y += 1
+              out.append(f'\033[{y};5H\033[1mDescription:\033[0m {ui.config["context_desc"]}')
+              y += 2
+
+              out.append(f'\033[{y};3H\033[90mWill create:\033[0m')
+              y += 1
+              files = [
+                  f'{ui.directory}/{ui.config["team_name"]}/team.ctx',
+                  f'{ui.directory}/{ui.config["team_name"]}/{ui.config["forenpc"]}.npc',
+                  f'{ui.directory}/{ui.config["team_name"]}/jinxs/',
+                  f'{ui.directory}/{ui.config["team_name"]}/tools/',
+                  f'{ui.directory}/images/',
+                  f'{ui.directory}/models/',
+                  f'{ui.directory}/mcp_servers/',
+              ]
+              for f in files:
+                  out.append(f'\033[{y};5H\033[90m{f}\033[0m')
+                  y += 1
+
+              out.append(f'\033[{height};1H\033[K\033[7m Enter:Create  Backspace:Back  q:Quit \033[0m'.ljust(width))
+
+          def render_done(out, width, height):
+              y = 4
+              if ui.error:
+                  out.append(f'\033[{y};3H\033[31;1mInitialization Failed\033[0m')
+                  y += 2
+                  out.append(f'\033[{y};3H\033[31m{ui.error}\033[0m')
+              else:
+                  out.append(f'\033[{y};3H\033[32;1mProject Initialized!\033[0m')
+                  y += 2
+                  out.append(f'\033[{y};3H{ui.result}')
+                  y += 2
+                  out.append(f'\033[{y};3H\033[1mNext steps:\033[0m')
+                  y += 1
+                  out.append(f'\033[{y};5H\033[36mcd {ui.directory}\033[0m')
+                  y += 1
+                  out.append(f'\033[{y};5H\033[36mnpcsh\033[0m')
+                  y += 2
+                  out.append(f'\033[{y};3H\033[90mOr add more NPCs:\033[0m')
+                  y += 1
+                  out.append(f'\033[{y};5H\033[90mCreate {ui.config["team_name"]}/analyst.npc, {ui.config["team_name"]}/writer.npc, etc.\033[0m')
+
+              out.append(f'\033[{height};1H\033[K\033[7m Enter/q:Exit \033[0m'.ljust(width))
+
+          # ========== Execution ==========
+          def do_init():
+              from npcpy.npc_compiler import initialize_npc_project
+              try:
+                  initialize_npc_project(
+                      directory=ui.directory,
+                      templates=context.get('templates'),
+                      context=ui.config['context_desc'],
+                      model=ui.config['model'],
+                      provider=ui.config['provider']
+                  )
+                  ui.result = f"Created project at {os.path.abspath(ui.directory)}"
+                  ui.error = ""
+              except Exception as e:
+                  ui.error = str(e)
+                  ui.result = ""
+
+          # ========== Input ==========
+          def handle_input(c, fd):
+              if ui.editing:
+                  return handle_edit(c, fd)
+
+              # Escape sequences
+              if c == '\x1b':
+                  if select.select([fd], [], [], 0.05)[0]:
+                      c2 = os.read(fd, 1).decode('latin-1')
+                      if c2 == '[':
+                          c3 = os.read(fd, 1).decode('latin-1')
+                          if c3 == 'A': move_up()
+                          elif c3 == 'B': move_down()
+                  return True
+
+              if c == 'q' or c == '\x03':
+                  return False
+
+              if ui.phase == 0:  # Directory
+                  if c == 'e':
+                      ui.editing = True
+                      ui.edit_buf = ui.directory
+                  elif c in ('\r', '\n'):
+                      ui.phase = 1
+                      render()
+                      run_detection()
+                      ui.phase = 2
+                      ui.sel = 0
+                      ui.scroll = 0
+
+              elif ui.phase == 2:  # Model select
+                  if c == 'j': move_down()
+                  elif c == 'k': move_up()
+                  elif c == 's':  # Skip
+                      ui.phase = 3
+                      ui.config_sel = 0
+                  elif c in ('\r', '\n'):
+                      if ui.all_models and ui.sel < len(ui.all_models):
+                          ui.config['provider'], ui.config['model'] = ui.all_models[ui.sel]
+                      ui.phase = 3
+                      ui.config_sel = 0
+
+              elif ui.phase == 3:  # Config
+                  if c == 'j': move_down()
+                  elif c == 'k': move_up()
+                  elif c == 'e':
+                      key = ui.config_keys[ui.config_sel]
+                      ui.editing = True
+                      ui.edit_field = key
+                      ui.edit_buf = ui.config[key]
+                  elif c == '\x7f' or c == '\x08':  # Backspace
+                      ui.phase = 2
+                      ui.sel = 0
+                  elif c in ('\r', '\n'):
+                      ui.phase = 4
+
+              elif ui.phase == 4:  # Confirm
+                  if c == '\x7f' or c == '\x08':
+                      ui.phase = 3
+                      ui.config_sel = 0
+                  elif c in ('\r', '\n'):
+                      ui.phase = 5
+                      render()
+                      do_init()
+
+              elif ui.phase == 5:  # Done
+                  if c in ('\r', '\n', 'q'):
+                      return False
+
+              return True
+
+          def handle_edit(c, fd):
+              if c == '\x1b':
+                  if select.select([fd], [], [], 0.05)[0]:
+                      os.read(fd, 2)
+                  ui.editing = False
+                  ui.edit_buf = ""
+                  return True
+              if c in ('\r', '\n'):
+                  if ui.phase == 0:
+                      ui.directory = os.path.abspath(os.path.expanduser(ui.edit_buf)) if ui.edit_buf else ui.directory
+                  elif ui.phase == 3:
+                      ui.config[ui.edit_field] = ui.edit_buf
+                  ui.editing = False
+                  return True
+              if c == '\x7f' or c == '\x08':
+                  ui.edit_buf = ui.edit_buf[:-1]
+                  return True
+              if c >= ' ' and c <= '~':
+                  ui.edit_buf += c
+              return True
+
+          def move_up():
+              if ui.phase == 2:
+                  ui.sel = max(0, ui.sel - 1)
+                  if ui.sel < ui.scroll:
+                      ui.scroll = ui.sel
+              elif ui.phase == 3:
+                  ui.config_sel = max(0, ui.config_sel - 1)
+
+          def move_down():
+              _, height = get_size()
+              if ui.phase == 2:
+                  ui.sel = min(len(ui.all_models) - 1, ui.sel + 1) if ui.all_models else 0
+                  list_height = height - 10
+                  if ui.sel >= ui.scroll + list_height:
+                      ui.scroll = ui.sel - list_height + 1
+              elif ui.phase == 3:
+                  ui.config_sel = min(len(ui.config_keys) - 1, ui.config_sel + 1)
+
+          # ========== Main Loop ==========
+          fd = sys.stdin.fileno()
+          old_settings = termios.tcgetattr(fd)
+
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
+              render()
+
+              running = True
+              while running:
+                  if select.select([fd], [], [], 0.1)[0]:
+                      c = os.read(fd, 1).decode('latin-1')
+                      running = handle_input(c, fd)
+                  render()
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+              sys.stdout.write('\033[?25h\033[2J\033[H')
+              sys.stdout.flush()
+
+          if ui.result:
+              print(ui.result)
+              context['output'] = ui.result
+          elif ui.error:
+              context['output'] = f"Error: {ui.error}"
+          else:
+              context['output'] = "Init cancelled."
+
+          context['messages'] = context.get('messages', [])
