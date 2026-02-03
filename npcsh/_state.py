@@ -3655,8 +3655,31 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
 
     forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
 
-    team = Team(team_path=team_dir, db_conn=command_history.engine)
-    
+    try:
+        team = Team(team_path=team_dir, db_conn=command_history.engine)
+    except FileNotFoundError as e:
+        print(f"Warning: Team compilation failed - {e}")
+        print("Auto-refreshing npc_team files from package...")
+
+        global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
+        if team_dir == global_team_path:
+            user_jinxs_dir = os.path.join(global_team_path, "jinxs")
+            if os.path.exists(user_jinxs_dir):
+                print(f"Removing stale jinxs directory: {user_jinxs_dir}")
+                shutil.rmtree(user_jinxs_dir)
+            initialize_base_npcs_if_needed(db_path)
+            print("npc_team files refreshed. Retrying team initialization...")
+            try:
+                team = Team(team_path=team_dir, db_conn=command_history.engine)
+            except FileNotFoundError as retry_e:
+                print(f"Error: Team initialization still failed after refresh: {retry_e}")
+                print("This may indicate corrupted NPC files. Try: rm -rf ~/.npcsh/npc_team && npcsh")
+                raise
+        else:
+            print(f"Error: Project team at '{team_dir}' has compilation errors.")
+            print("Please check your .npc files and jinx references.")
+            raise
+
     forenpc_obj = team.forenpc if hasattr(team, 'forenpc') and team.forenpc else None
 
     for npc_name, npc_obj in team.npcs.items():
