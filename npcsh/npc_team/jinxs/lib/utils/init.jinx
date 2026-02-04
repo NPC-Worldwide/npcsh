@@ -1,10 +1,9 @@
 jinx_name: init
 description: Interactive TUI for initializing NPC projects with model detection and configuration
-interactive: true
 inputs:
   - directory: ""
   - templates: ""
-  - context: ""
+  - team_ctx: ""
   - model: ""
   - provider: ""
 steps:
@@ -28,7 +27,7 @@ steps:
               initialize_npc_project(
                   directory=_direct_dir or '.',
                   templates=context.get('templates'),
-                  context=context.get('context'),
+                  context=context.get('team_ctx'),
                   model=context.get('model'),
                   provider=context.get('provider')
               )
@@ -162,7 +161,7 @@ steps:
           def render():
               width, height = get_size()
               out = []
-              out.append('\033[2J\033[H')
+              out.append('\033[H')  # Home cursor only, no full clear
 
               phase_names = ['Directory', 'Detecting...', 'Select Model', 'Configure', 'Confirm', 'Complete']
               phase_icons = ['1', '2', '3', '4', '5', '*']
@@ -224,7 +223,7 @@ steps:
                   out.append(f'\033[{y};3H\033[7m > {ui.directory} \033[0m {status}')
 
               y += 2
-              out.append(f'\033[{y};3H\033[90mThis will create:{"\033[0m"}')
+              out.append(f'\033[{y};3H\033[90mThis will create:\033[0m')
               y += 1
               preview_dir = ui.edit_buf if ui.editing else ui.directory
               out.append(f'\033[{y};5H\033[90m{preview_dir}/\033[0m')
@@ -310,7 +309,8 @@ steps:
                       out.append(f'\033[{row+1};5H\033[7m {val or "(not set)"} \033[0m')
                   else:
                       out.append(f'\033[{row};3H\033[90m{label}:\033[0m')
-                      out.append(f'\033[{row+1};5H {val or "\033[90m(not set)\033[0m"}')
+                      not_set = '\033[90m(not set)\033[0m'
+                      out.append(f'\033[{row+1};5H {val or not_set}')
 
               if ui.editing:
                   out.append(f'\033[{height};1H\033[K\033[7m Enter:Save  Esc:Cancel \033[0m'.ljust(width))
@@ -506,14 +506,15 @@ steps:
 
           try:
               tty.setcbreak(fd)
-              sys.stdout.write('\033[?25l')
+              sys.stdout.write('\033[?25l')    # hide cursor
+              sys.stdout.write('\033[2J\033[H') # initial full clear
+              sys.stdout.flush()
               render()
 
-              running = True
-              while running:
-                  if select.select([fd], [], [], 0.1)[0]:
-                      c = os.read(fd, 1).decode('latin-1')
-                      running = handle_input(c, fd)
+              while True:
+                  c = os.read(fd, 1).decode('latin-1')
+                  if not handle_input(c, fd):
+                      break
                   render()
           finally:
               termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)

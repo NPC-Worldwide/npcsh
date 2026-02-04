@@ -51,10 +51,6 @@ class CommandRouter:
         self.jinx_objects[command_name] = jinx
         self.help_info[command_name] = jinx.description or "Jinx command"
 
-    def is_interactive(self, command_name: str) -> bool:
-        jinx = self.jinx_objects.get(command_name)
-        return bool(jinx and getattr(jinx, 'interactive', False))
-    
     def _execute_jinx(self, jinx: Jinx, command: str, **kwargs):
         messages = kwargs.get("messages", [])
         npc = kwargs.get('npc')

@@ -1,6 +1,5 @@
 jinx_name: jinxs
 description: Interactive jinx browser - browse, search, and preview available jinxs
-interactive: true
 inputs: []
 steps:
   - name: jinxs_browser

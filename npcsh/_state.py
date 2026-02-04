@@ -2883,46 +2883,13 @@ def process_pipeline_command(
     exec_provider = provider_override or npc_provider or state.chat_provider
 
     if cmd_to_process.startswith("/"):
-        command_name = cmd_to_process.split()[0].lstrip('/')
-        
-        # Check if this is an interactive mode
-        is_interactive_mode = False
-
-        # Check if the jinx declares interactive: true
-        if router.is_interactive(command_name):
-            is_interactive_mode = True
-
-        # Also check modes/ directory (legacy)
-        if not is_interactive_mode:
-            global_modes_jinx = os.path.expanduser(f'~/.npcsh/npc_team/jinxs/modes/{command_name}.jinx')
-            if os.path.exists(global_modes_jinx):
-                is_interactive_mode = True
-
-        if not is_interactive_mode and state.team and state.team.team_path:
-            team_modes_jinx = os.path.join(state.team.team_path, 'jinxs', 'modes', f'{command_name}.jinx')
-            if os.path.exists(team_modes_jinx):
-                is_interactive_mode = True
-        
-        if is_interactive_mode:
-            result = execute_slash_command(
-                cmd_to_process, 
-                stdin_input, 
-                state, 
-                stream_final, 
-                router
-            )
-        else:
-            with SpinnerContext(
-                f"Routing to {cmd_to_process.split()[0]}", 
-                style="arrow"
-            ):
-                result = execute_slash_command(
-                    cmd_to_process, 
-                    stdin_input, 
-                    state, 
-                    stream_final, 
-                    router
-                )
+        result = execute_slash_command(
+            cmd_to_process,
+            stdin_input,
+            state,
+            stream_final,
+            router
+        )
         return result
     cmd_parts = parse_command_safely(cmd_to_process)
     if not cmd_parts:
