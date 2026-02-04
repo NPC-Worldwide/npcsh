@@ -132,7 +132,7 @@ from .config import (
     set_npcsh_config_value,
 )
 from .ui import SpinnerContext, orange, get_file_color, format_file_listing, wrap_text
-from .parsing import split_by_pipes, parse_command_safely, parse_generic_command_flags
+from .parsing import parse_command_safely, parse_generic_command_flags
 from .execution import (
     TERMINAL_EDITORS,
     INTERACTIVE_COMMANDS as interactive_commands,
@@ -2208,36 +2208,6 @@ def _get_npc_hints(state, prefix='@') -> str:
 
 
 
-def split_by_pipes(command: str) -> List[str]:
-    parts = []
-    current = ""
-    in_single_quote = False
-    in_double_quote = False
-    escape = False
-
-    for char in command:
-        if escape:
-            current += char
-            escape = False
-        elif char == '\\':
-            escape = True
-            current += char
-        elif char == "'" and not in_double_quote:
-            in_single_quote = not in_single_quote
-            current += char
-        elif char == '"' and not in_single_quote:
-            in_double_quote = not in_single_quote
-            current += char
-        elif char == '|' and not in_single_quote and not in_double_quote:
-            parts.append(current.strip())
-            current = ""
-        else:
-            current += char
-
-    if current:
-        parts.append(current.strip())
-    return parts
-
 def parse_command_safely(cmd: str) -> List[str]:
     try:
         return shlex.split(cmd)
@@ -3409,103 +3379,44 @@ def execute_command(
             # Fall through to normal processing
 
     original_command_for_embedding = command
-    commands = split_by_pipes(command)
-    # Unescape pipe characters that were escaped to prevent splitting (e.g., from pasted content)
-    commands = [cmd.replace('\\|', '|') for cmd in commands]
 
-    stdin_for_next = None
-    final_output = None
-    current_state = state
-
-    # Agent mode uses pipeline processing (the original behavior)
+    # Agent mode processes commands directly
     # Other modes route to their respective jinxs
     if state.current_mode == 'agent':
-        total_stages = len(commands)
+        try:
+            state, output = process_pipeline_command(
+                command.strip(),
+                None,
+                state,
+                stream_final=state.stream_output,
+                review=review,
+                router=router
+            )
 
-        for i, cmd_segment in enumerate(commands):
-            stage_num = i + 1
-            stage_emoji = ["🎯", "⚙️", "🔧", "✨", "🚀"][i % 5]
+            if output is not None and isinstance(output, str):
+                store_command_embeddings(original_command_for_embedding, output, state)
 
-            if total_stages > 1:
-                print(colored(
-                    f"\n{stage_emoji} Pipeline Stage {stage_num}/{total_stages}",
-                    "cyan",
-                    attrs=["bold"]
-                ))
+            return state, output
 
-            is_last_command = (i == len(commands) - 1)
-            stream_this_segment = state.stream_output and not is_last_command
-
-            try:
-                current_state, output = process_pipeline_command(
-                    cmd_segment.strip(),
-                    stdin_for_next,
-                    current_state,
-                    stream_final=stream_this_segment,
-                    review=review,
-                    router=router
-                )
-
-                # For last command, preserve full dict with usage info
-                if is_last_command:
-                    if total_stages > 1:
-                        print(colored("✅ Pipeline complete", "green"))
-                    return current_state, output
-
-                # For intermediate stages, extract output text for piping
-                if isinstance(output, dict) and 'output' in output:
-                    output = output['output']
-
-                if isinstance(output, str):
-                    stdin_for_next = output
-                else:
-                    try:
-                        if stream_this_segment:
-                            full_stream_output = (
-                                print_and_process_stream_with_markdown(
-                                    output,
-                                    state.npc.model if isinstance(state.npc, NPC) else state.chat_model,
-                                    state.npc.provider if isinstance(state.npc, NPC) else state.chat_provider,
-                                    show=True
-                                )
-                            )
-                            stdin_for_next = full_stream_output
-                    except Exception:
-                        if output is not None:
-                            try:
-                                stdin_for_next = str(output)
-                            except Exception:
-                                stdin_for_next = None
-                        else:
-                            stdin_for_next = None
-
-                if total_stages > 1:
-                    print(colored(f"  → Passing to stage {stage_num + 1}", "blue"))
-
-            except KeyboardInterrupt:
-                print(colored("\nOperation interrupted by user.", "yellow"))
-                return current_state, colored("Command interrupted.", "red")
-            except RateLimitError:
-                print(colored('Rate Limit Exceeded', 'yellow'))
-                messages = current_state.messages[0:1] + current_state.messages[-2:]
-                current_state.messages = messages
-                import time
-                print('Waiting 30s before retry...')
-                time.sleep(30)
-                return execute_command(command, current_state, review=review, router=router)
-            except Exception as pipeline_error:
-                import traceback
-                traceback.print_exc()
-                error_msg = colored(
-                    f"❌ Error in stage {stage_num} ('{cmd_segment[:50]}...'): {pipeline_error}",
-                    "red"
-                )
-                return current_state, error_msg
-
-        if final_output is not None and isinstance(final_output, str):
-            store_command_embeddings(original_command_for_embedding, final_output, current_state)
-
-        return current_state, final_output
+        except KeyboardInterrupt:
+            print(colored("\nOperation interrupted by user.", "yellow"))
+            return state, colored("Command interrupted.", "red")
+        except RateLimitError:
+            print(colored('Rate Limit Exceeded', 'yellow'))
+            messages = state.messages[0:1] + state.messages[-2:]
+            state.messages = messages
+            import time
+            print('Waiting 30s before retry...')
+            time.sleep(30)
+            return execute_command(command, state, review=review, router=router)
+        except Exception as cmd_error:
+            import traceback
+            traceback.print_exc()
+            error_msg = colored(
+                f"❌ Error processing command: {cmd_error}",
+                "red"
+            )
+            return state, error_msg
 
     else:
         # For non-agent modes (chat, cmd, or any custom mode), route through the jinx
