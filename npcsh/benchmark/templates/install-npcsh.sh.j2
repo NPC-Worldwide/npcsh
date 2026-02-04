@@ -12,23 +12,52 @@ if ! command -v pip &> /dev/null; then
     apt-get update && apt-get install -y python3-pip
 fi
 
-# Upgrade pip first to handle modern packages and extras
+# Upgrade pip and set config to allow system packages
 echo "Upgrading pip..."
+pip config set global.break-system-packages true 2>/dev/null || true
 pip install --upgrade pip 2>/dev/null || pip install --break-system-packages --upgrade pip 2>/dev/null || true
+
+# Pre-install build dependencies to avoid nested pip issues with PEP 668
+echo "Installing build dependencies..."
+pip install --break-system-packages setuptools wheel 2>/dev/null || pip install setuptools wheel || true
+
+# Always install ollama client (required for ollama provider)
+echo "Installing ollama client..."
+pip install --break-system-packages ollama 2>/dev/null || pip install ollama || true
 
 # Install from local source (uploaded by agent setup)
 echo "Installing npcpy from local source..."
 if [ -d /src/npcpy ]; then
-    pip install --break-system-packages -e /src/npcpy 2>/dev/null || pip install -e /src/npcpy
+    # Install npcpy with core deps only (skip GUI deps like pyautogui for headless containers)
+    pip install --break-system-packages -e /src/npcpy --no-build-isolation 2>/dev/null || \
+    pip install -e /src/npcpy --no-build-isolation 2>/dev/null || \
+    pip install --break-system-packages -e /src/npcpy 2>/dev/null || \
+    pip install -e /src/npcpy || {
+        echo "Installing npcpy deps manually..."
+        pip install --break-system-packages litellm termcolor pydantic jinja2 ollama tiktoken pyyaml 2>/dev/null || \
+        pip install litellm termcolor pydantic jinja2 ollama tiktoken pyyaml
+        pip install --break-system-packages --no-deps -e /src/npcpy 2>/dev/null || pip install --no-deps -e /src/npcpy
+    }
 fi
 
 echo "Installing npcsh from local source..."
-pip install --break-system-packages -e /src/npcsh ollama 2>/dev/null || pip install -e /src/npcsh ollama
+pip install --break-system-packages -e /src/npcsh --no-build-isolation 2>/dev/null || \
+pip install -e /src/npcsh --no-build-isolation 2>/dev/null || \
+pip install --break-system-packages -e /src/npcsh 2>/dev/null || \
+pip install -e /src/npcsh || {
+    echo "Installing npcsh deps manually..."
+    pip install --break-system-packages termcolor pyyaml jinja2 2>/dev/null || pip install termcolor pyyaml jinja2
+    pip install --break-system-packages --no-deps -e /src/npcsh 2>/dev/null || pip install --no-deps -e /src/npcsh
+}
 
 # Verify installation
 echo "Verifying npcsh installation..."
-npc --help > /dev/null 2>&1 || {
-    echo "ERROR: npcsh installation failed"
+python3 -c "import npcsh; print('npcsh imported successfully')" 2>&1 || {
+    echo "ERROR: npcsh import failed"
+    exit 1
+}
+npc --help > /dev/null 2>&1 || npcsh --help > /dev/null 2>&1 || {
+    echo "ERROR: npcsh CLI failed"
     exit 1
 }
 

@@ -5,44 +5,6 @@ import shlex
 from typing import List
 
 
-def split_by_pipes(command: str) -> List[str]:
-    """
-    Split a command by pipes, preserving quoted strings.
-
-    Examples:
-        'foo | bar' -> ['foo', 'bar']
-        'foo "hello|world" | bar' -> ['foo "hello|world"', 'bar']
-    """
-    result = []
-    current = []
-    in_single_quote = False
-    in_double_quote = False
-    i = 0
-
-    while i < len(command):
-        char = command[i]
-
-        if char == "'" and not in_double_quote:
-            in_single_quote = not in_single_quote
-            current.append(char)
-        elif char == '"' and not in_single_quote:
-            in_double_quote = not in_double_quote
-            current.append(char)
-        elif char == '|' and not in_single_quote and not in_double_quote:
-            result.append(''.join(current).strip())
-            current = []
-        else:
-            current.append(char)
-
-        i += 1
-
-    # Add final segment
-    if current:
-        result.append(''.join(current).strip())
-
-    return [s for s in result if s]
-
-
 def parse_command_safely(cmd: str) -> List[str]:
     """
     Safely parse a command string into parts using shlex.
