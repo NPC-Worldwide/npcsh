@@ -1,6 +1,5 @@
 jinx_name: python
-description: Execute scripts with python. You must set the ultimate result as the "output"
-  variable. It MUST be a string. 
+description: Execute Python code. Can create files (open/write), run computations, install packages, etc. Set the result as the "output" variable (must be a string). When asked to create a script file, use open() to write it. 
   Do not add unnecessary print statements. 
   This jinx is intended for executing code snippets that are not 
   accomplished by other jinxes. Use it only when the others are insufficient.

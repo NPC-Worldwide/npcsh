@@ -1,5 +1,5 @@
 jinx_name: web_search
-description: Search the web with interactive TUI
+description: Search the web for information. Returns a list of results with titles, URLs, and snippets. Use when you need current info, facts, or answers from the internet.
 interactive: true
 inputs:
 - query: ""

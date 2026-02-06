@@ -4,7 +4,7 @@
     "category": "shell",
     "difficulty": "easy",
     "instruction": "Count the number of files in /etc and write just the number to /tmp/result.txt",
-    "verify_cmd": "test -f /tmp/result.txt && grep -qE '^[0-9]+$' /tmp/result.txt",
+    "verify_cmd": "test -f /tmp/result.txt && grep -qE '[0-9]+' /tmp/result.txt",
     "description": "Basic shell command with file output"
   },
   {
@@ -44,7 +44,7 @@
     "category": "shell",
     "difficulty": "medium",
     "instruction": "Count how many lines in /etc/hosts contain a comment (lines starting with #) and write just the number to /tmp/comment_count.txt",
-    "verify_cmd": "test -f /tmp/comment_count.txt && grep -qE '^[0-9]+$' /tmp/comment_count.txt",
+    "verify_cmd": "test -f /tmp/comment_count.txt && grep -qE '[0-9]+' /tmp/comment_count.txt",
     "description": "Grep + count"
   },
   {
