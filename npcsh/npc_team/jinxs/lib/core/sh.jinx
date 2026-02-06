@@ -20,9 +20,11 @@ steps:
       )
       stdout, stderr = process.communicate()
 
-      if stderr:
-          output = f"Error: {stderr.decode('utf-8')}"
-      else:
+      if process.returncode != 0 and stderr:
+          output = f"Error (exit {process.returncode}): {stderr.decode('utf-8')}"
+      elif stdout.strip():
           output = stdout.decode('utf-8')
+      else:
+          output = f"Command executed successfully (exit code {process.returncode})"
 
 

@@ -21,6 +21,9 @@ steps:
 
       query = context.get('query', '').strip()
       text_mode = context.get('text', '').lower() in ('true', '1', 'yes')
+      # Auto text mode when no TTY (e.g. npcsh -c, tool calls)
+      if not text_mode and not sys.stdin.isatty():
+          text_mode = True
 
       if not query:
           lines = [

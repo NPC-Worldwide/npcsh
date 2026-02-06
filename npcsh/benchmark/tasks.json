@@ -1,0 +1,382 @@
+[
+  {
+    "id": "shell-pipe-01",
+    "category": "shell",
+    "difficulty": "easy",
+    "instruction": "Count the number of files in /etc and write just the number to /tmp/result.txt",
+    "verify_cmd": "test -f /tmp/result.txt && grep -qE '^[0-9]+$' /tmp/result.txt",
+    "description": "Basic shell command with file output"
+  },
+  {
+    "id": "shell-pipe-02",
+    "category": "shell",
+    "difficulty": "easy",
+    "instruction": "List all .py files in the current directory recursively and write the list to /tmp/pyfiles.txt",
+    "verify_cmd": "test -f /tmp/pyfiles.txt && test -s /tmp/pyfiles.txt",
+    "description": "Find + redirect"
+  },
+  {
+    "id": "shell-03",
+    "category": "shell",
+    "difficulty": "easy",
+    "instruction": "Write the output of 'uname -a' to /tmp/uname.txt",
+    "verify_cmd": "test -s /tmp/uname.txt && grep -qi 'darwin\\|linux' /tmp/uname.txt",
+    "description": "Simple command capture"
+  },
+  {
+    "id": "shell-04",
+    "category": "shell",
+    "difficulty": "easy",
+    "instruction": "Create a file /tmp/nums.txt with the numbers 1 through 10, one per line",
+    "verify_cmd": "test $(wc -l < /tmp/nums.txt) -ge 10 && grep -q '^1$' /tmp/nums.txt && grep -q '^10$' /tmp/nums.txt",
+    "description": "Sequence generation"
+  },
+  {
+    "id": "shell-05",
+    "category": "shell",
+    "difficulty": "medium",
+    "instruction": "Find all directories in /usr/local and write their full paths to /tmp/dirs.txt, sorted alphabetically",
+    "verify_cmd": "test -s /tmp/dirs.txt",
+    "description": "Directory listing with sort"
+  },
+  {
+    "id": "shell-06",
+    "category": "shell",
+    "difficulty": "medium",
+    "instruction": "Count how many lines in /etc/hosts contain a comment (lines starting with #) and write just the number to /tmp/comment_count.txt",
+    "verify_cmd": "test -f /tmp/comment_count.txt && grep -qE '^[0-9]+$' /tmp/comment_count.txt",
+    "description": "Grep + count"
+  },
+  {
+    "id": "shell-07",
+    "category": "shell",
+    "difficulty": "medium",
+    "instruction": "Get the top 5 largest files in /usr/bin by size, and write their names and sizes to /tmp/largest.txt",
+    "verify_cmd": "test -s /tmp/largest.txt && test $(wc -l < /tmp/largest.txt) -ge 5",
+    "description": "Sort by size and limit"
+  },
+  {
+    "id": "file-create-01",
+    "category": "file-ops",
+    "difficulty": "easy",
+    "instruction": "Create a file /tmp/hello.txt containing exactly the text 'hello world' (no quotes)",
+    "verify_cmd": "test \"$(cat /tmp/hello.txt)\" = 'hello world'",
+    "description": "Simple file creation"
+  },
+  {
+    "id": "file-create-02",
+    "category": "file-ops",
+    "difficulty": "easy",
+    "instruction": "Create a directory /tmp/mydir and inside it create three empty files: a.txt, b.txt, c.txt",
+    "verify_cmd": "test -d /tmp/mydir && test -f /tmp/mydir/a.txt && test -f /tmp/mydir/b.txt && test -f /tmp/mydir/c.txt",
+    "description": "Directory and multiple files"
+  },
+  {
+    "id": "file-create-03",
+    "category": "file-ops",
+    "difficulty": "easy",
+    "instruction": "Create a JSON file /tmp/person.json with fields name, age, and email. Use any values you want.",
+    "verify_cmd": "python3 -c \"import json; d=json.load(open('/tmp/person.json')); assert 'name' in d and 'age' in d and 'email' in d\"",
+    "description": "JSON file creation"
+  },
+  {
+    "id": "file-edit-01",
+    "category": "file-ops",
+    "difficulty": "medium",
+    "instruction": "Create a file /tmp/config.ini with the following sections: [database] with host=localhost and port=5432, and [app] with debug=true and name=myapp",
+    "verify_cmd": "grep -q '\\[database\\]' /tmp/config.ini && grep -q 'host=localhost' /tmp/config.ini && grep -q 'port=5432' /tmp/config.ini && grep -q '\\[app\\]' /tmp/config.ini && grep -q 'debug=true' /tmp/config.ini",
+    "description": "Multi-section config file creation"
+  },
+  {
+    "id": "file-edit-02",
+    "category": "file-ops",
+    "difficulty": "medium",
+    "instruction": "Create /tmp/env.sh that exports three environment variables: APP_NAME=myapp, APP_PORT=8080, APP_DEBUG=false. Each should be on its own line starting with 'export'.",
+    "verify_cmd": "grep -q 'export APP_NAME=myapp' /tmp/env.sh && grep -q 'export APP_PORT=8080' /tmp/env.sh && grep -q 'export APP_DEBUG=false' /tmp/env.sh",
+    "description": "Shell env file creation"
+  },
+  {
+    "id": "python-01",
+    "category": "python",
+    "difficulty": "easy",
+    "instruction": "Write a Python script /tmp/fib.py that defines a function fibonacci(n) returning the nth fibonacci number (0-indexed, fib(0)=0, fib(1)=1). The script should print fibonacci(10) when run.",
+    "verify_cmd": "python3 /tmp/fib.py | grep -q '55'",
+    "description": "Write and verify a Python script"
+  },
+  {
+    "id": "python-02",
+    "category": "python",
+    "difficulty": "easy",
+    "instruction": "Write a Python script /tmp/rev.py that takes a string as a command line argument and prints it reversed. For example: python3 /tmp/rev.py hello should print olleh",
+    "verify_cmd": "test \"$(python3 /tmp/rev.py hello)\" = 'olleh'",
+    "description": "Simple CLI script"
+  },
+  {
+    "id": "python-03",
+    "category": "python",
+    "difficulty": "easy",
+    "instruction": "Write a Python script /tmp/calc.py that takes three arguments: a number, an operator (+, -, *, /), and another number, then prints the result. Example: python3 /tmp/calc.py 3 + 4 should print 7",
+    "verify_cmd": "python3 /tmp/calc.py 3 + 4 | grep -q '7'",
+    "description": "Basic calculator script"
+  },
+  {
+    "id": "python-04",
+    "category": "python",
+    "difficulty": "medium",
+    "instruction": "Write a Python script /tmp/wordcount.py that reads /tmp/sample.txt and writes a JSON file /tmp/wc_result.json with keys 'lines', 'words', 'chars' containing the counts. First create /tmp/sample.txt with at least 3 lines of text.",
+    "verify_cmd": "python3 /tmp/wordcount.py && python3 -c \"import json; d=json.load(open('/tmp/wc_result.json')); assert 'lines' in d and 'words' in d and 'chars' in d\"",
+    "description": "Multi-step Python task with file I/O"
+  },
+  {
+    "id": "python-05",
+    "category": "python",
+    "difficulty": "medium",
+    "instruction": "Write /tmp/fizzbuzz.py that prints numbers 1 to 30, but prints 'Fizz' for multiples of 3, 'Buzz' for multiples of 5, and 'FizzBuzz' for multiples of both.",
+    "verify_cmd": "python3 /tmp/fizzbuzz.py | head -15 | grep -q 'FizzBuzz' && python3 /tmp/fizzbuzz.py | grep -c 'FizzBuzz' | grep -q '2'",
+    "description": "FizzBuzz implementation"
+  },
+  {
+    "id": "data-01",
+    "category": "data",
+    "difficulty": "medium",
+    "instruction": "Create a CSV file /tmp/data.csv with columns name,age,city and 5 rows of sample data. Then write a script /tmp/analyze.py that reads the CSV and writes /tmp/stats.json with the average age and the list of unique cities.",
+    "verify_cmd": "test -f /tmp/data.csv && python3 /tmp/analyze.py && python3 -c \"import json; d=json.load(open('/tmp/stats.json')); assert 'average_age' in d and 'cities' in d\"",
+    "description": "Data creation and analysis"
+  },
+  {
+    "id": "data-02",
+    "category": "data",
+    "difficulty": "easy",
+    "instruction": "Create a CSV file /tmp/scores.csv with columns student,score containing at least 5 rows of data. Use any names and scores between 0-100.",
+    "verify_cmd": "test -f /tmp/scores.csv && python3 -c \"import csv; rows=list(csv.DictReader(open('/tmp/scores.csv'))); assert len(rows)>=5 and 'student' in rows[0] and 'score' in rows[0]\"",
+    "description": "CSV file creation"
+  },
+  {
+    "id": "data-03",
+    "category": "data",
+    "difficulty": "medium",
+    "instruction": "Create /tmp/inventory.json containing a JSON array of at least 5 objects, each with fields: item (string), quantity (number), price (number). Then write /tmp/total.py that reads it and prints the total value (sum of quantity*price for each item).",
+    "verify_cmd": "python3 /tmp/total.py | grep -qE '[0-9]'",
+    "description": "JSON data processing"
+  },
+  {
+    "id": "sysinfo-01",
+    "category": "system",
+    "difficulty": "easy",
+    "instruction": "Write the current hostname, kernel version, and current user to /tmp/sysinfo.txt, one per line.",
+    "verify_cmd": "test -f /tmp/sysinfo.txt && test $(wc -l < /tmp/sysinfo.txt) -ge 3",
+    "description": "System information gathering"
+  },
+  {
+    "id": "network-01",
+    "category": "system",
+    "difficulty": "easy",
+    "instruction": "Write the current date in ISO format and your current working directory to /tmp/env_info.txt",
+    "verify_cmd": "test -f /tmp/env_info.txt && test -s /tmp/env_info.txt",
+    "description": "Environment information capture"
+  },
+  {
+    "id": "system-03",
+    "category": "system",
+    "difficulty": "medium",
+    "instruction": "Write a list of all environment variables that contain the word 'PATH' to /tmp/path_vars.txt",
+    "verify_cmd": "test -s /tmp/path_vars.txt && grep -qi 'PATH' /tmp/path_vars.txt",
+    "description": "Environment variable filtering"
+  },
+  {
+    "id": "text-process-01",
+    "category": "text",
+    "difficulty": "medium",
+    "instruction": "Create /tmp/log.txt with 10 lines of fake log entries in the format 'YYYY-MM-DD HH:MM:SS [LEVEL] message' using levels INFO, WARN, ERROR. Then extract only the ERROR lines to /tmp/errors.txt",
+    "verify_cmd": "test -f /tmp/errors.txt && grep -q ERROR /tmp/errors.txt && ! grep -q INFO /tmp/errors.txt",
+    "description": "Log generation and filtering"
+  },
+  {
+    "id": "text-process-02",
+    "category": "text",
+    "difficulty": "easy",
+    "instruction": "Create /tmp/fruits.txt with one fruit name per line (at least 5 fruits), then sort them alphabetically and write to /tmp/sorted_fruits.txt",
+    "verify_cmd": "test -s /tmp/sorted_fruits.txt && test $(wc -l < /tmp/sorted_fruits.txt) -ge 5",
+    "description": "Text sorting"
+  },
+  {
+    "id": "text-process-03",
+    "category": "text",
+    "difficulty": "medium",
+    "instruction": "Create /tmp/words.txt with at least 20 words (one per line, some repeated). Then write /tmp/unique_counts.txt showing each unique word and how many times it appears, sorted by count descending.",
+    "verify_cmd": "test -s /tmp/unique_counts.txt && test $(wc -l < /tmp/unique_counts.txt) -ge 3",
+    "description": "Word frequency counting"
+  },
+  {
+    "id": "script-debug-01",
+    "category": "debug",
+    "difficulty": "medium",
+    "instruction": "The file /tmp/broken.py has a bug. Fix it so it runs correctly. Here is the content to write to /tmp/broken.py first: \ndef add_numbers(a, b):\n    return a + b\n\ndef main():\n    result = add_numbers(5, '3')\n    print(f'Result: {result}')\n\nmain()\n\nThe fix should make it print 'Result: 8'.",
+    "verify_cmd": "python3 /tmp/broken.py | grep -q 'Result: 8'",
+    "description": "Debug and fix a Python script"
+  },
+  {
+    "id": "script-debug-02",
+    "category": "debug",
+    "difficulty": "easy",
+    "instruction": "Create /tmp/buggy.py with this content and fix the bug:\n\ndef greet(name):\n    print('Hello, ' + name + '!')\n\ngreet(42)\n\nIt should print 'Hello, 42!'",
+    "verify_cmd": "python3 /tmp/buggy.py | grep -q 'Hello, 42!'",
+    "description": "Simple type error fix"
+  },
+  {
+    "id": "git-01",
+    "category": "git",
+    "difficulty": "medium",
+    "instruction": "Create a git repository in /tmp/myrepo, add a README.md with the text 'My Project', and make an initial commit with message 'init'.",
+    "verify_cmd": "cd /tmp/myrepo && git log --oneline | grep -q 'init' && test -f README.md",
+    "description": "Git repository setup"
+  },
+  {
+    "id": "multistep-01",
+    "category": "multi-step",
+    "difficulty": "medium",
+    "instruction": "Create a directory /tmp/project with subdirectories src and tests. In src, create a file main.py that prints 'hello'. In tests, create test_main.py that imports and runs main.",
+    "verify_cmd": "test -d /tmp/project/src && test -d /tmp/project/tests && test -f /tmp/project/src/main.py && test -f /tmp/project/tests/test_main.py",
+    "description": "Multi-step directory and file creation"
+  },
+  {
+    "id": "multistep-02",
+    "category": "multi-step",
+    "difficulty": "medium",
+    "instruction": "Find the total disk usage of /usr/lib in human readable format and write it to /tmp/disk_usage.txt. Also write the count of files in that directory to /tmp/file_count.txt",
+    "verify_cmd": "test -s /tmp/disk_usage.txt && test -s /tmp/file_count.txt",
+    "description": "Multiple shell commands with output capture"
+  },
+  {
+    "id": "multistep-03",
+    "category": "multi-step",
+    "difficulty": "hard",
+    "instruction": "Create a Python CLI tool at /tmp/todo.py that supports: 'python3 /tmp/todo.py add <task>' to append a task to /tmp/todos.txt, and 'python3 /tmp/todo.py list' to print all tasks. Then add 3 tasks and verify with list.",
+    "verify_cmd": "python3 /tmp/todo.py add 'test task' && python3 /tmp/todo.py list | grep -q 'test task'",
+    "description": "Build and test a CLI tool"
+  },
+  {
+    "id": "multistep-04",
+    "category": "multi-step",
+    "difficulty": "medium",
+    "instruction": "Create /tmp/users.json with a JSON array of 3 user objects (each with name and role). Then write /tmp/report.txt listing each user as 'Name: X, Role: Y' on separate lines.",
+    "verify_cmd": "test -s /tmp/report.txt && test $(wc -l < /tmp/report.txt) -ge 3 && grep -qi 'name\\|role' /tmp/report.txt",
+    "description": "JSON to text report"
+  },
+  {
+    "id": "multistep-05",
+    "category": "multi-step",
+    "difficulty": "hard",
+    "instruction": "Write a bash script /tmp/backup.sh that takes a directory path as argument, creates a tarball of it at /tmp/backup.tar.gz, and prints the size of the archive. Then run it on /tmp/mydir (create /tmp/mydir with some files first if it doesn't exist).",
+    "verify_cmd": "test -f /tmp/backup.sh && test -f /tmp/backup.tar.gz",
+    "description": "Backup script creation and execution"
+  },
+  {
+    "id": "image-gen-01",
+    "category": "image-gen",
+    "difficulty": "easy",
+    "timeout": 300,
+    "instruction": "Generate an image of a sunset over mountains and save it to /tmp/sunset.png",
+    "verify_cmd": "test -f /tmp/sunset.png || ls ~/.npcsh/images/vixynt_*.png 2>/dev/null | head -1 | xargs test -f",
+    "description": "Image generation via delegation to frederic/vixynt"
+  },
+  {
+    "id": "image-gen-02",
+    "category": "image-gen",
+    "difficulty": "medium",
+    "timeout": 300,
+    "instruction": "Generate an image of a cat sitting on a windowsill and save it to /tmp/cat.png",
+    "verify_cmd": "test -f /tmp/cat.png || ls ~/.npcsh/images/vixynt_*.png 2>/dev/null | head -1 | xargs test -f",
+    "description": "Image generation - delegation + vixynt"
+  },
+  {
+    "id": "image-gen-03",
+    "category": "image-gen",
+    "difficulty": "easy",
+    "timeout": 300,
+    "instruction": "Generate any image and save it to /tmp/generated.png",
+    "verify_cmd": "test -f /tmp/generated.png || ls ~/.npcsh/images/vixynt_*.png 2>/dev/null | head -1 | xargs test -f",
+    "description": "Basic image generation via delegation"
+  },
+  {
+    "id": "audio-gen-01",
+    "category": "audio-gen",
+    "difficulty": "medium",
+    "timeout": 300,
+    "instruction": "Generate speech audio saying 'Hello, welcome to npcsh' and save it to /tmp/welcome.wav",
+    "verify_cmd": "test -f /tmp/welcome.wav || test -f /tmp/welcome.mp3 || ls ~/.npcsh/audio/scherzo_*.wav 2>/dev/null | head -1 | xargs test -f",
+    "description": "TTS via delegation to frederic/scherzo"
+  },
+  {
+    "id": "audio-gen-02",
+    "category": "audio-gen",
+    "difficulty": "medium",
+    "timeout": 300,
+    "instruction": "Generate speech audio of the sentence 'The quick brown fox jumps over the lazy dog' and save it as /tmp/pangram.wav",
+    "verify_cmd": "test -f /tmp/pangram.wav || test -f /tmp/pangram.mp3 || ls ~/.npcsh/audio/scherzo_*.wav 2>/dev/null | head -1 | xargs test -f",
+    "description": "TTS pangram via delegation"
+  },
+  {
+    "id": "web-search-01",
+    "category": "web-search",
+    "difficulty": "medium",
+    "timeout": 180,
+    "instruction": "Search the web for 'python asyncio tutorial' and write a summary of what you found to /tmp/search_results.txt",
+    "verify_cmd": "test -s /tmp/search_results.txt && test $(wc -w < /tmp/search_results.txt) -ge 10",
+    "description": "Web search and summarize"
+  },
+  {
+    "id": "web-search-02",
+    "category": "web-search",
+    "difficulty": "easy",
+    "timeout": 180,
+    "instruction": "Search the web for who created Linux and save the answer to /tmp/linux_creator.txt",
+    "verify_cmd": "test -s /tmp/linux_creator.txt",
+    "description": "Web search - factual question"
+  },
+  {
+    "id": "web-search-03",
+    "category": "web-search",
+    "difficulty": "medium",
+    "timeout": 180,
+    "instruction": "Search the web for the current population of Japan and write the answer to /tmp/japan_pop.txt",
+    "verify_cmd": "test -s /tmp/japan_pop.txt",
+    "description": "Web search - factual lookup"
+  },
+  {
+    "id": "delegation-01",
+    "category": "delegation",
+    "difficulty": "medium",
+    "timeout": 240,
+    "instruction": "Delegate to a specialist to write a Python script at /tmp/primes.py that finds all prime numbers under 100 and prints them",
+    "verify_cmd": "python3 /tmp/primes.py | grep -q '97'",
+    "description": "Delegation for code task"
+  },
+  {
+    "id": "delegation-02",
+    "category": "delegation",
+    "difficulty": "hard",
+    "timeout": 300,
+    "instruction": "Research what the Fibonacci sequence is, then create a Python script /tmp/fib_research.py that prints the first 15 Fibonacci numbers and a one-line comment explaining the sequence",
+    "verify_cmd": "test -f /tmp/fib_research.py && python3 /tmp/fib_research.py | grep -q '610'",
+    "description": "Research + code delegation chain"
+  },
+  {
+    "id": "tool-chain-01",
+    "category": "tool-chain",
+    "difficulty": "hard",
+    "timeout": 300,
+    "instruction": "Search the web for the top 5 most popular programming languages, save the results to /tmp/languages.txt, then create a Python script /tmp/rank.py that reads that file and prints the languages as a numbered list.",
+    "verify_cmd": "test -s /tmp/languages.txt && python3 /tmp/rank.py | grep -qE '[0-9]'",
+    "description": "Web search + file write + script chain"
+  },
+  {
+    "id": "tool-chain-02",
+    "category": "tool-chain",
+    "difficulty": "hard",
+    "timeout": 360,
+    "instruction": "Generate an image of a forest and save it to /tmp/forest.png, then write a Python script /tmp/img_info.py that opens the image and prints its dimensions.",
+    "verify_cmd": "(test -f /tmp/forest.png || ls ~/.npcsh/images/vixynt_*.png 2>/dev/null | head -1 | xargs test -f) && test -f /tmp/img_info.py",
+    "description": "Image gen + code analysis chain"
+  }
+]

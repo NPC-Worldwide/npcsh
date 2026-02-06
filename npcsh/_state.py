@@ -3006,43 +3006,41 @@ def process_pipeline_command(
 
             try: # Added try-except for KeyboardInterrupt here
                 if tool_capable:
-                    # Build kwargs - don't pass tool_choice for gemini as it doesn't support it
                     llm_kwargs = {
-                        "auto_process_tool_calls": True,
                         "tools": tools_for_llm,
                         "tool_map": tool_exec_map,
                     }
                     llm_kwargs["tool_choice"] = 'auto'
 
-                    # Agent loop: keep calling LLM until it stops making tool calls
-                    # The LLM decides when it's done - npcsh just facilitates
+                    # Agent loop: npcsh drives tool execution directly.
+                    # LLM returns tool_calls, we execute them, feed results back.
                     iteration = 0
-                    max_iterations = 50  # Safety limit to prevent infinite loops
+                    max_iterations = 50
                     total_usage = {"input_tokens": 0, "output_tokens": 0}
-                    state._agent_nudges = 0  # Track continuation nudges
-
-                    tool_calls_count = 0  # Track how many tool calls have been made
+                    state._agent_nudges = 0
+                    tool_calls_count = 0
 
                     while iteration < max_iterations:
                         iteration += 1
 
-                        # After a tool has been called, force the model to generate a
-                        # text response on the NEXT iteration by setting tool_choice='none'.
-                        # This prevents models from endlessly repeating tool calls when
-                        # they already have the answer. For multi-step tasks, delegate
-                        # and convene jinxs have their own internal loops.
                         iter_kwargs = dict(llm_kwargs)
-                        if tool_calls_count > 0:
-                            iter_kwargs["tool_choice"] = 'none'
+
+                        logger.debug(f"[agent-loop] iter={iteration} messages={len(state.messages)} tool_calls_count={tool_calls_count}")
+                        for i, m in enumerate(state.messages[-5:]):
+                            idx = max(0, len(state.messages)-5) + i
+                            role = m.get('role','?')
+                            content = str(m.get('content',''))[:120]
+                            has_tc = 'tool_calls' in m
+                            logger.debug(f"  msg[{idx}] role={role} has_tool_calls={has_tc}: {content}")
 
                         llm_result = get_llm_response(
-                            full_llm_cmd if iteration == 1 else None,  # Only pass prompt on first call
+                            full_llm_cmd if iteration == 1 else None,
                             model=exec_model,
                             provider=exec_provider,
                             npc=state.npc,
                             team=state.team,
                             messages=state.messages,
-                            stream=False,  # Don't stream intermediate calls
+                            stream=False,
                             attachments=state.attachments if iteration == 1 else None,
                             context=info if iteration == 1 else None,
                             **iter_kwargs,
@@ -3053,36 +3051,26 @@ def process_pipeline_command(
                             total_usage["input_tokens"] += llm_result['usage'].get('input_tokens', 0)
                             total_usage["output_tokens"] += llm_result['usage'].get('output_tokens', 0)
 
-                        # Update state messages
-                        old_msg_count = len(state.messages) if state.messages else 0
+                        # Log what came back
                         if isinstance(llm_result, dict):
-                            state.messages = llm_result.get("messages", state.messages)
+                            resp_preview = str(llm_result.get('response',''))[:200]
+                            tc_list = llm_result.get('tool_calls', [])
+                            ret_msgs = llm_result.get('messages', [])
+                            logger.debug(f"[agent-loop] result: response={resp_preview!r} tool_calls={len(tc_list)} messages={len(ret_msgs)} usage={llm_result.get('usage')}")
+                            for tc in tc_list:
+                                if isinstance(tc, dict):
+                                    logger.debug(f"  tool_call: {tc.get('function',{}).get('name','')} args={str(tc.get('function',{}).get('arguments',''))[:200]}")
+                                else:
+                                    logger.debug(f"  tool_call(obj): {tc}")
 
-                        # Display tool outputs from this iteration
-                        for msg in state.messages[old_msg_count:]:
-                            if msg.get("role") == "tool":
-                                tool_name = msg.get("name", "tool")
-                                tool_content = msg.get("content", "")
-                                if tool_content and tool_content.strip():
-                                    # Decode escaped newlines if present
-                                    if isinstance(tool_content, str):
-                                        tool_content = tool_content.replace('\\n', '\n').replace('\\t', '\t')
-                                    print(colored(f"\n⚡ {tool_name}:", "cyan"))
-                                    lines = tool_content.split('\n')
-                                    if len(lines) > 50:
-                                        render_markdown('\n'.join(lines[:25]))
-                                        print(colored(f"\n... ({len(lines) - 50} lines hidden) ...\n", "white", attrs=["dark"]))
-                                        render_markdown('\n'.join(lines[-25:]))
-                                    else:
-                                        render_markdown(tool_content)
+                        # Check for tool calls
+                        tool_calls = llm_result.get("tool_calls", []) if isinstance(llm_result, dict) else []
 
-                        # Check if LLM made tool calls - if not, consider re-prompting
-                        tool_calls_made = isinstance(llm_result, dict) and llm_result.get("tool_calls")
-                        if not tool_calls_made:
-                            # In agent mode, nudge to use tools — but ONLY if no tools
-                            # have been called yet (model hasn't started working).
-                            # Once tools have been called and returned results,
-                            # the model should synthesize an answer, not call more tools.
+                        if not tool_calls:
+                            # No tool calls — update messages from LLM response
+                            if isinstance(llm_result, dict):
+                                state.messages = llm_result.get("messages", state.messages)
+                            # No tool calls — nudge if model hasn't started working yet
                             if (state.current_mode == 'agent'
                                     and tool_calls_count == 0
                                     and iteration < max_iterations
@@ -3098,13 +3086,87 @@ def process_pipeline_command(
                                     )
                                 })
                                 continue
-                            # LLM is done - no more tool calls
                             break
 
-                        # Track tool calls and reset nudge counter
+                        # Execute tool calls directly
                         tool_calls_count += 1
                         state._agent_nudges = 0
-                        # Clear the prompt for continuation calls - context is in messages
+
+                        # Normalize tool_calls into dicts and append assistant message
+                        tc_normalized = []
+                        for tc in tool_calls:
+                            if isinstance(tc, dict):
+                                tc_normalized.append(tc)
+                            else:
+                                tc_normalized.append({
+                                    "id": getattr(tc, "id", f"call_{iteration}_{len(tc_normalized)}"),
+                                    "type": "function",
+                                    "function": {
+                                        "name": getattr(tc.function, "name", "") if hasattr(tc, "function") else "",
+                                        "arguments": getattr(tc.function, "arguments", "{}") if hasattr(tc, "function") else "{}",
+                                    }
+                                })
+
+                        # Add assistant message with tool_calls to conversation
+                        assistant_content = llm_result.get("response", "") if isinstance(llm_result, dict) else ""
+                        state.messages.append({
+                            "role": "assistant",
+                            "content": assistant_content or None,
+                            "tool_calls": tc_normalized,
+                        })
+
+                        # Execute each tool call and add results to messages
+                        for tc in tc_normalized:
+                            tc_id = tc.get("id", f"call_{iteration}")
+                            tc_func = tc.get("function", {})
+                            tc_name = tc_func.get("name", "")
+                            tc_args_raw = tc_func.get("arguments", "{}")
+
+                            try:
+                                tc_args = json.loads(tc_args_raw) if isinstance(tc_args_raw, str) else tc_args_raw
+                            except json.JSONDecodeError:
+                                tc_args = {}
+
+                            # Execute via the wrapped tool map (has logging)
+                            tool_result_str = ""
+                            logger.debug(f"[agent-loop] executing tool: {tc_name} args={tc_args}")
+                            if tc_name and tc_name in tool_exec_map:
+                                try:
+                                    raw_result = tool_exec_map[tc_name](**tc_args)
+                                    tool_result_str = json.dumps(raw_result, default=str)
+                                    logger.debug(f"[agent-loop] tool {tc_name} returned: {tool_result_str[:500]}")
+                                except Exception as e:
+                                    tool_result_str = f"Error executing {tc_name}: {e}"
+                                    logger.debug(f"[agent-loop] tool {tc_name} error: {e}")
+                            else:
+                                tool_result_str = f"Unknown tool: {tc_name}"
+                                logger.debug(f"[agent-loop] tool {tc_name} NOT in tool_exec_map. Available: {list(tool_exec_map.keys())}")
+
+                            # Display tool output
+                            if tool_result_str and tool_result_str.strip():
+                                try:
+                                    content_display = tool_result_str
+                                    if isinstance(content_display, str):
+                                        content_display = content_display.replace('\\n', '\n').replace('\\t', '\t')
+                                    print(colored(f"\n⚡ {tc_name}:", "cyan"))
+                                    lines = content_display.split('\n')
+                                    if len(lines) > 50:
+                                        render_markdown('\n'.join(lines[:25]))
+                                        print(colored(f"\n... ({len(lines) - 50} lines hidden) ...\n", "white", attrs=["dark"]))
+                                        render_markdown('\n'.join(lines[-25:]))
+                                    else:
+                                        render_markdown(content_display)
+                                except Exception:
+                                    pass
+
+                            # Add tool result to conversation
+                            state.messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "name": tc_name,
+                                "content": tool_result_str,
+                            })
+
                         full_llm_cmd = None
 
                     # Store accumulated usage
