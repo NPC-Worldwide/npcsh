@@ -1,6 +1,5 @@
 jinx_name: "scherzo"
 description: "Audio creation studio TUI - generate speech and audio with TTS engine controls"
-interactive: true
 inputs:
   - text: null
   - engine: null

@@ -1,6 +1,5 @@
 jinx_name: file_search
 description: Find and browse files with interactive TUI
-interactive: true
 inputs:
 - pattern: ""
 - path: "."

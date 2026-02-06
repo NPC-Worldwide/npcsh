@@ -1,6 +1,5 @@
 jinx_name: alicanto
 description: Deep research mode - multi-agent hypothesis exploration with approval-gated TUI pipeline
-interactive: true
 npc: forenpc
 inputs:
   - query: null

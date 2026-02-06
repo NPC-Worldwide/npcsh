@@ -1,6 +1,5 @@
 jinx_name: crond
 description: System task manager TUI - cron jobs, daemons, and processes
-interactive: true
 inputs: []
 steps:
   - name: crond_tui

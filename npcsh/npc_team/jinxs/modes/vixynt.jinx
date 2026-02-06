@@ -1,6 +1,5 @@
 jinx_name: "vixynt"
 description: "Image creation studio TUI - generate and manage images with parameter controls"
-interactive: true
 inputs:
   - prompt: null
   - model: null

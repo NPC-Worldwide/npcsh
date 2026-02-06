@@ -1,6 +1,5 @@
 jinx_name: setup
 description: Interactive setup wizard for npcsh - detect local models, configure defaults
-interactive: true
 inputs:
   - skip_detection: ""
 steps:

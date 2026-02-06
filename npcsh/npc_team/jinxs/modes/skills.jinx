@@ -1,6 +1,5 @@
 jinx_name: skills
 description: Interactive TUI for browsing, viewing, editing, and using skills
-interactive: true
 inputs: []
 steps:
   - name: skills_browser

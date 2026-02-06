@@ -1,6 +1,5 @@
 jinx_name: papers
 description: Multi-platform research paper browser with tabs for arXiv, Semantic Scholar, OpenReview, and Wikipedia
-interactive: true
 inputs:
 - query: ""
 - limit: 10
