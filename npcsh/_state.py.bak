@@ -1,7 +1,6 @@
 # Standard library imports
 import atexit
 import base64
-import os
 from dataclasses import dataclass, field
 from datetime import datetime
 import filecmp
@@ -22,8 +21,7 @@ import sys
 import tempfile
 import time
 import textwrap
-import readline
-import json
+import readlineimport json
 from typing import Dict, List, Any, Tuple, Union, Optional, Callable
 import yaml
 
@@ -99,10 +97,10 @@ from npcpy.npc_sysenv import (
 
 )
 from npcpy.tools import auto_tools
-from npcpy.gen.embeddings import get_embeddings
 
 # Local module imports
 from .config import (
+    VERSION,
     DEFAULT_NPC_TEAM_PATH,
     PROJECT_NPC_TEAM_PATH,
     READLINE_HISTORY_FILE,
@@ -125,14 +123,13 @@ from .config import (
     NPCSH_API_URL,
     NPCSH_SEARCH_PROVIDER,
     NPCSH_BUILD_KG,
-    NPCSH_EDIT_APPROVAL,
     setup_npcsh_config,
     is_npcsh_initialized,
     set_npcsh_initialized,
     set_npcsh_config_value,
 )
 from .ui import SpinnerContext, orange, get_file_color, format_file_listing, wrap_text
-from .parsing import parse_command_safely, parse_generic_command_flags
+from .parsing import split_by_pipes, parse_command_safely, parse_generic_command_flags
 from .execution import (
     TERMINAL_EDITORS,
     INTERACTIVE_COMMANDS as interactive_commands,
@@ -186,12 +183,6 @@ class ShellState:
     session_start_time: float = field(default_factory=lambda: __import__('time').time())
     # Logging level: "silent", "normal", "verbose"
     log_level: str = "normal"
-    # Edit approval mode: "off", "interactive", "auto"
-    edit_approval: str = NPCSH_EDIT_APPROVAL
-    # Pending file edits for approval
-    pending_edits: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    # Command history for jinx execution logging
-    command_history: Optional[Any] = None
 
     def get_model_for_command(self, model_type: str = "chat"):
         if model_type == "chat":
@@ -278,11 +269,6 @@ CONFIG_KEY_MAP = {
     "stream": "NPCSH_STREAM_OUTPUT",
     "apiurl": "NPCSH_API_URL",
     "buildkg": "NPCSH_BUILD_KG",
-    "editapproval": "NPCSH_EDIT_APPROVAL",
-    "approval": "NPCSH_EDIT_APPROVAL",
-    "ttsengine": "NPCSH_TTS_ENGINE",
-    "ttsvoice": "NPCSH_TTS_VOICE",
-    "yapsetup": "NPCSH_YAP_SETUP_DONE",
 }
 
 
@@ -327,7 +313,6 @@ def set_npcsh_config_value(key: str, value: str):
         "NPCSH_BUILD_KG": "build_kg",
         "NPCSH_API_URL": "api_url",
         "NPCSH_STREAM_OUTPUT": "stream_output",
-        "NPCSH_EDIT_APPROVAL": "edit_approval",
     }
     if env_key in field_map:
         setattr(ShellState, field_map[env_key], parsed_val)
@@ -372,7 +357,7 @@ def get_npc_path(npc_name: str, db_path: str) -> str:
             if result:
                 return result[0]
 
-    except Exception:
+    except Exception as e:
         try:
             with sqlite3.connect(db_path) as conn:
                 cursor = conn.cursor()
@@ -482,7 +467,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
 
             with open(manifest_path, 'r') as f:
                 old_package_jinxs = set(json.load(f).get('jinxs', []))
-        except Exception:
+        except Exception as e:
             pass
 
     # Track current package jinxs
@@ -616,6 +601,9 @@ def get_relevant_memories(
     max_memories: int = 10,
     state: Optional[ShellState] = None
 ) -> List[Dict]:
+    
+    engine = command_history.engine
+    
     all_memories = command_history.get_memories_for_scope(
         npc=npc_name,
         team=team_name,
@@ -1480,7 +1468,7 @@ def make_completer(shell_state: ShellState, router: Any):
             else:
                 return None # readline expects None when no more completions
             
-        except Exception:
+        except Exception as e:
             # Using completion_logger for internal debugging, not printing to stdout for user.
             # completion_logger.error(f"Exception in completion: {e}", exc_info=True) 
             return None
@@ -1605,7 +1593,7 @@ def print_jinxs(jinxs):
     for jinx in jinxs:
         output += f"  {jinx.jinx_name}\n"
         output += f"   Description: {jinx.description}\n"
-        output += f"   Inputs: {jinx.inputs}\n"
+        output += f"   Inputs: {jinx.inputs}\n"    return output
     return output
 
 def open_terminal_editor(command: str) -> str:
@@ -1676,19 +1664,10 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
     try:
         import shutil
         term_width = shutil.get_terminal_size().columns
-    except Exception:
+    except json.JSONDecodeError:
         term_width = 80
 
-    # Track how many hint lines were drawn last time (for clearing on redraw)
-    _prev_hint_lines = 1
-
-    # Tab completion state
-    _tab_matches = []
-    _tab_index = -1
-    _tab_prefix = ""
-
     def draw():
-        nonlocal _prev_hint_lines
         # Calculate how many lines the input takes
         total_len = prompt_visible_len + len(buf)
         num_lines = (total_len // term_width) + 1
@@ -1698,25 +1677,23 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         sys.stdout.write('\r')
         # Move up for each wrapped line we're on
         cursor_total = prompt_visible_len + pos
+        cursor_line = cursor_total // term_width
         # Go up to the first line of input
         for _ in range(num_lines - 1):
             sys.stdout.write('\033[A')
 
-        # Clear from cursor to end of screen (clears all wrapped lines + all hint lines below)
+        # Clear from cursor to end of screen (clears all wrapped lines + hint)
         sys.stdout.write('\033[J')
 
         # Print prompt and buffer
         sys.stdout.write(prompt + buf)
 
-        # Print hint on next line(s) - hint may contain newlines
-        hint = current_hint()
-        hint_line_count = hint.count('\n') + 1 if hint else 1
-        _prev_hint_lines = hint_line_count
-        sys.stdout.write('\n' + hint)
+        # Print hint on next line
+        sys.stdout.write('\n\033[K' + current_hint())
 
         # Now position cursor back to correct spot
         # Go back up to the line where cursor should be
-        lines_after_cursor = (total_len // term_width) - (cursor_total // term_width) + hint_line_count
+        lines_after_cursor = (total_len // term_width) - (cursor_total // term_width) + 1  # +1 for hint line
         for _ in range(lines_after_cursor):
             sys.stdout.write('\033[A')
 
@@ -1783,7 +1760,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                         # Check if this looks like binary/image data
                                         # Image signatures: PNG (\x89PNG), JPEG (\xff\xd8\xff), GIF (GIF8), BMP (BM)
                                         # Also check for high ratio of non-printable chars
-                                        is_binary = False
+
                                         if len(paste_buffer) > 4:
                                             # Check for common image magic bytes
                                             if paste_buffer[:4] == '\x89PNG' or paste_buffer[:8] == '\x89PNG\r\n\x1a\n':
@@ -1835,7 +1812,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                                         f.write(paste_buffer.encode('latin-1'))
                                                 pasted_content = temp_path  # Store path to image
                                                 placeholder = f"[pasted image: {temp_path}]"
-                                            except Exception:
+                                            except Exception as e:
                                                 pasted_content = None
                                                 placeholder = "[pasted image: failed to save]"
                                         else:
@@ -1941,9 +1918,6 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                 if pos > 0:
                     buf = buf[:pos-1] + buf[pos:]
                     pos -= 1
-                    _tab_matches = []
-                    _tab_index = -1
-                    _tab_prefix = ""
                     draw()
 
             elif c == '\x03':  # Ctrl-C
@@ -1961,26 +1935,10 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                     buf = ""
                     pos = 0
                     pasted_content = None
-                    _tab_matches = []
-                    _tab_index = -1
-                    _tab_prefix = ""
-                    # Clear all previous hint lines + current input
-                    sys.stdout.write('\r')
-                    for _ in range(_prev_hint_lines):
-                        sys.stdout.write('\033[B')
-                    sys.stdout.write('\033[J')  # Clear from cursor to end
-                    for _ in range(_prev_hint_lines):
-                        sys.stdout.write('\033[A')
-                    sys.stdout.write('\r\033[K')
+                    sys.stdout.write('\r\033[K')  # Clear current line
                     sys.stdout.write('^C\n')
-                    # Redraw prompt with fresh hint
-                    hint = current_hint()
-                    _prev_hint_lines = hint.count('\n') + 1 if hint else 1
-                    sys.stdout.write(prompt + '\n' + hint)
-                    # Go back up past all hint lines
-                    for _ in range(_prev_hint_lines):
-                        sys.stdout.write('\033[A')
-                    sys.stdout.write('\r')
+                    # Redraw prompt
+                    sys.stdout.write(prompt + '\n' + current_hint() + '\033[A\r')
                     if prompt_visible_len > 0:
                         sys.stdout.write('\033[' + str(prompt_visible_len) + 'C')
                     sys.stdout.flush()
@@ -2017,55 +1975,8 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                     pos -= 1
                 draw()
 
-            elif c == '\t':  # Tab - inline completion
-                try:
-                    if _tab_matches and _tab_prefix == buf:
-                        # Subsequent Tab: cycle through matches
-                        _tab_index = (_tab_index + 1) % len(_tab_matches)
-                        buf = _tab_matches[_tab_index]
-                        pos = len(buf)
-                        draw()
-                    else:
-                        # First Tab: compute matches
-                        matches = []
-                        if buf.startswith('/'):
-                            cmds = _get_slash_commands_set(state, router, buf)
-                            matches = ['/' + c for c in sorted(cmds)]
-                        elif buf.startswith('@'):
-                            npcs = _get_npc_names_set(state, buf)
-                            matches = ['@' + n for n in sorted(npcs)]
-                        else:
-                            # File path completion for non-prefix input
-                            import glob as _glob
-                            pattern = buf + '*'
-                            matches = sorted(_glob.glob(pattern))
-
-                        if len(matches) == 1:
-                            # Exact single match - autocomplete with trailing space
-                            buf = matches[0] + ' '
-                            pos = len(buf)
-                            _tab_matches = []
-                            _tab_index = -1
-                            _tab_prefix = ""
-                            draw()
-                        elif len(matches) > 1:
-                            # Find longest common prefix
-                            common = matches[0]
-                            for m in matches[1:]:
-                                while not m.startswith(common):
-                                    common = common[:-1]
-                            if len(common) > len(buf):
-                                # Complete common prefix
-                                buf = common
-                                pos = len(buf)
-                            # Set up cycling state
-                            _tab_matches = matches
-                            _tab_index = -1
-                            _tab_prefix = buf
-                            draw()
-                except Exception:
-                    pass
-                continue
+            elif c == '\t':  # Tab - do nothing for now
+                pass
 
             elif c == '\x0f':  # Ctrl-O - show last tool call args
                 try:
@@ -2099,15 +2010,12 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                         sys.stdout.flush()
                     else:
                         pass  # No tool call to show
-                except Exception:
+                except Exception as e:
                     pass
 
             elif c and ord(c) >= 32:  # Printable
                 buf = buf[:pos] + c + buf[pos:]
                 pos += 1
-                _tab_matches = []
-                _tab_index = -1
-                _tab_prefix = ""
                 draw()
 
     finally:
@@ -2116,66 +2024,42 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-def _get_slash_commands_set(state, router, prefix='/') -> set:
-    """Return the set of matching slash command names (without /)."""
-    # Computer-use commands hidden from hints/tab-complete (still callable)
-    _HIDDEN_CMDS = {
-        'browser_action', 'browser_screenshot', 'click', 'close_browser',
-        'key_press', 'launch_app', 'open_browser', 'screenshot',
-        'trigger', 'type_text', 'wait',
-    }
-    cmds = {'help', 'set', 'agent', 'chat', 'cmd', 'sq', 'quit', 'exit', 'clear', 'npc', 'reattach'}
+def _get_slash_hints(state, router, prefix='/') -> str:
+    """Slash command hints - fits terminal width."""
+    cmds = {'help', 'set', 'agent', 'chat', 'cmd', 'sq', 'quit', 'exit', 'clear', 'npc'}
     if state and state.team and hasattr(state.team, 'jinxs_dict'):
         cmds.update(state.team.jinxs_dict.keys())
     if router and hasattr(router, 'jinx_routes'):
         cmds.update(router.jinx_routes.keys())
-    cmds -= _HIDDEN_CMDS
     if len(prefix) > 1:
         f = prefix[1:].lower()
         cmds = {c for c in cmds if c.lower().startswith(f)}
-    return cmds
-
-
-def _layout_hints_multirow(items, term_width, style_fn) -> str:
-    """Lay out hint items across multiple rows that fit terminal width."""
-    if not items:
-        return ""
-    rows = []
-    current_row = []
-    current_len = 2  # leading spaces
-    for item in items:
-        needed = len(item) + 2  # item + spacing
-        if current_len + needed > term_width - 2 and current_row:
-            rows.append(current_row)
-            current_row = [item]
-            current_len = 2 + len(item) + 2
-        else:
-            current_row.append(item)
-            current_len += needed
-    if current_row:
-        rows.append(current_row)
-    return '\n'.join(style_fn('  ' + '  '.join(row)) for row in rows)
-
-
-def _get_slash_hints(state, router, prefix='/') -> str:
-    """Slash command hints - shows ALL commands across multiple rows."""
-    cmds = _get_slash_commands_set(state, router, prefix)
     if cmds:
+        # Get terminal width, default 80
         try:
             import shutil
             term_width = shutil.get_terminal_size().columns
-        except Exception:
+        except Exception as e:
             term_width = 80
-        sorted_items = ['/' + c for c in sorted(cmds)]
-        return _layout_hints_multirow(
-            sorted_items, term_width,
-            lambda s: colored(s, 'white', attrs=['dark'])
-        )
+
+        # Build hint string that fits in terminal
+        sorted_cmds = sorted(cmds)
+        hint_parts = []
+        current_len = 2  # leading spaces
+        for c in sorted_cmds:
+            item = '/' + c
+            if current_len + len(item) + 2 > term_width - 5:  # leave margin
+                break
+            hint_parts.append(item)
+            current_len += len(item) + 2
+
+        if hint_parts:
+            return colored('  ' + '  '.join(hint_parts), 'white', attrs=['dark'])
     return ""
 
 
-def _get_npc_names_set(state, prefix='@') -> set:
-    """Return the set of matching NPC names (without @)."""
+def _get_npc_hints(state, prefix='@') -> str:
+    """NPC hints."""
     npcs = set()
     if state and state.team:
         if hasattr(state.team, 'npcs') and state.team.npcs:
@@ -2187,26 +2071,41 @@ def _get_npc_names_set(state, prefix='@') -> set:
     if len(prefix) > 1:
         f = prefix[1:].lower()
         npcs = {n for n in npcs if n.lower().startswith(f)}
-    return npcs
-
-
-def _get_npc_hints(state, prefix='@') -> str:
-    """NPC hints - shows all NPCs across multiple rows."""
-    npcs = _get_npc_names_set(state, prefix)
     if npcs:
-        try:
-            import shutil
-            term_width = shutil.get_terminal_size().columns
-        except Exception:
-            term_width = 80
-        sorted_items = ['@' + n for n in sorted(npcs)]
-        return _layout_hints_multirow(
-            sorted_items, term_width,
-            lambda s: colored(s, 'cyan')
-        )
+        return colored('  ' + '  '.join('@' + n for n in sorted(npcs)), 'cyan')
     return ""
 
 
+
+def split_by_pipes(command: str) -> List[str]:
+    parts = []
+    current = ""
+    in_single_quote = False
+    in_double_quote = False
+    escape = False
+
+    for char in command:
+        if escape:
+            current += char
+            escape = False
+        elif char == '\\':
+            escape = True
+            current += char
+        elif char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            current += char
+        elif char == '"' and not in_single_quote:
+            in_double_quote = not in_single_quote
+            current += char
+        elif char == '|' and not in_single_quote and not in_double_quote:
+            parts.append(current.strip())
+            current = ""
+        else:
+            current += char
+
+    if current:
+        parts.append(current.strip())
+    return parts
 
 def parse_command_safely(cmd: str) -> List[str]:
     try:
@@ -2293,16 +2192,14 @@ def wrap_text(text: str, width: int = 80) -> str:
         
 def store_command_embeddings(command: str, output: Any, state: ShellState):
     if not chroma_client or not state.embedding_model or not state.embedding_provider:
-        if not chroma_client:
-            print("Warning: ChromaDB client not available for embeddings.", file=sys.stderr)
+        if not chroma_client: print("Warning: ChromaDB client not available for embeddings.", file=sys.stderr)
         return
     if not command and not output:
         return
 
     try:
         output_str = str(output) if output else ""
-        if not command and not output_str:
-            return
+        if not command and not output_str: return 
 
         texts_to_embed = [command, output_str]
 
@@ -2469,28 +2366,55 @@ def parse_generic_command_flags(parts: List[str]) -> Tuple[Dict[str, Any], List[
         
     return parsed_kwargs, positional_args
 
+def _ollama_supports_tools(model: str) -> Optional[bool]:
+    """
+    Best-effort check for tool-call support on an Ollama model by inspecting its template/metadata.
+    Mirrors the lightweight check used in the Flask serve path.
+    """
+
+
+    try:
+        details = ollama.show(model)
+        template = details.get("template") or ""
+        metadata = details.get("metadata") or {}
+        if any(token in template for token in ["{{- if .Tools", "{{- range .Tools", "{{- if .ToolCalls"]):
+            return True
+        if metadata.get("tools") or metadata.get("tool_calls"):
+            return True
+        return False
+    except Exception:
+        return None
+
+
 def model_supports_tool_calls(model: Optional[str], provider: Optional[str]) -> bool:
-    """Check whether a model supports tool/function calling."""
+    """
+    Decide whether to attempt tool-calling for the given model/provider.
+    Uses Ollama template inspection when possible and falls back to name heuristics.
+    """
     if not model:
         return False
 
     provider = (provider or "").lower()
+    model_lower = model.lower()
 
-    # Ollama: use the capabilities field from the model metadata
     if provider == "ollama":
-        try:
-            details = ollama.show(model)
-            caps = getattr(details, "capabilities", None) or []
-            return "tools" in caps
-        except Exception:
-            pass
+        ollama_support = _ollama_supports_tools(model)
+        if ollama_support is not None:
+            return ollama_support
 
-    # API providers: always support tools
-    if provider in ("anthropic", "openai", "gemini", "google", "deepseek", "groq", "openrouter"):
-        return True
-
-    # Unknown provider: assume yes
-    return True
+    toolish_markers = [
+        "gpt",
+        "claude",
+        "qwen",
+        "mistral",
+        "llama-3.1",
+        "llama3.1",
+        "llama-3.2",
+        "llama3.2",
+        "gemini",
+        "tool",
+    ]
+    return any(marker in model_lower for marker in toolish_markers)
 
 
 def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellState) -> Callable:
@@ -2554,7 +2478,7 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
                     print(colored(f"  ⚡ {tool_name}", "cyan") + colored(f" {args_display}", "white", attrs=["dark"]), end="", flush=True)
                 else:
                     print(colored(f"  ⚡ {tool_name}", "cyan"), end="", flush=True)
-            except Exception:
+            except Exception as e:
                 pass
 
         # Execute tool
@@ -2570,7 +2494,7 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
                             result_preview = result_preview[:200] + "..."
                         if result_preview and result_preview not in ('None', '', '{}', '[]'):
                             print(colored(f"    → {result_preview}", "white", attrs=["dark"]), flush=True)
-                except Exception:
+                except Exception as e:
                     pass
             return result
         except Exception as e:
@@ -2605,16 +2529,19 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
     elif npc_obj and getattr(npc_obj, "tool_map", None):
         tool_map.update(npc_obj.tool_map)
 
-    # Jinx tools from NPC only (NPC.jinxs_dict is already filtered by jinxs_spec
-    # during initialize_jinxs - don't add the full team catalog which overwhelms small models)
+    # Jinx tools from NPC and Team
     aggregated_jinxs: Dict[str, Any] = {}
     if npc_obj and getattr(npc_obj, "jinxs_dict", None):
         aggregated_jinxs.update(npc_obj.jinxs_dict)
+    if state.team and isinstance(state.team, Team) and getattr(state.team, "jinxs_dict", None):
+        aggregated_jinxs.update({k: v for k, v in state.team.jinxs_dict.items() if k not in aggregated_jinxs})
 
     if aggregated_jinxs:
         jinx_catalog: Dict[str, Dict[str, Any]] = {}
         if npc_obj and getattr(npc_obj, "jinx_tool_catalog", None):
             jinx_catalog.update(npc_obj.jinx_tool_catalog or {})
+        if state.team and isinstance(state.team, Team) and getattr(state.team, "jinx_tool_catalog", None):
+            jinx_catalog.update(state.team.jinx_tool_catalog or {})
         if not jinx_catalog:
             jinx_catalog = build_jinx_tool_catalog(aggregated_jinxs)
 
@@ -2766,45 +2693,15 @@ def execute_slash_command(command: str,
             'vmodel': state.vision_model, 'vprovider': state.vision_provider, 'rmodel': state.reasoning_model, 
             'rprovider': state.reasoning_provider, 'state': state
         }
-        import time as _time
-        _start = _time.monotonic()
-        _status = "success"
-        _error = None
         try:
             result = handler(command=command, **handler_kwargs)
-            if isinstance(result, dict):
+            if isinstance(result, dict): 
                 state.messages = result.get("messages", state.messages)
+            return state, result
         except Exception as e:
             import traceback
             traceback.print_exc()
-            _status = "error"
-            _error = str(e)
-            result = {"output": colored(f"Error executing slash command '{command_name}': {e}", "red"), "messages": state.messages}
-
-        _duration_ms = int((_time.monotonic() - _start) * 1000)
-
-        # Log jinx execution to jinx_execution_log
-        if hasattr(state, 'command_history') and state.command_history is not None and hasattr(state.command_history, 'save_jinx_execution'):
-            try:
-                _npc_name = state.npc.name if isinstance(state.npc, NPC) else "npcsh"
-                _team_name = state.team.name if state.team else "npcsh"
-                _args = ' '.join(all_command_parts[1:]) if len(all_command_parts) > 1 else ''
-                state.command_history.save_jinx_execution(
-                    triggering_message_id=None,
-                    conversation_id=state.conversation_id,
-                    npc_name=_npc_name,
-                    jinx_name=command_name,
-                    jinx_inputs={"command": command, "args": _args},
-                    jinx_output=result.get('output', '') if isinstance(result, dict) else str(result)[:2000],
-                    status=_status,
-                    team_name=_team_name,
-                    error_message=_error,
-                    duration_ms=_duration_ms,
-                )
-            except Exception:
-                pass  # Don't fail command execution due to logging error
-
-        return state, result
+            return state, {"output": colored(f"Error executing slash command '{command_name}': {e}", "red"), "messages": state.messages}
     
     # Fallback for switching NPC by name
     if state.team and command_name in state.team.npcs:
@@ -2853,13 +2750,42 @@ def process_pipeline_command(
     exec_provider = provider_override or npc_provider or state.chat_provider
 
     if cmd_to_process.startswith("/"):
-        result = execute_slash_command(
-            cmd_to_process,
-            stdin_input,
-            state,
-            stream_final,
-            router
-        )
+        command_name = cmd_to_process.split()[0].lstrip('/')
+        
+        # Check if this is an interactive mode by looking for the jinx file in modes/
+        is_interactive_mode = False
+        
+        # Check global modes
+        global_modes_jinx = os.path.expanduser(f'~/.npcsh/npc_team/jinxs/modes/{command_name}.jinx')
+        if os.path.exists(global_modes_jinx):
+            is_interactive_mode = True
+        
+        # Check team modes
+        if not is_interactive_mode and state.team and state.team.team_path:
+            team_modes_jinx = os.path.join(state.team.team_path, 'jinxs', 'modes', f'{command_name}.jinx')
+            if os.path.exists(team_modes_jinx):
+                is_interactive_mode = True
+        
+        if is_interactive_mode:
+            result = execute_slash_command(
+                cmd_to_process, 
+                stdin_input, 
+                state, 
+                stream_final, 
+                router
+            )
+        else:
+            with SpinnerContext(
+                f"Routing to {cmd_to_process.split()[0]}", 
+                style="arrow"
+            ):
+                result = execute_slash_command(
+                    cmd_to_process, 
+                    stdin_input, 
+                    state, 
+                    stream_final, 
+                    router
+                )
         return result
     cmd_parts = parse_command_safely(cmd_to_process)
     if not cmd_parts:
@@ -2960,14 +2886,6 @@ def process_pipeline_command(
             tools_for_llm, tool_exec_map = collect_llm_tools(state)
             if not tools_for_llm:
                 tool_capable = False
-            else:
-                # Add tool guidance so model knows to use function calls
-                tool_names = [t['function']['name'] for t in tools_for_llm if 'function' in t]
-                info += (
-                    f"\nYou have access to these tools: {', '.join(tool_names)}. "
-                    f"You MUST use the function calling interface to invoke them. "
-                    f"Do NOT write tool names as text - call them as functions."
-                )
 
         npc_name = (
             state.npc.name 
@@ -3012,6 +2930,9 @@ def process_pipeline_command(
                         "tools": tools_for_llm,
                         "tool_map": tool_exec_map,
                     }
+                    # Only add tool_choice for providers that support it (not gemini)
+                    is_gemini = (exec_provider and "gemini" in exec_provider.lower()) or \
+                                (exec_model and "gemini" in exec_model.lower())
                     llm_kwargs["tool_choice"] = 'auto'
 
                     # Agent loop: keep calling LLM until it stops making tool calls
@@ -3019,21 +2940,9 @@ def process_pipeline_command(
                     iteration = 0
                     max_iterations = 50  # Safety limit to prevent infinite loops
                     total_usage = {"input_tokens": 0, "output_tokens": 0}
-                    state._agent_nudges = 0  # Track continuation nudges
-
-                    tool_calls_count = 0  # Track how many tool calls have been made
 
                     while iteration < max_iterations:
                         iteration += 1
-
-                        # After a tool has been called, force the model to generate a
-                        # text response on the NEXT iteration by setting tool_choice='none'.
-                        # This prevents models from endlessly repeating tool calls when
-                        # they already have the answer. For multi-step tasks, delegate
-                        # and convene jinxs have their own internal loops.
-                        iter_kwargs = dict(llm_kwargs)
-                        if tool_calls_count > 0:
-                            iter_kwargs["tool_choice"] = 'none'
 
                         llm_result = get_llm_response(
                             full_llm_cmd if iteration == 1 else None,  # Only pass prompt on first call
@@ -3045,7 +2954,7 @@ def process_pipeline_command(
                             stream=False,  # Don't stream intermediate calls
                             attachments=state.attachments if iteration == 1 else None,
                             context=info if iteration == 1 else None,
-                            **iter_kwargs,
+                            **llm_kwargs,
                         )
 
                         # Accumulate usage
@@ -3076,34 +2985,12 @@ def process_pipeline_command(
                                     else:
                                         render_markdown(tool_content)
 
-                        # Check if LLM made tool calls - if not, consider re-prompting
+                        # Check if LLM made tool calls - if not, it's done
                         tool_calls_made = isinstance(llm_result, dict) and llm_result.get("tool_calls")
                         if not tool_calls_made:
-                            # In agent mode, nudge to use tools — but ONLY if no tools
-                            # have been called yet (model hasn't started working).
-                            # Once tools have been called and returned results,
-                            # the model should synthesize an answer, not call more tools.
-                            if (state.current_mode == 'agent'
-                                    and tool_calls_count == 0
-                                    and iteration < max_iterations
-                                    and state._agent_nudges < 3):
-                                state._agent_nudges += 1
-                                state.messages.append({
-                                    "role": "user",
-                                    "content": (
-                                        "You have not yet completed the task. "
-                                        "Continue working by calling tools. "
-                                        "Use the function calling interface to invoke tools - "
-                                        "do NOT write tool calls as text."
-                                    )
-                                })
-                                continue
                             # LLM is done - no more tool calls
                             break
 
-                        # Track tool calls and reset nudge counter
-                        tool_calls_count += 1
-                        state._agent_nudges = 0
                         # Clear the prompt for continuation calls - context is in messages
                         full_llm_cmd = None
 
@@ -3234,7 +3121,7 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
     MAX_DELEGATION_DEPTH = 1  # Only allow one level of delegation
 
     if delegation_depth > MAX_DELEGATION_DEPTH:
-        return state, {'output': "⚠ Maximum delegation depth reached."}
+        return state, {'output': f"⚠ Maximum delegation depth reached."}
 
     if not state.team or not hasattr(state.team, 'npcs') or npc_name not in state.team.npcs:
         return state, {'output': f"⚠ NPC '{npc_name}' not found in team"}
@@ -3379,58 +3266,103 @@ def execute_command(
             # Fall through to normal processing
 
     original_command_for_embedding = command
+    commands = split_by_pipes(command)
+    # Unescape pipe characters that were escaped to prevent splitting (e.g., from pasted content)
+    commands = [cmd.replace('\\|', '|') for cmd in commands]
 
-    # Agent mode processes commands directly
+    stdin_for_next = None
+    final_output = None
+    current_state = state
+
+    # Agent mode uses pipeline processing (the original behavior)
     # Other modes route to their respective jinxs
     if state.current_mode == 'agent':
-        try:
-            state, output = process_pipeline_command(
-                command.strip(),
-                None,
-                state,
-                stream_final=state.stream_output,
-                review=review,
-                router=router
-            )
+        total_stages = len(commands)
 
-            if output is not None and isinstance(output, str):
-                store_command_embeddings(original_command_for_embedding, output, state)
+        for i, cmd_segment in enumerate(commands):
+            stage_num = i + 1
+            stage_emoji = ["🎯", "⚙️", "🔧", "✨", "🚀"][i % 5]
 
-            return state, output
+            if total_stages > 1:
+                print(colored(
+                    f"\n{stage_emoji} Pipeline Stage {stage_num}/{total_stages}",
+                    "cyan",
+                    attrs=["bold"]
+                ))
 
-        except KeyboardInterrupt:
-            print(colored("\nOperation interrupted by user.", "yellow"))
-            return state, colored("Command interrupted.", "red")
-        except RateLimitError:
-            print(colored('Rate Limit Exceeded', 'yellow'))
-            # Truncate messages but preserve tool call/response pairs.
-            # Keep system message + last few messages, ensuring we don't
-            # orphan tool messages by splitting assistant(tool_calls)/tool pairs.
-            if len(state.messages) > 4:
-                truncated = state.messages[0:1]  # system message
-                tail = state.messages[-3:]
-                # If the first message in the tail is a 'tool' role, it's orphaned
-                # without its assistant(tool_calls) - skip it
-                for msg in tail:
-                    if msg.get('role') == 'tool' and not any(
-                        m.get('role') == 'assistant' and m.get('tool_calls')
-                        for m in truncated
-                    ):
-                        continue
-                    truncated.append(msg)
-                state.messages = truncated
-            import time
-            print('Waiting 30s before retry...')
-            time.sleep(30)
-            return execute_command(command, state, review=review, router=router)
-        except Exception as cmd_error:
-            import traceback
-            traceback.print_exc()
-            error_msg = colored(
-                f"❌ Error processing command: {cmd_error}",
-                "red"
-            )
-            return state, error_msg
+            is_last_command = (i == len(commands) - 1)
+            stream_this_segment = state.stream_output and not is_last_command
+
+            try:
+                current_state, output = process_pipeline_command(
+                    cmd_segment.strip(),
+                    stdin_for_next,
+                    current_state,
+                    stream_final=stream_this_segment,
+                    review=review,
+                    router=router
+                )
+
+                # For last command, preserve full dict with usage info
+                if is_last_command:
+                    if total_stages > 1:
+                        print(colored("✅ Pipeline complete", "green"))
+                    return current_state, output
+
+                # For intermediate stages, extract output text for piping
+                if isinstance(output, dict) and 'output' in output:
+                    output = output['output']
+
+                if isinstance(output, str):
+                    stdin_for_next = output
+                else:
+                    try:
+                        if stream_this_segment:
+                            full_stream_output = (
+                                print_and_process_stream_with_markdown(
+                                    output,
+                                    state.npc.model if isinstance(state.npc, NPC) else state.chat_model,
+                                    state.npc.provider if isinstance(state.npc, NPC) else state.chat_provider,
+                                    show=True
+                                )
+                            )
+                            stdin_for_next = full_stream_output
+                    except Exception as e:
+                        if output is not None:
+                            try:
+                                stdin_for_next = str(output)
+                            except Exception:
+                                stdin_for_next = None
+                        else:
+                            stdin_for_next = None
+
+                if total_stages > 1:
+                    print(colored(f"  → Passing to stage {stage_num + 1}", "blue"))
+
+            except KeyboardInterrupt:
+                print(colored("\nOperation interrupted by user.", "yellow"))
+                return current_state, colored("Command interrupted.", "red")
+            except RateLimitError:
+                print(colored('Rate Limit Exceeded', 'yellow'))
+                messages = current_state.messages[0:1] + current_state.messages[-2:]
+                current_state.messages = messages
+                import time
+                print('Waiting 30s before retry...')
+                time.sleep(30)
+                return execute_command(command, current_state, review=review, router=router)
+            except Exception as pipeline_error:
+                import traceback
+                traceback.print_exc()
+                error_msg = colored(
+                    f"❌ Error in stage {stage_num} ('{cmd_segment[:50]}...'): {pipeline_error}",
+                    "red"
+                )
+                return current_state, error_msg
+
+        if final_output is not None and isinstance(final_output, str):
+            store_command_embeddings(original_command_for_embedding, final_output, current_state)
+
+        return current_state, final_output
 
     else:
         # For non-agent modes (chat, cmd, or any custom mode), route through the jinx
@@ -3503,12 +3435,12 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     command_history = CommandHistory(db_path)
 
     if not is_npcsh_initialized():
-        print("Setting up npcsh for first use...")
+        print("Initializing NPCSH...")
         initialize_base_npcs_if_needed(db_path)
-        print("Setup complete.")
+        print("NPCSH initialization complete. Restart or source ~/.npcshrc.")
 
     try:
-        setup_readline()
+        history_file = setup_readline()
         atexit.register(save_readline_history)
         atexit.register(command_history.close)
     except OSError as e:
@@ -3517,17 +3449,80 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     project_team_path = os.path.abspath(PROJECT_NPC_TEAM_PATH)
     global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
 
+    team_dir = None
+    default_forenpc_name = None
+    global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
     if not os.path.exists(global_team_path):
+        print(f"Global NPC team directory doesn't exist. Initializing...")
         initialize_base_npcs_if_needed(db_path)
     if os.path.exists(project_team_path):
         team_dir = project_team_path
         default_forenpc_name = "forenpc"
     else:
-        # No project team in this directory - use global team.
-        # To create a project team, use /init from within npcsh or `npc init`.
+        if not os.path.exists('.npcsh_global'):
+            try:
+                resp = input(f"No npc_team found in {os.getcwd()}. Create a new team here? [Y/n]: ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print("\nAborted.")
+                sys.exit(0)
+            if resp in ("", "y", "yes"):
+                team_dir = project_team_path
+                os.makedirs(team_dir, exist_ok=True)
+                default_forenpc_name = "forenpc"
+                try:
+                    forenpc_directive = input(
+                        f"Enter a primary directive for {default_forenpc_name} (default: 'You are the forenpc of the team...'): "
+                    ).strip() or "You are the forenpc of the team, coordinating activities between NPCs on the team, verifying that results from NPCs are high quality and can help to adequately answer user requests."
+                    forenpc_model = input("Enter a model for your forenpc (default: llama3.2): ").strip() or "llama3.2"
+                    forenpc_provider = input("Enter a provider for your forenpc (default: ollama): ").strip() or "ollama"
+                except (KeyboardInterrupt, EOFError):
+                    print("\nAborted.")
+                    sys.exit(0)
+
+                with open(os.path.join(team_dir, f"{default_forenpc_name}.npc"), "w") as f:
+                    yaml.dump({
+                        "name": default_forenpc_name, "primary_directive": forenpc_directive,
+                        "model": forenpc_model, "provider": forenpc_provider
+                    }, f)
+
+                ctx_path = os.path.join(team_dir, "team.ctx")
+                try:
+                    folder_context = input("Enter a short description for this project/team (optional): ").strip()
+                    team_ctx_data = {
+                        "forenpc": default_forenpc_name,
+                        "model": forenpc_model,
+                        "provider": forenpc_provider,
+                        "context": folder_context if folder_context else None
+                    }
+                    use_jinxs = input("Use global jinxs folder (g) or copy to this project (c)? [g/c, default: g]: ").strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    print("\nAborted.")
+                    sys.exit(0)
+                if use_jinxs == "c":
+                    global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
+                    if os.path.exists(global_jinxs_dir):
+                        # Create the 'jinxs' subfolder within the new team's directory
+                        destination_jinxs_dir = os.path.join(team_dir, "jinxs")
+                        os.makedirs(destination_jinxs_dir, exist_ok=True)
+                        shutil.copytree(global_jinxs_dir, destination_jinxs_dir, dirs_exist_ok=True)
+                else:
+                    team_ctx_data["use_global_jinxs"] = True
+                with open(ctx_path, "w") as f:
+                    yaml.dump(team_ctx_data, f)
+            else:
+                render_markdown('From now on, npcsh will assume you will use the global team when activating from this folder. \n If you change your mind and want to initialize a team, use /init from within npcsh, `npc init` or `rm .npcsh_global` from the current working directory.')
+                with open(".npcsh_global", "w") as f:
+                    pass
+                team_dir = global_team_path
+                default_forenpc_name = "sibiji"
+        else:
+            team_dir = global_team_path
+            default_forenpc_name = "sibiji"
+    
+    if team_dir is None:
         team_dir = global_team_path
         default_forenpc_name = "sibiji"
-
+    
     if not os.path.exists(team_dir):
         print(f"Creating team directory: {team_dir}")
         os.makedirs(team_dir, exist_ok=True)
@@ -3544,34 +3539,14 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     forenpc_name = team_ctx.get("forenpc", default_forenpc_name)
     if forenpc_name is None:
         forenpc_name = "sibiji"
+  
+    print('forenpc_name:', forenpc_name)
 
     forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
+    print('forenpc_path:', forenpc_path)
 
-    try:
-        team = Team(team_path=team_dir, db_conn=command_history.engine)
-    except FileNotFoundError as e:
-        print(f"Warning: Team compilation failed - {e}")
-        print("Auto-refreshing npc_team files from package...")
-
-        global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
-        if team_dir == global_team_path:
-            user_jinxs_dir = os.path.join(global_team_path, "jinxs")
-            if os.path.exists(user_jinxs_dir):
-                print(f"Removing stale jinxs directory: {user_jinxs_dir}")
-                shutil.rmtree(user_jinxs_dir)
-            initialize_base_npcs_if_needed(db_path)
-            print("npc_team files refreshed. Retrying team initialization...")
-            try:
-                team = Team(team_path=team_dir, db_conn=command_history.engine)
-            except FileNotFoundError as retry_e:
-                print(f"Error: Team initialization still failed after refresh: {retry_e}")
-                print("This may indicate corrupted NPC files. Try: rm -rf ~/.npcsh/npc_team && npcsh")
-                raise
-        else:
-            print(f"Error: Project team at '{team_dir}' has compilation errors.")
-            print("Please check your .npc files and jinx references.")
-            raise
-
+    team = Team(team_path=team_dir, db_conn=command_history.engine)
+    
     forenpc_obj = team.forenpc if hasattr(team, 'forenpc') and team.forenpc else None
 
     for npc_name, npc_obj in team.npcs.items():
@@ -3966,39 +3941,12 @@ def process_result(
                             current_context + " " + suggestion
                         ).strip()
                         print(colored(
-                            f"{npc_name} suggests updating team context:",
+                            f"{npc_name} suggests updating team context:", 
                             "yellow"
                         ))
-                        # Show a proper unified diff with color highlighting
-                        import difflib
-                        old_lines = current_context.splitlines(keepends=True)
-                        new_lines = new_context.splitlines(keepends=True)
-                        # Ensure trailing newline for clean diff
-                        if old_lines and not old_lines[-1].endswith('\n'):
-                            old_lines[-1] += '\n'
-                        if new_lines and not new_lines[-1].endswith('\n'):
-                            new_lines[-1] += '\n'
-                        diff = list(difflib.unified_diff(
-                            old_lines, new_lines,
-                            fromfile='current', tofile='proposed', lineterm=''
-                        ))
-                        if diff:
-                            for line in diff:
-                                line = line.rstrip('\n')
-                                if line.startswith('+++') or line.startswith('---'):
-                                    print(colored(line, 'white', attrs=['bold']))
-                                elif line.startswith('@@'):
-                                    print(colored(line, 'cyan'))
-                                elif line.startswith('+'):
-                                    print(colored(line, 'green'))
-                                elif line.startswith('-'):
-                                    print(colored(line, 'red'))
-                                else:
-                                    print(line)
-                        else:
-                            # Fallback if no line-level diff (e.g. single-line append)
-                            print(colored(f"  - OLD: {current_context}", "red"))
-                            print(colored(f"  + NEW: {new_context}", "green"))
+                        print(
+                            f"  - OLD: {current_context}\n  + NEW: {new_context}"
+                        )
                         
                         choice = input(
                             "Apply? [y/N/e(dit)]: "

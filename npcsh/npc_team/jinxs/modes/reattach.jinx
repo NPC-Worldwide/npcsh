@@ -279,7 +279,25 @@ steps:
                       cid = convos[selected]['conversation_id']
                       if 'state' in dir() and state is not None:
                           state.conversation_id = cid
-                          context['output'] = f"Reattached to: {cid}"
+                          # Load past messages into state.messages so agents have context
+                          loaded_msgs = []
+                          try:
+                              if hasattr(state, 'command_history') and state.command_history is not None:
+                                  db_msgs = state.command_history.get_conversations_by_id(cid)
+                              else:
+                                  from npcpy.memory.command_history import CommandHistory
+                                  ch = CommandHistory()
+                                  db_msgs = ch.get_conversations_by_id(cid)
+                              for m in (db_msgs or []):
+                                  role = m.get('role', '')
+                                  content = m.get('content', '')
+                                  if role in ('user', 'assistant', 'system', 'tool') and content:
+                                      loaded_msgs.append({"role": role, "content": content})
+                          except Exception:
+                              pass
+                          state.messages = loaded_msgs
+                          msg_count = len(loaded_msgs)
+                          context['output'] = f"Reattached to: {cid} ({msg_count} messages loaded)"
                       else:
                           context['output'] = f"Selected: {cid}\n\nRun: /set conversation_id={cid}"
                       break
