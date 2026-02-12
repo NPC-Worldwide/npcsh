@@ -2639,11 +2639,30 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
             def _make_runner(jinx=jinx_obj, jinja_env=jinja_env_for_jinx, tool_name=name, extras=jinx_globals):
                 def runner(**kwargs):
                     input_values = kwargs if isinstance(kwargs, dict) else {}
+                    # Map mismatched arg names to actual jinx input names.
+                    # Models sometimes hallucinate parameter names (e.g.
+                    # "source" instead of "code").  When there's a 1:1
+                    # mismatch, remap so the template renders correctly.
+                    expected = [
+                        (i if isinstance(i, str) else list(i.keys())[0])
+                        for i in jinx.inputs
+                    ]
+                    if input_values and expected:
+                        provided = list(input_values.keys())
+                        missing = [e for e in expected if e not in input_values]
+                        extra = [p for p in provided if p not in expected]
+                        if len(missing) == len(extra) and missing:
+                            for m, x in zip(missing, extra):
+                                input_values[m] = input_values.pop(x)
                     try:
+                        # Pass a separate messages list so jinx execution
+                        # doesn't mutate state.messages (the jinx engine
+                        # appends assistant messages during execution).
+                        jinx_messages = []
                         ctx = jinx.execute(
                             input_values=input_values,
                             npc=npc_obj,
-                            messages=state.messages,
+                            messages=jinx_messages,
                             extra_globals=extras,
                             jinja_env=jinja_env
                         )
@@ -3025,13 +3044,14 @@ def process_pipeline_command(
 
                         iter_kwargs = dict(llm_kwargs)
 
-                        logger.debug(f"[agent-loop] iter={iteration} messages={len(state.messages)} tool_calls_count={tool_calls_count}")
-                        for i, m in enumerate(state.messages[-5:]):
-                            idx = max(0, len(state.messages)-5) + i
+                        tools_in_kwargs = iter_kwargs.get('tools', [])
+                        logger.debug(f"[agent-loop] iter={iteration} messages={len(state.messages)} tool_calls_count={tool_calls_count} tools={len(tools_in_kwargs)}")
+                        for i, m in enumerate(state.messages):
                             role = m.get('role','?')
-                            content = str(m.get('content',''))[:120]
+                            content = str(m.get('content',''))[:300]
                             has_tc = 'tool_calls' in m
-                            logger.debug(f"  msg[{idx}] role={role} has_tool_calls={has_tc}: {content}")
+                            tc_names = [tc.get('function',{}).get('name','') for tc in m.get('tool_calls',[])] if has_tc else []
+                            logger.debug(f"  msg[{i}] role={role} has_tool_calls={has_tc} tc={tc_names}: {content}")
 
                         llm_result = get_llm_response(
                             full_llm_cmd if iteration == 1 else None,
@@ -3066,11 +3086,14 @@ def process_pipeline_command(
                         # Check for tool calls
                         tool_calls = llm_result.get("tool_calls", []) if isinstance(llm_result, dict) else []
 
+                        # Always update state.messages from llm_result so the
+                        # full conversation history (including the user message
+                        # that get_llm_response added) is preserved.
+                        if isinstance(llm_result, dict):
+                            state.messages = llm_result.get("messages", state.messages)
+
                         if not tool_calls:
-                            # No tool calls — update messages from LLM response
-                            if isinstance(llm_result, dict):
-                                state.messages = llm_result.get("messages", state.messages)
-                            # No tool calls — nudge if model hasn't started working yet
+                            # Nudge if model stopped but may not be done
                             if (state.current_mode == 'agent'
                                     and tool_calls_count == 0
                                     and iteration < max_iterations
@@ -3092,7 +3115,7 @@ def process_pipeline_command(
                         tool_calls_count += 1
                         state._agent_nudges = 0
 
-                        # Normalize tool_calls into dicts and append assistant message
+                        # Normalize tool_calls into dicts
                         tc_normalized = []
                         for tc in tool_calls:
                             if isinstance(tc, dict):
@@ -3107,13 +3130,18 @@ def process_pipeline_command(
                                     }
                                 })
 
-                        # Add assistant message with tool_calls to conversation
-                        assistant_content = llm_result.get("response", "") if isinstance(llm_result, dict) else ""
-                        state.messages.append({
-                            "role": "assistant",
-                            "content": assistant_content or None,
-                            "tool_calls": tc_normalized,
-                        })
+                        # The last message from llm_result is the assistant message
+                        # (content only). Add tool_calls to it instead of appending a duplicate.
+                        if state.messages and state.messages[-1].get("role") == "assistant":
+                            state.messages[-1]["tool_calls"] = tc_normalized
+                        else:
+                            # Shouldn't happen, but handle gracefully
+                            assistant_content = llm_result.get("response", "") if isinstance(llm_result, dict) else ""
+                            state.messages.append({
+                                "role": "assistant",
+                                "content": assistant_content or None,
+                                "tool_calls": tc_normalized,
+                            })
 
                         # Execute each tool call and add results to messages
                         for tc in tc_normalized:

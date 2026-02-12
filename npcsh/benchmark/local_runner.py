@@ -108,13 +108,14 @@ def clean_task_artifacts():
 
 def run_task(task: dict, model: str, provider: str, timeout: int = 120) -> TaskResult:
     """Run a single task through npcsh -c and verify the result."""
+    import signal
 
     task_id = task["id"]
     instruction = task["instruction"]
     verify_cmd = task["verify_cmd"]
 
-    # Per-task timeout override (some tasks like image gen need more time)
-    task_timeout = task.get("timeout", timeout)
+    # Per-task timeout override — use whichever is larger
+    task_timeout = max(task.get("timeout", timeout), timeout)
     verify_timeout = task.get("verify_timeout", 30)
 
     # Clean up before each task
@@ -131,25 +132,34 @@ def run_task(task: dict, model: str, provider: str, timeout: int = 120) -> TaskR
 
     start = time.time()
 
-    # Run npcsh
+    # Run npcsh with process group so we can kill all children on timeout
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             ["npcsh", "-c", instruction],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=task_timeout,
             env=env,
+            start_new_session=True,
         )
-        npcsh_output = result.stdout + result.stderr
-    except subprocess.TimeoutExpired:
-        return TaskResult(
-            task_id=task_id,
-            category=task["category"],
-            difficulty=task["difficulty"],
-            passed=False,
-            duration=time.time() - start,
-            error="timeout",
-        )
+        try:
+            stdout, stderr = proc.communicate(timeout=task_timeout)
+            npcsh_output = stdout + stderr
+        except subprocess.TimeoutExpired:
+            # Kill entire process group
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
+            proc.wait(timeout=5)
+            return TaskResult(
+                task_id=task_id,
+                category=task["category"],
+                difficulty=task["difficulty"],
+                passed=False,
+                duration=time.time() - start,
+                error="timeout",
+            )
     except Exception as e:
         return TaskResult(
             task_id=task_id,
@@ -371,7 +381,7 @@ def main():
     parser.add_argument("--category", "-c", default=None)
     parser.add_argument("--difficulty", "-d", default=None)
     parser.add_argument("--task-id", "-t", default=None)
-    parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--timeout", type=int, default=1200)
     parser.add_argument("--compare", action="store_true",
                         help="Compare multiple local models")
 

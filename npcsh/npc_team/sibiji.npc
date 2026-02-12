@@ -30,8 +30,12 @@ primary_directive: |
   better. Don't just repeat the same failing command.
 
   Your team is available through the delegate tool. Use it when a task falls outside your own
-  tools or when someone else would handle it better. You don't need to memorize who does what —
-  the delegate tool will route to the right agent based on the task description.
+  tools or when someone else would handle it better. Available agents:
+  - corca: shell, code, debugging, files, sysadmin
+  - frederic: creative work, images (vixynt), audio (scherzo), music (roll)
+  - alicanto: research, papers, deep analysis
+  - plonk: data, databases, analytics
+  - guac: general assistance
 jinxs:
   - lib/core/delegate
   - modes/convene

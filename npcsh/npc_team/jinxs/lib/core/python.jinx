@@ -1,8 +1,5 @@
 jinx_name: python
-description: Execute Python code. Can create files (open/write), run computations, install packages, etc. Set the result as the "output" variable (must be a string). When asked to create a script file, use open() to write it. 
-  Do not add unnecessary print statements. 
-  This jinx is intended for executing code snippets that are not 
-  accomplished by other jinxes. Use it only when the others are insufficient.
+description: Execute Python code directly. Code runs immediately — do NOT wrap in function definitions unless you also call them. To create a file, use open('/path', 'w') and write to it. To create a script file, write the script content to the file with open(). Set the "output" variable to a result string.
 inputs:
 - code
 steps:
