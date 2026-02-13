@@ -1,0 +1,482 @@
+jinx_name: explore
+description: Thoroughly explore a codebase or directory. Discovers structure, reads key files iteratively using LLM-guided exploration, and produces a comprehensive analysis. Use when you need deep understanding of a project.
+inputs:
+  - path: "."
+  - task: null
+  - max_iterations: "15"
+  - max_file_lines: "300"
+  - model: null
+  - provider: null
+
+steps:
+  - name: explore_codebase
+    engine: python
+    code: |
+      import os
+      import sys
+      import json
+      import traceback
+      from collections import defaultdict
+      from termcolor import colored
+      from npcpy.llm_funcs import get_llm_response
+
+      # ── Inputs ──────────────────────────────────────────────
+      _npc = context.get('npc')
+      _team = context.get('team')
+      _messages = context.get('messages', [])
+
+      if isinstance(_npc, str) and _team:
+          _npc = _team.get(_npc) if hasattr(_team, 'get') else None
+      elif isinstance(_npc, str):
+          _npc = None
+
+      _model = context.get('model') or (_npc.model if _npc and hasattr(_npc, 'model') else None)
+      _provider = context.get('provider') or (_npc.provider if _npc and hasattr(_npc, 'provider') else None)
+
+      base_path = os.path.expanduser(context.get('path') or '.')
+      if not os.path.isabs(base_path):
+          base_path = os.path.abspath(base_path)
+      task_desc = context.get('task') or ''
+      max_iters = int(context.get('max_iterations') or '15')
+      max_lines = int(context.get('max_file_lines') or '300')
+
+      # Spinner support
+      try:
+          from npcsh.ui import get_current_spinner
+          spinner = get_current_spinner()
+      except Exception:
+          spinner = None
+
+      def status(msg):
+          if spinner:
+              spinner.set_message(msg)
+          print(colored(msg, "cyan"))
+
+      import time as _time
+
+      def llm(prompt, temperature=0.3):
+          t0 = _time.time()
+          result = get_llm_response(
+              prompt,
+              model=_model,
+              provider=_provider,
+              npc=_npc,
+              temperature=temperature,
+              think=False,
+          )
+          elapsed = _time.time() - t0
+          print(colored("    LLM: {:.1f}s".format(elapsed), "white", attrs=["dark"]))
+          return result
+
+      # ── Helpers ─────────────────────────────────────────────
+      SKIP_DIRS = {
+          '.git', '__pycache__', 'node_modules', '.tox', '.mypy_cache',
+          '.pytest_cache', 'dist', 'build', '.eggs',
+          '.venv', 'venv', 'env', '.env', '.idea', '.vscode',
+          '.guac', '.next', '.nuxt', 'coverage', '.coverage',
+          'htmlcov', '.cache', 'logs', 'log',
+      }
+      BINARY_EXTS = {
+          '.png', '.jpg', '.jpeg', '.gif', '.ico', '.bmp', '.svg', '.webp',
+          '.woff', '.woff2', '.ttf', '.eot', '.otf',
+          '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar',
+          '.pyc', '.pyo', '.so', '.dll', '.dylib', '.o', '.a',
+          '.exe', '.bin', '.dat', '.db', '.sqlite', '.sqlite3',
+          '.mp3', '.mp4', '.wav', '.avi', '.mov', '.mkv', '.flac',
+          '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.pptx',
+          '.log', '.exp',
+      }
+
+      def should_skip_dir(name):
+          return (name in SKIP_DIRS
+                  or name.endswith('.egg-info')
+                  or name.startswith('.'))
+
+      def is_binary(path):
+          _, ext = os.path.splitext(path)
+          return ext.lower() in BINARY_EXTS
+
+      def read_file_safe(path, max_lines_to_read):
+          if is_binary(path):
+              return "[binary file]"
+          try:
+              with open(path, 'r', errors='replace') as f:
+                  lines = []
+                  for i, line in enumerate(f):
+                      if i >= max_lines_to_read:
+                          lines.append(
+                              "\n... [truncated at {} lines, file continues] ...".format(max_lines_to_read)
+                          )
+                          break
+                      lines.append(line.rstrip())
+              return '\n'.join(lines)
+          except Exception as e:
+              return "[error reading file: {}]".format(e)
+
+      def get_relative(path):
+          if path.startswith(base_path):
+              rel = path[len(base_path):]
+              return rel.lstrip('/')
+          return path
+
+      # ══════════════════════════════════════════════════════════
+      #  PHASE 1: Structure Discovery
+      # ══════════════════════════════════════════════════════════
+      status("Phase 1: Discovering project structure...")
+
+      ext_counts = defaultdict(int)
+      ext_sizes = defaultdict(int)
+      all_files = []
+      dir_count = 0
+      key_files = []
+      KEY_NAMES = {
+          'readme', 'readme.md', 'readme.rst', 'readme.txt',
+          'setup.py', 'setup.cfg', 'pyproject.toml',
+          'package.json', 'cargo.toml', 'go.mod', 'makefile',
+          'dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
+          'requirements.txt', 'requirements.in', 'pipfile',
+          '.env.example', 'config.yaml', 'config.yml', 'config.json',
+          'main.py', 'app.py', 'index.js', 'index.ts', 'main.go', 'main.rs',
+          '__init__.py', 'conftest.py', 'tox.ini', '.flake8', '.eslintrc',
+      }
+
+      for root, dirs, files in os.walk(base_path):
+          dirs[:] = [d for d in sorted(dirs) if not should_skip_dir(d)]
+          dir_count += 1
+          depth = root.replace(base_path, '').count(os.sep)
+          if depth > 8:
+              dirs.clear()
+              continue
+          for f in files:
+              fpath = os.path.join(root, f)
+              try:
+                  sz = os.path.getsize(fpath)
+              except OSError:
+                  continue
+              _, ext = os.path.splitext(f)
+              ext = ext.lower() or '(no ext)'
+              ext_counts[ext] += 1
+              ext_sizes[ext] += sz
+              rel = get_relative(fpath)
+              all_files.append({'path': fpath, 'rel': rel, 'size': sz, 'ext': ext})
+              if f.lower() in KEY_NAMES:
+                  key_files.append(rel)
+
+      # Build tree (top 3 levels)
+      tree_lines = []
+      for root, dirs, files in os.walk(base_path):
+          dirs[:] = [d for d in sorted(dirs) if not should_skip_dir(d)]
+          depth = root.replace(base_path, '').count(os.sep)
+          if depth > 2:
+              dirs.clear()
+              continue
+          indent = '  ' * depth
+          dirname = os.path.basename(root) or base_path
+          n_files = len(files)
+          tree_lines.append("{}{}/ ({} files)".format(indent, dirname, n_files))
+
+      # Sort extensions by count
+      top_exts = sorted(ext_counts.items(), key=lambda x: x[1], reverse=True)[:20]
+      ext_summary = ', '.join("{}: {}".format(e, c) for e, c in top_exts)
+
+      # Build file listing — only readable (non-binary) files
+      readable_files = [f for f in all_files if not is_binary(f['path'])]
+      file_listing_lines = []
+      for f in sorted(readable_files, key=lambda x: x['rel']):
+          sz_str = "{:.1f}K".format(f['size'] / 1024) if f['size'] >= 1024 else "{}B".format(f['size'])
+          file_listing_lines.append("  {} ({})".format(f['rel'], sz_str))
+      if len(file_listing_lines) > 120:
+          file_listing = '\n'.join(file_listing_lines[:80])
+          file_listing += "\n  ... ({} more files) ...".format(len(file_listing_lines) - 80)
+      else:
+          file_listing = '\n'.join(file_listing_lines)
+
+      structure_parts = [
+          "PROJECT STRUCTURE REPORT",
+          "=======================",
+          "Root: " + base_path,
+          "Total files: " + str(len(all_files)),
+          "Total directories: " + str(dir_count),
+          "",
+          "File types: " + ext_summary,
+          "",
+          "Directory tree (top 3 levels):",
+          '\n'.join(tree_lines[:60]),
+          "",
+          "Key files found:",
+          '\n'.join('  - ' + kf for kf in key_files) if key_files else '  (none detected)',
+          "",
+          "All files:",
+          file_listing,
+      ]
+      structure_report = '\n'.join(structure_parts)
+
+      print(colored("\n  {} readable files across {} directories".format(len(readable_files), dir_count), "green"))
+      print(colored("  Top types: {}".format(ext_summary[:80]), "white", attrs=["dark"]))
+
+      # Parse file list from LLM response
+      def parse_file_list(text):
+          text = text.strip()
+          start = text.find('[')
+          end = text.rfind(']')
+          if start >= 0 and end > start:
+              try:
+                  return json.loads(text[start:end+1])
+              except json.JSONDecodeError:
+                  pass
+          import re
+          return re.findall(r'"([^"]+)"', text)
+
+      # Pick initial files using heuristics (no LLM call needed)
+      SKIP_BASENAMES = {'.env', '.gitignore', '.dockerignore', 'license', 'license.md'}
+      SKIP_PREFIXES = ('test_', 'screenshot', 'salmon_', 'experiment')
+
+      # Tier 1: READMEs and project configs (always read first)
+      TIER1 = {'readme.md', 'readme.rst', 'readme.txt', 'readme',
+               'pyproject.toml', 'setup.py', 'setup.cfg', 'package.json',
+               'cargo.toml', 'go.mod'}
+      # Tier 2: Entry points and top-level source
+      TIER2 = {'main.py', 'app.py', 'index.js', 'index.ts', 'main.go',
+               'main.rs', 'makefile', 'requirements.txt', 'conftest.py'}
+
+      tier1 = []
+      tier2 = []
+      rest = []
+      for f in readable_files:
+          basename = os.path.basename(f['rel']).lower()
+          if basename in SKIP_BASENAMES or any(basename.startswith(p) for p in SKIP_PREFIXES):
+              continue
+          depth = f['rel'].count('/')
+          if basename in TIER1 and depth == 0:
+              tier1.append(f)
+          elif basename in TIER2 and depth == 0:
+              tier2.append(f)
+          elif depth == 0 and f['ext'] in ('.py', '.js', '.ts', '.go', '.rs'):
+              # Top-level source files (not buried in subdirs)
+              rest.append(f)
+
+      # Top-level __init__.py only (not nested ones)
+      for f in readable_files:
+          if f['rel'] == '__init__.py':
+              tier1.append(f)
+              break
+
+      # Sort rest by size (prefer smaller files that are likely more focused)
+      rest.sort(key=lambda f: f['size'])
+
+      initial_picks = []
+      for pool in [tier1, tier2, rest]:
+          for f in pool:
+              if f['rel'] not in initial_picks and len(initial_picks) < 6:
+                  initial_picks.append(f['rel'])
+
+      files_to_read = initial_picks
+      print(colored("\n  Starting with {} files: {}".format(
+          len(files_to_read), ', '.join(os.path.basename(f) for f in files_to_read)
+      ), "yellow"))
+
+      # ══════════════════════════════════════════════════════════
+      #  PHASE 2: Iterative Deep Exploration
+      # ══════════════════════════════════════════════════════════
+      status("Phase 2: Deep exploration...")
+
+      files_read = set()
+      findings = []  # List of (file, summary) tuples
+      iteration = 0
+
+      # Resolve relative paths to absolute
+      def resolve_path(rel_path):
+          # Try direct join
+          candidate = os.path.join(base_path, rel_path)
+          if os.path.isfile(candidate):
+              return candidate
+          # Try case-insensitive search
+          rel_lower = rel_path.lower()
+          for f in all_files:
+              if f['rel'].lower() == rel_lower:
+                  return f['path']
+              if os.path.basename(f['rel']).lower() == os.path.basename(rel_lower):
+                  return f['path']
+          return None
+
+      while iteration < max_iters and files_to_read:
+          iteration += 1
+          status("  Iteration {}/{} - reading {} files...".format(iteration, max_iters, len(files_to_read)))
+
+          # Read requested files
+          file_contents = []
+          for rel_path in files_to_read[:4]:  # Cap at 4 per round to keep prompts manageable
+              abs_path = resolve_path(rel_path)
+              if abs_path is None:
+                  file_contents.append("### {}\n[file not found]".format(rel_path))
+                  continue
+              if abs_path in files_read:
+                  continue
+              files_read.add(abs_path)
+
+              content = read_file_safe(abs_path, max_lines)
+              rel = get_relative(abs_path)
+              file_contents.append("### {}\n```\n{}\n```".format(rel, content))
+              print(colored("    Read: {}".format(rel), "white", attrs=["dark"]))
+
+          if not file_contents:
+              print(colored("    No new files to read, finishing exploration", "yellow"))
+              break
+
+          # Build cumulative findings summary
+          findings_summary = ""
+          if findings:
+              findings_summary = "\n\nFINDINGS SO FAR:\n" + "\n".join(
+                  "- {}: {}".format(f, s) for f, s in findings[-10:]
+              )
+
+          files_read_list = '\n'.join('  - ' + get_relative(f) for f in sorted(files_read))
+
+          # Build list of files NOT yet read for the LLM to pick from
+          unread_files = '\n'.join(
+              '  ' + f['rel'] for f in sorted(all_files, key=lambda x: x['rel'])
+              if f['path'] not in files_read
+          )
+
+          analysis_parts = [
+              "You are exploring a codebase at: " + base_path,
+              ("Goal: " + task_desc) if task_desc else "",
+              "",
+              "FILES ALREADY READ:",
+              files_read_list,
+              findings_summary,
+              "",
+              "NEW FILES TO ANALYZE:",
+              '\n\n'.join(file_contents),
+              "",
+              "AVAILABLE FILES NOT YET READ:",
+              unread_files or "(all files have been read)",
+              "",
+              "Instructions:",
+              "1. Analyze the new files. For each, provide a 1-2 sentence summary.",
+              "2. Update your understanding of the project architecture.",
+              "3. Decide if you need to read more files.",
+              "",
+              "Respond in this EXACT format:",
+              "",
+              "ANALYSIS:",
+              "[Your analysis of the new files and updated understanding]",
+              "",
+              "FILE_SUMMARIES:",
+              "[One line per file: filename: summary]",
+              "",
+              "NEXT_FILES:",
+              "[JSON array of relative paths from the AVAILABLE list above, or [] if done]",
+              "",
+              "STATUS: EXPLORING or COMPLETE",
+          ]
+          analysis_prompt = '\n'.join(analysis_parts)
+
+          resp = llm(analysis_prompt, temperature=0.3)
+          analysis = str(resp.get('response', ''))
+
+          # Parse file summaries
+          if 'FILE_SUMMARIES:' in analysis:
+              summ_start = analysis.find('FILE_SUMMARIES:') + len('FILE_SUMMARIES:')
+              summ_end = analysis.find('NEXT_FILES:')
+              if summ_end < 0:
+                  summ_end = len(analysis)
+              summ_block = analysis[summ_start:summ_end].strip()
+              for line in summ_block.split('\n'):
+                  line = line.strip().lstrip('- ')
+                  if ':' in line and line:
+                      parts = line.split(':', 1)
+                      findings.append((parts[0].strip(), parts[1].strip()))
+
+          # Parse next files (cap at 8 to prevent LLM from dumping everything)
+          next_files = []
+          if 'NEXT_FILES:' in analysis:
+              nf_start = analysis.find('NEXT_FILES:') + len('NEXT_FILES:')
+              nf_end = analysis.find('STATUS:', nf_start)
+              if nf_end < 0:
+                  nf_end = len(analysis)
+              nf_block = analysis[nf_start:nf_end].strip()
+              next_files = parse_file_list(nf_block)[:8]
+
+          # Check if complete
+          is_complete = 'STATUS: COMPLETE' in analysis.upper() or 'STATUS:COMPLETE' in analysis.upper().replace(' ', '')
+
+          n_new = len([f for f in (files_to_read[:6]) if resolve_path(f) and resolve_path(f) not in files_read])
+          print(colored("    Iteration {} done. {} files read total. Next: {} files".format(
+              iteration, len(files_read), len(next_files)
+          ), "green"))
+
+          if is_complete:
+              print(colored("\n  LLM reports exploration complete.", "green", attrs=["bold"]))
+              break
+
+          files_to_read = next_files
+
+      # ══════════════════════════════════════════════════════════
+      #  PHASE 3: Synthesis
+      # ══════════════════════════════════════════════════════════
+      status("Phase 3: Synthesizing findings...")
+
+      findings_text = '\n'.join("- {}: {}".format(f, s) for f, s in findings)
+      files_read_text = '\n'.join('  - ' + get_relative(f) for f in sorted(files_read))
+
+      task_section = ""
+      if task_desc:
+          task_section = '8. **Task Answer**: Directly answer: "' + task_desc + '"'
+
+      synth_parts = [
+          "You have explored a codebase at: " + base_path,
+          ("The user specifically asked: " + task_desc) if task_desc else "",
+          "",
+          "STRUCTURE:",
+          structure_report,
+          "",
+          "FILES READ ({} total):".format(len(files_read)),
+          files_read_text,
+          "",
+          "FINDINGS:",
+          findings_text,
+          "",
+          "Write a comprehensive exploration report covering:",
+          "1. **Project Overview**: What this project is and what it does",
+          "2. **Architecture**: How the codebase is organized, key directories and their purposes",
+          "3. **Key Components**: The most important files/modules and what they do",
+          "4. **Entry Points**: How the project is run/used",
+          "5. **Patterns & Conventions**: Coding patterns, naming conventions, frameworks used",
+          "6. **Dependencies**: Key external dependencies",
+          "7. **Testing**: How tests are organized (if present)",
+          task_section,
+          "",
+          "Be specific - reference actual file names and paths.",
+      ]
+      synth_prompt = '\n'.join(synth_parts)
+
+      resp = llm(synth_prompt, temperature=0.4)
+      report = str(resp.get('response', 'No synthesis generated.'))
+
+      # Print final report
+      sep = '=' * 60
+      print(colored("\n" + sep, "cyan"))
+      print(colored("  EXPLORATION REPORT", "cyan", attrs=["bold"]))
+      print(colored("  {} | {} files read across {} iterations".format(
+          base_path, len(files_read), iteration
+      ), "white", attrs=["dark"]))
+      print(colored(sep + "\n", "cyan"))
+      try:
+          from npcpy.npc_sysenv import render_markdown
+          render_markdown(report)
+      except Exception:
+          print(report)
+      print(colored("\n" + sep, "cyan"))
+
+      output = report
+      context['output'] = output
+      context['messages'] = _messages
+      context['explore_result'] = {
+          'path': base_path,
+          'task': task_desc,
+          'files_read': list(files_read),
+          'findings': findings,
+          'iterations': iteration,
+          'report': report,
+      }

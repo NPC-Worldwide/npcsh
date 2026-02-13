@@ -13,6 +13,17 @@ steps:
 
       query = context.get('query', '').strip()
 
+      # Force text mode when called by an agent (non-interactive context)
+      if not text_mode:
+          try:
+              if ('state' in dir() and state is not None
+                      and getattr(state, 'current_mode', '') in ('agent', 'cmd')):
+                  text_mode = True
+              elif not sys.stdin.isatty():
+                  text_mode = True
+          except Exception:
+              pass
+
       if not query:
           context['output'] = "Usage: /web_search <query>"
       else:

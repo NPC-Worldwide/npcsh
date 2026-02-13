@@ -1783,7 +1783,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                         # Check if this looks like binary/image data
                                         # Image signatures: PNG (\x89PNG), JPEG (\xff\xd8\xff), GIF (GIF8), BMP (BM)
                                         # Also check for high ratio of non-printable chars
-
+                                        is_binary = False
                                         if len(paste_buffer) > 4:
                                             # Check for common image magic bytes
                                             if paste_buffer[:4] == '\x89PNG' or paste_buffer[:8] == '\x89PNG\r\n\x1a\n':
@@ -3031,8 +3031,6 @@ def process_pipeline_command(
                     }
                     llm_kwargs["tool_choice"] = 'auto'
 
-                    # Agent loop: npcsh drives tool execution directly.
-                    # LLM returns tool_calls, we execute them, feed results back.
                     iteration = 0
                     max_iterations = 50
                     total_usage = {"input_tokens": 0, "output_tokens": 0}
@@ -3493,8 +3491,22 @@ def execute_command(
             return state, colored("Command interrupted.", "red")
         except RateLimitError:
             print(colored('Rate Limit Exceeded', 'yellow'))
-            messages = state.messages[0:1] + state.messages[-2:]
-            state.messages = messages
+            # Truncate messages but preserve tool call/response pairs.
+            # Keep system message + last few messages, ensuring we don't
+            # orphan tool messages by splitting assistant(tool_calls)/tool pairs.
+            if len(state.messages) > 4:
+                truncated = state.messages[0:1]  # system message
+                tail = state.messages[-3:]
+                # If the first message in the tail is a 'tool' role, it's orphaned
+                # without its assistant(tool_calls) - skip it
+                for msg in tail:
+                    if msg.get('role') == 'tool' and not any(
+                        m.get('role') == 'assistant' and m.get('tool_calls')
+                        for m in truncated
+                    ):
+                        continue
+                    truncated.append(msg)
+                state.messages = truncated
             import time
             print('Waiting 30s before retry...')
             time.sleep(30)
@@ -4042,12 +4054,39 @@ def process_result(
                             current_context + " " + suggestion
                         ).strip()
                         print(colored(
-                            f"{npc_name} suggests updating team context:", 
+                            f"{npc_name} suggests updating team context:",
                             "yellow"
                         ))
-                        print(
-                            f"  - OLD: {current_context}\n  + NEW: {new_context}"
-                        )
+                        # Show a proper unified diff with color highlighting
+                        import difflib
+                        old_lines = current_context.splitlines(keepends=True)
+                        new_lines = new_context.splitlines(keepends=True)
+                        # Ensure trailing newline for clean diff
+                        if old_lines and not old_lines[-1].endswith('\n'):
+                            old_lines[-1] += '\n'
+                        if new_lines and not new_lines[-1].endswith('\n'):
+                            new_lines[-1] += '\n'
+                        diff = list(difflib.unified_diff(
+                            old_lines, new_lines,
+                            fromfile='current', tofile='proposed', lineterm=''
+                        ))
+                        if diff:
+                            for line in diff:
+                                line = line.rstrip('\n')
+                                if line.startswith('+++') or line.startswith('---'):
+                                    print(colored(line, 'white', attrs=['bold']))
+                                elif line.startswith('@@'):
+                                    print(colored(line, 'cyan'))
+                                elif line.startswith('+'):
+                                    print(colored(line, 'green'))
+                                elif line.startswith('-'):
+                                    print(colored(line, 'red'))
+                                else:
+                                    print(line)
+                        else:
+                            # Fallback if no line-level diff (e.g. single-line append)
+                            print(colored(f"  - OLD: {current_context}", "red"))
+                            print(colored(f"  + NEW: {new_context}", "green"))
                         
                         choice = input(
                             "Apply? [y/N/e(dit)]: "
