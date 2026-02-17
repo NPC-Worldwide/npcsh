@@ -39,6 +39,8 @@ NPCSH_EMBEDDING_MODEL = os.environ.get("NPCSH_EMBEDDING_MODEL", "nomic-embed-tex
 NPCSH_EMBEDDING_PROVIDER = os.environ.get("NPCSH_EMBEDDING_PROVIDER", "ollama")
 NPCSH_REASONING_MODEL = os.environ.get("NPCSH_REASONING_MODEL", "deepseek-r1")
 NPCSH_REASONING_PROVIDER = os.environ.get("NPCSH_REASONING_PROVIDER", "ollama")
+NPCSH_NQL_MODEL = os.environ.get("NPCSH_NQL_MODEL", "")
+NPCSH_NQL_PROVIDER = os.environ.get("NPCSH_NQL_PROVIDER", "")
 NPCSH_STREAM_OUTPUT = os.environ.get("NPCSH_STREAM_OUTPUT", "0") == "1"
 NPCSH_API_URL = os.environ.get("NPCSH_API_URL", None)
 NPCSH_SEARCH_PROVIDER = os.environ.get("NPCSH_SEARCH_PROVIDER", "duckduckgo")
@@ -86,6 +88,9 @@ export NPCSH_EMBEDDING_PROVIDER="{NPCSH_EMBEDDING_PROVIDER}"
 export NPCSH_SEARCH_PROVIDER="{NPCSH_SEARCH_PROVIDER}"
 export NPCSH_DEFAULT_MODE="{NPCSH_DEFAULT_MODE}"
 export NPCSH_STREAM_OUTPUT="0"
+# NQL (NPC SQL) — leave empty to inherit from chat model
+# export NPCSH_NQL_MODEL=""
+# export NPCSH_NQL_PROVIDER=""
 """
         with open(npcshrc_path, 'w') as f:
             f.write(default_content)

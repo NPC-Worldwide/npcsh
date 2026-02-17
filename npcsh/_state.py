@@ -121,6 +121,8 @@ from .config import (
     NPCSH_EMBEDDING_PROVIDER,
     NPCSH_REASONING_MODEL,
     NPCSH_REASONING_PROVIDER,
+    NPCSH_NQL_MODEL,
+    NPCSH_NQL_PROVIDER,
     NPCSH_STREAM_OUTPUT,
     NPCSH_API_URL,
     NPCSH_SEARCH_PROVIDER,
@@ -162,6 +164,8 @@ class ShellState:
     embedding_provider: str = NPCSH_EMBEDDING_PROVIDER
     reasoning_model: str = NPCSH_REASONING_MODEL
     reasoning_provider: str = NPCSH_REASONING_PROVIDER
+    nql_model: str = NPCSH_NQL_MODEL
+    nql_provider: str = NPCSH_NQL_PROVIDER
     search_provider: str = NPCSH_SEARCH_PROVIDER
     image_gen_model: str = NPCSH_IMAGE_GEN_MODEL
     image_gen_provider: str = NPCSH_IMAGE_GEN_PROVIDER
@@ -206,6 +210,10 @@ class ShellState:
             return self.image_gen_model, self.image_gen_provider
         elif model_type == "video_gen":
             return self.video_gen_model, self.video_gen_provider
+        elif model_type == "nql":
+            m = self.nql_model or self.chat_model
+            p = self.nql_provider or self.chat_provider
+            return m, p
         else:
             return self.chat_model, self.chat_provider
 
@@ -3692,12 +3700,13 @@ def initialize_router_with_jinxs(team, router):
     """Load global and team Jinxs into router"""
     global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
     router.load_jinx_routes(global_jinxs_dir)
-    
+
     if team and team.team_path:
         team_jinxs_dir = os.path.join(team.team_path, "jinxs")
         if os.path.exists(team_jinxs_dir):
             router.load_jinx_routes(team_jinxs_dir)
-    
+
+
     return router
                 
 
@@ -3862,6 +3871,18 @@ def process_result(
                 })
                 logger.debug(f"[process_result] Appended assistant message, now {len(result_state.messages)} messages")
 
+        # Extract tool_calls and tool_results from message history
+        all_tool_calls = []
+        all_tool_results = []
+        for msg in result_state.messages:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                all_tool_calls.extend(msg["tool_calls"])
+            elif msg.get("role") == "tool":
+                all_tool_results.append({
+                    "tool_call_id": msg.get("tool_call_id", ""),
+                    "content": msg.get("content", ""),
+                })
+
         save_conversation_message(
             command_history,
             result_state.conversation_id,
@@ -3875,6 +3896,8 @@ def process_result(
             input_tokens=msg_input_tokens,
             output_tokens=msg_output_tokens,
             cost=msg_cost,
+            tool_calls=all_tool_calls if all_tool_calls else None,
+            tool_results=all_tool_results if all_tool_results else None,
         )
 
         result_state.turn_count += 1

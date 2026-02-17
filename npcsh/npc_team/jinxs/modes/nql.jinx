@@ -6,6 +6,7 @@ inputs:
 - model: ""
 - schema: ""
 - show: ""
+- query: ""
 - cron: ""
 - install_cron: ""
 
@@ -25,6 +26,7 @@ steps:
       model_name = context.get('model') or ''
       schema = context.get('schema') or ''
       list_models = context.get('show') or ''
+      query_text = context.get('query') or ''
       install_cron = context.get('install_cron') or ''
 
       models_dir = os.path.expanduser(models_dir)
@@ -45,7 +47,19 @@ steps:
       elif os.path.exists(os.path.expanduser('~/.npcsh/npc_team')):
           npc_dir = os.path.expanduser('~/.npcsh/npc_team')
 
-      has_action = model_name or list_models or install_cron
+      # Also check for nql/ directory models
+      nql_dir = None
+      for base in [npc_dir, os.path.expanduser('~/.npcsh/npc_team')]:
+          if base:
+              candidate = os.path.join(base, 'jinxs', 'nql', 'models')
+              if os.path.isdir(candidate):
+                  nql_dir = candidate
+                  break
+      # If models_dir doesn't exist but nql/models does, use that
+      if not os.path.isdir(models_dir) and nql_dir:
+          models_dir = nql_dir
+
+      has_action = model_name or list_models or install_cron or query_text
 
       # Interactive TUI mode when no args
       if not has_action and sys.stdin.isatty():
@@ -376,6 +390,48 @@ steps:
 
           context['output'] = "NQL closed."
 
+      elif query_text:
+          # Inline SQL execution: /nql query="SELECT ..."
+          import sqlite3
+          try:
+              conn = sqlite3.connect(db_path)
+              cursor = conn.execute(query_text)
+              if query_text.strip().upper().startswith('SELECT') or query_text.strip().upper().startswith('WITH'):
+                  cols = [desc[0] for desc in cursor.description] if cursor.description else []
+                  rows = cursor.fetchall()
+                  conn.close()
+
+                  if not rows:
+                      context['output'] = "(0 rows)"
+                  else:
+                      # Format as table
+                      col_widths = [len(c) for c in cols]
+                      for row in rows:
+                          for i, cell in enumerate(row):
+                              col_widths[i] = max(col_widths[i], len(str(cell) if cell is not None else "NULL"))
+                      col_widths = [min(w, 40) for w in col_widths]
+
+                      header = " | ".join(c.ljust(col_widths[i]) for i, c in enumerate(cols))
+                      sep = "-+-".join("-" * col_widths[i] for i in range(len(cols)))
+                      lines = [header, sep]
+                      for row in rows[:200]:
+                          cells = []
+                          for i, cell in enumerate(row):
+                              s = str(cell) if cell is not None else "NULL"
+                              if len(s) > 40:
+                                  s = s[:37] + "..."
+                              cells.append(s.ljust(col_widths[i]))
+                          lines.append(" | ".join(cells))
+                      if len(rows) > 200:
+                          lines.append(f"... ({len(rows)} total rows, showing first 200)")
+                      context['output'] = "\n".join(lines)
+              else:
+                  conn.commit()
+                  context['output'] = f"OK. Affected {cursor.rowcount} rows."
+                  conn.close()
+          except Exception as e:
+              context['output'] = "SQL Error: " + str(e)
+
       elif list_models:
           if not os.path.exists(models_dir):
               context['output'] = "No models directory found at " + models_dir
@@ -385,14 +441,101 @@ steps:
               if not sql_files:
                   context['output'] = "No .sql models found in " + models_dir
               else:
-                  lines = ["Available NQL models in " + models_dir + ":", ""]
-                  for f in sorted(sql_files):
-                      rel = f.relative_to(models_path)
-                      with open(f, 'r') as fh:
-                          content = fh.read()
-                      has_nql = "nql." in content
-                      marker = " [NQL]" if has_nql else ""
-                      lines.append("  " + str(rel) + marker)
+                  import re as _re
+                  import types as _types
+
+                  # Build set of known NQL-callable function names
+                  _nql_funcs = set()
+                  try:
+                      import npcpy.llm_funcs as _lf
+                      for _n in dir(_lf):
+                          if not _n.startswith('_') and isinstance(getattr(_lf, _n), _types.FunctionType):
+                              _nql_funcs.add(_n)
+                  except ImportError:
+                      pass
+                  try:
+                      import npcpy.ml_funcs as _mf
+                      for _n in dir(_mf):
+                          if not _n.startswith('_') and isinstance(getattr(_mf, _n), _types.FunctionType):
+                              _nql_funcs.add(_n)
+                  except ImportError:
+                      pass
+
+                  # Also discover jinx names from team
+                  _jinx_names = set()
+                  if state and state.team and hasattr(state.team, 'jinx_tool_catalog'):
+                      for _tool in state.team.jinx_tool_catalog:
+                          _jn = _tool.get('name', '')
+                          if _jn:
+                              _jinx_names.add(_jn)
+
+                  lines = ["**NQL Models** in `" + models_dir + "`", ""]
+
+                  if list_models == "detail" or list_models == "all":
+                      # Detailed view — show source with syntax highlighting
+                      for f in sorted(sql_files):
+                          rel = f.relative_to(models_path)
+                          with open(f, 'r') as fh:
+                              src = fh.read()
+
+                          # Find which NQL functions are used
+                          used_funcs = []
+                          for fn in _nql_funcs:
+                              if _re.search(r'(?:nql\.)?' + fn + r'\s*\(', src, _re.IGNORECASE):
+                                  used_funcs.append(fn)
+                          used_jinxes = []
+                          for jn in _jinx_names:
+                              if _re.search(r'(?:nql\.)?' + jn + r'\s*\(', src, _re.IGNORECASE):
+                                  used_jinxes.append(jn)
+
+                          tags = []
+                          if used_funcs:
+                              tags.append("funcs: " + ", ".join(sorted(used_funcs)))
+                          if used_jinxes:
+                              tags.append("jinxes: " + ", ".join(sorted(used_jinxes)))
+
+                          lines.append("### " + str(rel))
+                          if tags:
+                              lines.append("  " + " | ".join(tags))
+                          lines.append("```sql")
+                          lines.append(src.strip())
+                          lines.append("```")
+                          lines.append("")
+                  else:
+                      # Summary view
+                      for f in sorted(sql_files):
+                          rel = f.relative_to(models_path)
+                          with open(f, 'r') as fh:
+                              src = fh.read()
+
+                          used = []
+                          for fn in _nql_funcs:
+                              if _re.search(r'(?:nql\.)?' + fn + r'\s*\(', src, _re.IGNORECASE):
+                                  used.append(fn)
+                          for jn in _jinx_names:
+                              if _re.search(r'(?:nql\.)?' + jn + r'\s*\(', src, _re.IGNORECASE):
+                                  used.append("/" + jn)
+
+                          tag = ""
+                          if used:
+                              tag = "  [" + ", ".join(sorted(used)) + "]"
+                          lines.append("  " + str(rel) + tag)
+
+                      lines.append("")
+                      lines.append("Use `show=detail` for full source with syntax highlighting.")
+
+                  # Show available NQL functions
+                  lines.append("")
+                  lines.append("**Available NQL functions:**")
+                  _sorted_funcs = sorted(_nql_funcs)
+                  _func_line = "  " + ", ".join(_sorted_funcs[:20])
+                  if len(_sorted_funcs) > 20:
+                      _func_line += f" ... (+{len(_sorted_funcs) - 20} more)"
+                  lines.append(_func_line)
+                  if _jinx_names:
+                      lines.append("**Team jinxes (usable as NQL functions):**")
+                      lines.append("  " + ", ".join(sorted(_jinx_names)))
+
                   context['output'] = "\n".join(lines)
 
       elif install_cron:
@@ -432,6 +575,17 @@ steps:
           except ImportError:
               context['output'] = "Error: npcpy.sql.npcsql not found."
 
+          # Resolve NQL model/provider from state
+          _nql_model = None
+          _nql_provider = None
+          if state:
+              if state.nql_model:
+                  _nql_model = state.nql_model
+                  _nql_provider = state.nql_provider
+              elif state.chat_model:
+                  _nql_model = state.chat_model
+                  _nql_provider = state.chat_provider
+
           if not os.path.exists(models_dir):
               context['output'] = "Models directory not found: " + models_dir
           else:
@@ -440,7 +594,9 @@ steps:
                       models_dir=models_dir,
                       target_engine=db_path,
                       npc_directory=npc_dir,
-                      target_schema=schema if schema else None
+                      target_schema=schema if schema else None,
+                      nql_model=_nql_model,
+                      nql_provider=_nql_provider,
                   )
                   if model_name:
                       compiler.discover_models()

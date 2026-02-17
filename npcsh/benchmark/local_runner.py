@@ -12,14 +12,16 @@ Usage:
     python -m npcsh.benchmark.local_runner --task-id shell-pipe-01
 """
 
-import json
 import os
+import re
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
+
+import pandas as pd
 
 
 @dataclass
@@ -31,6 +33,7 @@ class TaskResult:
     duration: float
     error: Optional[str] = None
     npcsh_output: str = ""
+    tool_calls: str = ""  # JSON list from DB
 
 
 @dataclass
@@ -54,10 +57,9 @@ def load_tasks(
     task_id: Optional[str] = None,
 ) -> list:
     if task_file is None:
-        task_file = Path(__file__).parent / "tasks.json"
+        task_file = Path(__file__).parent / "tasks.csv"
 
-    with open(task_file) as f:
-        tasks = json.load(f)
+    tasks = pd.read_csv(task_file).to_dict('records')
 
     if task_id:
         tasks = [t for t in tasks if t["id"] == task_id]
@@ -69,44 +71,36 @@ def load_tasks(
     return tasks
 
 
+def _collect_artifact_paths():
+    """Scan task definitions and extract all /tmp paths referenced in instructions and verify commands."""
+    import re as _re
+    tasks = load_tasks()
+    paths = set()
+    for t in tasks:
+        for field in ("instruction", "verify_cmd", "setup_cmd"):
+            text = t.get(field, "") or ""
+            for m in _re.finditer(r'/tmp/[\w.\-]+(?:\.[\w]+)?', text):
+                paths.add(m.group().rstrip("."))
+    return sorted(paths)
+
+
+# Cache once at import time
+_ARTIFACT_PATHS = _collect_artifact_paths()
+
+
 def clean_task_artifacts():
-    """Remove /tmp files created by tasks so runs don't bleed into each other."""
-    import glob
-    patterns = [
-        "/tmp/result.txt", "/tmp/pyfiles.txt", "/tmp/uname.txt", "/tmp/nums.txt",
-        "/tmp/dirs.txt", "/tmp/comment_count.txt", "/tmp/largest.txt",
-        "/tmp/hello.txt", "/tmp/person.json", "/tmp/config.ini", "/tmp/env.sh",
-        "/tmp/fib.py", "/tmp/rev.py", "/tmp/calc.py", "/tmp/wordcount.py",
-        "/tmp/sample.txt", "/tmp/wc_result.json", "/tmp/fizzbuzz.py",
-        "/tmp/data.csv", "/tmp/analyze.py", "/tmp/stats.json",
-        "/tmp/scores.csv", "/tmp/inventory.json", "/tmp/total.py",
-        "/tmp/sysinfo.txt", "/tmp/env_info.txt", "/tmp/path_vars.txt",
-        "/tmp/log.txt", "/tmp/errors.txt", "/tmp/fruits.txt", "/tmp/sorted_fruits.txt",
-        "/tmp/words.txt", "/tmp/unique_counts.txt",
-        "/tmp/broken.py", "/tmp/buggy.py",
-        "/tmp/report.txt", "/tmp/users.json",
-        "/tmp/backup.sh", "/tmp/backup.tar.gz",
-        "/tmp/todo.py", "/tmp/todos.txt",
-        "/tmp/sunset.png", "/tmp/cat.png", "/tmp/generated.png",
-        "/tmp/forest.png", "/tmp/img_info.py",
-        "/tmp/welcome.wav", "/tmp/welcome.mp3",
-        "/tmp/pangram.wav", "/tmp/pangram.mp3",
-        "/tmp/search_results.txt", "/tmp/linux_creator.txt", "/tmp/japan_pop.txt",
-        "/tmp/languages.txt", "/tmp/rank.py",
-        "/tmp/primes.py", "/tmp/fib_research.py",
-        "/tmp/disk_usage.txt", "/tmp/file_count.txt",
-    ]
+    """Remove /tmp files and dirs created by tasks so runs don't bleed into each other."""
     import shutil
-    for p in patterns:
+    for p in _ARTIFACT_PATHS:
         try:
             os.remove(p)
+        except IsADirectoryError:
+            shutil.rmtree(p, ignore_errors=True)
         except (OSError, FileNotFoundError):
             pass
-    for d in ["/tmp/mydir", "/tmp/myrepo", "/tmp/project"]:
-        shutil.rmtree(d, ignore_errors=True)
 
 
-def run_task(task: dict, model: str, provider: str, timeout: int = 120) -> TaskResult:
+def run_task(task: dict, model: str, provider: str, timeout: int = 120, startup_overhead: float = 0.0) -> TaskResult:
     """Run a single task through npcsh -c and verify the result."""
     import signal
 
@@ -125,6 +119,7 @@ def run_task(task: dict, model: str, provider: str, timeout: int = 120) -> TaskR
     env["NPCSH_CHAT_MODEL"] = model
     env["NPCSH_CHAT_PROVIDER"] = provider
     env["NPCSH_STREAM_OUTPUT"] = "0"
+    env["NPCSH_NO_EMBEDDINGS"] = "1"
 
     if provider == "ollama":
         env.setdefault("OLLAMA_HOST", "http://localhost:11434")
@@ -188,13 +183,43 @@ def run_task(task: dict, model: str, provider: str, timeout: int = 120) -> TaskR
         passed = False
         npcsh_output += f"\nVerify error: {e}"
 
+    # Pull tool_calls from the DB (written by npcsh -c)
+    # Match by content of the user message (the instruction) to avoid stale data
+    tool_calls_json = ""
+    try:
+        import sqlite3
+        db_path = os.path.expanduser("~/npcsh_history.db")
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            # Find the conversation_id of the most recent user message matching this instruction
+            user_row = conn.execute(
+                "SELECT conversation_id FROM conversation_history "
+                "WHERE role='user' AND content=:instruction "
+                "ORDER BY id DESC LIMIT 1",
+                {"instruction": instruction},
+            ).fetchone()
+            if user_row:
+                conv_id = user_row[0]
+                tc_row = conn.execute(
+                    "SELECT tool_calls FROM conversation_history "
+                    "WHERE role='assistant' AND conversation_id=:cid AND tool_calls IS NOT NULL "
+                    "ORDER BY id DESC LIMIT 1",
+                    {"cid": conv_id},
+                ).fetchone()
+                if tc_row and tc_row[0]:
+                    tool_calls_json = tc_row[0]
+            conn.close()
+    except Exception:
+        pass
+
     return TaskResult(
         task_id=task_id,
         category=task["category"],
         difficulty=task["difficulty"],
         passed=passed,
-        duration=duration,
-        npcsh_output=npcsh_output[:2000],
+        duration=max(0, duration - startup_overhead),
+        npcsh_output=npcsh_output,
+        tool_calls=tool_calls_json,
     )
 
 
@@ -210,7 +235,30 @@ def run_benchmark(
     tasks = load_tasks(category=category, difficulty=difficulty, task_id=task_id)
     report = BenchmarkReport(model=model, provider=provider, total=len(tasks))
 
+    # Calibrate startup overhead
+    env = os.environ.copy()
+    env["NPCSH_CHAT_MODEL"] = model
+    env["NPCSH_CHAT_PROVIDER"] = provider
+    env["NPCSH_STREAM_OUTPUT"] = "0"
+    env["NPCSH_NO_EMBEDDINGS"] = "1"
+    if provider == "ollama":
+        env.setdefault("OLLAMA_HOST", "http://localhost:11434")
+        env["NPCSH_OLLAMA_NUM_CTX"] = "16384"
+
     print(f"\nnpcsh benchmark: {provider}/{model}", flush=True)
+    print("Calibrating startup overhead...", flush=True)
+    cal_times = []
+    for _ in range(3):
+        cal_start = time.time()
+        subprocess.run(
+            ["npcsh", "-c", "echo ok"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=env, timeout=120,
+        )
+        cal_times.append(time.time() - cal_start)
+    startup_overhead = sum(cal_times) / len(cal_times)
+    print(f"Startup overhead: {startup_overhead:.1f}s (avg of 3)", flush=True)
+
     print(f"Tasks: {len(tasks)}", flush=True)
     print("=" * 60, flush=True)
 
@@ -219,19 +267,26 @@ def run_benchmark(
         print(f"\n[{i+1}/{len(tasks)}] {tid} ({task['category']}/{task['difficulty']})", flush=True)
         print(f"  {task['description']}", flush=True)
 
-        result = run_task(task, model, provider, timeout)
+        result = run_task(task, model, provider, timeout, startup_overhead)
         report.results.append(result)
+
+        # Extract execution info from output
+        out = result.npcsh_output
+        tool_lines = re.findall(r'^⚡ (\w+)', out, re.MULTILINE) if out else []
+        skipped = "skipped jinxes" in out.lower() if out else False
+        unknown = "Unknown action" in out if out else False
+
+        status = "PASS" if result.passed else ("ERROR: " + result.error if result.error else "FAIL")
+        tools_info = f"tools=[{','.join(tool_lines)}]" if tool_lines else ("skipped" if skipped else ("unknown_action" if unknown else "no_tools"))
+        print(f"  {status} ({result.duration:.1f}s) {tools_info}", flush=True)
 
         if result.passed:
             report.passed += 1
-            print(f"  PASS ({result.duration:.1f}s)", flush=True)
         elif result.error:
             report.errors += 1
             report.failed += 1
-            print(f"  ERROR: {result.error} ({result.duration:.1f}s)", flush=True)
         else:
             report.failed += 1
-            print(f"  FAIL ({result.duration:.1f}s)", flush=True)
 
         report.duration += result.duration
 
@@ -251,6 +306,18 @@ def run_benchmark(
         if result.passed:
             report.by_difficulty[diff]["passed"] += 1
 
+        # Save after every task so we don't lose progress
+        report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_file = report_dir / f"{provider}_{model}_running.csv"
+        df = pd.DataFrame([
+            {"task_id": r.task_id, "category": r.category, "difficulty": r.difficulty,
+             "passed": r.passed, "duration": round(r.duration, 1), "error": r.error or "",
+             "output": r.npcsh_output, "tool_calls": r.tool_calls}
+            for r in report.results
+        ])
+        df.to_csv(checkpoint_file, index=False)
+
     # Summary
     print("\n" + "=" * 60)
     print("RESULTS")
@@ -268,37 +335,23 @@ def run_benchmark(
     for diff, stats in sorted(report.by_difficulty.items()):
         print(f"  {diff:<10} {stats['passed']}/{stats['total']}")
 
-    # Save report
+    # Save final report as CSV
     report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
     report_dir.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
-    report_file = report_dir / f"{provider}_{model}_{ts}.json"
+    report_file = report_dir / f"{provider}_{model}_{ts}.csv"
+    df = pd.DataFrame([
+        {"task_id": r.task_id, "category": r.category, "difficulty": r.difficulty,
+         "passed": r.passed, "duration": round(r.duration, 1), "error": r.error or "",
+             "output": r.npcsh_output}
+        for r in report.results
+    ])
+    df.to_csv(report_file, index=False)
 
-    with open(report_file, "w") as f:
-        json.dump({
-            "model": model,
-            "provider": provider,
-            "timestamp": ts,
-            "total": report.total,
-            "passed": report.passed,
-            "failed": report.failed,
-            "errors": report.errors,
-            "score": report.passed / report.total if report.total else 0,
-            "duration": report.duration,
-            "by_category": report.by_category,
-            "by_difficulty": report.by_difficulty,
-            "results": [
-                {
-                    "task_id": r.task_id,
-                    "category": r.category,
-                    "difficulty": r.difficulty,
-                    "passed": r.passed,
-                    "duration": r.duration,
-                    "error": r.error,
-                }
-                for r in report.results
-            ],
-        }, f, indent=2)
+    # Remove checkpoint file
+    checkpoint = report_dir / f"{provider}_{model}_running.csv"
+    if checkpoint.exists():
+        checkpoint.unlink()
 
     print(f"\nReport saved: {report_file}")
     return report
@@ -372,6 +425,94 @@ def compare_models(
     return all_results
 
 
+def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 1200):
+    """Re-run only the failed tasks from an existing CSV and overwrite results in-place."""
+    import csv as csv_mod
+    csv_mod.field_size_limit(10**7)
+
+    csv_path = Path(csv_path)
+    if not csv_path.exists():
+        print(f"File not found: {csv_path}")
+        return
+
+    with open(csv_path) as f:
+        rows = list(csv_mod.DictReader(f))
+
+    failed_ids = [r["task_id"] for r in rows if r.get("passed", "").lower() != "true"]
+    print(f"\nRerun failed tasks from {csv_path.name}")
+    print(f"Total rows: {len(rows)}, Failed: {len(failed_ids)}")
+
+    if not failed_ids:
+        print("No failed tasks to rerun.")
+        return
+
+    all_tasks = load_tasks()
+    task_lookup = {t["id"]: t for t in all_tasks}
+
+    # Calibrate startup overhead
+    env = os.environ.copy()
+    env["NPCSH_CHAT_MODEL"] = model
+    env["NPCSH_CHAT_PROVIDER"] = provider
+    env["NPCSH_STREAM_OUTPUT"] = "0"
+    env["NPCSH_NO_EMBEDDINGS"] = "1"
+    if provider == "ollama":
+        env.setdefault("OLLAMA_HOST", "http://localhost:11434")
+        env["NPCSH_OLLAMA_NUM_CTX"] = "16384"
+
+    print("Calibrating startup overhead...", flush=True)
+    cal_times = []
+    for _ in range(3):
+        cal_start = time.time()
+        subprocess.run(
+            ["npcsh", "-c", "echo ok"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=env, timeout=120,
+        )
+        cal_times.append(time.time() - cal_start)
+    startup_overhead = sum(cal_times) / len(cal_times)
+    print(f"Startup overhead: {startup_overhead:.1f}s", flush=True)
+
+    # Build index: task_id -> row index
+    row_index = {}
+    for i, r in enumerate(rows):
+        row_index[r["task_id"]] = i
+
+    improved = 0
+    for j, tid in enumerate(failed_ids):
+        if tid not in task_lookup:
+            print(f"  [{j+1}/{len(failed_ids)}] {tid} — task definition not found, skipping")
+            continue
+
+        task = task_lookup[tid]
+        print(f"\n  [{j+1}/{len(failed_ids)}] {tid} ({task['category']}/{task['difficulty']})", flush=True)
+
+        result = run_task(task, model, provider, timeout, startup_overhead)
+
+        if result.passed:
+            print(f"    PASS ({result.duration:.1f}s) — upgraded!", flush=True)
+            improved += 1
+        elif result.error:
+            print(f"    ERROR: {result.error} ({result.duration:.1f}s)", flush=True)
+        else:
+            print(f"    FAIL ({result.duration:.1f}s)", flush=True)
+
+        # Overwrite the row
+        idx = row_index[tid]
+        rows[idx]["passed"] = str(result.passed)
+        rows[idx]["duration"] = str(round(result.duration, 1))
+        rows[idx]["error"] = result.error or ""
+        rows[idx]["output"] = result.npcsh_output
+
+        # Save after each task
+        df = pd.DataFrame(rows)
+        df.to_csv(csv_path, index=False)
+
+    total_passed = sum(1 for r in rows if r.get("passed", "").lower() == "true")
+    print(f"\nDone. Improved {improved}/{len(failed_ids)} tasks.")
+    print(f"New total: {total_passed}/{len(rows)} ({100*total_passed//len(rows)}%)")
+    print(f"Saved to: {csv_path}")
+
+
 def main():
     import argparse
 
@@ -384,10 +525,19 @@ def main():
     parser.add_argument("--timeout", type=int, default=1200)
     parser.add_argument("--compare", action="store_true",
                         help="Compare multiple local models")
+    parser.add_argument("--rerun-failed", type=str, default=None,
+                        help="Path to existing CSV — re-run only failed tasks and overwrite")
 
     args = parser.parse_args()
 
-    if args.compare:
+    if args.rerun_failed:
+        rerun_failed(
+            csv_path=args.rerun_failed,
+            model=args.model,
+            provider=args.provider,
+            timeout=args.timeout,
+        )
+    elif args.compare:
         models = [
             ("mistral-small3.2", "ollama"),
             ("qwen3:8b", "ollama"),

@@ -34,8 +34,100 @@ steps:
           # Check if we're in a git repo
           rc, _, _ = run_git('rev-parse', '--is-inside-work-tree')
           if rc != 0:
-              context['output'] = "Not a git repository: " + repo_path
-          else:
+              # Not a git repo — offer to initialize
+              fd = sys.stdin.fileno()
+              old_settings = termios.tcgetattr(fd)
+              init_done = False
+              try:
+                  tty.setcbreak(fd)
+                  sys.stdout.write('\033[?25l\033[2J')
+
+                  init_phase = 'menu'  # menu, remote_input
+                  remote_buf = ''
+                  init_msg = ''
+
+                  def render_init():
+                      width, height = 80, 24
+                      try:
+                          s = os.get_terminal_size()
+                          width, height = s.columns, s.lines
+                      except:
+                          pass
+                      out = []
+                      hdr = ' GIT: ' + os.path.basename(repo_path) + '  (no repo) '
+                      out.append('\033[1;1H\033[K\033[7;1m' + hdr.ljust(width) + '\033[0m')
+                      out.append('\033[3;1H\033[K\033[90m' + ('-' * width) + '\033[0m')
+
+                      if init_phase == 'menu':
+                          out.append('\033[5;3H\033[1mNo git repository found in:\033[0m')
+                          out.append('\033[6;5H\033[90m' + repo_path + '\033[0m')
+                          out.append('\033[8;3H\033[33m[i]\033[0m  Initialize a new repository')
+                          out.append('\033[9;3H\033[33m[q]\033[0m  Quit')
+                      elif init_phase == 'remote_input':
+                          out.append('\033[5;3H\033[1;32mRepository initialized.\033[0m')
+                          out.append('\033[7;3H\033[1mRemote URL\033[0m \033[90m(leave empty to skip):\033[0m')
+                          out.append('\033[8;5H' + remote_buf + '\033[7m \033[0m')
+                          out.append('\033[10;3H\033[90mEnter to confirm, Esc to skip\033[0m')
+
+                      if init_msg:
+                          out.append('\033[' + str(height - 2) + ';3H\033[32m' + init_msg[:width - 4] + '\033[0m')
+
+                      # Clear remaining lines
+                      for row in range(12, height - 2):
+                          out.append('\033[' + str(row) + ';1H\033[K')
+                      out.append('\033[' + str(height) + ';1H\033[K\033[7m [i] Init  [q] Quit \033[0m')
+                      sys.stdout.write(''.join(out))
+                      sys.stdout.flush()
+
+                  render_init()
+                  init_running = True
+                  while init_running:
+                      c = os.read(fd, 1).decode('latin-1')
+
+                      if init_phase == 'menu':
+                          if c in ('q', '\x03'):
+                              init_running = False
+                          elif c == 'i':
+                              irc, _, ierr = run_git('init')
+                              if irc == 0:
+                                  init_phase = 'remote_input'
+                                  remote_buf = ''
+                                  init_msg = 'Initialized empty git repository'
+                              else:
+                                  init_msg = 'Init failed: ' + ierr[:60]
+                              render_init()
+
+                      elif init_phase == 'remote_input':
+                          if c == '\x1b':
+                              # Esc — skip remote
+                              init_done = True
+                              init_running = False
+                          elif c in ('\r', '\n'):
+                              if remote_buf.strip():
+                                  rrc, _, rerr = run_git('remote', 'add', 'origin', remote_buf.strip())
+                                  if rrc == 0:
+                                      init_msg = 'Remote added: ' + remote_buf.strip()
+                                  else:
+                                      init_msg = 'Remote failed: ' + rerr[:60]
+                              init_done = True
+                              init_running = False
+                          elif c == '\x7f' or c == '\b':
+                              remote_buf = remote_buf[:-1]
+                              render_init()
+                          elif c.isprintable():
+                              remote_buf += c
+                              render_init()
+              finally:
+                  termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                  sys.stdout.write('\033[?25h\033[2J\033[H')
+                  sys.stdout.flush()
+
+              if init_done:
+                  rc, _, _ = run_git('rev-parse', '--is-inside-work-tree')
+
+              if not init_done or rc != 0:
+                  context['output'] = 'Git TUI closed.'
+              else:
               # Get repo root
               _, root, _ = run_git('rev-parse', '--show-toplevel')
               repo_root = root.strip()

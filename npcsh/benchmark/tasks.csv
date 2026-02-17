@@ -1,0 +1,213 @@
+id,category,difficulty,instruction,verify_cmd,description
+web-search-01,web-search,medium,Search the web for 'python asyncio tutorial' and write a summary of what you found to /tmp/search_results.txt,test -s /tmp/search_results.txt && test $(wc -w < /tmp/search_results.txt) -ge 10,Web search and summarize
+web-search-02,web-search,easy,Search the web for who created Linux and save the answer to /tmp/linux_creator.txt,test -s /tmp/linux_creator.txt,Web search - factual question
+web-search-03,web-search,medium,Search the web for the current population of Japan and write the answer to /tmp/japan_pop.txt,test -s /tmp/japan_pop.txt,Web search - factual lookup
+web-search-04,web-search,easy,Search the web for what year Python was first released and write the answer to /tmp/python_year.txt,test -s /tmp/python_year.txt,Web search - historical fact
+web-search-05,web-search,hard,"Search the web for the top 3 most popular JavaScript frameworks in 2025 and write them to /tmp/js_frameworks.txt, one per line",test -s /tmp/js_frameworks.txt && test $(wc -l < /tmp/js_frameworks.txt) -ge 3,Web search - ranked list
+python-01,python,easy,"Write a Python script /tmp/fib.py that defines a function fibonacci(n) returning the nth fibonacci number (0-indexed, fib(0)=0, fib(1)=1). The script should print fibonacci(10) when run.",python3 /tmp/fib.py | grep -q '55',Write and verify a Python script
+python-02,python,easy,Write a Python script /tmp/rev.py that takes a string as a command line argument and prints it reversed. For example: python3 /tmp/rev.py hello should print olleh,"test ""$(python3 /tmp/rev.py hello)"" = 'olleh'",Simple CLI script
+python-03,python,easy,"Write a Python script /tmp/calc.py that takes three arguments: a number, an operator (+, -, *, /), and another number, then prints the result. Example: python3 /tmp/calc.py 3 + 4 should print 7",python3 /tmp/calc.py 3 + 4 | grep -q '7',Basic calculator script
+python-04,python,medium,"Write a Python script /tmp/wordcount.py that reads /tmp/sample.txt and writes a JSON file /tmp/wc_result.json with keys 'lines', 'words', 'chars' containing the counts. First create /tmp/sample.txt with at least 3 lines of text.","python3 /tmp/wordcount.py && python3 -c ""import json; d=json.load(open('/tmp/wc_result.json')); assert 'lines' in d and 'words' in d and 'chars' in d""",Multi-step Python task with file I/O
+python-05,python,medium,"Write /tmp/fizzbuzz.py that prints numbers 1 to 30, but prints 'Fizz' for multiples of 3, 'Buzz' for multiples of 5, and 'FizzBuzz' for multiples of both.",python3 /tmp/fizzbuzz.py | head -15 | grep -q 'FizzBuzz' && python3 /tmp/fizzbuzz.py | grep -c 'FizzBuzz' | grep -q '2',FizzBuzz implementation
+python-06,python,easy,"Write a Python script /tmp/even.py that prints all even numbers from 1 to 20, one per line",python3 /tmp/even.py | grep -q '2' && python3 /tmp/even.py | grep -q '20' && test $(python3 /tmp/even.py | wc -l) -eq 10,Simple loop and conditional
+python-07,python,medium,"Write a Python script /tmp/palindrome.py that takes a string argument and prints 'yes' if it's a palindrome, 'no' otherwise. Example: python3 /tmp/palindrome.py racecar should print yes","test ""$(python3 /tmp/palindrome.py racecar)"" = 'yes' && test ""$(python3 /tmp/palindrome.py hello)"" = 'no'",String palindrome checker
+python-08,python,medium,"Write /tmp/stats.py that takes any number of numeric command line arguments and prints the min, max, and mean. Example: python3 /tmp/stats.py 1 5 3 should print something containing min=1, max=5, mean=3.0",python3 /tmp/stats.py 1 5 3 | grep -q '1' && python3 /tmp/stats.py 1 5 3 | grep -q '5',Stats calculator CLI
+python-09,python,hard,"Write /tmp/matrix.py that multiplies two 2x2 matrices A=[[1,2],[3,4]] and B=[[5,6],[7,8]] and prints the result matrix. Expected output should contain 19, 22, 43, 50.",python3 /tmp/matrix.py | grep -q '19' && python3 /tmp/matrix.py | grep -q '50',Matrix multiplication
+python-10,python,hard,Write /tmp/tree.py that takes a directory path as argument and prints its contents as a tree structure showing files and subdirectories with indentation. Run it on /tmp.,test -f /tmp/tree.py && python3 /tmp/tree.py /tmp 2>/dev/null | head -5 | grep -qE '.',Directory tree printer
+tool-chain-01,tool-chain,hard,"Search the web for the top 5 most popular programming languages, save the results to /tmp/languages.txt, then create a Python script /tmp/rank.py that reads that file and prints the languages as a numbered list.",test -s /tmp/languages.txt && python3 /tmp/rank.py | grep -qE '[0-9]',Web search + file write + script chain
+tool-chain-02,tool-chain,hard,"Generate an image of a forest and save it to /tmp/forest.png, then write a Python script /tmp/img_info.py that opens the image and prints its dimensions.",(test -f /tmp/forest.png || ls ~/.npcsh/images/vixynt_*.png 2>/dev/null | head -1 | xargs test -f) && test -f /tmp/img_info.py,Image gen + code analysis chain
+tool-chain-03,tool-chain,hard,"Search the web for the capital of Australia, save it to /tmp/capital.txt, then generate speech audio reading the answer and save to /tmp/capital_audio.wav.",test -s /tmp/capital.txt && (test -f /tmp/capital_audio.wav || ls ~/.npcsh/audio/scherzo_*.wav 2>/dev/null | tail -1 | xargs test -f),Web search + TTS chain
+tool-chain-04,tool-chain,hard,"Write a Python script /tmp/fetch_parse.py that creates a JSON file /tmp/sample_api.json with mock API data (list of 5 products with name and price), then reads it and writes /tmp/cheapest.txt with the cheapest product name.",python3 /tmp/fetch_parse.py && test -s /tmp/cheapest.txt,Data generation + processing chain
+tool-chain-05,tool-chain,hard,"Generate an image of a dog, save to /tmp/dog.png, then create /tmp/gallery.html with an HTML page that displays the image with a caption.",(test -f /tmp/dog.png || ls ~/.npcsh/images/vixynt_*.png 2>/dev/null | tail -1 | xargs test -f) && test -f /tmp/gallery.html && grep -qi 'img\|image' /tmp/gallery.html,Image gen + HTML creation chain
+delegation-01,delegation,medium,Delegate to a specialist to write a Python script at /tmp/primes.py that finds all prime numbers under 100 and prints them,python3 /tmp/primes.py | grep -q '97',Delegation for code task
+delegation-02,delegation,hard,"Research what the Fibonacci sequence is, then create a Python script /tmp/fib_research.py that prints the first 15 Fibonacci numbers and a one-line comment explaining the sequence",test -f /tmp/fib_research.py && python3 /tmp/fib_research.py | grep -q '610',Research + code delegation chain
+delegation-03,delegation,medium,"Delegate to a specialist to write a bash script /tmp/sysreport.sh that gathers hostname, uptime, disk usage, and memory info into /tmp/sysreport.txt. Then run it.",test -f /tmp/sysreport.sh && bash /tmp/sysreport.sh && test -s /tmp/sysreport.txt,Delegation for system script
+delegation-04,delegation,hard,"Delegate to an appropriate specialist to create a Python script /tmp/sorter.py that implements merge sort and tests it on the list [38, 27, 43, 3, 9, 82, 10].",python3 /tmp/sorter.py | grep -q '3' && python3 /tmp/sorter.py | grep -q '82',Delegation for algorithm implementation
+delegation-05,delegation,medium,"Delegate to a specialist to create /tmp/validators.py with functions: is_email(s) that returns True for valid emails, and is_url(s) that returns True for valid URLs. Include test calls that print results.",python3 /tmp/validators.py | grep -qi 'true\|True',Delegation for utility functions
+shell-01,shell,easy,Count the number of files in /etc and write just the number to /tmp/result.txt,test -f /tmp/result.txt && grep -qE '[0-9]+' /tmp/result.txt,Basic shell command with file output
+shell-02,shell,easy,List all .py files in the current directory recursively and write the list to /tmp/pyfiles.txt,test -f /tmp/pyfiles.txt && test -s /tmp/pyfiles.txt,Find + redirect
+shell-03,shell,easy,Write the output of 'uname -a' to /tmp/uname.txt,test -s /tmp/uname.txt && grep -qi 'darwin\|linux' /tmp/uname.txt,Simple command capture
+shell-04,shell,easy,"Create a file /tmp/nums.txt with the numbers 1 through 10, one per line",test $(wc -l < /tmp/nums.txt) -ge 10 && grep -q '^1$' /tmp/nums.txt && grep -q '^10$' /tmp/nums.txt,Sequence generation
+shell-05,shell,medium,"Find all directories in /usr/local and write their full paths to /tmp/dirs.txt, sorted alphabetically",test -s /tmp/dirs.txt,Directory listing with sort
+shell-06,shell,medium,Count how many lines in /etc/hosts contain a comment (lines starting with #) and write just the number to /tmp/comment_count.txt,test -f /tmp/comment_count.txt && grep -qE '[0-9]+' /tmp/comment_count.txt,Grep + count
+shell-07,shell,medium,"Get the top 5 largest files in /usr/bin by size, and write their names and sizes to /tmp/largest.txt",test -s /tmp/largest.txt && test $(wc -l < /tmp/largest.txt) -ge 5,Sort by size and limit
+shell-08,shell,easy,Write the current date and time to /tmp/now.txt,test -s /tmp/now.txt,Date output capture
+shell-09,shell,medium,Count how many unique file extensions exist in /usr/bin and write the count to /tmp/ext_count.txt,test -f /tmp/ext_count.txt && grep -qE '[0-9]+' /tmp/ext_count.txt,Extension counting with pipes
+shell-10,shell,hard,"Find all files in /etc that are larger than 10KB, sort them by size descending, and write the top 10 with their sizes to /tmp/big_etc.txt",test -s /tmp/big_etc.txt,Complex find with size filter and sort
+file-ops-01,file-ops,easy,Create a file /tmp/hello.txt containing exactly the text 'hello world' (no quotes),"test ""$(cat /tmp/hello.txt)"" = 'hello world'",Simple file creation
+file-ops-02,file-ops,easy,"Create a directory /tmp/mydir and inside it create three empty files: a.txt, b.txt, c.txt",test -d /tmp/mydir && test -f /tmp/mydir/a.txt && test -f /tmp/mydir/b.txt && test -f /tmp/mydir/c.txt,Directory and multiple files
+file-ops-03,file-ops,easy,"Create a JSON file /tmp/person.json with fields name, age, and email. Use any values you want.","python3 -c ""import json; d=json.load(open('/tmp/person.json')); assert 'name' in d and 'age' in d and 'email' in d""",JSON file creation
+file-ops-04,file-ops,medium,"Create a file /tmp/config.ini with the following sections: [database] with host=localhost and port=5432, and [app] with debug=true and name=myapp",grep -q '\[database\]' /tmp/config.ini && grep -q 'host=localhost' /tmp/config.ini && grep -q 'port=5432' /tmp/config.ini && grep -q '\[app\]' /tmp/config.ini && grep -q 'debug=true' /tmp/config.ini,Multi-section config file creation
+file-ops-05,file-ops,medium,"Create /tmp/env.sh that exports three environment variables: APP_NAME=myapp, APP_PORT=8080, APP_DEBUG=false. Each should be on its own line starting with 'export'.",grep -q 'export APP_NAME=myapp' /tmp/env.sh && grep -q 'export APP_PORT=8080' /tmp/env.sh && grep -q 'export APP_DEBUG=false' /tmp/env.sh,Shell env file creation
+file-ops-06,file-ops,easy,"Create a file /tmp/colors.txt with exactly these colors, one per line: red, green, blue, yellow, purple",grep -q 'red' /tmp/colors.txt && grep -q 'purple' /tmp/colors.txt && test $(wc -l < /tmp/colors.txt) -eq 5,Exact content file creation
+file-ops-07,file-ops,medium,"Create a directory tree /tmp/webapp with subdirectories: static/css, static/js, templates, and an empty __init__.py in the root",test -d /tmp/webapp/static/css && test -d /tmp/webapp/static/js && test -d /tmp/webapp/templates && test -f /tmp/webapp/__init__.py,Nested directory structure
+file-ops-08,file-ops,medium,"Create /tmp/requirements.txt with these Python packages one per line: flask>=2.0, requests, numpy>=1.20, pandas, pytest",grep -q 'flask' /tmp/requirements.txt && grep -q 'pytest' /tmp/requirements.txt && test $(wc -l < /tmp/requirements.txt) -ge 5,Requirements file creation
+file-ops-09,file-ops,hard,"Create a YAML file /tmp/docker-compose.yml that defines two services: 'web' (image: nginx, port 80:80) and 'db' (image: postgres, environment POSTGRES_PASSWORD=secret)",grep -q 'nginx' /tmp/docker-compose.yml && grep -q 'postgres' /tmp/docker-compose.yml && grep -q 'POSTGRES_PASSWORD' /tmp/docker-compose.yml,YAML config file creation
+file-ops-10,file-ops,hard,"Create /tmp/Makefile with targets: 'build' that runs 'echo building', 'test' that runs 'echo testing', and 'clean' that runs 'echo cleaning'. Make 'build' the default target.",grep -q 'build' /tmp/Makefile && grep -q 'test' /tmp/Makefile && grep -q 'clean' /tmp/Makefile,Makefile creation
+data-01,data,medium,"Create a CSV file /tmp/data.csv with columns name,age,city and 5 rows of sample data. Then write a script /tmp/analyze.py that reads the CSV and writes /tmp/stats.json with the average age and the list of unique cities.","test -f /tmp/data.csv && python3 /tmp/analyze.py && python3 -c ""import json; d=json.load(open('/tmp/stats.json')); assert 'average_age' in d and 'cities' in d""",Data creation and analysis
+data-02,data,easy,"Create a CSV file /tmp/scores.csv with columns student,score containing at least 5 rows of data. Use any names and scores between 0-100.","test -f /tmp/scores.csv && python3 -c ""import csv; rows=list(csv.DictReader(open('/tmp/scores.csv'))); assert len(rows)>=5 and 'student' in rows[0] and 'score' in rows[0]""",CSV file creation
+data-03,data,medium,"Create /tmp/inventory.json containing a JSON array of at least 5 objects, each with fields: item (string), quantity (number), price (number). Then write /tmp/total.py that reads it and prints the total value (sum of quantity*price for each item).",python3 /tmp/total.py | grep -qE '[0-9]',JSON data processing
+data-04,data,easy,"Create a JSON file /tmp/books.json with an array of 3 book objects, each with title, author, and year fields.","python3 -c ""import json; d=json.load(open('/tmp/books.json')); assert isinstance(d,list) and len(d)>=3 and 'title' in d[0] and 'author' in d[0]""",JSON array creation
+data-05,data,medium,"Create /tmp/temps.csv with columns date,temp_c for 7 days. Then write /tmp/convert.py that reads it and creates /tmp/temps_f.csv with columns date,temp_f where temp_f = temp_c * 9/5 + 32.","test -f /tmp/temps.csv && python3 /tmp/convert.py && python3 -c ""import csv; rows=list(csv.DictReader(open('/tmp/temps_f.csv'))); assert len(rows)>=7 and 'temp_f' in rows[0]""",CSV transformation
+data-06,data,medium,"Create /tmp/sales.csv with columns product,quantity,price for at least 8 rows. Then write /tmp/top_sales.py that reads it and prints the top 3 products by total revenue (quantity*price).",test -f /tmp/sales.csv && python3 /tmp/top_sales.py | head -3 | grep -qE '.',CSV aggregation and ranking
+data-07,data,easy,"Create /tmp/contacts.json with a JSON array of 5 contacts, each having name, phone, and email fields.","python3 -c ""import json; d=json.load(open('/tmp/contacts.json')); assert len(d)>=5 and 'phone' in d[0] and 'email' in d[0]""",Contact list JSON creation
+data-08,data,hard,"Create /tmp/employees.csv with columns name,department,salary for 10 employees across at least 3 departments. Then write /tmp/dept_avg.py that prints the average salary per department.",test -f /tmp/employees.csv && python3 /tmp/dept_avg.py | wc -l | grep -qE '[3-9]',Group-by aggregation
+data-09,data,hard,"Write /tmp/merge.py that reads /tmp/users_a.json and /tmp/users_b.json (create both first, each with an array of user objects having id and name), merges them removing duplicates by id, and writes /tmp/merged_users.json.","python3 /tmp/merge.py && python3 -c ""import json; d=json.load(open('/tmp/merged_users.json')); assert isinstance(d,list) and len(d)>=2""",JSON merge with deduplication
+data-10,data,medium,"Create /tmp/weather.csv with columns city,temp,humidity for 5 cities. Write /tmp/weather_report.py that reads it and writes /tmp/weather_report.txt with a formatted text summary of each city.",python3 /tmp/weather_report.py && test -s /tmp/weather_report.txt && test $(wc -l < /tmp/weather_report.txt) -ge 5,CSV to formatted report
+system-01,system,easy,"Write the current hostname, kernel version, and current user to /tmp/sysinfo.txt, one per line.",test -f /tmp/sysinfo.txt && test $(wc -l < /tmp/sysinfo.txt) -ge 3,System information gathering
+system-02,system,easy,Write the current date in ISO format and your current working directory to /tmp/env_info.txt,test -f /tmp/env_info.txt && test -s /tmp/env_info.txt,Environment information capture
+system-03,system,medium,Write a list of all environment variables that contain the word 'PATH' to /tmp/path_vars.txt,test -s /tmp/path_vars.txt && grep -qi 'PATH' /tmp/path_vars.txt,Environment variable filtering
+system-04,system,easy,Write the total number of running processes to /tmp/proc_count.txt,test -f /tmp/proc_count.txt && grep -qE '[0-9]+' /tmp/proc_count.txt,Process counting
+system-05,system,medium,Write the amount of free disk space on the root filesystem to /tmp/disk_free.txt in human-readable format,test -s /tmp/disk_free.txt,Disk space query
+system-06,system,medium,"List all users on the system (from /etc/passwd) and write just the usernames to /tmp/usernames.txt, one per line",test -s /tmp/usernames.txt && grep -q 'root' /tmp/usernames.txt,User listing from passwd
+system-07,system,medium,Write the system uptime to /tmp/uptime.txt,test -s /tmp/uptime.txt,Uptime capture
+system-08,system,hard,Find the 5 processes using the most memory and write their names and memory usage to /tmp/top_mem.txt,test -s /tmp/top_mem.txt && test $(wc -l < /tmp/top_mem.txt) -ge 5,Top memory processes
+system-09,system,easy,Write the value of the HOME environment variable to /tmp/home_var.txt,test -s /tmp/home_var.txt && grep -q '/Users\|/home\|/root' /tmp/home_var.txt,Environment variable access
+system-10,system,hard,"Write a summary of the system to /tmp/sys_summary.txt including: OS name, CPU architecture, total memory, hostname, and current shell. Each on its own line.",test -s /tmp/sys_summary.txt && test $(wc -l < /tmp/sys_summary.txt) -ge 5,Comprehensive system summary
+text-01,text,medium,"Create /tmp/log.txt with 10 lines of fake log entries in the format 'YYYY-MM-DD HH:MM:SS [LEVEL] message' using levels INFO, WARN, ERROR. Then extract only the ERROR lines to /tmp/errors.txt",test -f /tmp/errors.txt && grep -q ERROR /tmp/errors.txt && ! grep -q INFO /tmp/errors.txt,Log generation and filtering
+text-02,text,easy,"Create /tmp/fruits.txt with one fruit name per line (at least 5 fruits), then sort them alphabetically and write to /tmp/sorted_fruits.txt",test -s /tmp/sorted_fruits.txt && test $(wc -l < /tmp/sorted_fruits.txt) -ge 5,Text sorting
+text-03,text,medium,"Create /tmp/words.txt with at least 20 words (one per line, some repeated). Then write /tmp/unique_counts.txt showing each unique word and how many times it appears, sorted by count descending.",test -s /tmp/unique_counts.txt && test $(wc -l < /tmp/unique_counts.txt) -ge 3,Word frequency counting
+text-04,text,easy,Create /tmp/mixed_case.txt with 5 lines of mixed case text. Then write /tmp/lower.txt with all text converted to lowercase.,test -s /tmp/lower.txt && ! grep -q '[A-Z]' /tmp/lower.txt,Case conversion
+text-05,text,medium,"Create /tmp/addresses.txt with 5 lines, each containing 'Name, City, State'. Then extract just the cities to /tmp/cities.txt, one per line.",test -s /tmp/cities.txt && test $(wc -l < /tmp/cities.txt) -ge 5,Field extraction from structured text
+text-06,text,medium,Create /tmp/poem.txt with at least 8 lines. Then write /tmp/line_lengths.txt with the character count of each line.,test -s /tmp/line_lengths.txt && test $(wc -l < /tmp/line_lengths.txt) -ge 8,Per-line character counting
+text-07,text,hard,"Create /tmp/emails.txt with 5 lines of text containing email addresses mixed with other text. Then extract just the email addresses to /tmp/extracted_emails.txt, one per line.",test -s /tmp/extracted_emails.txt && grep -qE '@' /tmp/extracted_emails.txt && test $(wc -l < /tmp/extracted_emails.txt) -ge 5,Email extraction with regex
+text-08,text,easy,"Create /tmp/numbers.txt with the numbers 1 to 20, one per line. Then write /tmp/even_numbers.txt containing only the even numbers.",test -s /tmp/even_numbers.txt && grep -q '2' /tmp/even_numbers.txt && grep -q '20' /tmp/even_numbers.txt && ! grep -q '^1$' /tmp/even_numbers.txt,Number filtering
+text-09,text,hard,"Create /tmp/csv_raw.txt with 5 lines of comma-separated data (name,score,grade). Then reformat it as a fixed-width table in /tmp/table.txt with aligned columns.",test -s /tmp/table.txt && test $(wc -l < /tmp/table.txt) -ge 5,CSV to formatted table
+text-10,text,medium,"Create /tmp/paragraph.txt with a paragraph of at least 50 words. Then write /tmp/word_stats.txt containing the total word count, unique word count, and the most common word.",test -s /tmp/word_stats.txt,Paragraph word analysis
+debug-01,debug,medium,"The file /tmp/broken.py has a bug. Fix it so it runs correctly. Here is the content to write to /tmp/broken.py first: 
+def add_numbers(a, b):
+    return a + b
+
+def main():
+    result = add_numbers(5, '3')
+    print(f'Result: {result}')
+
+main()
+
+The fix should make it print 'Result: 8'.",python3 /tmp/broken.py | grep -q 'Result: 8',Debug and fix a Python script
+debug-02,debug,easy,"Create /tmp/buggy.py with this content and fix the bug:
+
+def greet(name):
+    print('Hello, ' + name + '!')
+
+greet(42)
+
+It should print 'Hello, 42!'","python3 /tmp/buggy.py | grep -q 'Hello, 42!'",Simple type error fix
+debug-03,debug,easy,"Create /tmp/fix_indent.py with this buggy code and fix it:
+
+def square(x):
+return x * x
+
+print(square(5))
+
+It should print 25.",python3 /tmp/fix_indent.py | grep -q '25',Fix indentation error
+debug-04,debug,medium,"Create /tmp/fix_loop.py with this buggy code and fix it:
+
+def sum_list(numbers):
+    total = 0
+    for i in range(len(numbers) + 1):
+        total += numbers[i]
+    return total
+
+print(sum_list([1, 2, 3, 4, 5]))
+
+It should print 15.",python3 /tmp/fix_loop.py | grep -q '15',Fix off-by-one error
+debug-05,debug,medium,"Create /tmp/fix_dict.py with this buggy code and fix it:
+
+def get_value(d, key):
+    return d[key]
+
+data = {'name': 'Alice', 'age': 30}
+print(get_value(data, 'email'))
+
+It should print 'N/A' instead of crashing with a KeyError.",python3 /tmp/fix_dict.py | grep -q 'N/A',Fix KeyError with default value
+debug-06,debug,medium,"Create /tmp/fix_recursion.py with this buggy code and fix it:
+
+def factorial(n):
+    return n * factorial(n - 1)
+
+print(factorial(5))
+
+It should print 120.",python3 /tmp/fix_recursion.py | grep -q '120',Fix missing base case in recursion
+debug-07,debug,hard,"Create /tmp/fix_sort.py with this buggy code and fix it:
+
+def bubble_sort(arr):
+    for i in range(len(arr)):
+        for j in range(len(arr) - 1):
+            if arr[j] > arr[j + 1]:
+                arr[j] = arr[j + 1]
+                arr[j + 1] = arr[j]
+    return arr
+
+print(bubble_sort([5, 3, 8, 1, 2]))
+
+It should print [1, 2, 3, 5, 8].","python3 /tmp/fix_sort.py | grep -q '1, 2, 3, 5, 8'",Fix broken swap in bubble sort
+debug-08,debug,easy,"Create /tmp/fix_import.py with this buggy code and fix it:
+
+import maths
+
+print(maths.sqrt(16))
+
+It should print 4.0.",python3 /tmp/fix_import.py | grep -q '4',Fix wrong module name
+debug-09,debug,hard,"Create /tmp/fix_class.py with this buggy code and fix it:
+
+class Counter:
+    count = 0
+    def __init__(self):
+        count += 1
+    def get_count(self):
+        return count
+
+c1 = Counter()
+c2 = Counter()
+print(c2.get_count())
+
+It should print 2.",python3 /tmp/fix_class.py | grep -q '2',Fix class variable vs instance variable
+debug-10,debug,medium,"Create /tmp/fix_file.py with this buggy code and fix it:
+
+f = open('/tmp/debug_test.txt', 'w')
+f.write('hello world')
+data = open('/tmp/debug_test.txt', 'r').read()
+print(data)
+
+It should print 'hello world'.",python3 /tmp/fix_file.py | grep -q 'hello world',Fix file not flushed before read
+git-01,git,medium,"Create a git repository in /tmp/myrepo, add a README.md with the text 'My Project', and make an initial commit with message 'init'.",cd /tmp/myrepo && git log --oneline | grep -q 'init' && test -f README.md,Git repository setup
+git-02,git,easy,"Create a git repo in /tmp/gittest, create a file hello.txt with 'hello', add and commit it with message 'add hello'.",cd /tmp/gittest && git log --oneline | grep -q 'add hello' && test -f hello.txt,Basic git add and commit
+git-03,git,medium,"Create a git repo in /tmp/gitbranch, add a file main.txt, commit it, then create and switch to a branch called 'feature' and add a file feature.txt there.",cd /tmp/gitbranch && git branch | grep -q 'feature' && git checkout feature && test -f feature.txt,Git branching
+git-04,git,medium,"Create a git repo in /tmp/gittag, add a file, commit it, then create a tag called 'v1.0'.",cd /tmp/gittag && git tag | grep -q 'v1.0',Git tagging
+git-05,git,hard,"Create a git repo in /tmp/gitlog with 3 commits, each adding a different file (a.txt, b.txt, c.txt). Write the git log output to /tmp/git_history.txt.",cd /tmp/gitlog && test $(git log --oneline | wc -l) -ge 3 && test -s /tmp/git_history.txt,Multi-commit git history
+git-06,git,easy,Create a git repo in /tmp/gitignore and add a .gitignore file that ignores *.log files and the node_modules directory.,cd /tmp/gitignore && grep -q '*.log' .gitignore && grep -q 'node_modules' .gitignore,Create .gitignore
+git-07,git,medium,"Create a git repo in /tmp/gitdiff, add file.txt with content 'version 1', commit it, then change file.txt to 'version 2' and write the diff output to /tmp/my_diff.txt.",test -s /tmp/my_diff.txt && grep -q 'version' /tmp/my_diff.txt,Git diff output
+git-08,git,hard,"Create a git repo in /tmp/gitmerge. On main, add base.txt and commit. Create branch 'dev', add dev.txt and commit. Switch back to main and merge dev.",cd /tmp/gitmerge && git log --oneline | wc -l | grep -qE '[3-9]' && test -f base.txt && test -f dev.txt,Git merge
+git-09,git,easy,"Create a git repo in /tmp/gitstatus, add two files tracked.txt and untracked.txt, but only stage tracked.txt. Write the output of git status to /tmp/status_output.txt.",test -s /tmp/status_output.txt && grep -q 'tracked.txt' /tmp/status_output.txt,Git status inspection
+git-10,git,hard,"Create a git repo in /tmp/gitstash, add file.txt with 'original', commit it. Modify file.txt to 'modified', stash the changes, then write the stash list to /tmp/stash_list.txt.",cd /tmp/gitstash && test -s /tmp/stash_list.txt && git stash list | grep -qE '.',Git stash
+multi-step-01,multi-step,medium,"Create a directory /tmp/project with subdirectories src and tests. In src, create a file main.py that prints 'hello'. In tests, create test_main.py that imports and runs main.",test -d /tmp/project/src && test -d /tmp/project/tests && test -f /tmp/project/src/main.py && test -f /tmp/project/tests/test_main.py,Multi-step directory and file creation
+multi-step-02,multi-step,medium,Find the total disk usage of /usr/lib in human readable format and write it to /tmp/disk_usage.txt. Also write the count of files in that directory to /tmp/file_count.txt,test -s /tmp/disk_usage.txt && test -s /tmp/file_count.txt,Multiple shell commands with output capture
+multi-step-03,multi-step,hard,"Create a Python CLI tool at /tmp/todo.py that supports: 'python3 /tmp/todo.py add <task>' to append a task to /tmp/todos.txt, and 'python3 /tmp/todo.py list' to print all tasks. Then add 3 tasks and verify with list.",python3 /tmp/todo.py add 'test task' && python3 /tmp/todo.py list | grep -q 'test task',Build and test a CLI tool
+multi-step-04,multi-step,medium,"Create /tmp/users.json with a JSON array of 3 user objects (each with name and role). Then write /tmp/report.txt listing each user as 'Name: X, Role: Y' on separate lines.",test -s /tmp/report.txt && test $(wc -l < /tmp/report.txt) -ge 3 && grep -qi 'name\|role' /tmp/report.txt,JSON to text report
+multi-step-05,multi-step,hard,"Write a bash script /tmp/backup.sh that takes a directory path as argument, creates a tarball of it at /tmp/backup.tar.gz, and prints the size of the archive. Then run it on /tmp/mydir (create /tmp/mydir with some files first if it doesn't exist).",test -f /tmp/backup.sh && test -f /tmp/backup.tar.gz,Backup script creation and execution
+multi-step-06,multi-step,medium,"Create /tmp/animals.txt with 10 animal names. Then sort them, remove duplicates, count the remaining, and write both the sorted list and the count to /tmp/animal_results.txt.",test -s /tmp/animal_results.txt,Multi-stage text processing pipeline
+multi-step-07,multi-step,hard,"Write /tmp/server_check.sh that checks if port 11434 is in use, writes 'up' or 'down' to /tmp/port_status.txt, then appends the current timestamp. Run the script.",test -f /tmp/server_check.sh && test -s /tmp/port_status.txt,Port check script with logging
+multi-step-08,multi-step,medium,"Create /tmp/grades.csv with columns student,math,science,english for 5 students. Then write /tmp/averages.py that reads it and creates /tmp/averages.csv with columns student,average.","python3 /tmp/averages.py && python3 -c ""import csv; rows=list(csv.DictReader(open('/tmp/averages.csv'))); assert len(rows)>=5 and 'average' in rows[0]""",CSV multi-column averaging
+multi-step-09,multi-step,hard,"Create a Python package at /tmp/mathpkg with __init__.py, add.py (with an add function), and multiply.py (with a multiply function). Create /tmp/test_mathpkg.py that imports and tests both functions.",test -f /tmp/mathpkg/__init__.py && test -f /tmp/mathpkg/add.py && test -f /tmp/mathpkg/multiply.py && python3 /tmp/test_mathpkg.py,Python package creation and testing
+multi-step-10,multi-step,hard,"Write /tmp/log_analyzer.py that: 1) creates /tmp/app.log with 20 lines of random log entries (timestamp, level, message), 2) reads the log, 3) writes /tmp/log_summary.json with counts per level and the timestamp range.","python3 /tmp/log_analyzer.py && python3 -c ""import json; d=json.load(open('/tmp/log_summary.json')); assert any(k in d for k in ['INFO','ERROR','counts','levels'])""",Log file generation and analysis
+scripting-01,scripting,easy,"Write a bash script /tmp/greet.sh that takes a name as argument and prints 'Hello, <name>!'. Make it executable. Test it with: bash /tmp/greet.sh World","bash /tmp/greet.sh World | grep -q 'Hello, World!'",Simple bash script with argument
+scripting-02,scripting,easy,"Write a bash script /tmp/countdown.sh that counts down from 5 to 1, printing each number on its own line, then prints 'Go!'",bash /tmp/countdown.sh | head -1 | grep -q '5' && bash /tmp/countdown.sh | tail -1 | grep -q 'Go',Loop countdown script
+scripting-03,scripting,medium,"Write a bash script /tmp/fileinfo.sh that takes a file path as argument and prints: its size, number of lines, and last modified date.",bash /tmp/fileinfo.sh /etc/hosts | grep -qE '[0-9]',File information script
+scripting-04,scripting,medium,"Write a bash script /tmp/extension_count.sh that takes a directory as argument and prints the count of files for each file extension found, sorted by count.",bash /tmp/extension_count.sh /usr/bin | grep -qE '[0-9]',File extension counter script
+scripting-05,scripting,medium,"Write a bash script /tmp/rename_ext.sh that takes a directory, old extension, and new extension as arguments, and renames all files with the old extension to the new one. Test it by creating /tmp/rentest with a few .txt files, then running the script to rename them to .md.",test -d /tmp/rentest && ls /tmp/rentest/*.md 2>/dev/null | grep -q '.md',Batch file rename script
+scripting-06,scripting,easy,Write a bash script /tmp/even_odd.sh that takes a number as argument and prints 'even' or 'odd'.,"test ""$(bash /tmp/even_odd.sh 4)"" = 'even' && test ""$(bash /tmp/even_odd.sh 7)"" = 'odd'",Even/odd checker script
+scripting-07,scripting,hard,"Write a bash script /tmp/monitor.sh that writes CPU usage percentage, memory usage, and load average to /tmp/monitor_log.txt with a timestamp. Run it once.",bash /tmp/monitor.sh && test -s /tmp/monitor_log.txt,System monitoring script
+scripting-08,scripting,medium,Write a bash script /tmp/largest_files.sh that takes a directory and a number N as arguments and prints the N largest files in that directory with their sizes.,bash /tmp/largest_files.sh /usr/bin 3 | wc -l | grep -qE '[3-9]',Top-N largest files script
+scripting-09,scripting,hard,"Write a bash script /tmp/csv2json.sh that converts a CSV file to a JSON array. Test it by creating /tmp/test_convert.csv with headers name,age and two rows, then running the script and writing output to /tmp/converted.json.","test -f /tmp/csv2json.sh && test -f /tmp/test_convert.csv && bash /tmp/csv2json.sh /tmp/test_convert.csv > /tmp/converted.json && python3 -c ""import json; d=json.load(open('/tmp/converted.json')); assert isinstance(d,list)""",CSV to JSON converter script
+scripting-10,scripting,hard,"Write a bash script /tmp/semver.sh that takes a version string like '1.2.3' and a bump type ('major', 'minor', or 'patch') and prints the bumped version. Example: bash /tmp/semver.sh 1.2.3 minor should print 1.3.0","test ""$(bash /tmp/semver.sh 1.2.3 minor)"" = '1.3.0' && test ""$(bash /tmp/semver.sh 1.2.3 patch)"" = '1.2.4'",Semantic version bumper
+image-gen-01,image-gen,easy,Generate an image of a sunset over mountains and save it to /tmp/sunset.png,test -f /tmp/sunset.png || ls ~/.npcsh/images/vixynt_*.png 2>/dev/null | head -1 | xargs test -f,Image generation via delegation to frederic/vixynt
+image-gen-02,image-gen,medium,Generate an image of a cat sitting on a windowsill and save it to /tmp/cat.png,test -f /tmp/cat.png || ls ~/.npcsh/images/vixynt_*.png 2>/dev/null | head -1 | xargs test -f,Image generation - delegation + vixynt
+image-gen-03,image-gen,easy,Generate any image and save it to /tmp/generated.png,test -f /tmp/generated.png || ls ~/.npcsh/images/vixynt_*.png 2>/dev/null | head -1 | xargs test -f,Basic image generation via delegation
+image-gen-04,image-gen,medium,Generate an image of a robot reading a book in a library and save it to /tmp/robot.png,test -f /tmp/robot.png || ls ~/.npcsh/images/vixynt_*.png 2>/dev/null | tail -1 | xargs test -f,Detailed scene image generation
+image-gen-05,image-gen,hard,Generate an image of a futuristic city at night with neon lights and save it to /tmp/city.png,test -f /tmp/city.png || ls ~/.npcsh/images/vixynt_*.png 2>/dev/null | tail -1 | xargs test -f,Complex scene image generation
+audio-gen-01,audio-gen,medium,"Generate speech audio saying 'Hello, welcome to npcsh' and save it to /tmp/welcome.wav",test -f /tmp/welcome.wav || test -f /tmp/welcome.mp3 || ls ~/.npcsh/audio/scherzo_*.wav 2>/dev/null | head -1 | xargs test -f,TTS via delegation to frederic/scherzo
+audio-gen-02,audio-gen,medium,Generate speech audio of the sentence 'The quick brown fox jumps over the lazy dog' and save it as /tmp/pangram.wav,test -f /tmp/pangram.wav || test -f /tmp/pangram.mp3 || ls ~/.npcsh/audio/scherzo_*.wav 2>/dev/null | head -1 | xargs test -f,TTS pangram via delegation
+audio-gen-03,audio-gen,easy,Generate any speech audio and save it to /tmp/speech.wav,test -f /tmp/speech.wav || test -f /tmp/speech.mp3 || ls ~/.npcsh/audio/scherzo_*.wav 2>/dev/null | tail -1 | xargs test -f,Basic TTS generation
+audio-gen-04,audio-gen,hard,Generate speech audio reading a haiku about nature and save it to /tmp/haiku.wav,test -f /tmp/haiku.wav || test -f /tmp/haiku.mp3 || ls ~/.npcsh/audio/scherzo_*.wav 2>/dev/null | tail -1 | xargs test -f,Creative TTS generation
+audio-gen-05,audio-gen,medium,Generate speech audio saying 'Testing one two three' and save it to /tmp/test_audio.wav,test -f /tmp/test_audio.wav || test -f /tmp/test_audio.mp3 || ls ~/.npcsh/audio/scherzo_*.wav 2>/dev/null | tail -1 | xargs test -f,Simple TTS test
