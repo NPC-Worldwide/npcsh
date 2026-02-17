@@ -3099,27 +3099,19 @@ def process_pipeline_command(
                             state.messages = llm_result.get("messages", state.messages)
 
                         if not tool_calls:
-                            # Nudge if model stopped but may not be done
-                            if (state.current_mode == 'agent'
-                                    and tool_calls_count == 0
-                                    and iteration < max_iterations
-                                    and state._agent_nudges < 3):
+                            # Nudge if model stopped but task may not be done
+                            if (iteration < max_iterations
+                                    and state._agent_nudges < 1):
                                 state._agent_nudges += 1
                                 state.messages.append({
                                     "role": "user",
-                                    "content": (
-                                        "You have not yet completed the task. "
-                                        "Continue working by calling tools. "
-                                        "Use the function calling interface to invoke tools - "
-                                        "do NOT write tool calls as text."
-                                    )
+                                    "content": "If the task is fully done, just provide your final answer. If there are remaining steps, continue."
                                 })
                                 continue
                             break
 
                         # Execute tool calls directly
                         tool_calls_count += 1
-                        state._agent_nudges = 0
 
                         # Normalize tool_calls into dicts
                         tc_normalized = []
@@ -3201,6 +3193,10 @@ def process_pipeline_command(
                                 "content": tool_result_str,
                             })
 
+                        # Let the model decide naturally: on the next
+                        # iteration it sees tool results in messages and
+                        # either makes more tool calls or returns a final
+                        # text response (caught by the nudge mechanism).
                         full_llm_cmd = None
 
                     # Store accumulated usage

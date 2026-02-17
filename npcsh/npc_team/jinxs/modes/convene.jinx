@@ -1,5 +1,5 @@
 jinx_name: convene
-description: Start a group discussion between multiple NPCs. ONLY use for complex questions that need multiple perspectives. Never use for simple factual questions.
+description: Start a group discussion between multiple NPCs to get diverse perspectives on a topic.
 inputs:
   - topic: ""
   - npcs: "alicanto,corca,guac"

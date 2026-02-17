@@ -1,5 +1,5 @@
 jinx_name: delegate
-description: ONLY for complex multi-step tasks. Sends a task to a specialist NPC who works on it with feedback until done. Do NOT use this for simple commands — use sh or python instead and answer directly.
+description: Send a task to a specialist NPC who works on it until done. Only for complex tasks that need a specialist.
 inputs:
 - npc_name:
       description: "Name of the NPC to delegate to"

@@ -1,5 +1,5 @@
 jinx_name: sh
-description: Run a shell command. Supports pipes, redirects (> /tmp/file.txt), chaining (&&), and any valid bash. When asked to save or write output to a file, include the redirect in the command itself (e.g. "echo hello > /tmp/out.txt"). Returns stdout if any.
+description: Run a shell command and return stdout. Use this to create files, run scripts, install packages, and any other shell operation.
 inputs:
 - bash_command
 steps:
@@ -12,13 +12,20 @@ steps:
       cmd = {{ bash_command | tojson }}
       output = ""
 
+      # Pipe previous step output as stdin — commands that need it (cat, tee)
+      # read it; commands that don't (ls, mkdir) ignore it. Unix standard.
+      stdin_data = context.get('previous_output') or None
+
       process = subprocess.Popen(
           cmd,
           shell=True,
+          stdin=subprocess.PIPE if stdin_data else None,
           stdout=subprocess.PIPE,
           stderr=subprocess.PIPE
       )
-      stdout, stderr = process.communicate()
+      stdout, stderr = process.communicate(
+          input=stdin_data.encode('utf-8') if stdin_data else None
+      )
 
       if process.returncode != 0 and stderr:
           output = f"Error (exit {process.returncode}): {stderr.decode('utf-8')}"

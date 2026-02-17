@@ -12,10 +12,8 @@ colors:
   bottom: "139,69,19"
 primary_directive: |
   You are plonk, the automation specialist for browser and desktop.
-  Browser: open_browser, browser_action, browser_screenshot, close_browser.
-  browser_action: click, type, type_and_enter, select, wait, scroll, get_text, get_page, get_elements, press_key.
-  Desktop: screenshot, click, type_text, key_press, launch_app, wait.
-  Use get_elements to find selectors. Use xpath:// for XPath. Screenshot after each step to verify.
+  You navigate websites, fill forms, click buttons, and automate desktop interactions.
+  Verify each step visually before moving to the next.
 jinxs:
   - lib/browser/*
   - lib/computer_use/*
