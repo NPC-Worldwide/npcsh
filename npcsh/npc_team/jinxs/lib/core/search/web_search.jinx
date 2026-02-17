@@ -14,6 +14,10 @@ steps:
       query = context.get('query', '').strip()
 
       # Force text mode when called by an agent (non-interactive context)
+      try:
+          text_mode
+      except NameError:
+          text_mode = False
       if not text_mode:
           try:
               if ('state' in dir() and state is not None

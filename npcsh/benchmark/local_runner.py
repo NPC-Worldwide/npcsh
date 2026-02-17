@@ -280,6 +280,14 @@ def run_benchmark(
         tools_info = f"tools=[{','.join(tool_lines)}]" if tool_lines else ("skipped" if skipped else ("unknown_action" if unknown else "no_tools"))
         print(f"  {status} ({result.duration:.1f}s) {tools_info}", flush=True)
 
+        # Show npcsh output for failed tasks so we can debug
+        if not result.passed and result.npcsh_output:
+            output_lines = result.npcsh_output.strip().split('\n')
+            for line in output_lines[:30]:
+                print(f"    | {line}", flush=True)
+            if len(output_lines) > 30:
+                print(f"    | ... ({len(output_lines) - 30} more lines)", flush=True)
+
         if result.passed:
             report.passed += 1
         elif result.error:

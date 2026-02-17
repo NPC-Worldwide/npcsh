@@ -2960,9 +2960,9 @@ def process_pipeline_command(
             else cmd_to_process
         )
         path_cmd = 'The current working directory is: ' + state.current_path
-        if os.path.exists(state.current_path):
+        include_dir_listing = os.environ.get('NPCSH_DIR_LISTING', '1') == '1'
+        if include_dir_listing and os.path.exists(state.current_path):
             all_files = os.listdir(state.current_path)
-            # Limit to first 100 files to avoid token explosion
             limited_files = all_files[:100]
             file_list = "\n".join([
                 os.path.join(state.current_path, f)
@@ -2972,7 +2972,7 @@ def process_pipeline_command(
                 file_list += f"\n... and {len(all_files) - 100} more files"
             ls_files = 'Files in the current directory (full paths):\n' + file_list
         else:
-            ls_files = 'No files found in the current directory.'
+            ls_files = ''
         platform_info = (
             f"Platform: {platform.system()} {platform.release()} "
             f"({platform.machine()})"
