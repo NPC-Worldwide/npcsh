@@ -1783,7 +1783,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                         # Check if this looks like binary/image data
                                         # Image signatures: PNG (\x89PNG), JPEG (\xff\xd8\xff), GIF (GIF8), BMP (BM)
                                         # Also check for high ratio of non-printable chars
-                                        is_binary = False
+
                                         if len(paste_buffer) > 4:
                                             # Check for common image magic bytes
                                             if paste_buffer[:4] == '\x89PNG' or paste_buffer[:8] == '\x89PNG\r\n\x1a\n':
@@ -2639,11 +2639,30 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
             def _make_runner(jinx=jinx_obj, jinja_env=jinja_env_for_jinx, tool_name=name, extras=jinx_globals):
                 def runner(**kwargs):
                     input_values = kwargs if isinstance(kwargs, dict) else {}
+                    # Map mismatched arg names to actual jinx input names.
+                    # Models sometimes hallucinate parameter names (e.g.
+                    # "source" instead of "code").  When there's a 1:1
+                    # mismatch, remap so the template renders correctly.
+                    expected = [
+                        (i if isinstance(i, str) else list(i.keys())[0])
+                        for i in jinx.inputs
+                    ]
+                    if input_values and expected:
+                        provided = list(input_values.keys())
+                        missing = [e for e in expected if e not in input_values]
+                        extra = [p for p in provided if p not in expected]
+                        if len(missing) == len(extra) and missing:
+                            for m, x in zip(missing, extra):
+                                input_values[m] = input_values.pop(x)
                     try:
+                        # Pass a separate messages list so jinx execution
+                        # doesn't mutate state.messages (the jinx engine
+                        # appends assistant messages during execution).
+                        jinx_messages = []
                         ctx = jinx.execute(
                             input_values=input_values,
                             npc=npc_obj,
-                            messages=state.messages,
+                            messages=jinx_messages,
                             extra_globals=extras,
                             jinja_env=jinja_env
                         )
@@ -3006,38 +3025,42 @@ def process_pipeline_command(
 
             try: # Added try-except for KeyboardInterrupt here
                 if tool_capable:
-                    # Build kwargs - don't pass tool_choice for gemini as it doesn't support it
                     llm_kwargs = {
-                        "auto_process_tool_calls": True,
                         "tools": tools_for_llm,
                         "tool_map": tool_exec_map,
                     }
                     llm_kwargs["tool_choice"] = 'auto'
 
-                    # Agent loop: keep calling LLM until it stops making tool calls.
-                    # The LLM decides when it's done - npcsh just facilitates.
-                    # tool_choice stays 'auto' so the model can keep calling tools
-                    # as many times as it needs. The 50-iteration cap prevents runaways.
+                    # Agent loop: npcsh drives tool execution directly.
+                    # LLM returns tool_calls, we execute them, feed results back.
                     iteration = 0
-                    max_iterations = 50  # Safety limit to prevent infinite loops
+                    max_iterations = 50
                     total_usage = {"input_tokens": 0, "output_tokens": 0}
-                    state._agent_nudges = 0  # Track continuation nudges
-
-                    tool_calls_count = 0  # Track how many tool calls have been made
+                    state._agent_nudges = 0
+                    tool_calls_count = 0
 
                     while iteration < max_iterations:
                         iteration += 1
 
                         iter_kwargs = dict(llm_kwargs)
 
+                        tools_in_kwargs = iter_kwargs.get('tools', [])
+                        logger.debug(f"[agent-loop] iter={iteration} messages={len(state.messages)} tool_calls_count={tool_calls_count} tools={len(tools_in_kwargs)}")
+                        for i, m in enumerate(state.messages):
+                            role = m.get('role','?')
+                            content = str(m.get('content',''))[:300]
+                            has_tc = 'tool_calls' in m
+                            tc_names = [tc.get('function',{}).get('name','') for tc in m.get('tool_calls',[])] if has_tc else []
+                            logger.debug(f"  msg[{i}] role={role} has_tool_calls={has_tc} tc={tc_names}: {content}")
+
                         llm_result = get_llm_response(
-                            full_llm_cmd if iteration == 1 else None,  # Only pass prompt on first call
+                            full_llm_cmd if iteration == 1 else None,
                             model=exec_model,
                             provider=exec_provider,
                             npc=state.npc,
                             team=state.team,
                             messages=state.messages,
-                            stream=False,  # Don't stream intermediate calls
+                            stream=False,
                             attachments=state.attachments if iteration == 1 else None,
                             context=info if iteration == 1 else None,
                             **iter_kwargs,
@@ -3048,34 +3071,29 @@ def process_pipeline_command(
                             total_usage["input_tokens"] += llm_result['usage'].get('input_tokens', 0)
                             total_usage["output_tokens"] += llm_result['usage'].get('output_tokens', 0)
 
-                        # Update state messages
-                        old_msg_count = len(state.messages) if state.messages else 0
+                        # Log what came back
+                        if isinstance(llm_result, dict):
+                            resp_preview = str(llm_result.get('response',''))[:200]
+                            tc_list = llm_result.get('tool_calls', [])
+                            ret_msgs = llm_result.get('messages', [])
+                            logger.debug(f"[agent-loop] result: response={resp_preview!r} tool_calls={len(tc_list)} messages={len(ret_msgs)} usage={llm_result.get('usage')}")
+                            for tc in tc_list:
+                                if isinstance(tc, dict):
+                                    logger.debug(f"  tool_call: {tc.get('function',{}).get('name','')} args={str(tc.get('function',{}).get('arguments',''))[:200]}")
+                                else:
+                                    logger.debug(f"  tool_call(obj): {tc}")
+
+                        # Check for tool calls
+                        tool_calls = llm_result.get("tool_calls", []) if isinstance(llm_result, dict) else []
+
+                        # Always update state.messages from llm_result so the
+                        # full conversation history (including the user message
+                        # that get_llm_response added) is preserved.
                         if isinstance(llm_result, dict):
                             state.messages = llm_result.get("messages", state.messages)
 
-                        # Display tool outputs from this iteration
-                        for msg in state.messages[old_msg_count:]:
-                            if msg.get("role") == "tool":
-                                tool_name = msg.get("name", "tool")
-                                tool_content = msg.get("content", "")
-                                if tool_content and tool_content.strip():
-                                    # Decode escaped newlines if present
-                                    if isinstance(tool_content, str):
-                                        tool_content = tool_content.replace('\\n', '\n').replace('\\t', '\t')
-                                    print(colored(f"\n⚡ {tool_name}:", "cyan"))
-                                    lines = tool_content.split('\n')
-                                    if len(lines) > 50:
-                                        render_markdown('\n'.join(lines[:25]))
-                                        print(colored(f"\n... ({len(lines) - 50} lines hidden) ...\n", "white", attrs=["dark"]))
-                                        render_markdown('\n'.join(lines[-25:]))
-                                    else:
-                                        render_markdown(tool_content)
-
-                        # Check if LLM made tool calls - if not, consider re-prompting
-                        tool_calls_made = isinstance(llm_result, dict) and llm_result.get("tool_calls")
-                        if not tool_calls_made:
-                            # In agent mode, nudge to use tools if model hasn't
-                            # started working yet (no tool calls at all).
+                        if not tool_calls:
+                            # Nudge if model stopped but may not be done
                             if (state.current_mode == 'agent'
                                     and tool_calls_count == 0
                                     and iteration < max_iterations
@@ -3091,13 +3109,92 @@ def process_pipeline_command(
                                     )
                                 })
                                 continue
-                            # LLM chose to respond with text - it's done
                             break
 
-                        # Track tool calls and reset nudge counter
+                        # Execute tool calls directly
                         tool_calls_count += 1
                         state._agent_nudges = 0
-                        # Clear the prompt for continuation calls - context is in messages
+
+                        # Normalize tool_calls into dicts
+                        tc_normalized = []
+                        for tc in tool_calls:
+                            if isinstance(tc, dict):
+                                tc_normalized.append(tc)
+                            else:
+                                tc_normalized.append({
+                                    "id": getattr(tc, "id", f"call_{iteration}_{len(tc_normalized)}"),
+                                    "type": "function",
+                                    "function": {
+                                        "name": getattr(tc.function, "name", "") if hasattr(tc, "function") else "",
+                                        "arguments": getattr(tc.function, "arguments", "{}") if hasattr(tc, "function") else "{}",
+                                    }
+                                })
+
+                        # The last message from llm_result is the assistant message
+                        # (content only). Add tool_calls to it instead of appending a duplicate.
+                        if state.messages and state.messages[-1].get("role") == "assistant":
+                            state.messages[-1]["tool_calls"] = tc_normalized
+                        else:
+                            # Shouldn't happen, but handle gracefully
+                            assistant_content = llm_result.get("response", "") if isinstance(llm_result, dict) else ""
+                            state.messages.append({
+                                "role": "assistant",
+                                "content": assistant_content or None,
+                                "tool_calls": tc_normalized,
+                            })
+
+                        # Execute each tool call and add results to messages
+                        for tc in tc_normalized:
+                            tc_id = tc.get("id", f"call_{iteration}")
+                            tc_func = tc.get("function", {})
+                            tc_name = tc_func.get("name", "")
+                            tc_args_raw = tc_func.get("arguments", "{}")
+
+                            try:
+                                tc_args = json.loads(tc_args_raw) if isinstance(tc_args_raw, str) else tc_args_raw
+                            except json.JSONDecodeError:
+                                tc_args = {}
+
+                            # Execute via the wrapped tool map (has logging)
+                            tool_result_str = ""
+                            logger.debug(f"[agent-loop] executing tool: {tc_name} args={tc_args}")
+                            if tc_name and tc_name in tool_exec_map:
+                                try:
+                                    raw_result = tool_exec_map[tc_name](**tc_args)
+                                    tool_result_str = json.dumps(raw_result, default=str)
+                                    logger.debug(f"[agent-loop] tool {tc_name} returned: {tool_result_str[:500]}")
+                                except Exception as e:
+                                    tool_result_str = f"Error executing {tc_name}: {e}"
+                                    logger.debug(f"[agent-loop] tool {tc_name} error: {e}")
+                            else:
+                                tool_result_str = f"Unknown tool: {tc_name}"
+                                logger.debug(f"[agent-loop] tool {tc_name} NOT in tool_exec_map. Available: {list(tool_exec_map.keys())}")
+
+                            # Display tool output
+                            if tool_result_str and tool_result_str.strip():
+                                try:
+                                    content_display = tool_result_str
+                                    if isinstance(content_display, str):
+                                        content_display = content_display.replace('\\n', '\n').replace('\\t', '\t')
+                                    print(colored(f"\n⚡ {tc_name}:", "cyan"))
+                                    lines = content_display.split('\n')
+                                    if len(lines) > 50:
+                                        render_markdown('\n'.join(lines[:25]))
+                                        print(colored(f"\n... ({len(lines) - 50} lines hidden) ...\n", "white", attrs=["dark"]))
+                                        render_markdown('\n'.join(lines[-25:]))
+                                    else:
+                                        render_markdown(content_display)
+                                except Exception:
+                                    pass
+
+                            # Add tool result to conversation
+                            state.messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "name": tc_name,
+                                "content": tool_result_str,
+                            })
+
                         full_llm_cmd = None
 
                     # Store accumulated usage
@@ -3396,22 +3493,8 @@ def execute_command(
             return state, colored("Command interrupted.", "red")
         except RateLimitError:
             print(colored('Rate Limit Exceeded', 'yellow'))
-            # Truncate messages but preserve tool call/response pairs.
-            # Keep system message + last few messages, ensuring we don't
-            # orphan tool messages by splitting assistant(tool_calls)/tool pairs.
-            if len(state.messages) > 4:
-                truncated = state.messages[0:1]  # system message
-                tail = state.messages[-3:]
-                # If the first message in the tail is a 'tool' role, it's orphaned
-                # without its assistant(tool_calls) - skip it
-                for msg in tail:
-                    if msg.get('role') == 'tool' and not any(
-                        m.get('role') == 'assistant' and m.get('tool_calls')
-                        for m in truncated
-                    ):
-                        continue
-                    truncated.append(msg)
-                state.messages = truncated
+            messages = state.messages[0:1] + state.messages[-2:]
+            state.messages = messages
             import time
             print('Waiting 30s before retry...')
             time.sleep(30)
@@ -3959,39 +4042,12 @@ def process_result(
                             current_context + " " + suggestion
                         ).strip()
                         print(colored(
-                            f"{npc_name} suggests updating team context:",
+                            f"{npc_name} suggests updating team context:", 
                             "yellow"
                         ))
-                        # Show a proper unified diff with color highlighting
-                        import difflib
-                        old_lines = current_context.splitlines(keepends=True)
-                        new_lines = new_context.splitlines(keepends=True)
-                        # Ensure trailing newline for clean diff
-                        if old_lines and not old_lines[-1].endswith('\n'):
-                            old_lines[-1] += '\n'
-                        if new_lines and not new_lines[-1].endswith('\n'):
-                            new_lines[-1] += '\n'
-                        diff = list(difflib.unified_diff(
-                            old_lines, new_lines,
-                            fromfile='current', tofile='proposed', lineterm=''
-                        ))
-                        if diff:
-                            for line in diff:
-                                line = line.rstrip('\n')
-                                if line.startswith('+++') or line.startswith('---'):
-                                    print(colored(line, 'white', attrs=['bold']))
-                                elif line.startswith('@@'):
-                                    print(colored(line, 'cyan'))
-                                elif line.startswith('+'):
-                                    print(colored(line, 'green'))
-                                elif line.startswith('-'):
-                                    print(colored(line, 'red'))
-                                else:
-                                    print(line)
-                        else:
-                            # Fallback if no line-level diff (e.g. single-line append)
-                            print(colored(f"  - OLD: {current_context}", "red"))
-                            print(colored(f"  + NEW: {new_context}", "green"))
+                        print(
+                            f"  - OLD: {current_context}\n  + NEW: {new_context}"
+                        )
                         
                         choice = input(
                             "Apply? [y/N/e(dit)]: "

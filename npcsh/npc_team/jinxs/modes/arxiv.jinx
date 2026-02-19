@@ -20,52 +20,8 @@ steps:
       import subprocess
       import urllib.request
       import urllib.parse
-      import urllib.error
       import xml.etree.ElementTree as ET
       import textwrap
-      import time
-
-      def log(msg):
-          sys.stderr.write("DEBUG [arxiv] " + str(msg) + "\n")
-          sys.stderr.flush()
-
-      def fetch_url_with_retry(url, timeout=60, max_retries=5, initial_delay=10):
-          """Fetch URL with exponential backoff for rate limiting."""
-          log(f"fetch_url_with_retry: url={url[:120]}... timeout={timeout}")
-          for attempt in range(max_retries):
-              t0 = time.time()
-              try:
-                  log(f"  attempt {attempt+1}/{max_retries} ...")
-                  req = urllib.request.Request(url, headers={"User-Agent": "npcsh/1.0 (https://github.com/npc-worldwide/npcsh; mailto:contact@npcworldwide.com)"})
-                  with urllib.request.urlopen(req, timeout=timeout) as response:
-                      status = response.getcode()
-                      data = response.read().decode('utf-8')
-                      elapsed = time.time() - t0
-                      log(f"  attempt {attempt+1} OK: status={status}, len={len(data)}, elapsed={elapsed:.2f}s")
-                      return data
-              except urllib.error.HTTPError as e:
-                  elapsed = time.time() - t0
-                  log(f"  attempt {attempt+1} HTTPError: code={e.code}, reason={e.reason}, elapsed={elapsed:.2f}s")
-                  if e.code in (429, 503) and attempt < max_retries - 1:
-                      delay = initial_delay * (2 ** attempt)
-                      log(f"  retryable ({e.code}), sleeping {delay}s before retry...")
-                      time.sleep(delay)
-                  else:
-                      raise
-              except (urllib.error.URLError, TimeoutError) as e:
-                  elapsed = time.time() - t0
-                  log(f"  attempt {attempt+1} URLError/Timeout: {e}, elapsed={elapsed:.2f}s")
-                  if attempt < max_retries - 1:
-                      delay = initial_delay * (2 ** attempt)
-                      log(f"  sleeping {delay}s before retry...")
-                      time.sleep(delay)
-                  else:
-                      raise
-              except Exception as e:
-                  elapsed = time.time() - t0
-                  log(f"  attempt {attempt+1} unexpected error: {type(e).__name__}: {e}, elapsed={elapsed:.2f}s")
-                  raise
-          return None
 
       def get_terminal_size():
           try:
@@ -264,16 +220,9 @@ steps:
           'physics': ['physics.acc-ph', 'physics.ao-ph', 'physics.atm-clus', 'physics.atom-ph', 'physics.bio-ph', 'physics.chem-ph', 'physics.class-ph', 'physics.comp-ph', 'physics.data-an', 'physics.flu-dyn', 'physics.gen-ph', 'physics.geo-ph', 'physics.hist-ph', 'physics.ins-det', 'physics.med-ph', 'physics.optics', 'physics.plasm-ph', 'physics.pop-ph', 'physics.soc-ph', 'physics.space-ph'],
       }
 
-      def quote_term(term):
-          """Wrap multi-word terms in %22 (double quotes) for arXiv API phrase search."""
-          t = term.strip()
-          if ' ' in t:
-              return '%22' + t.replace(' ', '+') + '%22'
-          return t
-
       if author:
           for a in author.split(','):
-              search_parts.append("au:" + quote_term(a))
+              search_parts.append("au:" + a.strip().replace(' ', '_'))
       if category:
           if category in cat_expansions:
               cat_or = "+OR+".join(["cat:" + c for c in cat_expansions[category]])
@@ -281,11 +230,11 @@ steps:
           else:
               search_parts.append("cat:" + category)
       if title_filter:
-          search_parts.append("ti:" + quote_term(title_filter))
+          search_parts.append("ti:" + title_filter)
       if abstract_filter:
-          search_parts.append("abs:" + quote_term(abstract_filter))
+          search_parts.append("abs:" + abstract_filter)
       if query:
-          search_parts.append("all:" + quote_term(query))
+          search_parts.append("all:" + query)
 
       if not search_parts:
           help_text = [
@@ -310,36 +259,24 @@ steps:
           context['output'] = "\n".join(help_text)
       else:
           # Build search query
-          log(f"search_parts: {search_parts}")
           if len(search_parts) > 1:
               search_query = "+AND+".join(search_parts)
           else:
               search_query = search_parts[0]
 
-          # Build URL - spaces already handled by quote_term, just replace any remaining
-          encoded_query = search_query.replace(' ', '+')
-          url = "https://export.arxiv.org/api/query?search_query=" + encoded_query + "&start=0&max_results=" + str(limit) + "&sortBy=relevance&sortOrder=descending"
-          log(f"full URL: {url}")
+          # Build URL manually to avoid encoding + signs in search query
+          url = "http://export.arxiv.org/api/query?search_query=" + search_query + "&start=0&max_results=" + str(limit) + "&sortBy=relevance&sortOrder=descending"
 
           try:
-              t_start = time.time()
-              data = fetch_url_with_retry(url, timeout=60)
-              t_total = time.time() - t_start
-              log(f"fetch complete: {len(data)} bytes in {t_total:.2f}s")
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  data = response.read().decode('utf-8')
 
               root = ET.fromstring(data)
               ns = {'atom': 'http://www.w3.org/2005/Atom'}
               entries = root.findall('atom:entry', ns)
-              log(f"parsed XML: {len(entries)} entries found")
-
-              # Check for API error responses
-              total_results_el = root.find('{http://a9.com/-/spec/opensearch/1.1/}totalResults')
-              if total_results_el is not None:
-                  log(f"totalResults: {total_results_el.text}")
 
               if not entries:
                   context['output'] = "No papers found for: " + query
-                  log(f"no entries for query={query}")
               elif text_only:
                   results = []
                   for i, entry in enumerate(entries, 1):
@@ -347,9 +284,9 @@ steps:
                       summary = entry.find('atom:summary', ns).text.strip()[:300] + '...'
                       published = entry.find('atom:published', ns).text[:10]
                       authors = [a.find('atom:name', ns).text for a in entry.findall('atom:author', ns)]
-                      author_str = ', '.join(authors[:6])
-                      if len(authors) > 6:
-                          author_str += ' et al. (' + str(len(authors)) + ')'
+                      author_str = ', '.join(authors[:3])
+                      if len(authors) > 3:
+                          author_str += ' et al.'
                       link = entry.find('atom:id', ns).text
 
                       results.append(str(i) + ". " + title)
@@ -502,9 +439,9 @@ steps:
                                   date = p['published']
                                   cat = p['category'][:cat_w-1]
                                   # Show multiple authors
-                                  author_names = [a.split()[-1] for a in p['authors'][:5]]
-                                  if p['num_authors'] > 5:
-                                      auth = ', '.join(author_names) + ' +' + str(p['num_authors']-5)
+                                  author_names = [a.split()[-1] for a in p['authors'][:3]]
+                                  if p['num_authors'] > 3:
+                                      auth = ', '.join(author_names) + ' +' + str(p['num_authors']-3)
                                   else:
                                       auth = ', '.join(author_names)
                                   auth = auth[:auth_w-1]
@@ -780,7 +717,4 @@ steps:
 
           except Exception as e:
               import traceback
-              tb = traceback.format_exc()
-              log(f"EXCEPTION: {type(e).__name__}: {e}")
-              log(tb)
-              context['output'] = "arXiv error: " + str(e) + "\n" + tb
+              context['output'] = "arXiv error: " + str(e) + "\n" + traceback.format_exc()

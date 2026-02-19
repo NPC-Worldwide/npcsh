@@ -1,6 +1,5 @@
 jinx_name: papers
 description: Multi-platform research paper browser with tabs for arXiv, Semantic Scholar, OpenReview, and Wikipedia
-interactive: true
 inputs:
 - query: ""
 - limit: 10
@@ -17,7 +16,6 @@ steps:
       import subprocess
       import urllib.request
       import urllib.parse
-      import urllib.error
       import xml.etree.ElementTree as ET
       import textwrap
       import json
@@ -30,67 +28,15 @@ steps:
           except:
               return 80, 24
 
-      def log(msg):
-          sys.stderr.write("DEBUG [papers] " + str(msg) + "\n")
-          sys.stderr.flush()
-
-      def fetch_url_with_retry(url, timeout=60, max_retries=5, initial_delay=10, req=None):
-          """Fetch URL with exponential backoff for rate limiting."""
-          log(f"fetch_url_with_retry: url={url[:120]}... timeout={timeout}")
-          for attempt in range(max_retries):
-              t0 = time.time()
-              try:
-                  log(f"  attempt {attempt+1}/{max_retries} ...")
-                  if req is not None:
-                      target = req
-                  else:
-                      target = urllib.request.Request(url, headers={"User-Agent": "npcsh/1.0 (https://github.com/npc-worldwide/npcsh; mailto:contact@npcworldwide.com)"})
-                  with urllib.request.urlopen(target, timeout=timeout) as response:
-                      status = response.getcode()
-                      data = response.read().decode('utf-8')
-                      elapsed = time.time() - t0
-                      log(f"  attempt {attempt+1} OK: status={status}, len={len(data)}, elapsed={elapsed:.2f}s")
-                      return data
-              except urllib.error.HTTPError as e:
-                  elapsed = time.time() - t0
-                  log(f"  attempt {attempt+1} HTTPError: code={e.code}, reason={e.reason}, elapsed={elapsed:.2f}s")
-                  if e.code in (429, 503) and attempt < max_retries - 1:
-                      delay = initial_delay * (2 ** attempt)
-                      log(f"  retryable ({e.code}), sleeping {delay}s before retry...")
-                      time.sleep(delay)
-                  else:
-                      raise
-              except (urllib.error.URLError, TimeoutError) as e:
-                  elapsed = time.time() - t0
-                  log(f"  attempt {attempt+1} URLError/Timeout: {e}, elapsed={elapsed:.2f}s")
-                  if attempt < max_retries - 1:
-                      delay = initial_delay * (2 ** attempt)
-                      log(f"  sleeping {delay}s before retry...")
-                      time.sleep(delay)
-                  else:
-                      raise
-              except Exception as e:
-                  elapsed = time.time() - t0
-                  log(f"  attempt {attempt+1} unexpected: {type(e).__name__}: {e}, elapsed={elapsed:.2f}s")
-                  raise
-          return None
-
       # ── Source fetchers ──────────────────────────────────────────
 
       def fetch_arxiv(query, limit):
           papers = []
           try:
-              # Wrap multi-word queries in quotes for phrase search
-              q = query.strip()
-              if ' ' in q:
-                  quoted = '%22' + q.replace(' ', '+') + '%22'
-              else:
-                  quoted = q
-              search_query = "all:" + quoted
-              url = "https://export.arxiv.org/api/query?search_query=" + search_query + "&start=0&max_results=" + str(limit) + "&sortBy=relevance&sortOrder=descending"
-              log(f"fetch_arxiv: query='{query}', url={url}")
-              data = fetch_url_with_retry(url, timeout=60)
-              log(f"fetch_arxiv: got {len(data)} bytes")
+              search_query = "all:" + query
+              url = "http://export.arxiv.org/api/query?search_query=" + urllib.parse.quote(search_query, safe=':+') + "&start=0&max_results=" + str(limit) + "&sortBy=relevance&sortOrder=descending"
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  data = response.read().decode('utf-8')
               root = ET.fromstring(data)
               ns = {'atom': 'http://www.w3.org/2005/Atom'}
               for entry in root.findall('atom:entry', ns):
@@ -111,10 +57,7 @@ steps:
                       'source': 'arXiv'
                   })
           except Exception as e:
-              log(f"fetch_arxiv ERROR: {type(e).__name__}: {e}")
-              import traceback; log(traceback.format_exc())
               papers.append({'title': f'[arXiv error: {e}]', 'authors': [], 'abstract': '', 'year': '', 'date': '', 'url': '', 'pdf': '', 'aid': '', 'category': '', 'citations': None, 'venue': '', 'source': 'arXiv'})
-          log(f"fetch_arxiv: returning {len(papers)} papers")
           return papers
 
       def fetch_semantic_scholar(query, limit):
@@ -124,55 +67,20 @@ steps:
               import requests
               url = "https://api.semanticscholar.org/graph/v1/paper/search"
               headers = {"x-api-key": api_key} if api_key else {}
-              headers["User-Agent"] = "npcsh/1.0"
-              params = {"query": query, "limit": limit, "fields": "title,abstract,authors,year,citationCount,url,venue,openAccessPdf,externalIds"}
-              log(f"fetch_semantic_scholar: query='{query}', has_api_key={bool(api_key)}")
-              response = None
-              for attempt in range(3):
-                  t0 = time.time()
-                  try:
-                      log(f"  S2 attempt {attempt+1}/3 ...")
-                      response = requests.get(url, headers=headers, params=params, timeout=30)
-                      log(f"  S2 attempt {attempt+1}: status={response.status_code}, elapsed={time.time()-t0:.2f}s")
-                      if response.status_code == 429 and attempt < 2:
-                          delay = 5 * (2 ** attempt)
-                          log(f"  S2 rate limited (429), sleeping {delay}s...")
-                          time.sleep(delay)
-                          continue
-                      response.raise_for_status()
-                      break
-                  except requests.exceptions.RequestException as e:
-                      if attempt < 2 and (response is None or response.status_code in (429, 503)):
-                          delay = 5 * (2 ** attempt)
-                          log(f"  S2 error: {e}, sleeping {delay}s...")
-                          time.sleep(delay)
-                      else:
-                          raise
+              params = {"query": query, "limit": limit, "fields": "title,abstract,authors,year,citationCount,url,venue,openAccessPdf"}
+              response = requests.get(url, headers=headers, params=params, timeout=30)
+              response.raise_for_status()
               for p in response.json().get('data', []):
                   pdf_info = p.get('openAccessPdf') or {}
-                  pdf_url = pdf_info.get('url', '')
-                  # If no open access PDF, try to construct one from arXiv ID
-                  ext_ids = p.get('externalIds') or {}
-                  arxiv_id = ext_ids.get('ArXiv', '')
-                  doi = ext_ids.get('DOI', '')
-                  if not pdf_url and arxiv_id:
-                      pdf_url = f'https://arxiv.org/pdf/{arxiv_id}.pdf'
-                  s2_url = p.get('url', '')
-                  # If S2 URL is empty, construct from DOI or arXiv
-                  if not s2_url and doi:
-                      s2_url = f'https://doi.org/{doi}'
-                  elif not s2_url and arxiv_id:
-                      s2_url = f'https://arxiv.org/abs/{arxiv_id}'
                   papers.append({
                       'title': p.get('title', ''), 'authors': [a.get('name', '') for a in p.get('authors', [])],
                       'abstract': p.get('abstract') or '', 'year': str(p.get('year') or ''),
-                      'date': str(p.get('year') or ''), 'url': s2_url,
-                      'pdf': pdf_url, 'aid': arxiv_id or '', 'category': '',
+                      'date': str(p.get('year') or ''), 'url': p.get('url', ''),
+                      'pdf': pdf_info.get('url', ''), 'aid': '', 'category': '',
                       'citations': p.get('citationCount', 0), 'venue': p.get('venue', ''),
                       'source': 'S2'
                   })
           except Exception as e:
-              log(f"fetch_semantic_scholar ERROR: {type(e).__name__}: {e}")
               papers.append({'title': f'[S2 error: {e}]', 'authors': [], 'abstract': '', 'year': '', 'date': '', 'url': '', 'pdf': '', 'aid': '', 'category': '', 'citations': None, 'venue': '', 'source': 'S2'})
           return papers
 
@@ -182,10 +90,7 @@ steps:
               import requests
               url = "https://api2.openreview.net/notes/search"
               params = {"query": query, "limit": limit, "content": "all"}
-              log(f"fetch_openreview: query='{query}'")
-              t0 = time.time()
               response = requests.get(url, params=params, timeout=30)
-              log(f"fetch_openreview: status={response.status_code}, elapsed={time.time()-t0:.2f}s")
               response.raise_for_status()
               for note in response.json().get('notes', []):
                   content = note.get('content', {})
@@ -209,7 +114,6 @@ steps:
                       'venue': venue, 'source': 'OpenReview'
                   })
           except Exception as e:
-              log(f"fetch_openreview ERROR: {type(e).__name__}: {e}")
               papers.append({'title': f'[OpenReview error: {e}]', 'authors': [], 'abstract': '', 'year': '', 'date': '', 'url': '', 'pdf': '', 'aid': '', 'category': '', 'citations': None, 'venue': '', 'source': 'OpenReview'})
           return papers
 
@@ -219,7 +123,8 @@ steps:
               url = "https://en.wikipedia.org/w/api.php"
               params = {"action": "query", "list": "search", "srsearch": query, "srlimit": limit, "format": "json", "srprop": "snippet|timestamp|wordcount"}
               req = urllib.request.Request(url + "?" + urllib.parse.urlencode(params), headers={"User-Agent": "npcsh/1.0"})
-              data = json.loads(fetch_url_with_retry(url, timeout=15, req=req))
+              with urllib.request.urlopen(req, timeout=15) as response:
+                  data = json.loads(response.read().decode('utf-8'))
               for r in data.get('query', {}).get('search', []):
                   import re
                   snippet = re.sub(r'<[^>]+>', '', r.get('snippet', ''))
@@ -266,9 +171,9 @@ steps:
           all_papers = fetch_arxiv(query, limit) + fetch_semantic_scholar(query, limit)
           results = []
           for i, p in enumerate(all_papers, 1):
-              auth = ', '.join(p['authors'][:6])
-              if len(p['authors']) > 6:
-                  auth += f' et al. ({len(p["authors"])})'
+              auth = ', '.join(p['authors'][:3])
+              if len(p['authors']) > 3:
+                  auth += ' et al.'
               results.append(f"{i}. [{p['source']}] {p['title']} ({p['year']})")
               results.append(f"   Authors: {auth}")
               if p['abstract']:
@@ -414,11 +319,11 @@ steps:
                           else:
                               cite = ''
                           cite = cite[:6]
-                          auth_names = [a.split()[-1] if ' ' in a else a for a in p.get('authors', [])[:5]]
+                          auth_names = [a.split()[-1] if ' ' in a else a for a in p.get('authors', [])[:3]]
                           auth = ', '.join(auth_names)
-                          if len(p.get('authors', [])) > 5:
-                              auth += ' +' + str(len(p.get('authors', [])) - 5)
-                          auth = auth[:28]
+                          if len(p.get('authors', [])) > 3:
+                              auth += '..'
+                          auth = auth[:24]
                           title = (p.get('title') or '')[:width - 40]
 
                           line = f" {year:<5} {cite:<6} {auth:<24} {title}"
@@ -604,16 +509,10 @@ steps:
                           sys.stdout.write('\033[2J\033[H')
                   elif c == 'o' and papers:
                       p = papers[selected]
-                      url_to_open = p.get('url', '')
-                      if url_to_open:
-                          try:
-                              subprocess.Popen(['xdg-open', url_to_open], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                          except:
-                              pass
-                      else:
-                          sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m No URL available for this paper \033[0m')
-                          sys.stdout.flush()
-                          time.sleep(1.5)
+                      try:
+                          subprocess.Popen(['xdg-open', p['url']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                      except:
+                          pass
                   elif c == 'p' and papers:
                       p = papers[selected]
                       if p.get('pdf'):
@@ -621,19 +520,6 @@ steps:
                               subprocess.Popen(['xdg-open', p['pdf']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                           except:
                               pass
-                      elif p.get('url'):
-                          # No PDF link, open the paper URL instead
-                          sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m No direct PDF, opening paper page... \033[0m')
-                          sys.stdout.flush()
-                          try:
-                              subprocess.Popen(['xdg-open', p['url']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                          except:
-                              pass
-                          time.sleep(1)
-                      else:
-                          sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m No PDF available for this paper \033[0m')
-                          sys.stdout.flush()
-                          time.sleep(1.5)
                   elif c == 'd' and papers:
                       p = papers[selected]
                       if p.get('pdf'):
@@ -643,10 +529,7 @@ steps:
                           try:
                               sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m Downloading {filename}... \033[0m')
                               sys.stdout.flush()
-                              req = urllib.request.Request(p['pdf'], headers={"User-Agent": "npcsh/1.0"})
-                              with urllib.request.urlopen(req, timeout=60) as resp:
-                                  with open(filepath, 'wb') as f:
-                                      f.write(resp.read())
+                              urllib.request.urlretrieve(p['pdf'], filepath)
                               sys.stdout.write(f'\033[{height};1H\033[K\033[42;30m Saved: {filepath} \033[0m')
                               sys.stdout.flush()
                               time.sleep(1)
@@ -654,10 +537,6 @@ steps:
                               sys.stdout.write(f'\033[{height};1H\033[K\033[41;37m Download failed: {str(e)[:50]} \033[0m')
                               sys.stdout.flush()
                               time.sleep(2)
-                      else:
-                          sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m No PDF available to download \033[0m')
-                          sys.stdout.flush()
-                          time.sleep(1.5)
                   elif c == 'v' and papers:
                       p = papers[selected]
                       if p.get('pdf'):
@@ -667,9 +546,7 @@ steps:
                               sys.stdout.flush()
                               with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
                                   tmp_path = tmp.name
-                                  req = urllib.request.Request(p['pdf'], headers={"User-Agent": "npcsh/1.0"})
-                                  with urllib.request.urlopen(req, timeout=60) as resp:
-                                      tmp.write(resp.read())
+                                  urllib.request.urlretrieve(p['pdf'], tmp_path)
                               pdf_lines = render_pdf_terminal(tmp_path, width - 4)
                               os.unlink(tmp_path)
                               mode = 'pdfview'
@@ -679,27 +556,6 @@ steps:
                               sys.stdout.write(f'\033[{height};1H\033[K\033[41;37m PDF view failed: {str(e)[:50]} \033[0m')
                               sys.stdout.flush()
                               time.sleep(2)
-                      elif p.get('abstract'):
-                          # No PDF but has abstract - show it in pdfview mode
-                          pdf_lines = []
-                          pdf_lines.append(p.get('title', ''))
-                          pdf_lines.append('')
-                          pdf_lines.append('Authors: ' + ', '.join(p.get('authors', [])))
-                          pdf_lines.append('Year: ' + str(p.get('year', '')))
-                          if p.get('venue'):
-                              pdf_lines.append('Venue: ' + p['venue'])
-                          pdf_lines.append('')
-                          pdf_lines.append('Abstract:')
-                          pdf_lines.extend(textwrap.wrap(p['abstract'], width=width - 8))
-                          pdf_lines.append('')
-                          pdf_lines.append('(No PDF available - showing abstract only)')
-                          mode = 'pdfview'
-                          pdf_scroll = 0
-                          sys.stdout.write('\033[2J\033[H')
-                      else:
-                          sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m No PDF available for this paper \033[0m')
-                          sys.stdout.flush()
-                          time.sleep(1.5)
                   elif c == 's' and mode == 'list':
                       # Cycle sort modes
                       cycle = ['relevance', 'date', 'citations', 'author']

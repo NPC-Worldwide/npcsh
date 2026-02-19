@@ -1,5 +1,5 @@
 jinx_name: sh
-description: Run a shell command and get the output. Use for counting files (ls /etc | wc -l), checking paths, listing directories. After you get the result, stop and answer the user. Do not call any other tools after this.
+description: Run a shell command. Supports pipes, redirects (> /tmp/file.txt), chaining (&&), and any valid bash. When asked to save or write output to a file, include the redirect in the command itself (e.g. "echo hello > /tmp/out.txt"). Returns stdout if any.
 inputs:
 - bash_command
 steps:
@@ -20,9 +20,11 @@ steps:
       )
       stdout, stderr = process.communicate()
 
-      if stderr:
-          output = f"Error: {stderr.decode('utf-8')}"
-      else:
+      if process.returncode != 0 and stderr:
+          output = f"Error (exit {process.returncode}): {stderr.decode('utf-8')}"
+      elif stdout.strip():
           output = stdout.decode('utf-8')
+      else:
+          output = f"Command executed successfully (exit code {process.returncode})"
 
 

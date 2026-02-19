@@ -1,6 +1,5 @@
 jinx_name: file_search
 description: Find and browse files with interactive TUI
-interactive: true
 inputs:
 - pattern: ""
 - path: "."
@@ -24,17 +23,6 @@ steps:
       base_path = context.get('path', '.').strip() or '.'
       recursive = context.get('recursive', 'true').lower() in ('true', '1', 'yes')
       text_mode = context.get('text', '').lower() in ('true', '1', 'yes')
-
-      # Force text mode when called by an agent (non-interactive context)
-      if not text_mode:
-          try:
-              if ('state' in dir() and state is not None
-                      and getattr(state, 'current_mode', '') in ('agent', 'cmd')):
-                  text_mode = True
-              elif not sys.stdin.isatty():
-                  text_mode = True
-          except Exception:
-              pass
 
       if not pattern:
           lines = [

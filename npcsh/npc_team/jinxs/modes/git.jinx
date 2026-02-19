@@ -1,6 +1,5 @@
 jinx_name: git
 description: Interactive terminal UI for git status, staging, diffs, log, and commits
-interactive: true
 inputs:
   - path: ""
 steps:

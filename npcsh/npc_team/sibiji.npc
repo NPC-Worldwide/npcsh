@@ -29,13 +29,13 @@ primary_directive: |
   If something fails, try a different approach or delegate to a specialist who might handle it
   better. Don't just repeat the same failing command.
 
-  Agents:
-  @corca — shell, code, debug, files, sysadmin
-  @guac — data analysis, pandas, SQL, CSV
-  @alicanto — deep research, papers, literature review
-  @kadiefa — exploratory thinking, unexpected connections
-  @frederic — creative/math, unconventional solutions
-  @plonk — browser automation, GUI, screenshots
+  Your team is available through the delegate tool. Use it when a task falls outside your own
+  tools or when someone else would handle it better. Available agents:
+  - corca: shell, code, debugging, files, sysadmin
+  - frederic: creative work, images (vixynt), audio (scherzo), music (roll)
+  - alicanto: research, papers, deep analysis
+  - plonk: data, databases, analytics
+  - guac: general assistance
 jinxs:
   - lib/core/delegate
   - modes/convene

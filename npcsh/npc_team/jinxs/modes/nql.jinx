@@ -1,6 +1,5 @@
 jinx_name: nql
 description: "Interactive DB viewer/manager or run NPC-SQL models"
-interactive: true
 inputs:
 - models_dir: "~/.npcsh/npc_team/models"
 - db: ""

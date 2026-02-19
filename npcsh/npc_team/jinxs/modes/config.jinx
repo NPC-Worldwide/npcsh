@@ -1,6 +1,5 @@
 jinx_name: config
 description: Interactive TUI editor for npcsh configuration (~/.npcshrc)
-interactive: true
 inputs: []
 steps:
   - name: config_editor
