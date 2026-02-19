@@ -62,6 +62,8 @@ class SpinnerContext:
         self._stop = False
         self._interrupted = False
         self._start_time = time.time()
+        if not sys.stdout.isatty():
+            return self
         self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
         # Start key listener for ESC
@@ -79,8 +81,9 @@ class SpinnerContext:
         if self._key_thread:
             self._key_thread.join(timeout=0.5)
         # Clear spinner line
-        sys.stdout.write('\r' + ' ' * (len(self.message) + 60) + '\r')
-        sys.stdout.flush()
+        if sys.stdout.isatty():
+            sys.stdout.write('\r' + ' ' * (len(self.message) + 60) + '\r')
+            sys.stdout.flush()
         # Check if we were interrupted by ESC
         if self._interrupted:
             raise KeyboardInterrupt("ESC pressed")

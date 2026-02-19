@@ -9,7 +9,7 @@ steps:
     code: |
       import pandas as pd
 
-      query = context.get('sql_query', '').strip()
+      query = ({{ sql_query | tojson }}).strip()
       if not query:
           context['output'] = "Usage: /sql <query>"
       else:

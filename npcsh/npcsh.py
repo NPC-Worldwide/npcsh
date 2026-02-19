@@ -13,13 +13,11 @@ try:
     from termcolor import colored
 except: 
     pass
-from npcpy.npc_sysenv import (
-    render_markdown,
-)
 from npcpy.memory.command_history import (
     CommandHistory,
-    load_kg_from_db, 
-    save_kg_to_db, 
+    load_kg_from_db,
+    save_kg_to_db,
+    save_conversation_message,
 )
 from npcpy.npc_compiler import NPC
 from npcpy.memory.knowledge_graph import (
@@ -516,15 +514,60 @@ def main(npc_name: str = None) -> None:
          state.current_path = os.getcwd()
          final_state, output = execute_command(args.command, state, router=router, command_history=command_history)
          # Handle output - check if it's a dict (from jinx) or a stream
+         from npcpy.npc_sysenv import print_and_process_stream
+         display_output = None
          if isinstance(output, dict):
-              display_output = output.get('output') or output.get('response') or str(output)
-              print(display_output)
-         elif final_state.stream_output and output is not None:
-              for chunk in output:
-                  print(str(chunk), end='')
-              print()
+              raw = output.get('output') or output.get('response') or str(output)
+              if isinstance(raw, str):
+                  display_output = raw
+                  print(display_output)
+              else:
+                  display_output = print_and_process_stream(raw, final_state.chat_model, final_state.chat_provider)
+         elif final_state.stream_output and output is not None and not isinstance(output, str):
+              display_output = print_and_process_stream(output, final_state.chat_model, final_state.chat_provider)
          elif output is not None:
-              print(output)
+              display_output = str(output)
+              print(display_output)
+
+         # Save conversation history (same as REPL's process_result)
+
+         team_name = final_state.team.name if final_state.team else "npcsh"
+         npc_obj = final_state.npc if isinstance(final_state.npc, NPC) else None
+         npc_name = npc_obj.name if npc_obj else "npcsh"
+         model_name = npc_obj.model if npc_obj else final_state.chat_model
+         provider_name = npc_obj.provider if npc_obj else final_state.chat_provider
+
+         # Extract tool_calls and tool_results from message history
+         all_tool_calls = []
+         all_tool_results = []
+         for msg in final_state.messages:
+             if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                 all_tool_calls.extend(msg["tool_calls"])
+             elif msg.get("role") == "tool":
+                 all_tool_results.append({
+                     "tool_call_id": msg.get("tool_call_id", ""),
+                     "content": msg.get("content", ""),
+                 })
+
+         output_str = display_output
+
+         conv_id = final_state.conversation_id
+
+         save_conversation_message(
+             command_history, conv_id, "user", args.command,
+             wd=final_state.current_path,
+             model=model_name, provider=provider_name,
+             npc=npc_name, team=team_name,
+         )
+         if output_str:
+             save_conversation_message(
+                 command_history, conv_id, "assistant", output_str,
+                 wd=final_state.current_path,
+                 model=model_name, provider=provider_name,
+                 npc=npc_name, team=team_name,
+                 tool_calls=all_tool_calls if all_tool_calls else None,
+                 tool_results=all_tool_results if all_tool_results else None,
+             )
     else:
         # Determine if launching an NPC or a jinx mode
         if target_npc_name and target_npc_name.lower() in jinx_modes:

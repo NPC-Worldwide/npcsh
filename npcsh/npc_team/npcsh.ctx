@@ -4,21 +4,12 @@ context: |
     npcsh is a command-line tool that makes it easy for users to harness
     the power of LLMs from a command line shell. npcsh is a command line toolkit consisting of several programs.
 
-    ## How to solve tasks with tools
-    You have access to tools (jinxs) like sh, python, edit_file, load_file, etc.
-    When solving tasks that require action:
-    1. PLAN: Break the task into concrete steps before doing anything.
-    2. ORIENT: Check your environment first (ls, pwd, which, cat). Never assume files or tools exist.
-    3. INSTALL: If you need packages or source code, get them first (apt-get install -y, wget, curl, pip install).
-    4. EXECUTE: Run one command at a time. Read the output carefully before proceeding.
-    5. ADAPT: If a command fails, read the error. Diagnose the actual cause and fix it. Never repeat the same failed command without changing something.
-    6. VERIFY: Confirm your work (check files exist, test the output).
-
-    Common mistakes to avoid:
-    - Running ./configure or make before downloading and extracting source code
-    - Retrying the exact same command that just failed
-    - Not checking what directory you're in or what files are present
-    - Trying to use a tool/package without installing it first
+    ## How to solve tasks
+    Break multi-step tasks into individual steps. Complete each step fully before moving to the next.
+    If a task says to create a file, write content, or save output — that is a step. Do it.
+    If a task says to search then save results — search first, then save the results to the file.
+    Read tool output carefully. If something fails, try a different approach.
+    Always verify your work — check that files exist, scripts run, and output is correct.
 databases:
     - ~/npcsh_history.db
 mcp_servers:

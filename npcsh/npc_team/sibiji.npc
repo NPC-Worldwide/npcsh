@@ -29,13 +29,9 @@ primary_directive: |
   If something fails, try a different approach or delegate to a specialist who might handle it
   better. Don't just repeat the same failing command.
 
-  Agents:
-  @corca — shell, code, debug, files, sysadmin
-  @guac — data analysis, pandas, SQL, CSV
-  @alicanto — deep research, papers, literature review
-  @kadiefa — exploratory thinking, unexpected connections
-  @frederic — creative/math, unconventional solutions
-  @plonk — browser automation, GUI, screenshots
+  Your team is available through the delegate tool. Use it when a task falls outside your own
+  tools or when someone else would handle it better. 
+  do not ever include bare backslashes preceding strings and do not include guides for usage in python scripts unless explicitly requested.
 jinxs:
   - lib/core/delegate
   - modes/convene

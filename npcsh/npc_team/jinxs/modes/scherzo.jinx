@@ -1,16 +1,13 @@
-jinx_name: "vixynt"
-description: "Image creation studio TUI - generate and manage images with parameter controls"
+jinx_name: "scherzo"
+description: "Audio creation studio TUI - generate speech and audio with TTS engine controls"
 inputs:
-  - prompt: null
-  - model: null
-  - provider: null
-  - output_name: null
-  - attachments: null
-  - n_images: null
-  - height: null
-  - width: null
+  - text: null
+  - engine: null
+  - voice: null
+  - output_path: null
+  - speed: null
 steps:
-  - name: "vixynt_tui"
+  - name: "scherzo_tui"
     engine: "python"
     code: |
       import os
@@ -19,64 +16,57 @@ steps:
       import termios
       import select
       from datetime import datetime
-      from PIL import Image
 
-      from npcpy.llm_funcs import gen_image
+      from npcpy.gen.audio_gen import text_to_speech, get_available_engines, get_available_voices
 
       npc = context.get('npc')
       if isinstance(npc, str):
           npc = None
 
       # ========== State ==========
-      class VixyntState:
+      class ScherzoState:
           def __init__(self):
-              self.prompt = ""
-              self.model = ""
-              self.provider = ""
-              self.width_val = 1024
-              self.height_val = 1024
-              self.n_images = 1
-              self.output_name = ""
-              self.attachments = ""
+              self.text = ""
+              self.engine_name = ""
+              self.voice = ""
+              self.output_path = ""
+              self.speed = 1.0
               # UI state
-              self.params = ['prompt', 'model', 'provider', 'width', 'height', 'n_images', 'output', 'attachments']
+              self.params = ['text', 'engine', 'voice', 'speed', 'output']
               self.sel = 0
               self.scroll = 0
               self.mode = 'params'  # params, editing, gallery, generating
               self.edit_buf = ""
               self.edit_cursor = 0
               self.status = "Ready"
-              self.gallery = []  # [{"path": str, "prompt": str, "timestamp": str}]
+              self.gallery = []  # [{"path": str, "text": str, "timestamp": str}]
               self.gallery_sel = 0
               self.gallery_scroll = 0
 
-      ui = VixyntState()
+      ui = ScherzoState()
 
       # Load from context
-      ui.prompt = str(context.get('prompt') or '')
-      ui.model = str(context.get('model') or os.getenv('NPCSH_IMAGE_GEN_MODEL', ''))
-      ui.provider = str(context.get('provider') or os.getenv('NPCSH_IMAGE_GEN_PROVIDER', ''))
+      ui.text = str(context.get('text') or '')
+      ui.engine_name = str(context.get('engine') or os.getenv('NPCSH_TTS_ENGINE', 'kokoro'))
+      ui.voice = str(context.get('voice') or os.getenv('NPCSH_TTS_VOICE', ''))
       try:
-          ui.width_val = int(context.get('width') or 1024)
+          ui.speed = float(context.get('speed') or 1.0)
       except:
           pass
-      try:
-          ui.height_val = int(context.get('height') or 1024)
-      except:
-          pass
-      try:
-          ui.n_images = int(context.get('n_images') or 1)
-      except:
-          pass
-      ui.output_name = str(context.get('output_name') or '')
-      ui.attachments = str(context.get('attachments') or '')
+      ui.output_path = str(context.get('output_path') or '')
+
+      # Set default voice for engine if none specified
+      if not ui.voice:
+          defaults = {'kokoro': 'af_heart', 'qwen3': 'ryan', 'elevenlabs': 'rachel',
+                      'openai': 'alloy', 'gemini': 'Puck', 'gtts': 'en'}
+          ui.voice = defaults.get(ui.engine_name, 'default')
 
       # Load existing gallery
-      img_dir = os.path.expanduser("~/.npcsh/images/")
-      if os.path.isdir(img_dir):
-          for f in sorted(os.listdir(img_dir), reverse=True)[:50]:
-              if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
-                  ui.gallery.append({"path": os.path.join(img_dir, f), "prompt": "", "timestamp": f})
+      audio_dir = os.path.expanduser("~/.npcsh/audio/")
+      if os.path.isdir(audio_dir):
+          for f in sorted(os.listdir(audio_dir), reverse=True)[:50]:
+              if f.lower().endswith(('.wav', '.mp3', '.ogg')):
+                  ui.gallery.append({"path": os.path.join(audio_dir, f), "text": "", "timestamp": f})
 
       def get_size():
           try:
@@ -87,81 +77,63 @@ steps:
 
       def get_param_value(idx):
           p = ui.params[idx]
-          if p == 'prompt': return ui.prompt
-          if p == 'model': return ui.model or '(env default)'
-          if p == 'provider': return ui.provider or '(env default)'
-          if p == 'width': return str(ui.width_val)
-          if p == 'height': return str(ui.height_val)
-          if p == 'n_images': return str(ui.n_images)
-          if p == 'output': return ui.output_name or '(auto)'
-          if p == 'attachments': return ui.attachments or '(none)'
+          if p == 'text': return ui.text
+          if p == 'engine': return ui.engine_name or '(kokoro)'
+          if p == 'voice': return ui.voice or '(default)'
+          if p == 'speed': return str(ui.speed)
+          if p == 'output': return ui.output_path or '(auto)'
           return ''
 
       def set_param_value(idx, val):
           p = ui.params[idx]
-          if p == 'prompt': ui.prompt = val
-          elif p == 'model': ui.model = val
-          elif p == 'provider': ui.provider = val
-          elif p == 'width':
-              try: ui.width_val = int(val)
+          if p == 'text': ui.text = val
+          elif p == 'engine': ui.engine_name = val
+          elif p == 'voice': ui.voice = val
+          elif p == 'speed':
+              try: ui.speed = max(0.1, min(5.0, float(val)))
               except: pass
-          elif p == 'height':
-              try: ui.height_val = int(val)
-              except: pass
-          elif p == 'n_images':
-              try: ui.n_images = max(1, int(val))
-              except: pass
-          elif p == 'output': ui.output_name = val
-          elif p == 'attachments': ui.attachments = val
+          elif p == 'output': ui.output_path = val
 
-      def generate_images():
+      def generate_audio():
           ui.mode = 'generating'
           ui.status = "Generating..."
           render_screen()
 
-          if not ui.prompt:
-              ui.status = "Error: No prompt provided"
+          if not ui.text:
+              ui.status = "Error: No text provided"
               ui.mode = 'params'
               return
 
-          input_images = []
-          if ui.attachments.strip():
-              input_images = [p.strip() for p in ui.attachments.split(',')]
-
           try:
-              result = gen_image(
-                  prompt=ui.prompt,
-                  model=ui.model or None,
-                  provider=ui.provider or None,
-                  npc=npc,
-                  height=ui.height_val,
-                  width=ui.width_val,
-                  n_images=ui.n_images,
-                  input_images=input_images if input_images else None
+              # Determine output format based on engine
+              if ui.engine_name in ('elevenlabs', 'gtts'):
+                  ext = '.mp3'
+              else:
+                  ext = '.wav'
+
+              audio_bytes = text_to_speech(
+                  ui.text,
+                  engine=ui.engine_name or 'kokoro',
+                  voice=ui.voice or None,
               )
 
-              if not isinstance(result, list):
-                  images_list = [result] if result is not None else []
+              if ui.output_path and ui.output_path.strip():
+                  out_file = os.path.expanduser(ui.output_path)
+                  # Ensure correct extension
+                  base, existing_ext = os.path.splitext(out_file)
+                  if not existing_ext:
+                      out_file = base + ext
               else:
-                  images_list = result
+                  os.makedirs(audio_dir, exist_ok=True)
+                  out_file = os.path.join(audio_dir, "scherzo_" + datetime.now().strftime('%Y%m%d_%H%M%S') + ext)
 
-              saved = []
-              for i, image in enumerate(images_list):
-                  if image is None:
-                      continue
-                  if ui.output_name and ui.output_name.strip():
-                      base, ext = os.path.splitext(os.path.expanduser(ui.output_name))
-                      if not ext:
-                          ext = ".png"
-                      out_file = base + ("_" + str(i) if len(images_list) > 1 else "") + ext
-                  else:
-                      os.makedirs(img_dir, exist_ok=True)
-                      out_file = os.path.join(img_dir, "vixynt_" + datetime.now().strftime('%Y%m%d_%H%M%S') + "_" + str(i) + ".png")
-                  image.save(out_file)
-                  saved.append(out_file)
-                  ui.gallery.insert(0, {"path": out_file, "prompt": ui.prompt, "timestamp": os.path.basename(out_file)})
+              # Ensure parent directory exists
+              os.makedirs(os.path.dirname(out_file) or '.', exist_ok=True)
+              with open(out_file, 'wb') as f:
+                  f.write(audio_bytes)
 
-              ui.status = "Generated " + str(len(saved)) + " image(s): " + ", ".join(os.path.basename(f) for f in saved)
+              ui.gallery.insert(0, {"path": out_file, "text": ui.text, "timestamp": os.path.basename(out_file)})
+              ui.status = "Generated: " + os.path.basename(out_file) + " (" + str(len(audio_bytes)) + " bytes)"
           except Exception as e:
               ui.status = "Error: " + str(e)[:60]
 
@@ -173,11 +145,10 @@ steps:
           out = []
           out.append("\033[H")
 
-          header = " VIXYNT - Image Creation Studio "
+          header = " SCHERZO - Audio Creation Studio "
           out.append("\033[1;1H\033[7;1m" + header.ljust(width) + "\033[0m")
 
           if ui.mode in ('params', 'editing', 'generating'):
-              # Parameter panel
               out.append("\033[3;1H\033[36;1m Parameters \033[90m" + ("-" * (width - 13)) + "\033[0m")
 
               for i, p in enumerate(ui.params):
@@ -196,12 +167,11 @@ steps:
                   else:
                       out.append(" " + line)
 
-              # Gallery preview
               gallery_row = 4 + len(ui.params) + 1
               out.append("\033[" + str(gallery_row) + ";1H\033[33;1m Gallery (" + str(len(ui.gallery)) + ") \033[90m" + ("-" * (width - 20)) + "\033[0m")
 
               gallery_h = height - gallery_row - 4
-              for i in range(gallery_h):
+              for i in range(max(0, gallery_h)):
                   idx = ui.gallery_scroll + i
                   row = gallery_row + 1 + i
                   out.append("\033[" + str(row) + ";1H\033[K")
@@ -235,7 +205,7 @@ steps:
           if ui.mode == 'editing':
               footer = " Type value, Enter:Confirm  Esc:Cancel "
           elif ui.mode == 'gallery':
-              footer = " j/k:Nav  o:Open  Enter:Select  b:Back  q:Quit "
+              footer = " j/k:Nav  p:Play  b:Back  q:Quit "
           elif ui.mode == 'generating':
               footer = " Generating... "
           else:
@@ -270,13 +240,12 @@ steps:
           elif c == 'k':
               ui.sel = max(0, ui.sel - 1)
           elif c == 'e' or c in ('\r', '\n'):
-              if c in ('\r', '\n') and ui.sel == 0 and ui.prompt:
-                  # Enter on prompt with existing prompt = generate
-                  generate_images()
+              if c in ('\r', '\n') and ui.sel == 0 and ui.text:
+                  generate_audio()
               else:
                   ui.mode = 'editing'
                   ui.edit_buf = get_param_value(ui.sel)
-                  if ui.edit_buf in ('(env default)', '(auto)', '(none)'):
+                  if ui.edit_buf in ('(kokoro)', '(default)', '(auto)'):
                       ui.edit_buf = ""
                   ui.edit_cursor = len(ui.edit_buf)
           elif c == 'g':
@@ -284,7 +253,7 @@ steps:
               ui.gallery_sel = 0
               ui.gallery_scroll = 0
           elif c == 'G':
-              generate_images()
+              generate_audio()
 
           return True
 
@@ -332,14 +301,17 @@ steps:
               ui.gallery_sel = min(max(0, len(ui.gallery) - 1), ui.gallery_sel + 1)
           elif c == 'k':
               ui.gallery_sel = max(0, ui.gallery_sel - 1)
-          elif c == 'o' and ui.gallery:
+          elif c == 'p' and ui.gallery:
               import subprocess
               path = ui.gallery[ui.gallery_sel]['path']
               try:
-                  subprocess.Popen(['xdg-open', path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                  ui.status = "Opened: " + os.path.basename(path)
+                  if sys.platform == 'darwin':
+                      subprocess.Popen(['afplay', path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  elif sys.platform == 'linux':
+                      subprocess.Popen(['aplay', path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  ui.status = "Playing: " + os.path.basename(path)
               except:
-                  ui.status = "Could not open image"
+                  ui.status = "Could not play audio"
 
           # Keep gallery_scroll in range
           _, height = get_size()
@@ -352,15 +324,15 @@ steps:
           return True
 
       # ========== One-shot mode ==========
-      if ui.prompt and context.get('prompt'):
-          # If prompt provided via CLI args, generate immediately
-          generate_images()
+      if ui.text and context.get('text'):
+          # If text provided via CLI args, generate immediately
+          generate_audio()
           context['output'] = ui.status
           context['messages'] = context.get('messages', [])
 
       # ========== Main TUI Loop ==========
       elif not sys.stdin.isatty():
-          context['output'] = "Vixynt requires an interactive terminal."
+          context['output'] = "Scherzo requires an interactive terminal."
       else:
           fd = sys.stdin.fileno()
           old_settings = termios.tcgetattr(fd)

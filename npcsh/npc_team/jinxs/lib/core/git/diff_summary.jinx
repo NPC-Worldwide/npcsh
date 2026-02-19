@@ -1,0 +1,100 @@
+jinx_name: diff_summary
+description: Get a plain-English summary of current git changes. Summarizes what changed and why using the LLM.
+inputs:
+  - ref: ""
+steps:
+  - name: summarize_diff
+    engine: python
+    code: |
+      import subprocess
+
+      ref = context.get('ref', '').strip()
+
+      def run_git(*args):
+          r = subprocess.run(
+              ['git'] + list(args),
+              capture_output=True, text=True, timeout=30
+          )
+          return r.returncode, r.stdout, r.stderr
+
+      rc, _, _ = run_git('rev-parse', '--is-inside-work-tree')
+      if rc != 0:
+          context['output'] = 'Not a git repository.'
+      else:
+          _, branch, _ = run_git('branch', '--show-current')
+          branch = branch.strip()
+
+          if ref:
+              # Diff against specified ref
+              _, diff, _ = run_git('diff', ref)
+              _, stat, _ = run_git('diff', '--stat', ref)
+              label = 'Changes vs ' + ref
+          else:
+              # Check for staged changes first
+              _, staged, _ = run_git('diff', '--cached')
+              _, unstaged, _ = run_git('diff')
+
+              if staged.strip():
+                  diff = staged
+                  _, stat, _ = run_git('diff', '--cached', '--stat')
+                  label = 'Staged changes'
+              elif unstaged.strip():
+                  diff = unstaged
+                  _, stat, _ = run_git('diff', '--stat')
+                  label = 'Unstaged changes'
+              else:
+                  # Diff branch against base
+                  base = None
+                  for candidate in ('main', 'master'):
+                      rc2, _, _ = run_git('rev-parse', '--verify', candidate)
+                      if rc2 == 0:
+                          base = candidate
+                          break
+                  if base and branch != base:
+                      _, diff, _ = run_git('diff', base + '...' + branch)
+                      _, stat, _ = run_git('diff', '--stat', base + '...' + branch)
+                      label = 'Branch ' + branch + ' vs ' + base
+                  else:
+                      diff = ''
+                      stat = ''
+                      label = ''
+
+          if not diff.strip():
+              context['output'] = 'No changes to summarize.'
+          else:
+              if len(diff) > 8000:
+                  diff = diff[:8000] + '\n... (truncated)'
+
+              from npcpy.llm_funcs import get_llm_response
+
+              _model = npc.model if npc else (state.chat_model if state else 'gemma3:4b')
+              _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
+
+              prompt_parts = [
+                  'Summarize these git changes in plain English.',
+                  '',
+                  'Context: ' + label + ' (branch: ' + branch + ')',
+                  '',
+                  'Stats:',
+                  stat,
+                  '',
+                  'Diff:',
+                  diff,
+                  '',
+                  'Provide:',
+                  '1. A one-sentence overview of what changed',
+                  '2. A bullet list of specific changes grouped by file or feature',
+                  '3. Any potential concerns (breaking changes, missing tests, etc.)',
+                  '',
+                  'Be concise and specific.',
+              ]
+              prompt = '\n'.join(prompt_parts)
+
+              resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
+              result = str(resp.get('response', ''))
+
+              header = label + ' (' + branch + ')\n'
+              header += stat.strip() + '\n'
+              header += '-' * 40 + '\n'
+
+              context['output'] = header + result
