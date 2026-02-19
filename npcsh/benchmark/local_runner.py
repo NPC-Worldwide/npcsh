@@ -14,7 +14,6 @@ Usage:
 
 import os
 import subprocess
-import sys  
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -82,7 +81,6 @@ def load_tasks(
 
 def clean_task_artifacts():
     """Remove /tmp files created by tasks so runs don't bleed into each other."""
-    import glob
     patterns = [
         "/tmp/result.txt", "/tmp/pyfiles.txt", "/tmp/uname.txt", "/tmp/nums.txt",
         "/tmp/dirs.txt", "/tmp/comment_count.txt", "/tmp/largest.txt",
@@ -123,7 +121,6 @@ def run_task(task: dict,
              timeout: int = 3000, 
              startup_overhead: float = 0.0) -> TaskResult:
     """Run a single task through npcsh -c and verify the result."""
-    import signal
 
     task_id = task["id"]
     instruction = task["instruction"]

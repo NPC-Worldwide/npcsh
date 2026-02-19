@@ -533,7 +533,6 @@ def main(npc_name: str = None) -> None:
               print(display_output)
 
          # Save conversation history (same as REPL's process_result)
-         import json
 
          team_name = final_state.team.name if final_state.team else "npcsh"
          npc_obj = final_state.npc if isinstance(final_state.npc, NPC) else None
