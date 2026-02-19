@@ -1,0 +1,16 @@
+# NQL Configuration
+# Override model/provider for NQL AI functions independently of the shell.
+# Leave empty to inherit from NPCSH_CHAT_MODEL / NPCSH_CHAT_PROVIDER.
+# Priority: NPC-specific (in SQL) > this config > shell chat model > ollama/gemma3:4b
+
+model: ""
+provider: ""
+
+# Default database for NQL queries
+# db: "~/.npcsh/npcsh.db"
+
+# Default schema for materialized tables
+# schema: ""
+
+# Models directory (SQL files with AI function calls)
+# models_dir: "./models"

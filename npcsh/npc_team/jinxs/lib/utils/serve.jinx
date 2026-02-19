@@ -1,6 +1,5 @@
 jinx_name: serve
 description: NPC Server Dashboard - start, stop, and monitor the API server
-interactive: true
 inputs:
 - port: 5337
 - cors: ""
