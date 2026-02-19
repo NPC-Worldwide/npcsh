@@ -1,6 +1,5 @@
 jinx_name: team
 description: Interactive TUI for managing team context, NPCs, and jinxs
-interactive: true
 inputs: []
 steps:
   - name: team_manager

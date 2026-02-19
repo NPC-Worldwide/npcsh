@@ -1,6 +1,5 @@
 jinx_name: db_search
 description: Search conversation history database with interactive TUI
-interactive: true
 inputs:
 - query: ""
 - path: ""

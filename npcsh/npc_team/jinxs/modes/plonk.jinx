@@ -1,6 +1,5 @@
 jinx_name: plonk
 description: Vision-based GUI automation TUI - visual task management and action automation
-interactive: true
 inputs:
   - task: null
   - vmodel: null

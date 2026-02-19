@@ -1,146 +1,85 @@
 jinx_name: benchmark
-description: Run Terminal-Bench evaluation to benchmark npcsh performance with different models
+description: Run the npcsh benchmark suite against a model
 inputs:
 - model: ""
 - provider: ""
-- action: "check"
-- concurrent: "4"
-- npc_name: ""
+- category: ""
+- difficulty: ""
+- task_id: ""
+- timeout: "120"
 
 steps:
   - name: run_benchmark
     engine: python
     code: |
-      import os
       import sys
 
-      action = {{ action | default("check") | tojson }}.strip().lower()
-      model = {{ model | default("") | tojson }}.strip()
-      provider = {{ provider | default("") | tojson }}.strip()
-      concurrent = int({{ concurrent | default("4") | tojson }} or "4")
-      npc_name_input = {{ npc_name | default("") | tojson }}.strip() or None
+      model = ({{ model | default("") | tojson }}).strip()
+      provider = ({{ provider | default("") | tojson }}).strip()
+      category = ({{ category | default("") | tojson }}).strip() or None
+      difficulty = ({{ difficulty | default("") | tojson }}).strip() or None
+      task_id_filter = ({{ task_id | default("") | tojson }}).strip() or None
+      timeout = int(({{ timeout | default("120") | tojson }}).strip() or "120")
 
       if not model:
-          model = npc.model if npc and npc.model else ""
+          model = npc.model if npc and npc.model else state.chat_model if state else ""
       if not provider:
-          provider = npc.provider if npc and npc.provider else ""
+          provider = npc.provider if npc and npc.provider else state.chat_provider if state else ""
 
-      try:
-          from npcsh.benchmark import BenchmarkRunner, run_benchmark
-          BENCHMARK_AVAILABLE = True
-      except ImportError:
-          BENCHMARK_AVAILABLE = False
-
-      if action == "check":
-          output = "## Terminal-Bench Integration Status\n\n"
-
-          if not BENCHMARK_AVAILABLE:
-              output += "**Status:** Benchmark module not fully loaded (harbor not installed)\n\n"
-          else:
-              output += "**Status:** Ready\n\n"
-
-          if BENCHMARK_AVAILABLE:
-              runner = BenchmarkRunner()
-              deps = runner.check_dependencies()
-              output += "### Dependencies:\n"
-              for dep, installed in deps.items():
-                  status = "Installed" if installed else "Not installed"
-                  output += "- **{}**: {}\n".format(dep, status)
-
-              if not all(deps.values()):
-                  output += "\n### Installation:\n"
-                  output += "```bash\n"
-                  output += "pip install harbor terminal-bench\n"
-                  output += "```\n"
-
-          output += "\n### Usage:\n"
-          output += "```\n"
-          output += "/benchmark action=quick\n"
-          output += "/benchmark action=run model=<model> provider=<provider>\n"
-          output += "/benchmark action=list\n"
-          output += "```\n"
-
-      elif action == "list":
-          if not BENCHMARK_AVAILABLE:
-              output = "Error: Benchmark module not available. Run `/benchmark` first."
-          else:
-              runner = BenchmarkRunner()
-              runs = runner.list_past_runs()
-
-              if not runs:
-                  output = "No past benchmark runs found."
-              else:
-                  output = "## Past Benchmark Runs ({} total)\n\n".format(len(runs))
-                  for run in runs[:10]:
-                      timestamp = run.get('timestamp', 'unknown')[:19]
-                      model_name = run.get('model', 'unknown')
-                      result = run.get('result', {})
-                      accuracy = result.get('accuracy', 0)
-                      passed = result.get('passed_tasks', 0)
-                      total = result.get('total_tasks', 0)
-
-                      output += "### {}\n".format(timestamp)
-                      output += "- **Model:** {}\n".format(model_name)
-                      output += "- **Accuracy:** {:.1%}\n".format(accuracy)
-                      output += "- **Tasks:** {}/{}\n\n".format(passed, total)
-
-      elif action == "quick":
-          if not BENCHMARK_AVAILABLE:
-              output = "Error: Install with: pip install harbor terminal-bench"
-          else:
-              output = "## Quick Test: {}/{}\n\n".format(provider, model)
-              output += "Running quick test with 3 tasks...\n\n"
-
-              try:
-                  from npcsh.benchmark import quick_test
-                  result = quick_test(model=model, provider=provider)
-
-                  status = "PASS" if result.success else "FAIL"
-                  output += "**Status:** {}\n".format(status)
-                  output += "**Accuracy:** {:.1%}\n".format(result.accuracy)
-                  output += "**Tasks:** {}/{}\n".format(result.passed_tasks, result.total_tasks)
-                  output += "**Duration:** {:.1f}s\n".format(result.duration_seconds)
-
-                  if result.error:
-                      output += "\n**Error:** {}\n".format(result.error)
-
-                  output += "\n**Output:** {}\n".format(result.output_dir)
-
-              except Exception as e:
-                  output = "Error running quick test: {}".format(e)
-
-      elif action == "run":
-          if not BENCHMARK_AVAILABLE:
-              output = "Error: Install with: pip install harbor terminal-bench"
-          else:
-              output = "## Benchmark Run: {}/{}\n\n".format(provider, model)
-              output += "Running Terminal-Bench 2.0 with {} concurrent tasks...\n\n".format(concurrent)
-
-              try:
-                  runner = BenchmarkRunner()
-                  result = runner.run(
-                      model=model,
-                      provider=provider,
-                      n_concurrent=concurrent,
-                      npc_name=npc_name_input,
-                  )
-
-                  status = "SUCCESS" if result.success else "FAILED"
-                  output += "**Status:** {}\n".format(status)
-                  output += "**Accuracy:** {:.1%}\n".format(result.accuracy)
-                  output += "**Tasks Passed:** {}/{}\n".format(result.passed_tasks, result.total_tasks)
-                  output += "**Duration:** {:.1f}s\n".format(result.duration_seconds)
-                  output += "**Total Tokens:** {:,}\n".format(result.total_tokens)
-                  output += "**Total Cost:** ${:.4f}\n".format(result.total_cost_usd)
-
-                  if result.error:
-                      output += "\n**Error:** {}\n".format(result.error)
-
-                  output += "\n**Results saved to:** {}\n".format(result.output_dir)
-
-              except Exception as e:
-                  import traceback
-                  output = "Error running benchmark: {}\n\n{}".format(e, traceback.format_exc())
-
+      if not model or not provider:
+          context['output'] = "Error: model and provider are required. Usage: /benchmark model=qwen3:4b provider=ollama"
       else:
-          output = "Unknown action: {}\n\nAvailable: check, run, quick, list".format(action)
+          try:
+              from npcsh.benchmark.local_runner import run_benchmark
+
+              report = run_benchmark(
+                  model=model,
+                  provider=provider,
+                  category=category,
+                  difficulty=difficulty,
+                  task_id=task_id_filter,
+                  timeout=timeout,
+              )
+
+              lines = []
+              lines.append("## Benchmark Results: " + provider + "/" + model)
+              lines.append("")
+              lines.append("**Total:** " + str(report.total))
+              lines.append("**Passed:** " + str(report.passed))
+              lines.append("**Failed:** " + str(report.failed))
+              lines.append("**Errors:** " + str(report.errors))
+              pct = (100 * report.passed / report.total) if report.total > 0 else 0
+              lines.append("**Pass Rate:** " + "{:.1f}%".format(pct))
+              lines.append("**Duration:** " + "{:.1f}s".format(report.duration))
+              lines.append("")
+
+              if report.by_category:
+                  lines.append("### By Category")
+                  for cat, stats in sorted(report.by_category.items()):
+                      p = stats.get("passed", 0)
+                      t = stats.get("total", 0)
+                      cat_pct = (100 * p / t) if t > 0 else 0
+                      lines.append("- **{}:** {}/{} ({:.0f}%)".format(cat, p, t, cat_pct))
+                  lines.append("")
+
+              if report.by_difficulty:
+                  lines.append("### By Difficulty")
+                  for diff, stats in sorted(report.by_difficulty.items()):
+                      p = stats.get("passed", 0)
+                      t = stats.get("total", 0)
+                      diff_pct = (100 * p / t) if t > 0 else 0
+                      lines.append("- **{}:** {}/{} ({:.0f}%)".format(diff, p, t, diff_pct))
+                  lines.append("")
+
+              failed_tasks = [r for r in report.results if not r.passed]
+              if failed_tasks:
+                  lines.append("### Failed Tasks")
+                  for r in failed_tasks[:20]:
+                      err = r.error or "verification failed"
+                      lines.append("- **{}** ({}): {}".format(r.task_id, r.category, err))
+
+              context['output'] = "\n".join(lines)
+
+          except Exception as e:
+              import traceback
+              context['output'] = "Error running benchmark: " + str(e) + "\n\n" + traceback.format_exc()

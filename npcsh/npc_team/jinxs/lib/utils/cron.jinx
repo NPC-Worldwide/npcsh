@@ -1,0 +1,68 @@
+jinx_name: cron
+description: Manage cron jobs. Add, remove, list, or check scheduled tasks. Works cross-platform (crontab on Linux, launchd on macOS).
+inputs:
+  - action: "list"
+  - schedule: ""
+  - command: ""
+  - name: ""
+steps:
+  - name: manage_cron
+    engine: python
+    code: |
+      from npcpy.work.plan import schedule_job, unschedule_job, list_jobs, job_status
+
+      action = {{ action | default("list") | tojson }}.strip().lower()
+      schedule = {{ schedule | default("") | tojson }}.strip()
+      command = {{ command | default("") | tojson }}.strip()
+      job_name = {{ name | default("") | tojson }}.strip()
+
+      if action == 'list':
+          jobs = list_jobs()
+          if jobs:
+              context['output'] = 'Scheduled jobs:\n' + '\n'.join(
+                  '  ' + j['name'] + ' (' + ('active' if j['active'] else 'inactive') + ')'
+                  for j in jobs
+              )
+          else:
+              context['output'] = 'No scheduled jobs found.'
+
+      elif action == 'add':
+          if not schedule:
+              context['output'] = 'Usage: /cron action=add schedule="0 9 * * *" name="my_job"'
+          else:
+              if not job_name and command:
+                  job_name = command.lstrip('/').split()[0].replace(' ', '_')
+              if not command:
+                  command = job_name
+              if not job_name:
+                  context['output'] = 'Need at least a name or command.'
+              else:
+                  ok, msg = schedule_job(schedule, command, job_name)
+                  context['output'] = msg
+
+      elif action == 'remove':
+          if not job_name:
+              context['output'] = 'Usage: /cron action=remove name="job_name"'
+          else:
+              ok, msg = unschedule_job(job_name)
+              context['output'] = msg
+
+      elif action == 'status':
+          if not job_name:
+              context['output'] = 'Usage: /cron action=status name="job_name"'
+          else:
+              info = job_status(job_name)
+              lines = [
+                  'Job: ' + info['name'],
+                  'Status: ' + ('active' if info['active'] else 'inactive'),
+              ]
+              if info['recent_log']:
+                  lines.append('Recent log:')
+                  for l in info['recent_log']:
+                      lines.append('  ' + l.rstrip())
+              else:
+                  lines.append('No log file yet.')
+              context['output'] = '\n'.join(lines)
+
+      else:
+          context['output'] = 'Unknown action: ' + action + '. Use: list, add, remove, status'

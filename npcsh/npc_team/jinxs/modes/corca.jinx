@@ -1,6 +1,5 @@
 jinx_name: corca
 description: MCP-powered agentic shell with tabbed TUI
-interactive: true
 inputs:
   - mcp_server_path: null
   - initial_command: null

@@ -1,6 +1,5 @@
 jinx_name: models
 description: Interactive model browser - detect available models and set active defaults
-interactive: true
 inputs: []
 steps:
   - name: model_browser

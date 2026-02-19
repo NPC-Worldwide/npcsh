@@ -1,0 +1,98 @@
+jinx_name: changelog
+description: Generate a formatted changelog between two git refs. Groups commits by category (features, fixes, etc.) using the LLM.
+inputs:
+  - from_ref: ""
+  - to_ref: "HEAD"
+steps:
+  - name: gen_changelog
+    engine: python
+    code: |
+      import subprocess
+
+      from_ref = context.get('from_ref', '').strip()
+      to_ref = context.get('to_ref', '').strip() or 'HEAD'
+
+      def run_git(*args):
+          r = subprocess.run(
+              ['git'] + list(args),
+              capture_output=True, text=True, timeout=30
+          )
+          return r.returncode, r.stdout, r.stderr
+
+      rc, _, _ = run_git('rev-parse', '--is-inside-work-tree')
+      if rc != 0:
+          context['output'] = 'Not a git repository.'
+      else:
+          if not from_ref:
+              # Find latest tag
+              rc, tag_out, _ = run_git('describe', '--tags', '--abbrev=0')
+              if rc == 0:
+                  from_ref = tag_out.strip()
+              else:
+                  # No tags — use last 30 commits
+                  from_ref = 'HEAD~30'
+
+          commit_range = from_ref + '..' + to_ref
+          _, log, _ = run_git(
+              'log', commit_range,
+              '--format=%h %s (%an, %ar)'
+          )
+
+          # Get detailed log with bodies for context
+          _, detailed, _ = run_git(
+              'log', commit_range,
+              '--format=%h\t%s\t%b\t%an',
+              '--no-merges'
+          )
+
+          if not log.strip():
+              context['output'] = 'No commits found between ' + from_ref + ' and ' + to_ref
+          else:
+              commit_count = len(log.strip().split('\n'))
+
+              from npcpy.llm_funcs import get_llm_response
+
+              _model = npc.model if npc else (state.chat_model if state else 'gemma3:4b')
+              _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
+
+              prompt_parts = [
+                  'Generate a changelog from these git commits.',
+                  '',
+                  'Range: ' + from_ref + ' -> ' + to_ref + ' (' + str(commit_count) + ' commits)',
+                  '',
+                  'Commits:',
+                  log[:6000],
+                  '',
+                  'Detailed (with bodies):',
+                  detailed[:4000] if detailed else '(none)',
+                  '',
+                  'Format as a clean markdown changelog:',
+                  '',
+                  '### Features',
+                  '- Description of feature (hash)',
+                  '',
+                  '### Bug Fixes',
+                  '- Description of fix (hash)',
+                  '',
+                  '### Improvements',
+                  '- Description of improvement (hash)',
+                  '',
+                  '### Other',
+                  '- Chores, docs, refactoring (hash)',
+                  '',
+                  'Rules:',
+                  '- Group related commits into single entries',
+                  '- Include commit hashes',
+                  '- Omit empty sections',
+                  '- Be concise — one line per entry',
+              ]
+              prompt = '\n'.join(prompt_parts)
+
+              resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
+              result = str(resp.get('response', ''))
+
+              header = 'Changelog: ' + from_ref + ' -> ' + to_ref
+              header += ' (' + str(commit_count) + ' commits)\n'
+              header += '=' * 50 + '\n\n'
+
+              context['output'] = header + result
