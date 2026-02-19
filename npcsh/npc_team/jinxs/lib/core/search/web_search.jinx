@@ -1,28 +1,23 @@
 jinx_name: web_search
-description: Search the web with interactive TUI
-interactive: true
+description: Search the web for information. Returns a list of results with titles, URLs, and snippets. Use when you need current info, facts, or answers from the internet.
 inputs:
 - query: ""
 - provider: ""
 - num_results: "10"
-- text: "false"
 
 steps:
   - name: search_web
     engine: python
     code: |
-      import os
-      import sys
-      import tty
-      import termios
-      import webbrowser
-      import subprocess
       from npcpy.data.web import search_web
 
       query = context.get('query', '').strip()
-      text_mode = context.get('text', '').lower() in ('true', '1', 'yes')
 
       # Force text mode when called by an agent (non-interactive context)
+      try:
+          text_mode
+      except NameError:
+          text_mode = False
       if not text_mode:
           try:
               if ('state' in dir() and state is not None
@@ -34,27 +29,7 @@ steps:
               pass
 
       if not query:
-          lines = [
-              "Usage: /web_search <query>",
-              "",
-              "Options:",
-              "  provider    - Search provider (default uses state.search_provider)",
-              "  num_results - Number of results (default 10)",
-              "  text        - Text-only output, no TUI (true/false)",
-              "",
-              "TUI Controls:",
-              "  j/k or arrows - Navigate",
-              "  p             - Preview page content",
-              "  o             - Open in browser",
-              "  i             - Open in incognide",
-              "  c             - Copy URL to clipboard",
-              "  q/ESC         - Quit",
-              "",
-              "Examples:",
-              "  /web_search python asyncio tutorial",
-              "  /web_search react hooks num_results=20",
-          ]
-          context['output'] = "\n".join(lines)
+          context['output'] = "Usage: /web_search <query>"
       else:
           provider = context.get('provider') or None
           try:
@@ -75,13 +50,11 @@ steps:
                       and isinstance(raw_results[1], (list, tuple))):
                       answer_text = raw_results[0]
                       citations = raw_results[1]
-                      # First result: the AI answer
                       results.append({
                           'title': 'AI Answer',
                           'url': '',
                           'snippet': answer_text[:500]
                       })
-                      # Then each citation as a result
                       for url in citations:
                           url_str = str(url).strip()
                           try:
@@ -103,7 +76,6 @@ steps:
                                   'snippet': res.get('snippet', res.get('description', res.get('content', '')))
                               })
                           elif isinstance(res, str):
-                              # Could be a URL or text
                               if res.startswith('http'):
                                   results.append({'title': res[:60], 'url': res, 'snippet': ''})
                               else:
@@ -113,219 +85,15 @@ steps:
 
               if not results:
                   context['output'] = "No web results found."
-              elif text_mode:
-                  # Text-only output
+              else:
                   lines = []
                   for res in results:
                       lines.append(f"- {res['title']}")
                       lines.append(f"  {res['url']}")
                       if res.get('snippet'):
-                          lines.append(f"  {res['snippet'][:100]}...")
+                          lines.append(f"  {res['snippet'][:200]}")
                       lines.append("")
                   context['output'] = "\n".join(lines)
-              else:
-                  # Interactive TUI mode
-                  def get_terminal_size():
-                      try:
-                          size = os.get_terminal_size()
-                          return size.columns, size.lines
-                      except:
-                          return 80, 24
-
-                  def get_domain(url):
-                      try:
-                          from urllib.parse import urlparse
-                          return urlparse(url).netloc[:25]
-                      except:
-                          return url[:25]
-
-                  width, height = get_terminal_size()
-                  selected = 0
-                  scroll = 0
-                  list_height = height - 5
-                  mode = 'list'
-                  preview_scroll = 0
-                  preview_content = []
-
-                  fd = sys.stdin.fileno()
-                  old_settings = termios.tcgetattr(fd)
-
-                  try:
-                      tty.setcbreak(fd)
-                      sys.stdout.write('\033[?25l')
-                      sys.stdout.write('\033[2J\033[H')
-
-                      while True:
-                          width, height = get_terminal_size()
-                          list_height = height - 5
-
-                          if mode == 'list':
-                              if selected < scroll:
-                                  scroll = selected
-                              elif selected >= scroll + list_height:
-                                  scroll = selected - list_height + 1
-
-                          sys.stdout.write('\033[H')
-
-                          # Header
-                          if mode == 'list':
-                              header = f" WEB SEARCH ({len(results)} results): '{query}' "
-                          else:
-                              header = f" PREVIEW: {results[selected]['title'][:width-12]} "
-                          sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
-
-                          # Column headers
-                          if mode == 'list':
-                              col_header = f' {"#":<3} {"DOMAIN":<25} {"TITLE":<50}'
-                              sys.stdout.write(f'\033[90m{col_header[:width]}\033[0m\n')
-                          else:
-                              sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
-
-                          if mode == 'list':
-                              for i in range(list_height):
-                                  idx = scroll + i
-                                  sys.stdout.write(f'\033[{3+i};1H\033[K')
-                                  if idx >= len(results):
-                                      continue
-
-                                  r = results[idx]
-                                  num = str(idx + 1)
-                                  domain = get_domain(r['url'])
-                                  title = r['title'][:55].replace('\n', ' ')
-
-                                  line = f" {num:<3} {domain:<25} {title}"
-                                  line = line[:width-1]
-
-                                  if idx == selected:
-                                      sys.stdout.write(f'\033[7;1m>{line}\033[0m')
-                                  else:
-                                      sys.stdout.write(f' {line}')
-
-                              # Status bar
-                              sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
-                              sel = results[selected] if results else {}
-                              snippet = (sel.get('snippet') or '')[:width-2]
-                              sys.stdout.write(f'\033[{height-1};1H\033[K {snippet}'.ljust(width))
-                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav p:Preview o:Open i:Incog c:Copy q:Quit [{selected+1}/{len(results)}] \033[0m')
-
-                          else:  # preview mode
-                              for i in range(list_height):
-                                  idx = preview_scroll + i
-                                  sys.stdout.write(f'\033[{3+i};1H\033[K')
-                                  if idx < len(preview_content):
-                                      sys.stdout.write(preview_content[idx][:width-1])
-
-                              sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
-                              sys.stdout.write(f'\033[{height-1};1H\033[K [{preview_scroll+1}/{len(preview_content)} lines]')
-                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll b:Back o:Open c:Copy q:Quit \033[0m')
-
-                          sys.stdout.flush()
-
-                          c = os.read(fd, 1).decode('latin-1')
-
-                          if c == '\x1b':
-                              import select as _sel
-                              if _sel.select([fd], [], [], 0.05)[0]:
-                                  c2 = os.read(fd, 1).decode('latin-1')
-                              else:
-                                  context['output'] = "Cancelled."
-                                  break
-                              if c2 == '[':
-                                  c3 = os.read(fd, 1).decode('latin-1')
-                                  if c3 == 'A':
-                                      if mode == 'list' and selected > 0:
-                                          selected -= 1
-                                      elif mode == 'preview' and preview_scroll > 0:
-                                          preview_scroll -= 1
-                                  elif c3 == 'B':
-                                      if mode == 'list' and selected < len(results) - 1:
-                                          selected += 1
-                                      elif mode == 'preview' and preview_scroll < max(0, len(preview_content) - list_height):
-                                          preview_scroll += 1
-                              else:
-                                  if mode == 'preview':
-                                      mode = 'list'
-                                      sys.stdout.write('\033[2J\033[H')
-                                  else:
-                                      context['output'] = "Cancelled."
-                                      break
-                              continue
-
-                          if c == 'q' or c == '\x03':
-                              context['output'] = "Cancelled."
-                              break
-                          elif c == 'k':
-                              if mode == 'list' and selected > 0:
-                                  selected -= 1
-                              elif mode == 'preview' and preview_scroll > 0:
-                                  preview_scroll -= 1
-                          elif c == 'j':
-                              if mode == 'list' and selected < len(results) - 1:
-                                  selected += 1
-                              elif mode == 'preview' and preview_scroll < max(0, len(preview_content) - list_height):
-                                  preview_scroll += 1
-                          elif c == 'p' and mode == 'list' and results:
-                              # Build preview from available info
-                              sel = results[selected]
-                              preview_content = [
-                                  f"Title: {sel['title']}",
-                                  "",
-                                  f"URL: {sel['url']}",
-                                  f"Domain: {get_domain(sel['url'])}",
-                                  "",
-                              ]
-                              if sel.get('snippet'):
-                                  preview_content.append("Snippet:")
-                                  # Word wrap snippet
-                                  words = sel['snippet'].split()
-                                  line = ""
-                                  for w in words:
-                                      if len(line) + len(w) + 1 > width - 4:
-                                          preview_content.append(f"  {line}")
-                                          line = w
-                                      else:
-                                          line = f"{line} {w}" if line else w
-                                  if line:
-                                      preview_content.append(f"  {line}")
-
-                              mode = 'preview'
-                              preview_scroll = 0
-                              sys.stdout.write('\033[2J\033[H')
-                          elif c == 'b' and mode == 'preview':
-                              mode = 'list'
-                              sys.stdout.write('\033[2J\033[H')
-                          elif c == 'o' and results:
-                              url = results[selected].get('url', '')
-                              if url:
-                                  webbrowser.open(url)
-                          elif c == 'i' and results:
-                              url = results[selected].get('url', '')
-                              if url:
-                                  try:
-                                      subprocess.run(['npcsh', '-c', f'/navigate url={url}'], check=False, capture_output=True)
-                                  except:
-                                      webbrowser.open(url)
-                          elif c == 'c' and results:
-                              url = results[selected].get('url', '')
-                              if url:
-                                  try:
-                                      # Try xclip or xsel
-                                      subprocess.run(['xclip', '-selection', 'clipboard'], input=url.encode(), check=True)
-                                  except:
-                                      try:
-                                          subprocess.run(['xsel', '--clipboard', '--input'], input=url.encode(), check=True)
-                                      except:
-                                          pass
-                          elif c in ('\r', '\n') and results:
-                              sel = results[selected]
-                              context['output'] = f"Selected: {sel['title']}\nURL: {sel['url']}"
-                              break
-
-                  finally:
-                      termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-                      sys.stdout.write('\033[?25h')
-                      sys.stdout.write('\033[2J\033[H')
-                      sys.stdout.flush()
 
           except Exception as e:
               import traceback

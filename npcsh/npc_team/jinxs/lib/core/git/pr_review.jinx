@@ -1,0 +1,109 @@
+jinx_name: pr_review
+description: Review a pull request using LLM analysis. Fetches diff and description, then provides a structured code review.
+inputs:
+  - pr: ""
+steps:
+  - name: review_pr
+    engine: python
+    code: |
+      import subprocess
+
+      pr_ref = context.get('pr', '').strip()
+
+      def run_gh(*args):
+          r = subprocess.run(
+              ['gh'] + list(args),
+              capture_output=True, text=True, timeout=60
+          )
+          return r.returncode, r.stdout, r.stderr
+
+      # Check gh is available
+      rc, _, _ = run_gh('--version')
+      if rc != 0:
+          context['output'] = 'Error: gh CLI not found. Install from https://cli.github.com'
+      else:
+          # Get PR info — if no number given, use current branch's PR
+          view_args = ['pr', 'view']
+          if pr_ref:
+              view_args.append(pr_ref)
+          view_args.extend(['--json', 'title,body,author,baseRefName,headRefName,files,additions,deletions,number'])
+
+          rc, pr_json, pr_err = run_gh(*view_args)
+          if rc != 0:
+              context['output'] = 'Could not find PR: ' + pr_err[:200]
+          else:
+              import json
+              try:
+                  pr_data = json.loads(pr_json)
+              except json.JSONDecodeError:
+                  context['output'] = 'Failed to parse PR data.'
+                  pr_data = None
+
+              if pr_data:
+                  pr_num = pr_data.get('number', pr_ref or 'current')
+
+                  # Get the diff
+                  diff_args = ['pr', 'diff']
+                  if pr_ref:
+                      diff_args.append(str(pr_ref))
+                  rc, diff, _ = run_gh(*diff_args)
+
+                  if len(diff) > 12000:
+                      diff = diff[:12000] + '\n... (truncated — full diff too large for review)'
+
+                  from npcpy.llm_funcs import get_llm_response
+
+                  _model = npc.model if npc else (state.chat_model if state else 'gemma3:4b')
+                  _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
+
+                  title = pr_data.get('title', '')
+                  body = pr_data.get('body', '')
+                  author = pr_data.get('author', {})
+                  author_name = author.get('login', '') if isinstance(author, dict) else str(author)
+                  base = pr_data.get('baseRefName', '')
+                  head = pr_data.get('headRefName', '')
+                  additions = pr_data.get('additions', 0)
+                  deletions = pr_data.get('deletions', 0)
+
+                  prompt_parts = [
+                      'Review this pull request and provide structured feedback.',
+                      '',
+                      'PR #' + str(pr_num) + ': ' + title,
+                      'Author: ' + author_name,
+                      'Branch: ' + head + ' -> ' + base,
+                      'Size: +' + str(additions) + ' / -' + str(deletions),
+                      '',
+                      'Description:',
+                      body[:2000] if body else '(no description)',
+                      '',
+                      'Diff:',
+                      diff,
+                      '',
+                      'Provide your review in this format:',
+                      '',
+                      '## Summary',
+                      'Brief overview of what this PR does.',
+                      '',
+                      '## Issues',
+                      'List any bugs, logic errors, or security concerns. Use severity:',
+                      '- CRITICAL: Must fix before merge',
+                      '- WARNING: Should fix, but not blocking',
+                      '- NOTE: Minor suggestion or style issue',
+                      '',
+                      '## Suggestions',
+                      'Improvements, refactoring ideas, or missing tests.',
+                      '',
+                      '## Verdict',
+                      'APPROVE, REQUEST_CHANGES, or COMMENT with brief justification.',
+                  ]
+                  prompt = '\n'.join(prompt_parts)
+
+                  resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
+                  review = str(resp.get('response', ''))
+
+                  header = 'PR #' + str(pr_num) + ': ' + title + '\n'
+                  header += author_name + ' | ' + head + ' -> ' + base
+                  header += ' | +' + str(additions) + '/-' + str(deletions) + '\n'
+                  header += '-' * 60 + '\n'
+
+                  context['output'] = header + review

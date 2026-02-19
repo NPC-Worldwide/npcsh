@@ -1,6 +1,5 @@
 jinx_name: wander
 description: Interactive wandering mode - creative exploration with live TUI dashboard
-interactive: true
 inputs:
   - problem: null
   - environment: null
