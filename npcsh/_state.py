@@ -3637,7 +3637,6 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     if forenpc_name is None:
         forenpc_name = "sibiji"
 
-    forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
 
     try:
         team = Team(team_path=team_dir, db_conn=command_history.engine)

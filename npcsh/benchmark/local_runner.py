@@ -25,13 +25,8 @@ from npcsh.routes import router
 
 from npcsh._state import (
     initial_state,
-    orange,
-    ShellState,
     execute_command,
-    make_completer,
-    process_result,
     setup_shell,
-    get_multiline_input,
 )
 @dataclass
 class TaskResult:
@@ -127,7 +122,6 @@ def run_task(task: dict,
     verify_cmd = task["verify_cmd"]
 
     # Per-task timeout override — use whichever is larger
-    task_timeout = max(task.get("timeout", timeout), timeout)
     verify_timeout = task.get("verify_timeout", 30)
 
     # Clean up before each task
@@ -192,8 +186,7 @@ def run_task(task: dict,
         passed = verify.returncode == 0
     except Exception as e:
         passed = False
-        npcsh_output += f"\nVerify error: {e}"
-
+        output += f"\nVerify error: {e}"
     return TaskResult(
         task_id=task_id,
         category=task["category"],
@@ -383,7 +376,7 @@ def compare_models(
     for r in all_results.values():
         all_cats.update(r.by_category.keys())
 
-    print(f"\nCategory breakdown:", flush=True)
+    print("\nCategory breakdown:", flush=True)
     header = f"{'Category':<15}"
     for key in [k for k, _ in sorted_results]:
         short = key.split("/")[-1][:12]

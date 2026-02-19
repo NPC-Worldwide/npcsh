@@ -13,9 +13,6 @@ try:
     from termcolor import colored
 except: 
     pass
-from npcpy.npc_sysenv import (
-    render_markdown,
-)
 from npcpy.memory.command_history import (
     CommandHistory,
     load_kg_from_db,
