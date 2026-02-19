@@ -13,17 +13,27 @@ Usage:
 """
 
 import os
-import re
 import subprocess
-import sys
+import sys  
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
 import pandas as pd
+from npcsh.routes import router
 
 
+from npcsh._state import (
+    initial_state,
+    orange,
+    ShellState,
+    execute_command,
+    make_completer,
+    process_result,
+    setup_shell,
+    get_multiline_input,
+)
 @dataclass
 class TaskResult:
     task_id: str
@@ -33,7 +43,6 @@ class TaskResult:
     duration: float
     error: Optional[str] = None
     npcsh_output: str = ""
-    tool_calls: str = ""  # JSON list from DB
 
 
 @dataclass
@@ -71,36 +80,48 @@ def load_tasks(
     return tasks
 
 
-def _collect_artifact_paths():
-    """Scan task definitions and extract all /tmp paths referenced in instructions and verify commands."""
-    import re as _re
-    tasks = load_tasks()
-    paths = set()
-    for t in tasks:
-        for field in ("instruction", "verify_cmd", "setup_cmd"):
-            text = t.get(field, "") or ""
-            for m in _re.finditer(r'/tmp/[\w.\-]+(?:\.[\w]+)?', text):
-                paths.add(m.group().rstrip("."))
-    return sorted(paths)
-
-
-# Cache once at import time
-_ARTIFACT_PATHS = _collect_artifact_paths()
-
-
 def clean_task_artifacts():
-    """Remove /tmp files and dirs created by tasks so runs don't bleed into each other."""
+    """Remove /tmp files created by tasks so runs don't bleed into each other."""
+    import glob
+    patterns = [
+        "/tmp/result.txt", "/tmp/pyfiles.txt", "/tmp/uname.txt", "/tmp/nums.txt",
+        "/tmp/dirs.txt", "/tmp/comment_count.txt", "/tmp/largest.txt",
+        "/tmp/hello.txt", "/tmp/person.json", "/tmp/config.ini", "/tmp/env.sh",
+        "/tmp/fib.py", "/tmp/rev.py", "/tmp/calc.py", "/tmp/wordcount.py",
+        "/tmp/sample.txt", "/tmp/wc_result.json", "/tmp/fizzbuzz.py",
+        "/tmp/data.csv", "/tmp/analyze.py", "/tmp/stats.json",
+        "/tmp/scores.csv", "/tmp/inventory.json", "/tmp/total.py",
+        "/tmp/sysinfo.txt", "/tmp/env_info.txt", "/tmp/path_vars.txt",
+        "/tmp/log.txt", "/tmp/errors.txt", "/tmp/fruits.txt", "/tmp/sorted_fruits.txt",
+        "/tmp/words.txt", "/tmp/unique_counts.txt",
+        "/tmp/broken.py", "/tmp/buggy.py",
+        "/tmp/report.txt", "/tmp/users.json",
+        "/tmp/backup.sh", "/tmp/backup.tar.gz",
+        "/tmp/todo.py", "/tmp/todos.txt",
+        "/tmp/sunset.png", "/tmp/cat.png", "/tmp/generated.png",
+        "/tmp/forest.png", "/tmp/img_info.py",
+        "/tmp/welcome.wav", "/tmp/welcome.mp3",
+        "/tmp/pangram.wav", "/tmp/pangram.mp3",
+        "/tmp/search_results.txt", "/tmp/linux_creator.txt", "/tmp/japan_pop.txt",
+        "/tmp/languages.txt", "/tmp/rank.py",
+        "/tmp/primes.py", "/tmp/fib_research.py",
+        "/tmp/disk_usage.txt", "/tmp/file_count.txt",
+    ]
     import shutil
-    for p in _ARTIFACT_PATHS:
+    for p in patterns:
         try:
             os.remove(p)
-        except IsADirectoryError:
-            shutil.rmtree(p, ignore_errors=True)
         except (OSError, FileNotFoundError):
             pass
+    for d in ["/tmp/mydir", "/tmp/myrepo", "/tmp/project"]:
+        shutil.rmtree(d, ignore_errors=True)
 
 
-def run_task(task: dict, model: str, provider: str, timeout: int = 120, startup_overhead: float = 0.0) -> TaskResult:
+def run_task(task: dict, 
+             model: str, 
+             provider: str, 
+             timeout: int = 3000, 
+             startup_overhead: float = 0.0) -> TaskResult:
     """Run a single task through npcsh -c and verify the result."""
     import signal
 
@@ -127,48 +148,41 @@ def run_task(task: dict, model: str, provider: str, timeout: int = 120, startup_
 
     start = time.time()
 
-    # Run npcsh with process group so we can kill all children on timeout
-    try:
-        proc = subprocess.Popen(
-            ["npcsh", "-c", instruction],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-            start_new_session=True,
-        )
-        try:
-            stdout, stderr = proc.communicate(timeout=task_timeout)
-            npcsh_output = stdout + stderr
-        except subprocess.TimeoutExpired:
-            # Kill entire process group
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                proc.kill()
-            proc.wait(timeout=5)
-            return TaskResult(
-                task_id=task_id,
-                category=task["category"],
-                difficulty=task["difficulty"],
-                passed=False,
-                duration=time.time() - start,
-                error="timeout",
-            )
-    except Exception as e:
-        return TaskResult(
-            task_id=task_id,
-            category=task["category"],
-            difficulty=task["difficulty"],
-            passed=False,
-            duration=time.time() - start,
-            error=str(e),
-        )
-
+    command_history, team, default_npc = setup_shell()
+    if team and hasattr(team, 'jinxs_dict'):
+        for jinx_name, jinx_obj in team.jinxs_dict.items():
+            router.register_jinx(jinx_obj)
+    initial_state.npc = default_npc
+    initial_state.npc.model = model
+    initial_state.npc.provider = provider
+  
+    initial_state.team = team
+    initial_state.team.model = model
+    initial_state.team.provider = provider
+  
+    initial_state.model = model
+    initial_state.model = provider
+    
+    initial_state.command_history = command_history
+    state = initial_state
+    state.current_path = os.getcwd()
+    final_state, output = execute_command(instruction, 
+                                         state, 
+                                         router=router, 
+                                         command_history=command_history)
+    if isinstance(output, dict):
+         display_output = output.get('output') or output.get('response') or str(output)
+         print(display_output)
+    elif final_state.stream_output and output is not None:
+         for chunk in output:
+             print(str(chunk), end='')
+         print()
+    elif output is not None:
+         print(output)
     duration = time.time() - start
 
     # Small delay to let filesystem sync (especially for image/audio files on macOS)
-    time.sleep(0.5)
+    time.sleep(5)
 
     # Verify
     try:
@@ -183,49 +197,19 @@ def run_task(task: dict, model: str, provider: str, timeout: int = 120, startup_
         passed = False
         npcsh_output += f"\nVerify error: {e}"
 
-    # Pull tool_calls from the DB (written by npcsh -c)
-    # Match by content of the user message (the instruction) to avoid stale data
-    tool_calls_json = ""
-    try:
-        import sqlite3
-        db_path = os.path.expanduser("~/npcsh_history.db")
-        if os.path.exists(db_path):
-            conn = sqlite3.connect(db_path)
-            # Find the conversation_id of the most recent user message matching this instruction
-            user_row = conn.execute(
-                "SELECT conversation_id FROM conversation_history "
-                "WHERE role='user' AND content=:instruction "
-                "ORDER BY id DESC LIMIT 1",
-                {"instruction": instruction},
-            ).fetchone()
-            if user_row:
-                conv_id = user_row[0]
-                tc_row = conn.execute(
-                    "SELECT tool_calls FROM conversation_history "
-                    "WHERE role='assistant' AND conversation_id=:cid AND tool_calls IS NOT NULL "
-                    "ORDER BY id DESC LIMIT 1",
-                    {"cid": conv_id},
-                ).fetchone()
-                if tc_row and tc_row[0]:
-                    tool_calls_json = tc_row[0]
-            conn.close()
-    except Exception:
-        pass
-
     return TaskResult(
         task_id=task_id,
         category=task["category"],
         difficulty=task["difficulty"],
         passed=passed,
         duration=max(0, duration - startup_overhead),
-        npcsh_output=npcsh_output,
-        tool_calls=tool_calls_json,
+        npcsh_output=output,
     )
 
 
 def run_benchmark(
-    model: str = "mistral-small3.2",
-    provider: str = "ollama",
+    model:str,
+    provider:str,
     category: Optional[str] = None,
     difficulty: Optional[str] = None,
     task_id: Optional[str] = None,
@@ -252,7 +236,7 @@ def run_benchmark(
         cal_start = time.time()
         subprocess.run(
             ["npcsh", "-c", "echo ok"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            #stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, env=env, timeout=120,
         )
         cal_times.append(time.time() - cal_start)
@@ -270,29 +254,19 @@ def run_benchmark(
         result = run_task(task, model, provider, timeout, startup_overhead)
         report.results.append(result)
 
-        # Extract execution info from output
-        out = result.npcsh_output
-        tool_lines = re.findall(r'^⚡ (\w+)', out, re.MULTILINE) if out else []
-        skipped = "skipped jinxes" in out.lower() if out else False
-        unknown = "Unknown action" in out if out else False
-
-        status = "PASS" if result.passed else ("ERROR: " + result.error if result.error else "FAIL")
-        tools_info = f"tools=[{','.join(tool_lines)}]" if tool_lines else ("skipped" if skipped else ("unknown_action" if unknown else "no_tools"))
-        print(f"  {status} ({result.duration:.1f}s) {tools_info}", flush=True)
-
-        # Show npcsh output for failed tasks so we can debug
-        if not result.passed and result.npcsh_output:
-            output_lines = result.npcsh_output.strip().split('\n')
-            for line in output_lines:
-                print(f"    | {line}", flush=True)
-
         if result.passed:
             report.passed += 1
+            print(f"  PASS ({result.duration:.1f}s)", flush=True)
         elif result.error:
+            import pdb 
+            pdb.set_trace()
+            print(result)
             report.errors += 1
             report.failed += 1
+            print(f"  ERROR: {result.error} ({result.duration:.1f}s)", flush=True)
         else:
             report.failed += 1
+            print(f"  FAIL ({result.duration:.1f}s)", flush=True)
 
         report.duration += result.duration
 
@@ -319,7 +293,7 @@ def run_benchmark(
         df = pd.DataFrame([
             {"task_id": r.task_id, "category": r.category, "difficulty": r.difficulty,
              "passed": r.passed, "duration": round(r.duration, 1), "error": r.error or "",
-             "output": r.npcsh_output, "tool_calls": r.tool_calls}
+             "output": r.npcsh_output}
             for r in report.results
         ])
         df.to_csv(checkpoint_file, index=False)
@@ -471,7 +445,7 @@ def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 1200):
         cal_start = time.time()
         subprocess.run(
             ["npcsh", "-c", "echo ok"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            #stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, env=env, timeout=120,
         )
         cal_times.append(time.time() - cal_start)
@@ -545,11 +519,26 @@ def main():
         )
     elif args.compare:
         models = [
-            ("mistral-small3.2", "ollama"),
+          
             ("qwen3:8b", "ollama"),
-            ("gemma3:12b", "ollama"),
+          
+            ("qwen3:1.7b", "ollama"),
+            ("qwen3:4b", "ollama"),
+            ("qwen3:30b", "ollama"),  
+            ("qwen3:0.6b", "ollama"),
+          
+            ('llama3.2:1b', 'ollama'),
+            ('llama3.2:3b', 'ollama'),
+            ('llama3.1:8b', 'ollama'),
+            ('gemma3:1b', 'ollama'),
+            ('gemma3:4b', 'ollama'),
+            ('gemma3:12b', 'ollama'),
+          
+            ('gemma3:27b', 'ollama'),
+                 
+            ("mistral-small3.2:latest", "ollama"),
             ("phi4", "ollama"),
-            ("llama3.1:8b", "ollama"),
+            ('gpt-oss:20b', 'ollama')
         ]
         compare_models(
             models,
