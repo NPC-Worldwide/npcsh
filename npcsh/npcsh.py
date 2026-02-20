@@ -39,6 +39,7 @@ except importlib.metadata.PackageNotFoundError:
 from npcsh._state import (
     initial_state,
     orange,
+    sanitize_messages,
     ShellState,
     execute_command,
     make_completer,
@@ -46,6 +47,8 @@ from npcsh._state import (
     setup_shell,
     get_multiline_input,
 )
+from npcsh.ui import BottomBar
+import npcsh.ui as _ui_module
 
 
 def display_usage(state: ShellState):
@@ -230,6 +233,11 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
         pass
     session_scopes = set()
 
+    # Queue of messages the user typed while a command was processing.
+    # Populated by the BottomBar thread (on non-Windows ttys).
+    import collections
+    _input_queue = collections.deque()
+
     def exit_shell(current_state: ShellState):
         print("\nGoodbye!")
         print(colored("Processing and archiving all session knowledge...", "cyan"))
@@ -293,6 +301,10 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
         sys.exit(0)
 
     while True:
+        # ── INPUT PHASE ──────────────────────────────────────────────────────
+        # KeyboardInterrupt here means double Ctrl+C from _input_with_hint_below
+        # (the first Ctrl+C just clears the line inside that function).
+        # EOFError means Ctrl+D on an empty line.
         try:
             if state.messages is not None:
                 if len(state.messages) > 20:
@@ -306,8 +318,10 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                         # Fallback: just keep recent messages if summarization fails
                         compressed_state = None
 
-                    # Keep last 6 messages (3 exchanges) for immediate context
+                    # Keep last 6 messages (3 exchanges) without splitting
+                    # tool call/response pairs (sanitize_messages handles that).
                     recent = state.messages[-6:]
+                    recent = sanitize_messages(recent)
                     if compressed_state:
                         state.messages = [{"role": "system", "content": f"Session context (earlier conversation summary): {compressed_state}"}] + recent
                     else:
@@ -316,7 +330,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                 try:
                     completer = make_completer(state, router)
                     readline.set_completer(completer)
-                except:
+                except Exception:
                     pass
 
             display_model = state.chat_model
@@ -377,8 +391,16 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
 
                 prompt = colored("> ", "green")
 
-            user_input = get_multiline_input(prompt, state=state, router=router, token_hint=token_hint).strip()
-          
+            # If the user typed something while the last command was processing,
+            # use it directly instead of showing the prompt again.
+            if _input_queue:
+                user_input = _input_queue.popleft().strip()
+                queued_count = len(_input_queue)
+                queue_note = f" [{queued_count} queued]" if queued_count else ""
+                print(colored(f"{prompt}{user_input}", "green") + colored(queue_note, "yellow"))
+            else:
+                user_input = get_multiline_input(prompt, state=state, router=router, token_hint=token_hint).strip()
+
             if user_input == "\x1a":
                 exit_shell(state)
 
@@ -392,34 +414,57 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                     continue
                 else:
                     exit_shell(state)
-            
+
+        except KeyboardInterrupt:
+            # Double Ctrl+C during input = intentional exit
+            exit_shell(state)
+        except EOFError:
+            exit_shell(state)
+
+        # ── PROCESSING PHASE ─────────────────────────────────────────────────
+        # Ctrl+C / ESC just interrupt the current command and return to prompt.
+        # Start the BottomBar so the user can queue the next message while
+        # this one is running.
+        _bar = None
+        if not is_windows and sys.stdout.isatty():
+            _bar = BottomBar()
+            _ui_module._active_bottom_bar = _bar
+            _bar.start()
+
+        try:
             team_name = state.team.name if state.team else "__none__"
             npc_name = state.npc.name if isinstance(state.npc, NPC) else "__none__"
             session_scopes.add((team_name, npc_name, state.current_path))
 
-            state, output = execute_command(user_input, 
-                                            state, 
-                                            review = False, 
-                                            router=router, 
+            state, output = execute_command(user_input,
+                                            state,
+                                            review=False,
+                                            router=router,
                                             command_history=command_history)
 
-            process_result(user_input, 
-                           state, 
-                           output, 
-                           command_history, 
+            process_result(user_input,
+                           state,
+                           output,
+                           command_history,
                            )
-        
-        except KeyboardInterrupt:
-            # Double Ctrl+C exits (handled in _input_with_hint_below)
-            exit_shell(state)
 
-        except EOFError:
-            exit_shell(state)
-        except Exception as e:            
+        except KeyboardInterrupt:
+            print(colored("\nInterrupted.", "yellow"))
+            state.messages = sanitize_messages(state.messages)
+
+        except Exception as e:
             if is_windows and "EOF" in str(e).lower():
                 print("\nHint: On Windows, use Ctrl+Z then Enter for EOF, or type 'exit'")
                 continue
             raise
+
+        finally:
+            if _bar is not None:
+                _bar.stop()
+                _ui_module._active_bottom_bar = None
+                # Transfer any queued messages to the main input queue.
+                while _bar.queue:
+                    _input_queue.append(_bar.queue.popleft())
         
 
 def main(npc_name: str = None) -> None:
