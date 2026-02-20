@@ -35,6 +35,7 @@ class TaskResult:
     difficulty: str
     passed: bool
     duration: float
+    attempts: int = 1
     error: Optional[str] = None
     npcsh_output: str = ""
 
@@ -110,90 +111,125 @@ def clean_task_artifacts():
         shutil.rmtree(d, ignore_errors=True)
 
 
-def run_task(task: dict, 
-             model: str, 
-             provider: str, 
-             timeout: int = 3000, 
-             startup_overhead: float = 0.0) -> TaskResult:
-    """Run a single task through npcsh -c and verify the result."""
-
-    task_id = task["id"]
-    instruction = task["instruction"]
-    verify_cmd = task["verify_cmd"]
-
-    # Per-task timeout override — use whichever is larger
-    verify_timeout = task.get("verify_timeout", 30)
-
-    # Clean up before each task
-    clean_task_artifacts()
-
-    env = os.environ.copy()
-    env["NPCSH_CHAT_MODEL"] = model
-    env["NPCSH_CHAT_PROVIDER"] = provider
-    env["NPCSH_STREAM_OUTPUT"] = "0"
-    env["NPCSH_NO_EMBEDDINGS"] = "1"
-
-    if provider == "ollama":
-        env.setdefault("OLLAMA_HOST", "http://localhost:11434")
-        env["NPCSH_OLLAMA_NUM_CTX"] = "16384"
-
-    start = time.time()
-
+def _run_attempt(instruction: str, model: str, provider: str, state) -> tuple:
+    """Execute one instruction and return (final_state, output_str)."""
     command_history, team, default_npc = setup_shell()
     if team and hasattr(team, 'jinxs_dict'):
         for jinx_name, jinx_obj in team.jinxs_dict.items():
             router.register_jinx(jinx_obj)
-    initial_state.npc = default_npc
-    initial_state.npc.model = model
-    initial_state.npc.provider = provider
-  
-    initial_state.team = team
-    initial_state.team.model = model
-    initial_state.team.provider = provider
-  
-    initial_state.model = model
-    initial_state.model = provider
-    
-    initial_state.command_history = command_history
-    state = initial_state
+    state.npc = default_npc
+    state.npc.model = model
+    state.npc.provider = provider
+    state.team = team
+    state.team.model = model
+    state.team.provider = provider
+    state.chat_model = model
+    state.chat_provider = provider
+    state.command_history = command_history
     state.current_path = os.getcwd()
-    final_state, output = execute_command(instruction, 
-                                         state, 
-                                         router=router, 
-                                         command_history=command_history)
+
+    final_state, output = execute_command(
+        instruction, state, router=router, command_history=command_history
+    )
+
+    output_str = ""
     if isinstance(output, dict):
-         display_output = output.get('output') or output.get('response') or str(output)
-         print(display_output)
+        output_str = output.get('output') or output.get('response') or str(output)
+        print(output_str)
     elif final_state.stream_output and output is not None:
-         for chunk in output:
-             print(str(chunk), end='')
-         print()
+        chunks = []
+        for chunk in output:
+            s = str(chunk)
+            chunks.append(s)
+            print(s, end='')
+        print()
+        output_str = "".join(chunks)
     elif output is not None:
-         print(output)
+        output_str = str(output)
+        print(output_str)
+
+    return final_state, output_str
+
+
+def run_task(task: dict,
+             model: str,
+             provider: str,
+             timeout: int = 1200,
+             startup_overhead: float = 0.0) -> TaskResult:
+    """Run a task with retries until it passes or the timeout budget is exhausted."""
+
+    task_id = task["id"]
+    instruction = task["instruction"]
+    verify_cmd = task["verify_cmd"]
+    verify_timeout = task.get("verify_timeout", 30)
+
+    deadline = time.time() + timeout
+    start = time.time()
+    attempt = 0
+    passed = False
+    all_outputs: list = []
+    last_output = ""
+
+    while time.time() < deadline:
+        attempt += 1
+        clean_task_artifacts()
+
+        # On retries, give the model context about the previous failure
+        if attempt == 1:
+            current_instruction = instruction
+        else:
+            remaining = int(deadline - time.time())
+            current_instruction = (
+                f"{instruction}\n\n"
+                f"[Retry {attempt}] Your previous attempt did not satisfy the "
+                f"verification check. Here is what your last attempt produced:\n"
+                f"{last_output[:800]}\n\n"
+                f"Please try a different approach. {remaining}s remaining."
+            )
+
+        print(f"  [attempt {attempt}]", flush=True)
+
+        try:
+            _, output_str = _run_attempt(
+                current_instruction, model, provider, initial_state
+            )
+        except Exception as e:
+            output_str = f"Exception: {e}"
+
+        all_outputs.append(f"[attempt {attempt}]\n{output_str}")
+        last_output = output_str
+
+        # Filesystem sync delay
+        time.sleep(5)
+
+        # Verify
+        try:
+            verify = subprocess.run(
+                ["bash", "-c", verify_cmd],
+                capture_output=True, text=True, timeout=verify_timeout,
+            )
+            passed = verify.returncode == 0
+        except Exception as e:
+            passed = False
+            all_outputs.append(f"Verify error: {e}")
+
+        if passed:
+            break
+
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+        print(f"  attempt {attempt} failed, {int(remaining)}s left — retrying", flush=True)
+
     duration = time.time() - start
-
-    # Small delay to let filesystem sync (especially for image/audio files on macOS)
-    time.sleep(5)
-
-    # Verify
-    try:
-        verify = subprocess.run(
-            ["bash", "-c", verify_cmd],
-            capture_output=True,
-            text=True,
-            timeout=verify_timeout,
-        )
-        passed = verify.returncode == 0
-    except Exception as e:
-        passed = False
-        output += f"\nVerify error: {e}"
     return TaskResult(
         task_id=task_id,
         category=task["category"],
         difficulty=task["difficulty"],
         passed=passed,
         duration=max(0, duration - startup_overhead),
-        npcsh_output=output,
+        attempts=attempt,
+        npcsh_output="\n---\n".join(all_outputs),
     )
 
 
@@ -246,17 +282,15 @@ def run_benchmark(
 
         if result.passed:
             report.passed += 1
-            print(f"  PASS ({result.duration:.1f}s)", flush=True)
+            print(f"  PASS ({result.duration:.1f}s, {result.attempts} attempt(s))", flush=True)
         elif result.error:
-            import pdb 
-            pdb.set_trace()
             print(result)
             report.errors += 1
             report.failed += 1
             print(f"  ERROR: {result.error} ({result.duration:.1f}s)", flush=True)
         else:
             report.failed += 1
-            print(f"  FAIL ({result.duration:.1f}s)", flush=True)
+            print(f"  FAIL ({result.duration:.1f}s, {result.attempts} attempt(s))", flush=True)
 
         report.duration += result.duration
 
@@ -282,7 +316,7 @@ def run_benchmark(
         checkpoint_file = report_dir / f"{provider}_{model}_running.csv"
         df = pd.DataFrame([
             {"task_id": r.task_id, "category": r.category, "difficulty": r.difficulty,
-             "passed": r.passed, "duration": round(r.duration, 1), "error": r.error or "",
+             "passed": r.passed, "attempts": r.attempts, "duration": round(r.duration, 1), "error": r.error or "",
              "output": r.npcsh_output}
             for r in report.results
         ])

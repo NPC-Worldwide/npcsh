@@ -132,6 +132,24 @@ from .config import (
     set_npcsh_config_value,
 )
 from .ui import SpinnerContext, orange, get_file_color, format_file_listing, wrap_text
+import npcsh.ui as _ui_module
+
+
+def _shell_input(prompt: str = "") -> str:
+    """Drop-in replacement for input() that coordinates with BottomBar.
+
+    If a BottomBar is active it is paused (terminal restored to cooked mode)
+    before the prompt, then resumed afterwards.  Without a BottomBar this is
+    identical to input().
+    """
+    bar = _ui_module._active_bottom_bar
+    if bar is not None:
+        bar.pause()
+        try:
+            return input(prompt)
+        finally:
+            bar.resume()
+    return input(prompt)
 from .parsing import parse_command_safely, parse_generic_command_flags
 from .execution import (
     TERMINAL_EDITORS,
@@ -1748,6 +1766,13 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
 
     try:
         tty.setcbreak(fd)
+        # setcbreak keeps ISIG enabled, which means Ctrl+C still generates
+        # SIGINT and is never passed through as the \x03 byte we read below.
+        # Disable ISIG so we can handle Ctrl+C ourselves (clear line on first
+        # press, exit only on double-press with an empty buffer).
+        _cbreak_settings = termios.tcgetattr(fd)
+        _cbreak_settings[3] &= ~termios.ISIG
+        termios.tcsetattr(fd, termios.TCSADRAIN, _cbreak_settings)
 
         while True:
             c = sys.stdin.read(1)
@@ -1948,16 +1973,22 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
 
             elif c == '\x03':  # Ctrl-C
                 current_time = time.time()
-                if current_time - last_ctrl_c_time < 1.0:  # Double Ctrl+C within 1 second
-                    # Exit
+                # Double Ctrl+C exits ONLY when the buffer was already empty
+                # (i.e., user pressed Ctrl+C twice on an empty prompt).
+                # Ctrl+C with text in the buffer always just clears the line.
+                if not buf and current_time - last_ctrl_c_time < 1.0:
+                    # Empty buffer, second Ctrl+C within 1 second = exit
                     sys.stdout.write('\033[?2004l')  # Disable bracketed paste
                     sys.stdout.write('\n\033[K')
                     sys.stdout.flush()
                     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
                     raise KeyboardInterrupt
                 else:
-                    # First Ctrl+C - clear the line
-                    last_ctrl_c_time = current_time
+                    # Clear the line.  Only start the exit-timer when buf was empty.
+                    if not buf:
+                        last_ctrl_c_time = current_time
+                    else:
+                        last_ctrl_c_time = 0  # Reset so next Ctrl+C on empty line starts fresh
                     buf = ""
                     pos = 0
                     pasted_content = None
@@ -2468,6 +2499,57 @@ def parse_generic_command_flags(parts: List[str]) -> Tuple[Dict[str, Any], List[
         i += 1
         
     return parsed_kwargs, positional_args
+
+def sanitize_messages(messages: List[Dict]) -> List[Dict]:
+    """Remove orphaned tool call sequences from message history.
+
+    An 'orphaned' sequence is an assistant message that has tool_calls but
+    is not followed by the corresponding tool-response messages for every
+    tool_call_id it emitted.  This can happen when the user interrupts with
+    Ctrl-C mid-loop or when message compression slices into the middle of a
+    call/response pair.  Sending such a history to the API causes an error,
+    so we strip the dangling assistant message (and any partial tool responses
+    that came after it) from the tail of the list.
+    """
+    if not messages:
+        return messages
+
+    # Walk backwards to find the last assistant message that has tool_calls.
+    # If it's not fully satisfied, drop it and everything after it.
+    clean = list(messages)
+    while clean:
+        # Collect the tool_call_ids that the last assistant-with-tool_calls expects.
+        last_assistant_idx = None
+        for i in range(len(clean) - 1, -1, -1):
+            msg = clean[i]
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                last_assistant_idx = i
+                break
+
+        if last_assistant_idx is None:
+            break  # No assistant-with-tool_calls found - list is clean.
+
+        expected_ids = {
+            tc.get("id") or (tc.get("function", {}) or {}).get("id", "")
+            for tc in clean[last_assistant_idx]["tool_calls"]
+            if isinstance(tc, dict)
+        }
+        expected_ids.discard("")
+
+        # Collect tool_call_ids actually present in subsequent tool messages.
+        fulfilled_ids = set()
+        for msg in clean[last_assistant_idx + 1:]:
+            if msg.get("role") == "tool":
+                fulfilled_ids.add(msg.get("tool_call_id", ""))
+
+        if expected_ids and not expected_ids.issubset(fulfilled_ids):
+            # Orphaned: drop the assistant message and everything after it.
+            clean = clean[:last_assistant_idx]
+        else:
+            break  # The sequence is complete.
+
+    return clean
+
 
 def model_supports_tool_calls(model: Optional[str], provider: Optional[str]) -> bool:
     """Check whether a model supports tool/function calling."""
@@ -3006,41 +3088,39 @@ def process_pipeline_command(
 
             try: # Added try-except for KeyboardInterrupt here
                 if tool_capable:
-                    # Build kwargs - don't pass tool_choice for gemini as it doesn't support it
+                    # Pass tools to LLM; npcsh executes them manually in the loop.
+                    # No auto_process_tool_calls - that path caused Anthropic prefill
+                    # errors on iteration >1 (messages ending with assistant + no prompt).
                     llm_kwargs = {
-                        "auto_process_tool_calls": True,
                         "tools": tools_for_llm,
-                        "tool_map": tool_exec_map,
+                        "tool_choice": "auto",
                     }
-                    llm_kwargs["tool_choice"] = 'auto'
 
-                    # Agent loop: keep calling LLM until it stops making tool calls.
-                    # The LLM decides when it's done - npcsh just facilitates.
-                    # tool_choice stays 'auto' so the model can keep calling tools
-                    # as many times as it needs. The 50-iteration cap prevents runaways.
+                    # Agent loop: call LLM → execute tool calls → repeat until
+                    # the model returns plain text (signals task complete).
                     iteration = 0
-                    max_iterations = 50  # Safety limit to prevent infinite loops
+                    max_iterations = 50
                     total_usage = {"input_tokens": 0, "output_tokens": 0}
-                    state._agent_nudges = 0  # Track continuation nudges
-
-                    tool_calls_count = 0  # Track how many tool calls have been made
+                    state._agent_nudges = 0
+                    tool_calls_count = 0
 
                     while iteration < max_iterations:
                         iteration += 1
 
-                        iter_kwargs = dict(llm_kwargs)
+                        # Guard against orphaned tool calls from a prior interrupt
+                        state.messages = sanitize_messages(state.messages)
 
                         llm_result = get_llm_response(
-                            full_llm_cmd if iteration == 1 else None,  # Only pass prompt on first call
+                            full_llm_cmd if iteration == 1 else None,
                             model=exec_model,
                             provider=exec_provider,
                             npc=state.npc,
                             team=state.team,
                             messages=state.messages,
-                            stream=False,  # Don't stream intermediate calls
+                            stream=False,
                             attachments=state.attachments if iteration == 1 else None,
                             context=info if iteration == 1 else None,
-                            **iter_kwargs,
+                            **llm_kwargs,
                         )
 
                         # Accumulate usage
@@ -3048,34 +3128,52 @@ def process_pipeline_command(
                             total_usage["input_tokens"] += llm_result['usage'].get('input_tokens', 0)
                             total_usage["output_tokens"] += llm_result['usage'].get('output_tokens', 0)
 
-                        # Update state messages
-                        old_msg_count = len(state.messages) if state.messages else 0
+                        # Update state messages (response.py now embeds tool_calls
+                        # into the assistant message so the history is well-formed)
                         if isinstance(llm_result, dict):
                             state.messages = llm_result.get("messages", state.messages)
 
-                        # Display tool outputs from this iteration
-                        for msg in state.messages[old_msg_count:]:
-                            if msg.get("role") == "tool":
-                                tool_name = msg.get("name", "tool")
-                                tool_content = msg.get("content", "")
-                                if tool_content and tool_content.strip():
-                                    # Decode escaped newlines if present
-                                    if isinstance(tool_content, str):
-                                        tool_content = tool_content.replace('\\n', '\n').replace('\\t', '\t')
-                                    print(colored(f"\n⚡ {tool_name}:", "cyan"))
-                                    lines = tool_content.split('\n')
-                                    if len(lines) > 50:
-                                        render_markdown('\n'.join(lines[:25]))
-                                        print(colored(f"\n... ({len(lines) - 50} lines hidden) ...\n", "white", attrs=["dark"]))
-                                        render_markdown('\n'.join(lines[-25:]))
-                                    else:
-                                        render_markdown(tool_content)
+                        raw_tool_calls = llm_result.get("tool_calls") if isinstance(llm_result, dict) else None
 
-                        # Check if LLM made tool calls - if not, consider re-prompting
-                        tool_calls_made = isinstance(llm_result, dict) and llm_result.get("tool_calls")
-                        if not tool_calls_made:
-                            # In agent mode, nudge to use tools if model hasn't
-                            # started working yet (no tool calls at all).
+                        if raw_tool_calls:
+                            # Execute each tool and append its result to messages
+                            tool_calls_count += 1
+                            state._agent_nudges = 0
+                            full_llm_cmd = None  # subsequent calls use messages for context
+
+                            for tool_call in raw_tool_calls:
+                                if isinstance(tool_call, dict):
+                                    tool_id = tool_call.get("id", f"call_{tool_calls_count}")
+                                    tool_name = tool_call.get("function", {}).get("name")
+                                    arguments_str = tool_call.get("function", {}).get("arguments", "{}")
+                                else:
+                                    tool_id = getattr(tool_call, "id", f"call_{tool_calls_count}")
+                                    tool_name = getattr(tool_call.function, "name", None) if hasattr(tool_call, "function") else None
+                                    arguments_str = getattr(tool_call.function, "arguments", "{}") if hasattr(tool_call, "function") else "{}"
+
+                                try:
+                                    arguments = json.loads(arguments_str) if isinstance(arguments_str, str) else (arguments_str or {})
+                                except json.JSONDecodeError:
+                                    arguments = {}
+
+                                if tool_name and tool_name in tool_exec_map:
+                                    try:
+                                        # wrap_tool_with_display already prints tool output
+                                        tool_result = tool_exec_map[tool_name](**arguments)
+                                    except Exception as exc:
+                                        tool_result = f"Error executing '{tool_name}': {exc}"
+                                    tool_result_str = json.dumps(tool_result, default=str) if not isinstance(tool_result, str) else tool_result
+                                else:
+                                    tool_result_str = f"Tool '{tool_name}' not found in available tools."
+
+                                state.messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_id,
+                                    "name": tool_name or "unknown",
+                                    "content": tool_result_str,
+                                })
+                        else:
+                            # LLM returned plain text - nudge if no tools called yet
                             if (state.current_mode == 'agent'
                                     and tool_calls_count == 0
                                     and iteration < max_iterations
@@ -3091,14 +3189,8 @@ def process_pipeline_command(
                                     )
                                 })
                                 continue
-                            # LLM chose to respond with text - it's done
+                            # LLM chose to respond with text - task is done
                             break
-
-                        # Track tool calls and reset nudge counter
-                        tool_calls_count += 1
-                        state._agent_nudges = 0
-                        # Clear the prompt for continuation calls - context is in messages
-                        full_llm_cmd = None
 
                     # Store accumulated usage
                     if isinstance(llm_result, dict):
@@ -3122,6 +3214,7 @@ def process_pipeline_command(
                     )
             except KeyboardInterrupt:
                 print(colored("\nLLM processing interrupted by user.", "yellow"))
+                state.messages = sanitize_messages(state.messages)
                 return state, colored("LLM processing interrupted.", "red")
 
         # Extract output and messages from llm_result
@@ -3236,59 +3329,10 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
     model_name = target_npc.model if hasattr(target_npc, 'model') else 'unknown'
 
     try:
-        # Build tools from the NPC's jinx catalog
-        tools_for_npc = None
-        tool_map_for_npc = None
-        if hasattr(target_npc, 'jinx_tool_catalog') and target_npc.jinx_tool_catalog:
-            tools_for_npc = list(target_npc.jinx_tool_catalog.values())
-            # Build tool_map that executes jinxs
-            tool_map_for_npc = {}
-            for jinx_name, jinx_obj in target_npc.jinxs_dict.items():
-                def make_executor(jname, jobj, npc):
-                    # Get expected input names from jinx
-                    expected_inputs = []
-                    for inp in (jobj.inputs or []):
-                        if isinstance(inp, str):
-                            expected_inputs.append(inp)
-                        elif isinstance(inp, dict):
-                            expected_inputs.append(list(inp.keys())[0])
+        with SpinnerContext(f"{npc_name} processing with {model_name}", style="dots_pulse"):
+            result = target_npc.check_llm_command(command, team=state.team)
 
-                    def executor(**received):
-                        # Map received args to expected jinx inputs
-                        mapped = {}
-                        if expected_inputs:
-                            # If we got unexpected keys, map first value to first expected input
-                            received_keys = list(received.keys())
-                            for i, expected in enumerate(expected_inputs):
-                                if expected in received:
-                                    mapped[expected] = received[expected]
-                                elif i < len(received_keys):
-                                    # Map positionally
-                                    mapped[expected] = received[received_keys[i]]
-                        else:
-                            mapped = received
-
-                        result = npc.execute_jinx(jname, mapped)
-                        return result.get('output', str(result))
-                    executor.__name__ = jname
-                    return executor
-                tool_map_for_npc[jinx_name] = make_executor(jinx_name, jinx_obj, target_npc)
-
-        with SpinnerContext(
-            f"{npc_name} processing with {model_name}",
-            style="dots_pulse"
-        ):
-            # Just send the command directly - don't pass team context so they don't know about other NPCs
-            result = target_npc.get_llm_response(
-                command,
-                messages=[],  # Fresh messages - don't leak conversation history
-                context={},   # No team context - they shouldn't know about teammates
-                tools=tools_for_npc,
-                tool_map=tool_map_for_npc,
-                auto_process_tool_calls=True
-            )
-
-        output = result.get("response") or result.get("output", "")
+        output = result.get("output") or result.get("response", "")
         if result.get("messages"):
             state.messages = result["messages"]
 
@@ -3393,25 +3437,16 @@ def execute_command(
 
         except KeyboardInterrupt:
             print(colored("\nOperation interrupted by user.", "yellow"))
+            state.messages = sanitize_messages(state.messages)
             return state, colored("Command interrupted.", "red")
         except RateLimitError:
             print(colored('Rate Limit Exceeded', 'yellow'))
-            # Truncate messages but preserve tool call/response pairs.
-            # Keep system message + last few messages, ensuring we don't
-            # orphan tool messages by splitting assistant(tool_calls)/tool pairs.
+            # Truncate messages to system + last few, then sanitize to remove
+            # any orphaned tool call sequences introduced by the slice.
             if len(state.messages) > 4:
                 truncated = state.messages[0:1]  # system message
-                tail = state.messages[-3:]
-                # If the first message in the tail is a 'tool' role, it's orphaned
-                # without its assistant(tool_calls) - skip it
-                for msg in tail:
-                    if msg.get('role') == 'tool' and not any(
-                        m.get('role') == 'assistant' and m.get('tool_calls')
-                        for m in truncated
-                    ):
-                        continue
-                    truncated.append(msg)
-                state.messages = truncated
+                truncated += state.messages[-3:]
+                state.messages = sanitize_messages(truncated)
             import time
             print('Waiting 30s before retry...')
             time.sleep(30)
@@ -3785,17 +3820,18 @@ def process_result(
         result_state.turn_count += 1
 
         if result_state.turn_count % 10 == 0:
+          try:
             approved_facts = []
-            
+
             conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
             engine = command_history.engine
 
             memory_examples = command_history.get_memory_examples_for_context(
                 npc=npc_name,
-                team=team_name, 
+                team=team_name,
                 directory_path=result_state.current_path
             )
-            
+
             memory_context = format_memory_context(memory_examples)
             
             try:
@@ -3813,7 +3849,7 @@ def process_result(
                         f"\nThere are {num_memories} potential memories. Do you want to review them now?", 
                         "cyan"
                     ))
-                    review_choice = input("[y/N]: ").strip().lower()
+                    review_choice = _shell_input("[y/N]: ").strip().lower()
                     
                     if review_choice == 'y':
                         memories_for_approval = []
@@ -3993,7 +4029,7 @@ def process_result(
                             print(colored(f"  - OLD: {current_context}", "red"))
                             print(colored(f"  + NEW: {new_context}", "green"))
                         
-                        choice = input(
+                        choice = _shell_input(
                             "Apply? [y/N/e(dit)]: "
                         ).strip().lower()
                         
@@ -4021,11 +4057,16 @@ def process_result(
             except Exception as e:
                 import traceback
                 print(colored(
-                    f"Could not generate team suggestions: {e}", 
+                    f"Could not generate team suggestions: {e}",
                     "yellow"
                 ))
                 traceback.print_exc()
-                
+          except KeyboardInterrupt:
+            print(colored(
+                "\nMemory/knowledge extraction interrupted. Returning to shell.",
+                "yellow"
+            ))
+
 initial_state = ShellState(
     conversation_id=start_new_conversation(),
     stream_output=NPCSH_STREAM_OUTPUT,
