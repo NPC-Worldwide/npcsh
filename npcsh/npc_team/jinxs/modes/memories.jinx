@@ -1,6 +1,5 @@
 jinx_name: memories
 description: Interactive TUI for browsing and managing npcsh memories
-interactive: true
 inputs:
   - scope: ""
 steps:

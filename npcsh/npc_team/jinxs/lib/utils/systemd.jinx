@@ -1,0 +1,203 @@
+jinx_name: systemd
+description: Manage background services/daemons. Works cross-platform (launchd on macOS, systemd on Linux).
+inputs:
+  - action: "list"
+  - command: ""
+  - name: ""
+  - restart_on_failure: "true"
+steps:
+  - name: manage_service
+    engine: python
+    code: |
+      import os
+      import subprocess
+      import platform
+
+      action = {{ action | default("list") | tojson }}.strip().lower()
+      command = {{ command | default("") | tojson }}.strip()
+      svc_name = {{ name | default("") | tojson }}.strip()
+      restart = {{ restart_on_failure | default("true") | tojson }}.lower() in ('true', '1', 'yes')
+
+      is_mac = platform.system() == 'Darwin'
+      logs_dir = os.path.expanduser('~/.npcsh/logs')
+      os.makedirs(logs_dir, exist_ok=True)
+
+      def plist_path(n):
+          return os.path.expanduser('~/Library/LaunchAgents/com.npcsh.daemon.' + n + '.plist')
+
+      def unit_path(n):
+          return os.path.expanduser('~/.config/systemd/user/npcsh-' + n + '.service')
+
+      # ── LIST ──
+      if action == 'list':
+          found = []
+          if is_mac:
+              agents_dir = os.path.expanduser('~/Library/LaunchAgents/')
+              if os.path.isdir(agents_dir):
+                  for f in sorted(os.listdir(agents_dir)):
+                      if f.startswith('com.npcsh.daemon.') and f.endswith('.plist'):
+                          dname = f.replace('com.npcsh.daemon.', '').replace('.plist', '')
+                          r = subprocess.run(
+                              ['launchctl', 'list', 'com.npcsh.daemon.' + dname],
+                              capture_output=True, text=True
+                          )
+                          status = 'running' if r.returncode == 0 else 'stopped'
+                          found.append(dname + ' (' + status + ')')
+          else:
+              r = subprocess.run(
+                  ['systemctl', '--user', 'list-units', '--type=service', '--no-pager', '--no-legend'],
+                  capture_output=True, text=True
+              )
+              if r.returncode == 0:
+                  for line in r.stdout.splitlines():
+                      parts = line.split()
+                      if parts and parts[0].startswith('npcsh-'):
+                          dname = parts[0].replace('.service', '').replace('npcsh-', '')
+                          status = parts[2] if len(parts) > 2 else 'unknown'
+                          found.append(dname + ' (' + status + ')')
+
+          if found:
+              context['output'] = 'Daemons:\n' + '\n'.join('  ' + f for f in found)
+          else:
+              context['output'] = 'No npcsh daemons running.'
+
+      # ── CREATE / ENABLE ──
+      elif action in ('create', 'enable', 'start'):
+          if not command or not svc_name:
+              context['output'] = 'Usage: /systemd action=create name="my_daemon" command="/some_jinx"'
+          else:
+              full_cmd = 'npcsh -c "' + command + '"' if command.startswith('/') else command
+              log_path = os.path.join(logs_dir, 'daemon_' + svc_name + '.log')
+
+              if is_mac:
+                  plist = '<?xml version="1.0" encoding="UTF-8"?>\n'
+                  plist += '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+                  plist += '<plist version="1.0">\n<dict>\n'
+                  plist += '  <key>Label</key>\n  <string>com.npcsh.daemon.' + svc_name + '</string>\n'
+                  plist += '  <key>ProgramArguments</key>\n  <array>\n'
+                  plist += '    <string>/bin/bash</string>\n'
+                  plist += '    <string>-c</string>\n'
+                  plist += '    <string>' + full_cmd + '</string>\n'
+                  plist += '  </array>\n'
+                  plist += '  <key>RunAtLoad</key>\n  <true/>\n'
+                  if restart:
+                      plist += '  <key>KeepAlive</key>\n  <true/>\n'
+                  plist += '  <key>StandardOutPath</key>\n  <string>' + log_path + '</string>\n'
+                  plist += '  <key>StandardErrorPath</key>\n  <string>' + log_path + '</string>\n'
+                  plist += '</dict>\n</plist>\n'
+
+                  ppath = plist_path(svc_name)
+                  os.makedirs(os.path.dirname(ppath), exist_ok=True)
+                  with open(ppath, 'w') as f:
+                      f.write(plist)
+
+                  subprocess.run(['launchctl', 'load', ppath], capture_output=True)
+                  context['output'] = 'Daemon "' + svc_name + '" created and started.\n  Command: ' + full_cmd + '\n  Log: ' + log_path
+
+              else:
+                  unit = '[Unit]\n'
+                  unit += 'Description=npcsh daemon: ' + svc_name + '\n\n'
+                  unit += '[Service]\n'
+                  unit += 'Type=simple\n'
+                  unit += 'ExecStart=/bin/bash -c "' + full_cmd + '"\n'
+                  if restart:
+                      unit += 'Restart=on-failure\n'
+                      unit += 'RestartSec=10\n'
+                  unit += 'StandardOutput=append:' + log_path + '\n'
+                  unit += 'StandardError=append:' + log_path + '\n\n'
+                  unit += '[Install]\n'
+                  unit += 'WantedBy=default.target\n'
+
+                  upath = unit_path(svc_name)
+                  os.makedirs(os.path.dirname(upath), exist_ok=True)
+                  with open(upath, 'w') as f:
+                      f.write(unit)
+
+                  subprocess.run(['systemctl', '--user', 'daemon-reload'], capture_output=True)
+                  subprocess.run(['systemctl', '--user', 'enable', '--now', 'npcsh-' + svc_name], capture_output=True)
+                  context['output'] = 'Daemon "' + svc_name + '" created and started.\n  Command: ' + full_cmd
+
+      # ── STOP ──
+      elif action == 'stop':
+          if not svc_name:
+              context['output'] = 'Usage: /systemd action=stop name="daemon_name"'
+          else:
+              if is_mac:
+                  ppath = plist_path(svc_name)
+                  if os.path.exists(ppath):
+                      subprocess.run(['launchctl', 'unload', ppath], capture_output=True)
+                      context['output'] = 'Daemon "' + svc_name + '" stopped.'
+                  else:
+                      context['output'] = 'Daemon "' + svc_name + '" not found.'
+              else:
+                  subprocess.run(['systemctl', '--user', 'stop', 'npcsh-' + svc_name], capture_output=True)
+                  context['output'] = 'Daemon "' + svc_name + '" stopped.'
+
+      # ── REMOVE ──
+      elif action == 'remove':
+          if not svc_name:
+              context['output'] = 'Usage: /systemd action=remove name="daemon_name"'
+          else:
+              if is_mac:
+                  ppath = plist_path(svc_name)
+                  if os.path.exists(ppath):
+                      subprocess.run(['launchctl', 'unload', ppath], capture_output=True)
+                      os.remove(ppath)
+                      context['output'] = 'Daemon "' + svc_name + '" removed.'
+                  else:
+                      context['output'] = 'Daemon "' + svc_name + '" not found.'
+              else:
+                  subprocess.run(['systemctl', '--user', 'stop', 'npcsh-' + svc_name], capture_output=True)
+                  subprocess.run(['systemctl', '--user', 'disable', 'npcsh-' + svc_name], capture_output=True)
+                  upath = unit_path(svc_name)
+                  if os.path.exists(upath):
+                      os.remove(upath)
+                  subprocess.run(['systemctl', '--user', 'daemon-reload'], capture_output=True)
+                  context['output'] = 'Daemon "' + svc_name + '" removed.'
+
+      # ── LOGS ──
+      elif action == 'logs':
+          if not svc_name:
+              context['output'] = 'Usage: /systemd action=logs name="daemon_name"'
+          else:
+              log_path = os.path.join(logs_dir, 'daemon_' + svc_name + '.log')
+              if os.path.exists(log_path):
+                  with open(log_path) as f:
+                      lines = f.readlines()[-30:]
+                  context['output'] = 'Last 30 lines of ' + svc_name + ':\n' + ''.join(lines)
+              else:
+                  context['output'] = 'No log file for "' + svc_name + '".'
+
+      # ── STATUS ──
+      elif action == 'status':
+          if not svc_name:
+              context['output'] = 'Usage: /systemd action=status name="daemon_name"'
+          else:
+              lines = ['Daemon: ' + svc_name]
+              if is_mac:
+                  r = subprocess.run(
+                      ['launchctl', 'list', 'com.npcsh.daemon.' + svc_name],
+                      capture_output=True, text=True
+                  )
+                  lines.append('Status: ' + ('running' if r.returncode == 0 else 'stopped'))
+                  if r.returncode == 0 and r.stdout.strip():
+                      lines.append(r.stdout.strip())
+              else:
+                  r = subprocess.run(
+                      ['systemctl', '--user', 'status', 'npcsh-' + svc_name, '--no-pager'],
+                      capture_output=True, text=True
+                  )
+                  lines.append(r.stdout.strip() if r.stdout else 'Not found')
+
+              log_path = os.path.join(logs_dir, 'daemon_' + svc_name + '.log')
+              if os.path.exists(log_path):
+                  with open(log_path) as f:
+                      tail = f.readlines()[-5:]
+                  lines.append('\nRecent log:')
+                  for l in tail:
+                      lines.append('  ' + l.rstrip())
+
+              context['output'] = '\n'.join(lines)
+
+      else:
+          context['output'] = 'Unknown action: ' + action + '. Use: list, create, stop, remove, status, logs'

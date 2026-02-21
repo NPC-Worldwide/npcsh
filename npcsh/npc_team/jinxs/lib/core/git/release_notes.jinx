@@ -1,0 +1,100 @@
+jinx_name: release_notes
+description: Generate release notes from git commits between tags or refs. Categorizes changes into Features, Fixes, Breaking Changes, etc.
+inputs:
+  - tag: ""
+  - to: "HEAD"
+steps:
+  - name: gen_release_notes
+    engine: python
+    code: |
+      import subprocess
+
+      from_tag = context.get('tag', '').strip()
+      to_ref = context.get('to', '').strip() or 'HEAD'
+
+      def run_git(*args):
+          r = subprocess.run(
+              ['git'] + list(args),
+              capture_output=True, text=True, timeout=30
+          )
+          return r.returncode, r.stdout, r.stderr
+
+      rc, _, _ = run_git('rev-parse', '--is-inside-work-tree')
+      if rc != 0:
+          context['output'] = 'Not a git repository.'
+      else:
+          # Find the from ref
+          if not from_tag:
+              # Get latest tag
+              rc, tag_out, _ = run_git('describe', '--tags', '--abbrev=0')
+              if rc == 0:
+                  from_tag = tag_out.strip()
+              else:
+                  # No tags — use first commit
+                  rc, first, _ = run_git('rev-list', '--max-parents=0', 'HEAD')
+                  from_tag = first.strip().split('\n')[0] if rc == 0 else 'HEAD~20'
+
+          # Get commits in range
+          commit_range = from_tag + '..' + to_ref
+          _, log, _ = run_git(
+              'log', commit_range,
+              '--format=%h\t%s\t%an\t%ai',
+              '--no-merges'
+          )
+
+          # Also get merge commits for PR context
+          _, merges, _ = run_git(
+              'log', commit_range,
+              '--format=%h\t%s\t%an\t%ai',
+              '--merges'
+          )
+
+          if not log.strip() and not merges.strip():
+              context['output'] = 'No commits found between ' + from_tag + ' and ' + to_ref
+          else:
+              # Get repo name
+              _, remote_url, _ = run_git('remote', 'get-url', 'origin')
+              repo_name = remote_url.strip().split('/')[-1].replace('.git', '') if remote_url.strip() else 'project'
+
+              from npcpy.llm_funcs import get_llm_response
+
+              _model = npc.model if npc else (state.chat_model if state else 'gemma3:4b')
+              _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
+
+              prompt_parts = [
+                  'Generate release notes for ' + repo_name + '.',
+                  '',
+                  'Range: ' + from_tag + ' -> ' + to_ref,
+                  '',
+                  'Commits:',
+                  log[:6000] if log else '(none)',
+                  '',
+                  'Merge commits (PRs):',
+                  merges[:2000] if merges else '(none)',
+                  '',
+                  'Format the release notes in markdown:',
+                  '',
+                  '# Release Notes: ' + repo_name,
+                  '',
+                  '## Features',
+                  '- New capabilities and enhancements',
+                  '',
+                  '## Bug Fixes',
+                  '- Issues resolved',
+                  '',
+                  '## Breaking Changes',
+                  '- Changes that require user action (if any)',
+                  '',
+                  '## Other',
+                  '- Refactoring, docs, tests, chores',
+                  '',
+                  'Rules:',
+                  '- Group related commits together',
+                  '- Include commit hashes in parentheses',
+                  '- Skip trivial merge commits',
+                  '- Be concise but informative',
+              ]
+              prompt = '\n'.join(prompt_parts)
+
+              resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
+              context['output'] = str(resp.get('response', 'Failed to generate release notes.'))

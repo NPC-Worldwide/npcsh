@@ -1,0 +1,146 @@
+jinx_name: pr
+description: Create a GitHub pull request with an LLM-generated title and description. Requires gh CLI.
+inputs:
+  - task: ""
+  - base: ""
+steps:
+  - name: create_pr
+    engine: python
+    code: |
+      import os
+      import subprocess
+
+      task = context.get('task', '').strip()
+      base = context.get('base', '').strip()
+
+      def run_git(*args):
+          r = subprocess.run(
+              ['git'] + list(args),
+              capture_output=True, text=True, timeout=30
+          )
+          return r.returncode, r.stdout, r.stderr
+
+      def run_gh(*args):
+          r = subprocess.run(
+              ['gh'] + list(args),
+              capture_output=True, text=True, timeout=60
+          )
+          return r.returncode, r.stdout, r.stderr
+
+      # Check gh is available
+      rc, _, _ = run_gh('--version')
+      if rc != 0:
+          context['output'] = 'Error: gh CLI not found. Install from https://cli.github.com'
+      else:
+          # Check if in a git repo
+          rc, _, _ = run_git('rev-parse', '--is-inside-work-tree')
+          if rc != 0:
+              context['output'] = 'Not a git repository.'
+          else:
+              _, branch, _ = run_git('branch', '--show-current')
+              branch = branch.strip()
+
+              if branch in ('main', 'master'):
+                  context['output'] = 'Cannot create PR from ' + branch + '. Switch to a feature branch first.'
+              else:
+                  # Detect base branch
+                  if not base:
+                      for candidate in ('main', 'master'):
+                          rc, _, _ = run_git('rev-parse', '--verify', candidate)
+                          if rc == 0:
+                              base = candidate
+                              break
+                      if not base:
+                          base = 'main'
+
+                  # Push branch if needed
+                  rc, _, _ = run_git('rev-parse', '--verify', 'origin/' + branch)
+                  if rc != 0:
+                      prc, _, perr = run_git('push', '-u', 'origin', branch)
+                      if prc != 0:
+                          context['output'] = 'Failed to push branch: ' + perr[:200]
+
+                  if 'output' not in context:
+                      # Get diff and commit log
+                      _, diff_stat, _ = run_git('diff', '--stat', base + '...' + branch)
+                      _, diff_full, _ = run_git('diff', base + '...' + branch)
+                      _, log, _ = run_git('log', '--oneline', base + '..' + branch)
+
+                      if len(diff_full) > 8000:
+                          diff_full = diff_full[:8000] + '\n... (truncated)'
+
+                      from npcpy.llm_funcs import get_llm_response
+
+                      _model = npc.model if npc else (state.chat_model if state else 'gemma3:4b')
+                      _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
+
+                      prompt_parts = [
+                          'Generate a GitHub pull request title and description.',
+                          '',
+                          'Branch: ' + branch + ' -> ' + base,
+                      ]
+                      if task:
+                          prompt_parts.append('Task context: ' + task)
+
+                      prompt_parts.extend([
+                          '',
+                          'Commits:',
+                          log,
+                          '',
+                          'Diff stats:',
+                          diff_stat,
+                          '',
+                          'Diff:',
+                          diff_full,
+                          '',
+                          'Respond in this EXACT format:',
+                          'TITLE: <short PR title, max 72 chars>',
+                          '',
+                          'BODY:',
+                          '## Summary',
+                          '<2-4 bullet points describing the changes>',
+                          '',
+                          '## Changes',
+                          '<list of specific changes>',
+                          '',
+                          '## Test Plan',
+                          '<how to verify these changes>',
+                      ])
+                      prompt = '\n'.join(prompt_parts)
+
+                      resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
+                      result = str(resp.get('response', ''))
+
+                      # Parse title and body
+                      title = branch.replace('-', ' ').replace('_', ' ').title()
+                      body = ''
+                      if 'TITLE:' in result:
+                          title_start = result.find('TITLE:') + 6
+                          title_end = result.find('\n', title_start)
+                          if title_end < 0:
+                              title_end = len(result)
+                          title = result[title_start:title_end].strip()
+
+                      if 'BODY:' in result:
+                          body = result[result.find('BODY:') + 5:].strip()
+                      elif '## Summary' in result:
+                          body = result[result.find('## Summary'):].strip()
+
+                      if not body:
+                          body = result
+
+                      # Create PR
+                      prc, pr_out, pr_err = run_gh(
+                          'pr', 'create',
+                          '--title', title,
+                          '--body', body,
+                          '--base', base,
+                      )
+                      if prc == 0:
+                          context['output'] = 'PR created: ' + pr_out.strip()
+                      else:
+                          # Maybe PR already exists
+                          if 'already exists' in pr_err:
+                              context['output'] = 'PR already exists for this branch.\n' + pr_err.strip()
+                          else:
+                              context['output'] = 'PR creation failed: ' + pr_err[:300]

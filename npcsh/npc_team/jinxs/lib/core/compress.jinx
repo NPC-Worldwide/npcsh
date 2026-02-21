@@ -1,6 +1,5 @@
 jinx_name: "compress"
 description: "Manages conversation and knowledge context - compress, flush, sleep, dream"
-interactive: true
 inputs:
 - flush: ""
 - sleep: False

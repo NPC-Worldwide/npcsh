@@ -1,9 +1,5 @@
 jinx_name: python
-description: Execute scripts with python. You must set the ultimate result as the "output"
-  variable. It MUST be a string. 
-  Do not add unnecessary print statements. 
-  This jinx is intended for executing code snippets that are not 
-  accomplished by other jinxes. Use it only when the others are insufficient.
+description: Execute Python code directly. Code runs immediately — do NOT wrap in function definitions unless you also call them. To create a file, use open('/path', 'w') and write to it. To create a script file, write the script content to the file with open(). Set the "output" variable to a result string. Do not write print statements in your code. do not ever include bare backslashes preceding strings and do not include guides for usage in python scripts unless explicitly requested.
 inputs:
 - code
 steps:
