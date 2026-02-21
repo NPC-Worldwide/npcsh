@@ -1,6 +1,5 @@
 jinx_name: yap
 description: Voice chat TUI - speech-to-text input, text-to-speech output
-interactive: true
 inputs:
   - model: null
   - provider: null

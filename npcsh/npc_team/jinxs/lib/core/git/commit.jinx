@@ -1,0 +1,144 @@
+jinx_name: commit
+description: Generate a commit message from staged changes using the LLM. Stages all if nothing is staged. Shows the proposed message for confirmation.
+inputs:
+  - hint: ""
+steps:
+  - name: smart_commit
+    engine: python
+    code: |
+      import os
+      import sys
+      import subprocess
+
+      hint = context.get('hint', '').strip()
+
+      def run_git(*args):
+          r = subprocess.run(
+              ['git'] + list(args),
+              capture_output=True, text=True, timeout=30
+          )
+          return r.returncode, r.stdout, r.stderr
+
+      # Check if in a git repo
+      rc, _, _ = run_git('rev-parse', '--is-inside-work-tree')
+      if rc != 0:
+          context['output'] = 'Not a git repository.'
+      else:
+          # Check for staged changes
+          rc, staged_diff, _ = run_git('diff', '--cached', '--stat')
+          if not staged_diff.strip():
+              # Nothing staged — check for unstaged changes
+              rc, unstaged, _ = run_git('diff', '--stat')
+              rc2, untracked, _ = run_git('status', '--porcelain')
+              if not unstaged.strip() and not untracked.strip():
+                  context['output'] = 'Nothing to commit — working tree clean.'
+              else:
+                  # Auto-stage everything
+                  run_git('add', '-A')
+                  _, staged_diff, _ = run_git('diff', '--cached', '--stat')
+                  if not staged_diff.strip():
+                      context['output'] = 'Nothing to commit after staging.'
+
+          if staged_diff.strip():
+              # Get the full diff for the LLM
+              _, full_diff, _ = run_git('diff', '--cached')
+              # Truncate if huge
+              if len(full_diff) > 8000:
+                  full_diff = full_diff[:8000] + '\n... (truncated)'
+
+              _, branch, _ = run_git('branch', '--show-current')
+              branch = branch.strip()
+
+              from npcpy.llm_funcs import get_llm_response
+
+              _model = npc.model if npc else (state.chat_model if state else 'gemma3:4b')
+              _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
+
+              prompt_parts = [
+                  'Generate a concise git commit message for these changes.',
+                  'Branch: ' + branch,
+                  '',
+                  'Staged files:',
+                  staged_diff,
+                  '',
+                  'Diff:',
+                  full_diff,
+              ]
+              if hint:
+                  prompt_parts.insert(1, 'Context: ' + hint)
+
+              prompt_parts.extend([
+                  '',
+                  'Rules:',
+                  '- First line: type(scope): description (max 72 chars)',
+                  '- Types: feat, fix, refactor, docs, test, chore, style, perf',
+                  '- Optional body after blank line for complex changes',
+                  '- Be specific about what changed, not vague',
+                  '',
+                  'Respond with ONLY the commit message, no explanation.',
+              ])
+              prompt = '\n'.join(prompt_parts)
+
+              resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
+              message = str(resp.get('response', '')).strip()
+              # Clean up — remove markdown fencing if present
+              if message.startswith('```'):
+                  lines = message.split('\n')
+                  message = '\n'.join(lines[1:-1] if lines[-1].startswith('```') else lines[1:])
+
+              if not message:
+                  context['output'] = 'Failed to generate commit message.'
+              elif sys.stdin.isatty():
+                  # Interactive — show message and ask for confirmation
+                  import tty, termios
+                  from termcolor import colored
+
+                  print(colored('\nProposed commit message:', 'cyan', attrs=['bold']))
+                  print()
+                  print(colored(message, 'white'))
+                  print()
+                  print(colored('[Enter] Commit  [e] Edit  [q] Cancel', 'yellow'))
+
+                  fd = sys.stdin.fileno()
+                  old = termios.tcgetattr(fd)
+                  try:
+                      tty.setcbreak(fd)
+                      c = os.read(fd, 1).decode('latin-1')
+                  finally:
+                      termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+                  if c in ('\r', '\n'):
+                      rc, out, err = run_git('commit', '-m', message)
+                      if rc == 0:
+                          context['output'] = 'Committed: ' + message.split('\n')[0]
+                      else:
+                          context['output'] = 'Commit failed: ' + (err or out)[:200]
+                  elif c == 'e':
+                      # Open in $EDITOR
+                      import tempfile
+                      editor = os.environ.get('EDITOR', 'vi')
+                      with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                          f.write(message)
+                          tmppath = f.name
+                      os.system(editor + ' ' + tmppath)
+                      with open(tmppath) as f:
+                          edited = f.read().strip()
+                      os.unlink(tmppath)
+                      if edited:
+                          rc, out, err = run_git('commit', '-m', edited)
+                          if rc == 0:
+                              context['output'] = 'Committed: ' + edited.split('\n')[0]
+                          else:
+                              context['output'] = 'Commit failed: ' + (err or out)[:200]
+                      else:
+                          context['output'] = 'Empty message — commit cancelled.'
+                  else:
+                      # Unstage if we auto-staged
+                      context['output'] = 'Commit cancelled.'
+              else:
+                  # Non-interactive — just commit
+                  rc, out, err = run_git('commit', '-m', message)
+                  if rc == 0:
+                      context['output'] = 'Committed: ' + message.split('\n')[0]
+                  else:
+                      context['output'] = 'Commit failed: ' + (err or out)[:200]

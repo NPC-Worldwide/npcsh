@@ -4,6 +4,10 @@ UI helpers for npcsh - spinners, colors, formatting
 import sys
 import threading
 import time
+import collections
+import shutil
+import os
+import signal
 from termcolor import colored
 
 # Global reference to current active spinner for sub-agent updates
@@ -12,6 +16,163 @@ _current_spinner = None
 def get_current_spinner():
     """Get the currently active spinner, if any."""
     return _current_spinner
+
+# Lock that all threads must hold before writing to stdout so that spinner
+# updates and BottomBar redraws never interleave.
+_stdout_lock = threading.Lock()
+
+# Set to the active BottomBar instance while a processing phase is running.
+_active_bottom_bar = None
+
+
+class BottomBar:
+    """Sticky input area pinned to the last terminal row during processing.
+
+    While a command is running the user can type their next message here.
+    Pressing Enter queues the message; Ctrl-C / ESC interrupts the running
+    command (same as before).  The scroll region is restricted so that all
+    normal output (print statements, spinner animation) scrolls in the rows
+    above the bar.
+    """
+
+    _PROMPT = "⌨ Next: "
+
+    def __init__(self):
+        self.queue = collections.deque()
+        self._stop = threading.Event()
+        self._pause_req = threading.Event()   # main thread requests pause
+        self._pause_ack = threading.Event()   # bar thread acknowledges pause
+        self._thread = None
+        self._buf = ""
+        self._rows = shutil.get_terminal_size().lines
+
+    # ── public API ──────────────────────────────────────────────────────────
+
+    def start(self):
+        self._rows = shutil.get_terminal_size().lines
+        self._stop.clear()
+        self._pause_req.clear()
+        self._pause_ack.clear()
+        self._buf = ""
+        with _stdout_lock:
+            # Reserve the bottom row by restricting the scroll region.
+            sys.stdout.write(f'\033[1;{self._rows - 1}r')
+            # Park the cursor at the bottom of the scroll region so normal
+            # output scrolls there and not into the bar.
+            sys.stdout.write(f'\033[{self._rows - 1};1H')
+            sys.stdout.flush()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        self._pause_req.clear()
+        if self._thread:
+            self._thread.join(timeout=0.5)
+        with _stdout_lock:
+            sys.stdout.write('\033[r')                              # reset scroll region
+            sys.stdout.write(f'\033[{self._rows};1H\033[K')        # clear bar row
+            sys.stdout.write(f'\033[{self._rows - 1};1H')          # park cursor
+            sys.stdout.flush()
+
+    def pause(self):
+        """Temporarily restore the terminal to cooked mode for input() calls.
+        Blocks until the bar thread has restored settings."""
+        self._pause_req.set()
+        self._pause_ack.wait(timeout=1.0)
+        # Clear the bar row so it doesn't confuse the user during input().
+        with _stdout_lock:
+            sys.stdout.write(f'\033[{self._rows};1H\033[K')
+            sys.stdout.flush()
+
+    def resume(self):
+        """Re-enter cbreak mode and redraw the bar after an input() call."""
+        self._pause_ack.clear()
+        self._pause_req.clear()
+        self._draw()
+
+    # ── internal ────────────────────────────────────────────────────────────
+
+    def _draw(self):
+        rows = shutil.get_terminal_size().lines
+        if rows != self._rows:
+            self._rows = rows
+            with _stdout_lock:
+                sys.stdout.write(f'\033[1;{rows - 1}r')
+                sys.stdout.flush()
+        with _stdout_lock:
+            # Save cursor, jump to bar row, draw, restore cursor.
+            # Using ANSI save/restore (\033[s / \033[u) so the cursor returns
+            # to exactly where it was — no fixed-row jump that causes flashing.
+            sys.stdout.write(f'\033[s')
+            sys.stdout.write(f'\033[{self._rows};1H\033[K')
+            sys.stdout.write(colored(self._PROMPT, "cyan") + self._buf)
+            if self.queue:
+                sys.stdout.write(colored(f"  [{len(self.queue)} queued]", "yellow"))
+            sys.stdout.write('\033[u')
+            sys.stdout.flush()
+
+    def _run(self):
+        try:
+            import termios
+            import tty
+            import select as _sel
+
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+
+            def _enter_cbreak():
+                tty.setcbreak(fd)
+                s = termios.tcgetattr(fd)
+                s[3] &= ~termios.ISIG        # Ctrl-C → \x03, not SIGINT
+                termios.tcsetattr(fd, termios.TCSADRAIN, s)
+
+            try:
+                _enter_cbreak()
+                self._draw()
+
+                while not self._stop.is_set():
+                    # ── pause/resume for synchronous input() calls ──────────
+                    if self._pause_req.is_set():
+                        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                        self._pause_ack.set()
+                        while self._pause_req.is_set() and not self._stop.is_set():
+                            time.sleep(0.05)
+                        if not self._stop.is_set():
+                            _enter_cbreak()
+                            self._draw()
+                        continue
+
+                    ready, _, _ = _sel.select([sys.stdin], [], [], 0.15)
+                    if not ready:
+                        continue    # scroll region protects bar row — no redraw needed
+
+                    c = sys.stdin.read(1)
+                    if not c:
+                        break
+
+                    if c in ('\r', '\n'):
+                        if self._buf.strip():
+                            self.queue.append(self._buf.strip())
+                        self._buf = ""
+                        self._draw()
+                    elif c in ('\x03', '\x1b'):     # Ctrl-C or ESC → interrupt
+                        self._stop.set()
+                        os.kill(os.getpid(), signal.SIGINT)
+                        break
+                    elif c in ('\x7f', '\x08'):     # Backspace
+                        if self._buf:
+                            self._buf = self._buf[:-1]
+                        self._draw()
+                    elif ord(c) >= 32:              # Printable character
+                        self._buf += c
+                        self._draw()
+
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+        except Exception:
+            pass
 
 class SpinnerContext:
     """Context manager for showing a spinner during long operations.
@@ -64,9 +225,11 @@ class SpinnerContext:
         self._start_time = time.time()
         self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
-        # Start key listener for ESC
-        self._key_thread = threading.Thread(target=self._listen_for_esc, daemon=True)
-        self._key_thread.start()
+        # Only start the ESC listener when BottomBar is not managing stdin.
+        # (BottomBar forwards Ctrl-C/ESC as SIGINT itself.)
+        if _active_bottom_bar is None:
+            self._key_thread = threading.Thread(target=self._listen_for_esc, daemon=True)
+            self._key_thread.start()
         return self
 
     def __exit__(self, *args):
@@ -138,9 +301,10 @@ class SpinnerContext:
             timer_display = colored(f" [{timer_str}]", "blue")
 
             line = f'\r{char} {self.message}...{timer_display}{token_str}{status_str}{hint}'
-            # Clear rest of line
-            sys.stdout.write(line + ' ' * 10)
-            sys.stdout.flush()
+            # Clear rest of line; hold the lock so BottomBar redraws don't interleave.
+            with _stdout_lock:
+                sys.stdout.write(line + ' ' * 10)
+                sys.stdout.flush()
             idx += 1
             time.sleep(self.delay)
 

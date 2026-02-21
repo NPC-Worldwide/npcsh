@@ -1,6 +1,5 @@
 jinx_name: build
 description: Interactive TUI for building deployment artifacts from an NPC team
-interactive: true
 inputs:
   - target: ""
   - outdir: "./build"

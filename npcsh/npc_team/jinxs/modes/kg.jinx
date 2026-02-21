@@ -1,6 +1,5 @@
 jinx_name: kg
 description: Interactive knowledge graph browser - explore facts, concepts, and links
-interactive: true
 inputs:
   - action: ""
   - dream: false
