@@ -240,6 +240,10 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
 
     def exit_shell(current_state: ShellState):
         print("\nGoodbye!")
+
+        if current_state.turn_count <= 10:
+            sys.exit(0)
+
         print(colored("Processing and archiving all session knowledge...", "cyan"))
 
         engine = command_history.engine
@@ -289,7 +293,9 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                                   evolved_kg,
                                   team_name,
                                   npc_name,
-                                  path)
+                                  path,
+                                  conversation_id=current_state.conversation_id,
+                                  message_id=f"{current_state.conversation_id}_exit")
 
                 except Exception as e:
                     import traceback

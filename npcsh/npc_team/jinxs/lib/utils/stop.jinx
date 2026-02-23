@@ -7,3 +7,4 @@ steps:
     engine: python
     code: |
       context['output'] = ''
+      state._stop_requested = True

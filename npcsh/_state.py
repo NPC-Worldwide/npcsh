@@ -1739,10 +1739,21 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         sys.stdout.write('\033[J')
         sys.stdout.write(prompt + buf)
 
-        # No hint line below — position cursor at correct column
-        _prev_hint_lines = 0
+        # Draw hint line below input
+        hint = current_hint()
+        if hint:
+            hint_lines = hint.split('\n')
+            _prev_hint_lines = len(hint_lines)
+            sys.stdout.write('\n' + hint)
+        else:
+            _prev_hint_lines = 0
+
+        # Move cursor back to correct position in input
+        # First go back up past hint lines
+        total_lines_below = _prev_hint_lines
         lines_after_cursor = (total_len // term_width) - (cursor_total // term_width)
-        for _ in range(lines_after_cursor):
+        total_lines_below += lines_after_cursor
+        for _ in range(total_lines_below):
             sys.stdout.write('\033[A')
         cursor_col = cursor_total % term_width
         sys.stdout.write('\r')
@@ -1753,8 +1764,16 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
 
     # Enable bracketed paste mode
     sys.stdout.write('\033[?2004h')
-    # Print prompt on its own line — no cursor dancing
+    # Print prompt with initial hint below
     sys.stdout.write(prompt)
+    if token_hint:
+        sys.stdout.write('\n' + token_hint)
+        sys.stdout.write('\033[A')  # Move back up to prompt line
+        # Position cursor after prompt
+        sys.stdout.write('\r')
+        if prompt_visible_len > 0:
+            sys.stdout.write('\033[' + str(prompt_visible_len) + 'C')
+        _prev_hint_lines = len(token_hint.split('\n'))
     sys.stdout.flush()
 
     # Store pasted content separately
@@ -2590,8 +2609,8 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
     def wrapped(**kwargs):
         log_level = getattr(state, 'log_level', 'normal')
 
-        # Display tool call (skip in silent mode)
-        if log_level != "silent":
+        # Display tool call (skip in silent mode, skip chat which streams its own output)
+        if log_level != "silent" and tool_name != "chat":
             try:
                 args_display = ""
                 # Always show a preview of args for key tools
@@ -2646,7 +2665,7 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
         # Execute tool
         try:
             result = tool_func(**kwargs)
-            if log_level != "silent":
+            if log_level != "silent" and tool_name != "chat":
                 try:
                     print(colored(" ✓", "green"), flush=True)
                     # Show preview of result only in verbose mode
@@ -2729,7 +2748,7 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
                         ctx = jinx.execute(
                             input_values=input_values,
                             npc=npc_obj,
-                            messages=state.messages,
+                            messages=list(state.messages),
                             extra_globals=extras,
                             jinja_env=jinja_env
                         )
@@ -3021,7 +3040,8 @@ def process_pipeline_command(
 You have access to these tools: {tool_list}. Call tools via the function calling interface.
 
 Use tools when you need to take action (run commands, search, edit files, etc.). Use chat to respond to the user. Use stop when you are done. Do not call the same tool twice with the same arguments.
-Do not call stop without first calling chat to deliver a response to the user."""
+Do not call stop without first calling chat to deliver a response to the user.
+The user can see tool outputs directly. Do not re-write or repeat them in your chat response — just reference the relevant parts."""
 
         npc_name = (
             state.npc.name 
@@ -3050,9 +3070,10 @@ Do not call stop without first calling chat to deliver a response to the user.""
                 max_iterations = 50
                 total_usage = {"input_tokens": 0, "output_tokens": 0}
                 state._agent_nudges = 0
+                state._stop_requested = False
                 tool_calls_count = 0
 
-                while iteration < max_iterations:
+                while iteration < max_iterations and not state._stop_requested:
                     iteration += 1
 
                     # Guard against orphaned tool calls from a prior interrupt
@@ -3060,9 +3081,10 @@ Do not call stop without first calling chat to deliver a response to the user.""
 
                     # Log what the model will see
                     msg_roles = [m.get("role", "?") for m in state.messages[-6:]]
-                    iter_prompt = full_llm_cmd if iteration == 1 else "If you have a response for the user, call chat with your message. When you have nothing left to do, call stop."
-                    iter_context = info if iteration == 1 else None
-                    print(colored(f"  [iter {iteration}] {len(state.messages)} msgs, last roles: {msg_roles}, prompt: {repr(iter_prompt[:80]) if iter_prompt else None}", "white", attrs=["dark"]))
+                    iter_prompt = full_llm_cmd if iteration == 1 else "Continue. Call stop when done."
+                    print(colored(f"  [iter {iteration}] {len(state.messages)} msgs, last roles: {msg_roles}", "white", attrs=["dark"]))
+                    if iter_prompt:
+                        print(colored(f"  [iter {iteration}] prompt: {iter_prompt[:120]}{'...' if len(iter_prompt) > 120 else ''}", "white", attrs=["dark"]))
 
                     with SpinnerContext(f"{npc_name} thinking...", style="dots_pulse"):
                         llm_result = get_llm_response(
@@ -3074,7 +3096,7 @@ Do not call stop without first calling chat to deliver a response to the user.""
                             messages=state.messages,
                             stream=False,
                             attachments=state.attachments if iteration == 1 else None,
-                            context=iter_context,
+                            context=info if iteration == 1 else None,
                             tools=tools_for_llm,
                             tool_choice="auto",
                         )
@@ -3088,6 +3110,9 @@ Do not call stop without first calling chat to deliver a response to the user.""
                         state.messages = llm_result.get("messages", state.messages)
 
                     raw_tool_calls = llm_result.get("tool_calls") if isinstance(llm_result, dict) else None
+                    response_text = llm_result.get("response", "") if isinstance(llm_result, dict) else ""
+                    if response_text and isinstance(response_text, str) and response_text.strip():
+                        print(colored(f"  [iter {iteration}] model text: {response_text[:150]}{'...' if len(response_text) > 150 else ''}", "white", attrs=["dark"]))
 
                     if raw_tool_calls:
                         tool_calls_count += 1
@@ -3100,7 +3125,7 @@ Do not call stop without first calling chat to deliver a response to the user.""
                                 called_names.append(tc.get("function", {}).get("name", "?"))
                             elif hasattr(tc, "function"):
                                 called_names.append(getattr(tc.function, "name", "?"))
-                        print(colored(f"  [iter {iteration}] tools: {', '.join(called_names)}", "white", attrs=["dark"]))
+                        print(colored(f"  [iter {iteration}] tools called: {', '.join(called_names)}", "white", attrs=["dark"]))
 
                         for tool_call in raw_tool_calls:
                             if isinstance(tool_call, dict):
@@ -3125,6 +3150,12 @@ Do not call stop without first calling chat to deliver a response to the user.""
                                 tool_result_str = json.dumps(tool_result, default=str) if not isinstance(tool_result, str) else tool_result
                             else:
                                 tool_result_str = f"Tool '{tool_name}' not found in available tools."
+
+                            # Log tool args and result
+                            args_preview = str(arguments)[:150]
+                            result_preview = tool_result_str[:150] if tool_result_str else "(empty)"
+                            print(colored(f"  [iter {iteration}] {tool_name} args: {args_preview}", "white", attrs=["dark"]))
+                            print(colored(f"  [iter {iteration}] {tool_name} result: {result_preview}", "white", attrs=["dark"]))
 
                             state.messages.append({
                                 "role": "tool",
@@ -3783,7 +3814,7 @@ def process_result(
 
         result_state.turn_count += 1
 
-        if result_state.turn_count % 10 == 0:
+        if result_state.turn_count > 10 and result_state.turn_count % 10 == 0:
           try:
             approved_facts = []
 
@@ -3900,10 +3931,12 @@ def process_result(
                         )
                         save_kg_to_db(
                             engine,
-                            evolved_npc_kg, 
-                            team_name, 
-                            npc_name, 
-                            result_state.current_path
+                            evolved_npc_kg,
+                            team_name,
+                            npc_name,
+                            result_state.current_path,
+                            conversation_id=result_state.conversation_id,
+                            message_id=f"{result_state.conversation_id}_{len(result_state.messages)}"
                         )
                 except Exception as e:
                     print(colored(

@@ -129,9 +129,9 @@ steps:
               if init_done:
                   rc, _, _ = run_git('rev-parse', '--is-inside-work-tree')
 
-              if not init_done or rc != 0:
-                  context['output'] = 'Git TUI closed.'
-              else:
+          if rc != 0:
+              context['output'] = 'Git TUI closed.'
+          else:
               # Get repo root
               _, root, _ = run_git('rev-parse', '--show-toplevel')
               repo_root = root.strip()

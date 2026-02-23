@@ -1,0 +1,25 @@
+jinx_name: ctx
+description: Browse and edit individual context fields in your editor
+inputs: []
+
+steps:
+  - name: edit_ctx
+    engine: python
+    code: |
+      from pathlib import Path
+
+      if not state or not state.team:
+          context['output'] = "No team loaded."
+      else:
+          team_dir = Path(state.team.team_path)
+          ctx_files = sorted(team_dir.glob('*.ctx'))
+          ctx_path = ctx_files[0] if ctx_files else team_dir / f"{state.team.name or 'team'}.ctx"
+
+          def _on_save(data):
+              forenpc = data.get('forenpc')
+              if forenpc and state.team and hasattr(state.team, 'npcs'):
+                  if forenpc in state.team.npcs:
+                      state.npc = state.team.npcs[forenpc]
+
+          ctx_editor(str(ctx_path), on_save=_on_save)
+          context['output'] = "Context editor closed."
