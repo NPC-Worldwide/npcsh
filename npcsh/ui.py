@@ -25,6 +25,18 @@ _stdout_lock = threading.Lock()
 _active_bottom_bar = None
 
 
+def pause_bottom_bar():
+    """Stop the BottomBar if active. Call before any TUI that reads stdin directly."""
+    if _active_bottom_bar is not None:
+        _active_bottom_bar.stop()
+
+
+def resume_bottom_bar():
+    """Restart the BottomBar after a TUI is done."""
+    if _active_bottom_bar is not None:
+        _active_bottom_bar.start()
+
+
 class BottomBar:
     """Invisible input buffer that captures keystrokes during processing.
 
@@ -121,8 +133,20 @@ class BottomBar:
                     elif c in ('\x7f', '\x08'):     # Backspace
                         if self._buf:
                             self._buf = self._buf[:-1]
+                            spinner = get_current_spinner()
+                            if spinner:
+                                if self._buf:
+                                    preview = self._buf[-40:] if len(self._buf) > 40 else self._buf
+                                    spinner.set_status(f"typing: {preview}")
+                                else:
+                                    spinner.set_status("")
                     elif ord(c) >= 32:              # Printable character
                         self._buf += c
+                        # Show typing in spinner status
+                        spinner = get_current_spinner()
+                        if spinner:
+                            preview = self._buf[-40:] if len(self._buf) > 40 else self._buf
+                            spinner.set_status(f"typing: {preview}")
 
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -253,7 +277,10 @@ class SpinnerContext:
             if self._status_msg:
                 status_str = colored(f" {self._status_msg}", "yellow")
 
-            hint = colored(" (ESC to cancel)", "white", attrs=["dark"])
+            if _active_bottom_bar is not None:
+                hint = colored(" (type to queue, ESC to cancel)", "white", attrs=["dark"])
+            else:
+                hint = colored(" (ESC to cancel)", "white", attrs=["dark"])
             timer_display = colored(f" [{timer_str}]", "blue")
 
             line = f'\r{char} {self.message}...{timer_display}{token_str}{status_str}{hint}'
@@ -337,3 +364,218 @@ def wrap_text(text: str, width: int = 80) -> str:
     """Wrap text to specified width"""
     import textwrap
     return textwrap.fill(text, width=width)
+
+
+def ctx_editor(ctx_path, on_save=None):
+    """Field-level editor for .ctx files. Navigate with j/k, Enter opens field in $EDITOR."""
+    import yaml
+    import tty
+    import termios
+    import select
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    ctx_path = Path(ctx_path)
+    if not ctx_path.exists():
+        ctx_path.write_text("forenpc: \n")
+
+    with open(ctx_path) as f:
+        ctx_data = yaml.safe_load(f) or {}
+
+    ui = {'sel': 0, 'scroll': 0, 'status': '', 'dirty': False}
+
+    def term_size():
+        try:
+            s = os.get_terminal_size()
+            return s.columns, s.lines
+        except Exception:
+            return 80, 24
+
+    def fmt_val(raw, maxw):
+        if isinstance(raw, list):
+            v = ', '.join(str(x) for x in raw)
+        elif isinstance(raw, bool):
+            v = 'true' if raw else 'false'
+        elif raw is None:
+            v = ''
+        else:
+            v = str(raw).replace('\n', ' ')
+        if len(v) > maxw:
+            v = v[:maxw - 3] + '...'
+        return v
+
+    def wl(row, text):
+        return f"\033[{row};1H\033[K{text}"
+
+    def render():
+        W, H = term_size()
+        out = ["\033[H"]
+        hdr = f" {ctx_path.name} "
+        out.append(wl(1, f"\033[7;1m{'=' * W}\033[0m"))
+        out.append(f"\033[1;{max(1, (W - len(hdr)) // 2)}H\033[7;1m{hdr}\033[0m")
+        out.append(wl(2, f"\033[90m{'─' * W}\033[0m"))
+
+        fields = list(ctx_data.keys())
+        body_start = 3
+        body_h = H - 5
+        vis = fields[ui['scroll']:ui['scroll'] + body_h]
+
+        for r in range(body_h):
+            row = body_start + r
+            i = r + ui['scroll']
+            if r >= len(vis):
+                out.append(wl(row, ""))
+                continue
+            key = vis[r]
+            raw = ctx_data.get(key, '')
+            val = fmt_val(raw, W - 22)
+            if i == ui['sel']:
+                line = f"  {key}: {val}"
+                out.append(wl(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+            elif val:
+                out.append(wl(row, f"  {key}: \033[32m{val}\033[0m"))
+            else:
+                out.append(wl(row, f"  {key}: \033[90m(empty)\033[0m"))
+
+        if not fields:
+            out.append(wl(body_start, "  \033[90mNo fields. Press 'a' to add one.\033[0m"))
+
+        out.append(wl(H - 2, f"\033[90m{'─' * W}\033[0m"))
+        if ui['status']:
+            out.append(wl(H - 1, f" \033[33m{ui['status'][:W - 2]}\033[0m"))
+        else:
+            dm = " [unsaved]" if ui['dirty'] else ""
+            out.append(wl(H - 1, f" \033[90m{len(fields)} fields{dm}\033[0m"))
+        foot = " [j/k] Nav  [Enter] Edit field  [a] Add  [d] Delete  [s] Save  [q] Quit"
+        out.append(wl(H, f"\033[7m{foot[:W].ljust(W)}\033[0m"))
+
+        sys.stdout.write(''.join(out))
+        sys.stdout.flush()
+
+    def edit_field(key):
+        raw = ctx_data.get(key, '')
+        if isinstance(raw, list):
+            val_str = '\n'.join(str(x) for x in raw)
+        elif raw is None:
+            val_str = ''
+        else:
+            val_str = str(raw)
+
+        editor = os.environ.get('EDITOR', os.environ.get('VISUAL', 'vim'))
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+        sys.stdout.write('\033[?25h\033[2J\033[H')
+        sys.stdout.flush()
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix=f'.{key}.txt', delete=False) as tf:
+                tf.write(val_str)
+                tf_path = tf.name
+            subprocess.call([editor, tf_path])
+            with open(tf_path) as f:
+                result = f.read().rstrip('\n')
+            os.unlink(tf_path)
+
+            if isinstance(raw, list):
+                ctx_data[key] = [x.strip() for x in result.split('\n') if x.strip()]
+            elif isinstance(raw, bool):
+                ctx_data[key] = result.lower() in ('true', '1', 'yes')
+            else:
+                ctx_data[key] = result
+            ui['dirty'] = True
+            ui['status'] = f"Updated {key}"
+        except Exception as e:
+            ui['status'] = f"Editor error: {e}"
+        finally:
+            tty.setcbreak(fd)
+            sys.stdout.write('\033[?25l\033[2J\033[H')
+            sys.stdout.flush()
+
+    def add_field():
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+        sys.stdout.write('\033[?25h')
+        sys.stdout.write(f"\033[{term_size()[1]};1H\033[KNew field name: ")
+        sys.stdout.flush()
+        try:
+            name = input().strip()
+        except (EOFError, KeyboardInterrupt):
+            name = ''
+        finally:
+            tty.setcbreak(fd)
+            sys.stdout.write('\033[?25l')
+            sys.stdout.flush()
+        if name:
+            ctx_data[name] = ''
+            ui['dirty'] = True
+            ui['status'] = f"Added {name} — press Enter to edit"
+
+    def save():
+        with open(ctx_path, 'w') as f:
+            yaml.dump(ctx_data, f, default_flow_style=False)
+        ui['dirty'] = False
+        ui['status'] = f"Saved {ctx_path.name}"
+        if on_save:
+            on_save(ctx_data)
+
+    fd = sys.stdin.fileno()
+    old_attrs = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.write('\033[?25l\033[2J\033[H')
+        sys.stdout.flush()
+        render()
+        while True:
+            c = os.read(fd, 1).decode('latin-1')
+            fields = list(ctx_data.keys())
+            _, H = term_size()
+            body_h = H - 5
+
+            if c == '\x1b':
+                if select.select([fd], [], [], 0.05)[0]:
+                    c2 = os.read(fd, 1).decode('latin-1')
+                    if c2 == '[':
+                        c3 = os.read(fd, 1).decode('latin-1')
+                        if c3 == 'A':
+                            ui['sel'] = max(0, ui['sel'] - 1)
+                            if ui['sel'] < ui['scroll']:
+                                ui['scroll'] = ui['sel']
+                            ui['status'] = ""
+                        elif c3 == 'B':
+                            ui['sel'] = min(max(0, len(fields) - 1), ui['sel'] + 1)
+                            if ui['sel'] >= ui['scroll'] + body_h:
+                                ui['scroll'] = ui['sel'] - body_h + 1
+                            ui['status'] = ""
+                    render()
+                    continue
+                else:
+                    break
+            elif c == 'q':
+                break
+            elif c == 'k':
+                ui['sel'] = max(0, ui['sel'] - 1)
+                if ui['sel'] < ui['scroll']:
+                    ui['scroll'] = ui['sel']
+                ui['status'] = ""
+            elif c == 'j':
+                ui['sel'] = min(max(0, len(fields) - 1), ui['sel'] + 1)
+                if ui['sel'] >= ui['scroll'] + body_h:
+                    ui['scroll'] = ui['sel'] - body_h + 1
+                ui['status'] = ""
+            elif c in ('\r', '\n', 'e'):
+                if fields and ui['sel'] < len(fields):
+                    edit_field(fields[ui['sel']])
+            elif c == 'a':
+                add_field()
+            elif c == 'd':
+                if fields and ui['sel'] < len(fields):
+                    removed = fields[ui['sel']]
+                    del ctx_data[removed]
+                    ui['sel'] = min(ui['sel'], max(0, len(ctx_data) - 1))
+                    ui['dirty'] = True
+                    ui['status'] = f"Deleted {removed}"
+            elif c == 's':
+                save()
+            render()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+        sys.stdout.write('\033[?25h\033[2J\033[H')
+        sys.stdout.flush()

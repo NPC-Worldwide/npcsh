@@ -73,6 +73,8 @@ class CommandRouter:
             from npcpy.data.load import load_file_contents
             from npcpy.data.web import search_web
             
+            from npcsh.ui import ctx_editor, pause_bottom_bar, resume_bottom_bar
+
             application_globals_for_jinx = {
                 "CommandHistory": CommandHistory,
                 "load_kg_from_db": load_kg_from_db,
@@ -80,6 +82,9 @@ class CommandRouter:
                 "execute_brainblast_command": execute_brainblast_command,
                 "load_file_contents": load_file_contents,
                 "search_web": search_web,
+                "ctx_editor": ctx_editor,
+                "pause_bottom_bar": pause_bottom_bar,
+                "resume_bottom_bar": resume_bottom_bar,
                 'state': kwargs.get('state')
             }
             
@@ -91,12 +96,18 @@ class CommandRouter:
             except:
                 pass
             
-            jinx_output = jinx.execute(
-                input_values=input_values,
-                npc=npc,
-                messages=messages,
-                extra_globals=application_globals_for_jinx
-            )
+            # Pause BottomBar for ALL jinx execution so TUI jinxes
+            # get exclusive stdin access without needing individual calls.
+            pause_bottom_bar()
+            try:
+                jinx_output = jinx.execute(
+                    input_values=input_values,
+                    npc=npc,
+                    messages=messages,
+                    extra_globals=application_globals_for_jinx
+                )
+            finally:
+                resume_bottom_bar()
             
             if isinstance(jinx_output, dict):
                 return {
