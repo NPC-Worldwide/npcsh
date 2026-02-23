@@ -13,8 +13,12 @@ steps:
       import sys
       import io
       import re
-      import tty
-      import termios
+      try:
+          import tty
+          import termios
+      except ImportError:
+          tty = None
+          termios = None
       import traceback
       import textwrap
       import select

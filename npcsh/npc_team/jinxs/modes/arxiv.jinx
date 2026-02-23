@@ -15,8 +15,12 @@ steps:
     code: |
       import os
       import sys
-      import tty
-      import termios
+      try:
+          import tty
+          import termios
+      except ImportError:
+          tty = None
+          termios = None
       import subprocess
       import urllib.request
       import urllib.parse

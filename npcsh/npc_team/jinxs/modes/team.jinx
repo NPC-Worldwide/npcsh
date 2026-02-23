@@ -7,8 +7,12 @@ steps:
     code: |
       import os
       import sys
-      import tty
-      import termios
+      try:
+          import tty
+          import termios
+      except ImportError:
+          tty = None
+          termios = None
       import select
       import yaml
       from pathlib import Path

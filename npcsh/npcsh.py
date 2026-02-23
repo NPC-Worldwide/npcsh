@@ -423,8 +423,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
 
         # ── PROCESSING PHASE ─────────────────────────────────────────────────
         # Ctrl+C / ESC just interrupt the current command and return to prompt.
-        # Start the BottomBar so the user can queue the next message while
-        # this one is running.
+        # BottomBar lets the user queue their next message while processing.
         _bar = None
         if not is_windows and sys.stdout.isatty():
             _bar = BottomBar()
