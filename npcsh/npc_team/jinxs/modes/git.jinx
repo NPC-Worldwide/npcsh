@@ -265,6 +265,12 @@ steps:
                       st.all_files.append({'type': 'header', 'label': 'Untracked'})
                       for f in st.untracked:
                           st.all_files.append({'type': 'untracked', 'entry': f})
+                  # Actions section
+                  st.all_files.append({'type': 'header', 'label': 'Actions'})
+                  st.all_files.append({'type': 'action', 'action': 'push', 'label': 'Push to remote'})
+                  st.all_files.append({'type': 'action', 'action': 'pull', 'label': 'Pull from remote'})
+                  st.all_files.append({'type': 'action', 'action': 'fetch', 'label': 'Fetch all remotes'})
+                  st.all_files.append({'type': 'action', 'action': 'diff_main', 'label': 'Diff vs main'})
                   # Clamp selection
                   if st.all_files:
                       st.sel = min(st.sel, len(st.all_files) - 1)
@@ -357,7 +363,7 @@ steps:
                   elif st.mode == 'commit_detail':
                       foot = ' [b] Back  [j/k] Scroll  [q] Quit '
                   elif st.tab == 0:
-                      foot = ' [j/k] Nav  [Enter] Diff  [s] Stage/Unstage  [a] StageAll  [u] UnstageAll  [c] Commit  [Tab] Switch  [q] Quit '
+                      foot = ' [j/k] Nav  [Enter] Open  [s] Stage  [a] StageAll  [u] UnstageAll  [c] Commit  [Tab] Switch  [q] Quit '
                   elif st.tab == 1:
                       foot = ' [j/k] Nav  [Enter] Detail  [Tab] Switch  [q] Quit '
                   elif st.tab == 2:
@@ -389,6 +395,12 @@ steps:
                       item = st.all_files[idx]
                       if item['type'] == 'header':
                           out.append(' \033[1;4m' + item['label'] + '\033[0m')
+                      elif item['type'] == 'action':
+                          label = item['label']
+                          if idx == st.sel:
+                              out.append('\033[7m   > ' + label + ' \033[0m')
+                          else:
+                              out.append('   \033[36m> ' + label + '\033[0m')
                       else:
                           e = item['entry']
                           if item['type'] == 'staged':
@@ -643,6 +655,65 @@ steps:
                       st.msg_color = '31'
                   st.stashes = load_stash()
 
+              def do_push():
+                  st.msg = 'Pushing...'
+                  st.msg_color = '36'
+                  render()
+                  rc, out, err = run_git('push')
+                  if rc == 0:
+                      st.msg = 'Pushed successfully'
+                      st.msg_color = '32'
+                  else:
+                      st.msg = 'Push failed: ' + (err or out)[:60]
+                      st.msg_color = '31'
+                  refresh_branch_info()
+
+              def do_pull():
+                  st.msg = 'Pulling...'
+                  st.msg_color = '36'
+                  render()
+                  rc, out, err = run_git('pull')
+                  if rc == 0:
+                      st.msg = 'Pulled successfully'
+                      st.msg_color = '32'
+                  else:
+                      st.msg = 'Pull failed: ' + (err or out)[:60]
+                      st.msg_color = '31'
+                  refresh_all()
+
+              def do_fetch():
+                  st.msg = 'Fetching...'
+                  st.msg_color = '36'
+                  render()
+                  rc, out, err = run_git('fetch', '--all')
+                  if rc == 0:
+                      st.msg = 'Fetched all remotes'
+                      st.msg_color = '32'
+                  else:
+                      st.msg = 'Fetch failed: ' + (err or out)[:60]
+                      st.msg_color = '31'
+                  refresh_branch_info()
+                  if st.tab == 2:
+                      st.branches = load_branches()
+
+              def show_diff_vs_main():
+                  # Try main, then master
+                  for base in ('main', 'master'):
+                      rc, _, _ = run_git('rev-parse', '--verify', base)
+                      if rc == 0:
+                          _, out, _ = run_git('diff', base + '...HEAD', '--color=never', '--stat')
+                          _, patch, _ = run_git('diff', base + '...HEAD', '--color=never')
+                          header = ['Diff: ' + st.branch_name + ' vs ' + base, '']
+                          if out.strip():
+                              header += out.splitlines() + ['', '--- full diff ---', '']
+                          st.diff_lines = header + patch.splitlines()
+                          st.mode = 'diff'
+                          st.diff_scroll = 0
+                          sys.stdout.write('\033[2J')
+                          return
+                  st.msg = 'No main or master branch found'
+                  st.msg_color = '33'
+
               # ========== Input ==========
               def list_len():
                   if st.tab == 0:
@@ -808,16 +879,26 @@ steps:
 
               def handle_enter():
                   if st.tab == 0:
-                      # Show diff for selected file
                       if st.all_files and st.sel < len(st.all_files):
                           item = st.all_files[st.sel]
                           if item['type'] == 'header':
                               return
+                          if item['type'] == 'action':
+                              act = item['action']
+                              if act == 'push':
+                                  do_push()
+                              elif act == 'pull':
+                                  do_pull()
+                              elif act == 'fetch':
+                                  do_fetch()
+                              elif act == 'diff_main':
+                                  show_diff_vs_main()
+                              return
+                          # Show diff for selected file
                           e = item['entry']
                           is_staged = item['type'] == 'staged'
                           st.diff_lines = load_diff(e['path'], staged=is_staged)
                           if not st.diff_lines:
-                              # Try unstaged diff
                               st.diff_lines = load_diff(e['path'], staged=False)
                           if not st.diff_lines:
                               st.msg = 'No diff for: ' + e['path']
