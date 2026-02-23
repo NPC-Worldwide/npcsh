@@ -42,3 +42,5 @@ jinxs:
   - lib/core/sh
   - lib/core/python
   - lib/core/search/web_search
+  - lib/utils/chat
+  - lib/utils/stop

@@ -23,3 +23,5 @@ jinxs:
   - lib/core/python
   - lib/core/load_file
   - lib/core/edit_file
+  - lib/utils/chat
+  - lib/utils/stop

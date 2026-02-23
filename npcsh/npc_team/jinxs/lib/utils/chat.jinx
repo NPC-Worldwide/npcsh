@@ -11,6 +11,7 @@ steps:
     engine: python
     code: |
       from npcpy.llm_funcs import get_llm_response
+      from npcpy.npc_sysenv import print_and_process_stream_with_markdown
 
       npc = context.get('npc')
       messages = context.get('messages', [])
@@ -33,7 +34,15 @@ steps:
               messages=messages
           )
 
-          context['output'] = response.get('response', '')
+          result = response.get('response', '')
+          if hasattr(result, '__iter__') and not isinstance(result, str):
+              result = print_and_process_stream_with_markdown(
+                  result, model, provider, show=True
+              )
+              st = globals().get('state')
+              if st:
+                  st._tool_output_streamed = True
+          context['output'] = f"[Response delivered to user] {result}"
           context['messages'] = response.get('messages', messages)
 
           # Track usage

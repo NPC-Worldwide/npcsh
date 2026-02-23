@@ -22,10 +22,26 @@ import sys
 import tempfile
 import time
 import textwrap
-import readline
+try:
+    import readline
+except ImportError:
+    readline = None
 import json
 from typing import Dict, List, Any, Tuple, Union, Optional, Callable
 import yaml
+
+
+def _yaml_block_dumper():
+    """Return a YAML Dumper that uses block scalar style for multiline strings."""
+    class _Dumper(yaml.SafeDumper):
+        pass
+    def _str_representer(dumper, data):
+        if '\n' in data:
+            return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+        return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+    _Dumper.add_representer(str, _str_representer)
+    return _Dumper
+
 
 # Setup logging - INFO by default, DEBUG if NPCSH_DEBUG=1
 def _setup_logging():
@@ -1095,20 +1111,20 @@ def validate_bash_command(command_parts: list) -> bool:
     if not command_parts:
         return False
 
-    base_command = command_parts[0]
+    base_command = command_parts[0].lower()
 
-    # Commands that are always considered valid for direct execution
+    # Commands that are always considered valid for direct execution (case-insensitive)
     ALWAYS_VALID_COMMANDS = BASH_COMMANDS + list(interactive_commands.keys()) + TERMINAL_EDITORS
 
     if base_command in ALWAYS_VALID_COMMANDS:
         return True
-    
+
     # Specific checks for commands that might be misinterpreted or need special handling
     if base_command == 'which':
-        return True # 'which' is a valid bash command
+        return True
 
     # If it's not in our explicit list, it's not a bash command we want to validate strictly
-    return False # If it reaches here, it's not a recognized bash command for strict validation.
+    return False
 
 def is_npcsh_initialized() -> bool:
     """
@@ -1666,8 +1682,11 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         return input(prompt)
 
     # Get history from readline
-    hist_len = readline.get_current_history_length()
-    history = [readline.get_history_item(i) for i in range(1, hist_len + 1)]
+    if readline is not None:
+        hist_len = readline.get_current_history_length()
+        history = [readline.get_history_item(i) for i in range(1, hist_len + 1)]
+    else:
+        history = []
     history_idx = len(history)
     saved_line = ""
 
@@ -1707,38 +1726,24 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
 
     def draw():
         nonlocal _prev_hint_lines
-        # Calculate how many lines the input takes
         total_len = prompt_visible_len + len(buf)
         num_lines = (total_len // term_width) + 1
-
-        # Move to start of input (may need to go up multiple lines)
-        # First go to column 0
-        sys.stdout.write('\r')
-        # Move up for each wrapped line we're on
         cursor_total = prompt_visible_len + pos
-        # Go up to the first line of input
+
+        # Go to start of first input line
+        sys.stdout.write('\r')
         for _ in range(num_lines - 1):
             sys.stdout.write('\033[A')
 
-        # Clear from cursor to end of screen (clears all wrapped lines + all hint lines below)
+        # Clear to end of screen and redraw prompt+buf
         sys.stdout.write('\033[J')
-
-        # Print prompt and buffer
         sys.stdout.write(prompt + buf)
 
-        # Print hint on next line(s) - hint may contain newlines
-        hint = current_hint()
-        hint_line_count = hint.count('\n') + 1 if hint else 1
-        _prev_hint_lines = hint_line_count
-        sys.stdout.write('\n' + hint)
-
-        # Now position cursor back to correct spot
-        # Go back up to the line where cursor should be
-        lines_after_cursor = (total_len // term_width) - (cursor_total // term_width) + hint_line_count
+        # No hint line below — position cursor at correct column
+        _prev_hint_lines = 0
+        lines_after_cursor = (total_len // term_width) - (cursor_total // term_width)
         for _ in range(lines_after_cursor):
             sys.stdout.write('\033[A')
-
-        # Position cursor in correct column
         cursor_col = cursor_total % term_width
         sys.stdout.write('\r')
         if cursor_col > 0:
@@ -1746,13 +1751,10 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
 
         sys.stdout.flush()
 
-    # Enable bracketed paste mode - terminal will wrap pastes with escape sequences
+    # Enable bracketed paste mode
     sys.stdout.write('\033[?2004h')
-
-    # Print prompt and reserve hint line
-    sys.stdout.write(prompt + '\n' + (token_hint or '') + '\033[A\r')
-    if prompt_visible_len > 0:
-        sys.stdout.write('\033[' + str(prompt_visible_len) + 'C')
+    # Print prompt on its own line — no cursor dancing
+    sys.stdout.write(prompt)
     sys.stdout.flush()
 
     # Store pasted content separately
@@ -2004,16 +2006,8 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                         sys.stdout.write('\033[A')
                     sys.stdout.write('\r\033[K')
                     sys.stdout.write('^C\n')
-                    # Redraw prompt with fresh hint
-                    hint = current_hint()
-                    _prev_hint_lines = hint.count('\n') + 1 if hint else 1
-                    sys.stdout.write(prompt + '\n' + hint)
-                    # Go back up past all hint lines
-                    for _ in range(_prev_hint_lines):
-                        sys.stdout.write('\033[A')
-                    sys.stdout.write('\r')
-                    if prompt_visible_len > 0:
-                        sys.stdout.write('\033[' + str(prompt_visible_len) + 'C')
+                    # Redraw prompt cleanly
+                    sys.stdout.write(prompt)
                     sys.stdout.flush()
 
             elif c == '\x04':  # Ctrl-D
@@ -2529,12 +2523,15 @@ def sanitize_messages(messages: List[Dict]) -> List[Dict]:
         if last_assistant_idx is None:
             break  # No assistant-with-tool_calls found - list is clean.
 
-        expected_ids = {
-            tc.get("id") or (tc.get("function", {}) or {}).get("id", "")
-            for tc in clean[last_assistant_idx]["tool_calls"]
-            if isinstance(tc, dict)
-        }
-        expected_ids.discard("")
+        # Extract expected IDs from both dict and object tool_calls
+        expected_ids = set()
+        for tc in clean[last_assistant_idx]["tool_calls"]:
+            if isinstance(tc, dict):
+                tc_id = tc.get("id") or (tc.get("function", {}) or {}).get("id", "")
+            else:
+                tc_id = getattr(tc, "id", "")
+            if tc_id:
+                expected_ids.add(tc_id)
 
         # Collect tool_call_ids actually present in subsequent tool messages.
         fulfilled_ids = set()
@@ -2542,11 +2539,18 @@ def sanitize_messages(messages: List[Dict]) -> List[Dict]:
             if msg.get("role") == "tool":
                 fulfilled_ids.add(msg.get("tool_call_id", ""))
 
-        if expected_ids and not expected_ids.issubset(fulfilled_ids):
-            # Orphaned: drop the assistant message and everything after it.
+        has_tool_calls = bool(clean[last_assistant_idx].get("tool_calls"))
+        if expected_ids:
+            if not expected_ids.issubset(fulfilled_ids):
+                # Orphaned: drop the assistant message and everything after it.
+                clean = clean[:last_assistant_idx]
+            else:
+                break  # The sequence is complete.
+        elif has_tool_calls and not fulfilled_ids:
+            # Can't verify IDs (non-dict objects) and no tool results follow — strip it.
             clean = clean[:last_assistant_idx]
         else:
-            break  # The sequence is complete.
+            break  # Has following tool results or empty tool_calls, assume OK.
 
     return clean
 
@@ -2974,40 +2978,7 @@ def process_pipeline_command(
                 print(colored("\nBash command interrupted by user.", "yellow"))
                 return state, colored("Command interrupted.", "red")
         
-        if success:
-            return state, result
-        else:
-            print(
-                colored(
-                    f"Command failed. Consulting {exec_model}...", 
-                    "yellow"
-                ), 
-                file=sys.stderr
-            )
-            fixer_prompt = (
-                f"The command '{cmd_to_process}' failed with error: "
-                f"'{result}'. Provide the correct command."
-            )
-            
-            with SpinnerContext(
-                f"{exec_model} analyzing error", 
-                style="brain"
-            ):
-                try: # Added try-except for KeyboardInterrupt here
-                    response = execute_llm_command(
-                        fixer_prompt, 
-                        model=exec_model,
-                        provider=exec_provider,
-                        npc=state.npc, 
-                        stream=stream_final, 
-                        messages=state.messages
-                    )
-                except KeyboardInterrupt:
-                    print(colored("\nLLM analysis interrupted by user.", "yellow"))
-                    return state, colored("LLM analysis interrupted.", "red")
-            
-            state.messages = response['messages']     
-            return state, response['response']
+        return state, result
     else:
         full_llm_cmd = (
             f"{cmd_to_process} {stdin_input}" 
@@ -3045,11 +3016,12 @@ def process_pipeline_command(
             else:
                 # Add tool guidance so model knows to use function calls
                 tool_names = [t['function']['name'] for t in tools_for_llm if 'function' in t]
-                info += (
-                    f"\nYou have access to these tools: {', '.join(tool_names)}. "
-                    f"You MUST use the function calling interface to invoke them. "
-                    f"Do NOT write tool names as text - call them as functions."
-                )
+                tool_list = ', '.join(tool_names)
+                info += f"""
+You have access to these tools: {tool_list}. Call tools via the function calling interface.
+
+Use tools when you need to take action (run commands, search, edit files, etc.). Use chat to respond to the user. Use stop when you are done. Do not call the same tool twice with the same arguments.
+Do not call stop without first calling chat to deliver a response to the user."""
 
         npc_name = (
             state.npc.name 
@@ -3057,61 +3029,44 @@ def process_pipeline_command(
             else "Assistant"
         )
         
-        with SpinnerContext(
-            f"{npc_name} processing with {exec_model}", 
-            style="dots_pulse"
-        ):
-            # Build extra_globals for jinx execution
-            application_globals_for_jinx = {
-                "CommandHistory": CommandHistory, 
-                "load_kg_from_db": load_kg_from_db,
-                "execute_rag_command": execute_rag_command, 
-                "execute_brainblast_command": execute_brainblast_command,
-                "load_file_contents": load_file_contents, 
-                "search_web": search_web,
-                "get_relevant_memories": get_relevant_memories,
+        # Build extra_globals for jinx execution (outside spinner)
+        application_globals_for_jinx = {
+            "CommandHistory": CommandHistory,
+            "load_kg_from_db": load_kg_from_db,
+            "execute_rag_command": execute_rag_command,
+            "execute_brainblast_command": execute_brainblast_command,
+            "load_file_contents": load_file_contents,
+            "search_web": search_web,
+            "get_relevant_memories": get_relevant_memories,
+            'state': state
+        }
+        current_module = sys.modules[__name__]
+        for name, func in inspect.getmembers(current_module, inspect.isfunction):
+            application_globals_for_jinx[name] = func
 
-                'state': state
-            }
-            current_module = sys.modules[__name__]
-            for name, func in inspect.getmembers(current_module, inspect.isfunction):
-                application_globals_for_jinx[name] = func
+        try:
+            if tool_capable:
+                iteration = 0
+                max_iterations = 50
+                total_usage = {"input_tokens": 0, "output_tokens": 0}
+                state._agent_nudges = 0
+                tool_calls_count = 0
 
-            # Log messages before LLM call
-            logger = logging.getLogger("npcsh.state")
-            logger.debug(f"[process_pipeline_command] Before LLM call: {len(state.messages)} messages, tool_capable={tool_capable}")
-            for i, msg in enumerate(state.messages[-3:]):
-                role = msg.get('role', 'unknown')
-                content = msg.get('content', '')
-                preview = content[:80] if isinstance(content, str) else str(type(content))
-                logger.debug(f"  msg[{len(state.messages)-3+i}] role={role}: {preview}...")
+                while iteration < max_iterations:
+                    iteration += 1
 
-            try: # Added try-except for KeyboardInterrupt here
-                if tool_capable:
-                    # Pass tools to LLM; npcsh executes them manually in the loop.
-                    # No auto_process_tool_calls - that path caused Anthropic prefill
-                    # errors on iteration >1 (messages ending with assistant + no prompt).
-                    llm_kwargs = {
-                        "tools": tools_for_llm,
-                        "tool_choice": "auto",
-                    }
+                    # Guard against orphaned tool calls from a prior interrupt
+                    state.messages = sanitize_messages(state.messages)
 
-                    # Agent loop: call LLM → execute tool calls → repeat until
-                    # the model returns plain text (signals task complete).
-                    iteration = 0
-                    max_iterations = 50
-                    total_usage = {"input_tokens": 0, "output_tokens": 0}
-                    state._agent_nudges = 0
-                    tool_calls_count = 0
+                    # Log what the model will see
+                    msg_roles = [m.get("role", "?") for m in state.messages[-6:]]
+                    iter_prompt = full_llm_cmd if iteration == 1 else "If you have a response for the user, call chat with your message. When you have nothing left to do, call stop."
+                    iter_context = info if iteration == 1 else None
+                    print(colored(f"  [iter {iteration}] {len(state.messages)} msgs, last roles: {msg_roles}, prompt: {repr(iter_prompt[:80]) if iter_prompt else None}", "white", attrs=["dark"]))
 
-                    while iteration < max_iterations:
-                        iteration += 1
-
-                        # Guard against orphaned tool calls from a prior interrupt
-                        state.messages = sanitize_messages(state.messages)
-
+                    with SpinnerContext(f"{npc_name} thinking...", style="dots_pulse"):
                         llm_result = get_llm_response(
-                            full_llm_cmd if iteration == 1 else None,
+                            iter_prompt,
                             model=exec_model,
                             provider=exec_provider,
                             npc=state.npc,
@@ -3119,84 +3074,91 @@ def process_pipeline_command(
                             messages=state.messages,
                             stream=False,
                             attachments=state.attachments if iteration == 1 else None,
-                            context=info if iteration == 1 else None,
-                            **llm_kwargs,
+                            context=iter_context,
+                            tools=tools_for_llm,
+                            tool_choice="auto",
                         )
 
-                        # Accumulate usage
-                        if isinstance(llm_result, dict) and llm_result.get('usage'):
-                            total_usage["input_tokens"] += llm_result['usage'].get('input_tokens', 0)
-                            total_usage["output_tokens"] += llm_result['usage'].get('output_tokens', 0)
+                    # Accumulate usage
+                    if isinstance(llm_result, dict) and llm_result.get('usage'):
+                        total_usage["input_tokens"] += llm_result['usage'].get('input_tokens', 0)
+                        total_usage["output_tokens"] += llm_result['usage'].get('output_tokens', 0)
 
-                        # Update state messages (response.py now embeds tool_calls
-                        # into the assistant message so the history is well-formed)
-                        if isinstance(llm_result, dict):
-                            state.messages = llm_result.get("messages", state.messages)
-
-                        raw_tool_calls = llm_result.get("tool_calls") if isinstance(llm_result, dict) else None
-
-                        if raw_tool_calls:
-                            # Execute each tool and append its result to messages
-                            tool_calls_count += 1
-                            state._agent_nudges = 0
-                            full_llm_cmd = None  # subsequent calls use messages for context
-
-                            for tool_call in raw_tool_calls:
-                                if isinstance(tool_call, dict):
-                                    tool_id = tool_call.get("id", f"call_{tool_calls_count}")
-                                    tool_name = tool_call.get("function", {}).get("name")
-                                    arguments_str = tool_call.get("function", {}).get("arguments", "{}")
-                                else:
-                                    tool_id = getattr(tool_call, "id", f"call_{tool_calls_count}")
-                                    tool_name = getattr(tool_call.function, "name", None) if hasattr(tool_call, "function") else None
-                                    arguments_str = getattr(tool_call.function, "arguments", "{}") if hasattr(tool_call, "function") else "{}"
-
-                                try:
-                                    arguments = json.loads(arguments_str) if isinstance(arguments_str, str) else (arguments_str or {})
-                                except json.JSONDecodeError:
-                                    arguments = {}
-
-                                if tool_name and tool_name in tool_exec_map:
-                                    try:
-                                        # wrap_tool_with_display already prints tool output
-                                        tool_result = tool_exec_map[tool_name](**arguments)
-                                    except Exception as exc:
-                                        tool_result = f"Error executing '{tool_name}': {exc}"
-                                    tool_result_str = json.dumps(tool_result, default=str) if not isinstance(tool_result, str) else tool_result
-                                else:
-                                    tool_result_str = f"Tool '{tool_name}' not found in available tools."
-
-                                state.messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tool_id,
-                                    "name": tool_name or "unknown",
-                                    "content": tool_result_str,
-                                })
-                        else:
-                            # LLM returned plain text - nudge if no tools called yet
-                            if (state.current_mode == 'agent'
-                                    and tool_calls_count == 0
-                                    and iteration < max_iterations
-                                    and state._agent_nudges < 3):
-                                state._agent_nudges += 1
-                                state.messages.append({
-                                    "role": "user",
-                                    "content": (
-                                        "You have not yet completed the task. "
-                                        "Continue working by calling tools. "
-                                        "Use the function calling interface to invoke tools - "
-                                        "do NOT write tool calls as text."
-                                    )
-                                })
-                                continue
-                            # LLM chose to respond with text - task is done
-                            break
-
-                    # Store accumulated usage
                     if isinstance(llm_result, dict):
-                        llm_result['usage'] = total_usage
+                        state.messages = llm_result.get("messages", state.messages)
 
-                else:
+                    raw_tool_calls = llm_result.get("tool_calls") if isinstance(llm_result, dict) else None
+
+                    if raw_tool_calls:
+                        tool_calls_count += 1
+                        state._agent_nudges = 0
+                        full_llm_cmd = None
+
+                        called_names = []
+                        for tc in raw_tool_calls:
+                            if isinstance(tc, dict):
+                                called_names.append(tc.get("function", {}).get("name", "?"))
+                            elif hasattr(tc, "function"):
+                                called_names.append(getattr(tc.function, "name", "?"))
+                        print(colored(f"  [iter {iteration}] tools: {', '.join(called_names)}", "white", attrs=["dark"]))
+
+                        for tool_call in raw_tool_calls:
+                            if isinstance(tool_call, dict):
+                                tool_id = tool_call.get("id", f"call_{tool_calls_count}")
+                                tool_name = tool_call.get("function", {}).get("name")
+                                arguments_str = tool_call.get("function", {}).get("arguments", "{}")
+                            else:
+                                tool_id = getattr(tool_call, "id", f"call_{tool_calls_count}")
+                                tool_name = getattr(tool_call.function, "name", None) if hasattr(tool_call, "function") else None
+                                arguments_str = getattr(tool_call.function, "arguments", "{}") if hasattr(tool_call, "function") else "{}"
+
+                            try:
+                                arguments = json.loads(arguments_str) if isinstance(arguments_str, str) else (arguments_str or {})
+                            except json.JSONDecodeError:
+                                arguments = {}
+
+                            if tool_name and tool_name in tool_exec_map:
+                                try:
+                                    tool_result = tool_exec_map[tool_name](**arguments)
+                                except Exception as exc:
+                                    tool_result = f"Error executing '{tool_name}': {exc}"
+                                tool_result_str = json.dumps(tool_result, default=str) if not isinstance(tool_result, str) else tool_result
+                            else:
+                                tool_result_str = f"Tool '{tool_name}' not found in available tools."
+
+                            state.messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_id,
+                                "name": tool_name or "unknown",
+                                "content": tool_result_str,
+                            })
+
+                            # Display tool result content (spinner is stopped here)
+                            # Skip if tool already streamed its own output
+                            already_streamed = getattr(state, '_tool_output_streamed', False)
+                            state._tool_output_streamed = False
+                            if tool_result_str and tool_result_str.strip() and not already_streamed:
+                                content = tool_result_str.replace('\\n', '\n').replace('\\t', '\t')
+                                print(colored(f"\n⚡ {tool_name}:", "cyan"))
+                                lines = content.split('\n')
+                                if len(lines) > 50:
+                                    render_markdown('\n'.join(lines[:25]))
+                                    print(colored(f"\n... ({len(lines) - 50} lines hidden) ...\n", "white", attrs=["dark"]))
+                                    render_markdown('\n'.join(lines[-25:]))
+                                else:
+                                    render_markdown(content)
+
+
+                    else:
+                        break
+
+
+                print(colored(f"  [{iteration} iterations, {tool_calls_count} tool calls]", "white", attrs=["dark"]))
+                if isinstance(llm_result, dict):
+                    llm_result['usage'] = total_usage
+
+            else:
+                with SpinnerContext(f"{npc_name} processing with {exec_model}", style="dots_pulse"):
                     llm_result = check_llm_command(
                         full_llm_cmd,
                         model=exec_model,
@@ -3212,16 +3174,19 @@ def process_pipeline_command(
                         extra_globals=application_globals_for_jinx,
                         tool_capable=tool_capable,
                     )
-            except KeyboardInterrupt:
-                print(colored("\nLLM processing interrupted by user.", "yellow"))
-                state.messages = sanitize_messages(state.messages)
-                return state, colored("LLM processing interrupted.", "red")
+        except KeyboardInterrupt:
+            print(colored("\nLLM processing interrupted by user.", "yellow"))
+            state.messages = sanitize_messages(state.messages)
+            return state, colored("LLM processing interrupted.", "red")
+        except Exception as _loop_exc:
+            state.messages = sanitize_messages(state.messages)
+            raise
 
         # Extract output and messages from llm_result
         # get_llm_response uses 'response', check_llm_command uses 'output'
         if isinstance(llm_result, dict):
             new_messages = llm_result.get("messages", state.messages)
-            logger.debug(f"[process_pipeline_command] After LLM call: received {len(new_messages)} messages (was {len(state.messages)})")
+            logging.getLogger("npcsh.state").debug(f"[process_pipeline_command] After LLM call: received {len(new_messages)} messages (was {len(state.messages)})")
             state.messages = new_messages
             output_text = llm_result.get("output") or llm_result.get("response")
 
@@ -3452,8 +3417,7 @@ def execute_command(
             time.sleep(30)
             return execute_command(command, state, review=review, router=router)
         except Exception as cmd_error:
-            import traceback
-            traceback.print_exc()
+            state.messages = sanitize_messages(state.messages)
             error_msg = colored(
                 f"❌ Error processing command: {cmd_error}",
                 "red"
@@ -4036,7 +4000,7 @@ def process_result(
                         if choice == 'y':
                             ctx_data['context'] = new_context
                             with open(team_ctx_path, 'w') as f:
-                                yaml.dump(ctx_data, f)
+                                yaml.dump(ctx_data, f, Dumper=_yaml_block_dumper(), default_flow_style=False, allow_unicode=True)
                             print(colored("Team context updated.", "green"))
                         elif choice == 'e':
                             edited_context = input(
@@ -4047,7 +4011,7 @@ def process_result(
                             else:
                                 ctx_data['context'] = new_context
                             with open(team_ctx_path, 'w') as f:
-                                yaml.dump(ctx_data, f)
+                                yaml.dump(ctx_data, f, Dumper=_yaml_block_dumper(), default_flow_style=False, allow_unicode=True)
                             print(colored(
                                 "Team context updated with edits.", 
                                 "green"

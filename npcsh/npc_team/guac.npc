@@ -20,3 +20,5 @@ jinxs:
   - lib/core/sql
   - lib/core/sh
   - lib/core/load_file
+  - lib/utils/chat
+  - lib/utils/stop
