@@ -72,6 +72,9 @@ except ImportError:
 # Optional dependencies
 try:
     import chromadb
+    # Suppress noisy posthog telemetry errors from chromadb
+    import logging as _logging
+    _logging.getLogger("chromadb.telemetry.product.posthog").setLevel(_logging.CRITICAL)
 except ImportError:
     chromadb = None
 
@@ -2348,7 +2351,18 @@ def store_command_embeddings(command: str, output: Any, state: ShellState):
         if not command and not output_str:
             return
 
-        texts_to_embed = [command, output_str]
+        # Build parallel lists, skipping empty strings that produce empty embeddings
+        texts_to_embed = []
+        meta_types = []
+        if command.strip():
+            texts_to_embed.append(command)
+            meta_types.append("command")
+        if output_str.strip():
+            texts_to_embed.append(output_str)
+            meta_types.append("response")
+
+        if not texts_to_embed:
+            return
 
         embeddings = get_embeddings(
             texts_to_embed,
@@ -2356,8 +2370,7 @@ def store_command_embeddings(command: str, output: Any, state: ShellState):
             state.embedding_provider,
         )
 
-        if not embeddings or len(embeddings) != 2:
-             print(f"Warning: Failed to generate embeddings for command: {command[:50]}...", file=sys.stderr)
+        if not embeddings or len(embeddings) != len(texts_to_embed):
              return
 
         timestamp = datetime.now().isoformat()
@@ -2365,19 +2378,16 @@ def store_command_embeddings(command: str, output: Any, state: ShellState):
 
         metadata = [
             {
-                "type": "command", "timestamp": timestamp, "path": state.current_path,
+                "type": mt, "timestamp": timestamp, "path": state.current_path,
                 "npc": npc_name, "conversation_id": state.conversation_id,
-            },
-            {
-                "type": "response", "timestamp": timestamp, "path": state.current_path,
-                "npc": npc_name, "conversation_id": state.conversation_id,
-            },
+            }
+            for mt in meta_types
         ]
 
         collection_name = f"{state.embedding_provider}_{state.embedding_model}_embeddings"
         try:
             collection = chroma_client.get_or_create_collection(collection_name)
-            ids = [f"cmd_{timestamp}_{hash(command)}", f"resp_{timestamp}_{hash(output_str)}"]
+            ids = [f"{mt}_{timestamp}_{hash(t)}" for mt, t in zip(meta_types, texts_to_embed)]
 
             collection.add(
                 embeddings=embeddings,
