@@ -22,3 +22,5 @@ jinxs:
   - lib/core/load_file
   - lib/core/search/web_search
   - lib/core/edit_file
+  - lib/utils/chat
+  - lib/utils/stop

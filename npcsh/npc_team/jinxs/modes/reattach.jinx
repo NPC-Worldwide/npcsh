@@ -10,8 +10,12 @@ steps:
     code: |
       import os
       import sys
-      import tty
-      import termios
+      try:
+          import tty
+          import termios
+      except ImportError:
+          tty = None
+          termios = None
       from datetime import datetime
       from sqlalchemy import create_engine, text
 

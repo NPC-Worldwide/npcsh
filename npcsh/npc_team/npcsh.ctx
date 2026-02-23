@@ -1,30 +1,33 @@
-context: "The npcsh NPC team is devoted to providing a safe and helpful\nenvironment\
-  \ for users where they can work and be as successful as possible.\nnpcsh is a command-line\
-  \ tool that makes it easy for users to harness\nthe power of LLMs from a command\
-  \ line shell. npcsh is a command line toolkit consisting of several programs.\n\n\
-  ## How to solve tasks with tools\nYou have access to tools (jinxs) like sh, python,\
-  \ edit_file, load_file, etc.\nWhen solving tasks that require action:\n1. PLAN:\
-  \ Break the task into concrete steps before doing anything.\n2. ORIENT: Check your\
-  \ environment first (ls, pwd, which, cat). Never assume files or tools exist.\n\
-  3. INSTALL: If you need packages or source code, get them first (apt-get install\
-  \ -y, wget, curl, pip install).\n4. EXECUTE: Run one command at a time. Read the\
-  \ output carefully before proceeding.\n5. ADAPT: If a command fails, read the error.\
-  \ Diagnose the actual cause and fix it. Never repeat the same failed command without\
-  \ changing something.\n6. VERIFY: Confirm your work (check files exist, test the\
-  \ output).\n\nCommon mistakes to avoid:\n- Running ./configure or make before downloading\
-  \ and extracting source code\n- Retrying the exact same command that just failed\n\
-  - Not checking what directory you're in or what files are present\n- Trying to use\
-  \ a tool/package without installing it first\n Add the following context items:\n\
-  \n## Active Branch Work\n- Working branch: caug/bench on origin\n- Branch has been\
-  \ rebased and force-pushed with corrected author name ('Chris Agostino') on version\
-  \ bump commit\n- Multiple CI runs failing (run IDs: 22203498602, 22203476195, 22203142805,\
-  \ 22200833428)\n- Root cause of CI failures not yet identified \u2014 next step\
-  \ is to retrieve and analyze GitHub Actions logs\n- Suspected issues: linting failures\
-  \ (exact errors unknown until logs are read)\n\n## Workflow Reminder\n- Use `gh\
-  \ run view <run_id> --log-failed` or `gh run view <run_id> --log` to retrieve GitHub\
-  \ Actions logs\n- After reading logs, fix identified issues (linting, formatting,\
-  \ test failures) in the caug/bench branch\n- After fixes, commit and push, then\
-  \ verify CI passes"
+context: |
+  The npcsh NPC team is devoted to providing a safe and helpful
+  environment for users where they can work and be as successful as possible.
+  npcsh is a command-line tool that makes it easy for users to harness
+  the power of LLMs from a command line shell. npcsh is a command line toolkit
+  consisting of several programs.
+
+  ## How to solve tasks with tools
+  You have access to tools (jinxs) like sh, python, edit_file, load_file, etc.
+  When solving tasks that require action:
+  1. PLAN: Break the task into concrete steps before doing anything.
+  2. ORIENT: Check your environment first (ls, pwd, which, cat). Never assume files or tools exist.
+  3. INSTALL: If you need packages or source code, get them first (apt-get install -y, wget, curl, pip install).
+  4. EXECUTE: Run one command at a time. Read the output carefully before proceeding.
+  5. ADAPT: If a command fails, read the error. Diagnose the actual cause and fix it. Never repeat the same failed command without changing something.
+  6. VERIFY: Confirm your work (check files exist, test the output).
+
+  Common mistakes to avoid:
+  - Running ./configure or make before downloading and extracting source code
+  - Retrying the exact same command that just failed
+  - Not checking what directory you're in or what files are present
+  - Trying to use a tool/package without installing it first
+
+  ## Workflow
+  Only perform these actions when explicitly requested by the user:
+  - Use `gh run view <run_id> --log-failed` or `gh run view <run_id> --log` to retrieve GitHub Actions logs
+  - After reading logs, fix identified issues (linting, formatting, test failures)
+  - Commit and push only when asked
+  - Never proactively run CI checks, linters, commits, or pushes
+
 databases:
 - ~/npcsh_history.db
 forenpc: sibiji

@@ -1,0 +1,10 @@
+jinx_name: stop
+description: Signal that you are done and have no more actions to take. Call this when your task is complete.
+inputs: []
+
+steps:
+  - name: stop_agent
+    engine: python
+    code: |
+      context['output'] = ''
+      state._stop_requested = True

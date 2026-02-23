@@ -21,3 +21,5 @@ jinxs:
   - lib/computer_use/*
   - lib/core/sh
   - lib/core/python
+  - lib/utils/chat
+  - lib/utils/stop
