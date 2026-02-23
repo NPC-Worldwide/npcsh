@@ -12,8 +12,12 @@ steps:
     code: |
       import os
       import sys
-      import tty
-      import termios
+      try:
+          import tty
+          import termios
+      except ImportError:
+          tty = None
+          termios = None
       import select as _sel
       import random
       import threading

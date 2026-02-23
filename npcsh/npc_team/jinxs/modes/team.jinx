@@ -7,8 +7,12 @@ steps:
     code: |
       import os
       import sys
-      import tty
-      import termios
+      try:
+          import tty
+          import termios
+      except ImportError:
+          tty = None
+          termios = None
       import select
       import yaml
       from pathlib import Path
@@ -176,7 +180,7 @@ steps:
 
               # ── footer ──
               if ui.editing:
-                  foot = " [Enter] Save  [Esc] Cancel  [Backspace] Delete"
+                  foot = " [Enter] Save  [Esc] Cancel  [←/→] Move  [Ctrl+A/E] Home/End  [Ctrl+K] Kill"
               elif ui.detail:
                   foot = " [j/k] Navigate  [e/Enter] Edit  [s] Save  [q/Esc] Back"
               else:
@@ -200,7 +204,10 @@ steps:
 
                   if i == ui.sel:
                       if ui.editing:
-                          out.append(wline(row, f"  \033[1m{key}:\033[0m \033[7m{ui.edit_buf}\033[0m\033[K"))
+                          before = ui.edit_buf[:ui.edit_cursor]
+                          cursor_ch = ui.edit_buf[ui.edit_cursor] if ui.edit_cursor < len(ui.edit_buf) else ' '
+                          after = ui.edit_buf[ui.edit_cursor + 1:] if ui.edit_cursor < len(ui.edit_buf) else ''
+                          out.append(wline(row, f"  \033[1m{key}:\033[0m {before}\033[7m{cursor_ch}\033[0m{after}\033[K"))
                       else:
                           line = f"  {key}: {val}"
                           out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
@@ -282,7 +289,10 @@ steps:
                   fval = fmt_val(data.get(fkey, ''), W - 25)
                   if fi == ui.detail_idx:
                       if ui.editing:
-                          out.append(wline(row, f"  \033[1m{fkey}:\033[0m \033[7m{ui.edit_buf}\033[0m"))
+                          before = ui.edit_buf[:ui.edit_cursor]
+                          cursor_ch = ui.edit_buf[ui.edit_cursor] if ui.edit_cursor < len(ui.edit_buf) else ' '
+                          after = ui.edit_buf[ui.edit_cursor + 1:] if ui.edit_cursor < len(ui.edit_buf) else ''
+                          out.append(wline(row, f"  \033[1m{fkey}:\033[0m {before}\033[7m{cursor_ch}\033[0m{after}"))
                       else:
                           line = f"  {fkey}: {fval}"
                           out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
@@ -340,19 +350,43 @@ steps:
                   if select.select([fd], [], [], 0.05)[0]:
                       c2 = os.read(fd, 1).decode('latin-1')
                       if c2 == '[':
-                          os.read(fd, 1).decode('latin-1')  # consume arrow char
+                          c3 = os.read(fd, 1).decode('latin-1')
+                          if c3 == 'D':    # Left arrow
+                              ui.edit_cursor = max(0, ui.edit_cursor - 1)
+                          elif c3 == 'C':  # Right arrow
+                              ui.edit_cursor = min(len(ui.edit_buf), ui.edit_cursor + 1)
+                          elif c3 == 'H':  # Home
+                              ui.edit_cursor = 0
+                          elif c3 == 'F':  # End
+                              ui.edit_cursor = len(ui.edit_buf)
+                          elif c3 == '3':  # Delete key (ESC [ 3 ~)
+                              if select.select([fd], [], [], 0.02)[0]:
+                                  os.read(fd, 1)  # consume ~
+                              if ui.edit_cursor < len(ui.edit_buf):
+                                  ui.edit_buf = ui.edit_buf[:ui.edit_cursor] + ui.edit_buf[ui.edit_cursor + 1:]
                   else:
                       ui.editing = False
                       ui.edit_buf = ""
+                      ui.edit_cursor = 0
                       ui.status = "Cancelled"
               elif c in ('\r', '\n'):
                   finish_edit()
               elif c in ('\x7f', '\x08'):
-                  ui.edit_buf = ui.edit_buf[:-1]
+                  if ui.edit_cursor > 0:
+                      ui.edit_buf = ui.edit_buf[:ui.edit_cursor - 1] + ui.edit_buf[ui.edit_cursor:]
+                      ui.edit_cursor -= 1
+              elif c == '\x01':  # Ctrl+A = Home
+                  ui.edit_cursor = 0
+              elif c == '\x05':  # Ctrl+E = End
+                  ui.edit_cursor = len(ui.edit_buf)
               elif c == '\x15':  # Ctrl+U clear line
                   ui.edit_buf = ""
+                  ui.edit_cursor = 0
+              elif c == '\x0b':  # Ctrl+K kill to end
+                  ui.edit_buf = ui.edit_buf[:ui.edit_cursor]
               elif 32 <= ord(c) <= 126:
-                  ui.edit_buf += c
+                  ui.edit_buf = ui.edit_buf[:ui.edit_cursor] + c + ui.edit_buf[ui.edit_cursor:]
+                  ui.edit_cursor += 1
               return True
 
           def nav_up():
@@ -411,13 +445,53 @@ steps:
                   else:
                       start_detail_edit()
 
+          def _edit_in_editor(value_str, field_name):
+              """Open $EDITOR for a long value. Returns edited string or None on cancel."""
+              import subprocess
+              import tempfile
+              editor = os.environ.get('EDITOR', os.environ.get('VISUAL', 'vim'))
+              # Restore terminal before launching editor
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+              sys.stdout.write('\033[?25h')  # show cursor
+              sys.stdout.flush()
+              try:
+                  with tempfile.NamedTemporaryFile(mode='w', suffix=f'.{field_name}.yaml', delete=False) as tf:
+                      tf.write(value_str)
+                      tf_path = tf.name
+                  subprocess.call([editor, tf_path])
+                  with open(tf_path) as f:
+                      result = f.read()
+                  os.unlink(tf_path)
+                  return result.rstrip('\n')
+              except Exception as e:
+                  ui.status = f"Editor error: {e}"
+                  return None
+              finally:
+                  tty.setcbreak(fd)
+                  sys.stdout.write('\033[?25l')
+                  sys.stdout.write('\033[2J\033[H')
+                  sys.stdout.flush()
+
+          def _is_long_value(raw):
+              """Check if a value needs $EDITOR instead of inline editing."""
+              s = str(raw) if raw else ''
+              return '\n' in s or len(s) > 80
+
           def start_ctx_edit():
               fields = ctx_fields()
               if ui.sel < len(fields):
                   ui.edit_field = fields[ui.sel]
                   raw = ui.team_ctx.get(ui.edit_field, '')
-                  ui.edit_buf = fmt_val(raw, 9999)  # full value, no truncation
-                  ui.editing = True
+                  if _is_long_value(raw):
+                      val_str = str(raw) if raw else ''
+                      result = _edit_in_editor(val_str, ui.edit_field)
+                      if result is not None:
+                          ui.team_ctx[ui.edit_field] = result
+                          ui.status = f"Set {ui.edit_field}"
+                  else:
+                      ui.edit_buf = fmt_val(raw, 9999)
+                      ui.edit_cursor = len(ui.edit_buf)
+                      ui.editing = True
 
           def start_detail_edit():
               if ui.tab == 1:
@@ -432,11 +506,26 @@ steps:
               if ui.detail_idx < len(fields):
                   ui.edit_field = fields[ui.detail_idx]
                   raw = data.get(ui.edit_field, '')
-                  if isinstance(raw, list):
-                      ui.edit_buf = ', '.join(str(x) for x in raw)
+                  if _is_long_value(raw):
+                      if isinstance(raw, list):
+                          val_str = '\n'.join(str(x) for x in raw)
+                      else:
+                          val_str = str(raw) if raw else ''
+                      result = _edit_in_editor(val_str, ui.edit_field)
+                      if result is not None:
+                          old = raw
+                          if isinstance(old, list):
+                              data[ui.edit_field] = [x.strip() for x in result.split('\n') if x.strip()]
+                          else:
+                              data[ui.edit_field] = result
+                          ui.status = f"Set {ui.edit_field}"
                   else:
-                      ui.edit_buf = str(raw) if raw else ''
-                  ui.editing = True
+                      if isinstance(raw, list):
+                          ui.edit_buf = ', '.join(str(x) for x in raw)
+                      else:
+                          ui.edit_buf = str(raw) if raw else ''
+                      ui.edit_cursor = len(ui.edit_buf)
+                      ui.editing = True
 
           def finish_edit():
               if ui.tab == 0:
@@ -468,6 +557,7 @@ steps:
                       ui.jinx_data[key][ui.edit_field] = ui.edit_buf
               ui.editing = False
               ui.edit_buf = ""
+              ui.edit_cursor = 0
               ui.status = f"Set {ui.edit_field}"
 
           def do_save():

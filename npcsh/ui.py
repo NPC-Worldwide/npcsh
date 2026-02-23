@@ -25,42 +25,42 @@ _stdout_lock = threading.Lock()
 _active_bottom_bar = None
 
 
+def pause_bottom_bar():
+    """Stop the BottomBar if active. Call before any TUI that reads stdin directly."""
+    if _active_bottom_bar is not None:
+        _active_bottom_bar.stop()
+
+
+def resume_bottom_bar():
+    """Restart the BottomBar after a TUI is done."""
+    if _active_bottom_bar is not None:
+        _active_bottom_bar.start()
+
+
 class BottomBar:
-    """Sticky input area pinned to the last terminal row during processing.
+    """Invisible input buffer that captures keystrokes during processing.
 
-    While a command is running the user can type their next message here.
+    While a command is running the user can type their next message.
     Pressing Enter queues the message; Ctrl-C / ESC interrupts the running
-    command (same as before).  The scroll region is restricted so that all
-    normal output (print statements, spinner animation) scrolls in the rows
-    above the bar.
+    command.  No scroll region or visual bar — just keystroke capture so
+    output is never eaten.  The spinner shows the queued count instead.
     """
-
-    _PROMPT = "⌨ Next: "
 
     def __init__(self):
         self.queue = collections.deque()
         self._stop = threading.Event()
-        self._pause_req = threading.Event()   # main thread requests pause
-        self._pause_ack = threading.Event()   # bar thread acknowledges pause
+        self._pause_req = threading.Event()
+        self._pause_ack = threading.Event()
         self._thread = None
         self._buf = ""
-        self._rows = shutil.get_terminal_size().lines
 
     # ── public API ──────────────────────────────────────────────────────────
 
     def start(self):
-        self._rows = shutil.get_terminal_size().lines
         self._stop.clear()
         self._pause_req.clear()
         self._pause_ack.clear()
         self._buf = ""
-        with _stdout_lock:
-            # Reserve the bottom row by restricting the scroll region.
-            sys.stdout.write(f'\033[1;{self._rows - 1}r')
-            # Park the cursor at the bottom of the scroll region so normal
-            # output scrolls there and not into the bar.
-            sys.stdout.write(f'\033[{self._rows - 1};1H')
-            sys.stdout.flush()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -69,48 +69,18 @@ class BottomBar:
         self._pause_req.clear()
         if self._thread:
             self._thread.join(timeout=0.5)
-        with _stdout_lock:
-            sys.stdout.write('\033[r')                              # reset scroll region
-            sys.stdout.write(f'\033[{self._rows};1H\033[K')        # clear bar row
-            sys.stdout.write(f'\033[{self._rows - 1};1H')          # park cursor
-            sys.stdout.flush()
 
     def pause(self):
-        """Temporarily restore the terminal to cooked mode for input() calls.
-        Blocks until the bar thread has restored settings."""
+        """Temporarily restore the terminal to cooked mode for input() calls."""
         self._pause_req.set()
         self._pause_ack.wait(timeout=1.0)
-        # Clear the bar row so it doesn't confuse the user during input().
-        with _stdout_lock:
-            sys.stdout.write(f'\033[{self._rows};1H\033[K')
-            sys.stdout.flush()
 
     def resume(self):
-        """Re-enter cbreak mode and redraw the bar after an input() call."""
+        """Re-enter cbreak mode after an input() call."""
         self._pause_ack.clear()
         self._pause_req.clear()
-        self._draw()
 
     # ── internal ────────────────────────────────────────────────────────────
-
-    def _draw(self):
-        rows = shutil.get_terminal_size().lines
-        if rows != self._rows:
-            self._rows = rows
-            with _stdout_lock:
-                sys.stdout.write(f'\033[1;{rows - 1}r')
-                sys.stdout.flush()
-        with _stdout_lock:
-            # Save cursor, jump to bar row, draw, restore cursor.
-            # Using ANSI save/restore (\033[s / \033[u) so the cursor returns
-            # to exactly where it was — no fixed-row jump that causes flashing.
-            sys.stdout.write(f'\033[s')
-            sys.stdout.write(f'\033[{self._rows};1H\033[K')
-            sys.stdout.write(colored(self._PROMPT, "cyan") + self._buf)
-            if self.queue:
-                sys.stdout.write(colored(f"  [{len(self.queue)} queued]", "yellow"))
-            sys.stdout.write('\033[u')
-            sys.stdout.flush()
 
     def _run(self):
         try:
@@ -129,10 +99,8 @@ class BottomBar:
 
             try:
                 _enter_cbreak()
-                self._draw()
 
                 while not self._stop.is_set():
-                    # ── pause/resume for synchronous input() calls ──────────
                     if self._pause_req.is_set():
                         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
                         self._pause_ack.set()
@@ -140,12 +108,11 @@ class BottomBar:
                             time.sleep(0.05)
                         if not self._stop.is_set():
                             _enter_cbreak()
-                            self._draw()
                         continue
 
                     ready, _, _ = _sel.select([sys.stdin], [], [], 0.15)
                     if not ready:
-                        continue    # scroll region protects bar row — no redraw needed
+                        continue
 
                     c = sys.stdin.read(1)
                     if not c:
@@ -154,8 +121,11 @@ class BottomBar:
                     if c in ('\r', '\n'):
                         if self._buf.strip():
                             self.queue.append(self._buf.strip())
+                            # Update spinner to show queued count
+                            spinner = get_current_spinner()
+                            if spinner:
+                                spinner.set_status(f"[{len(self.queue)} queued]")
                         self._buf = ""
-                        self._draw()
                     elif c in ('\x03', '\x1b'):     # Ctrl-C or ESC → interrupt
                         self._stop.set()
                         os.kill(os.getpid(), signal.SIGINT)
@@ -163,10 +133,20 @@ class BottomBar:
                     elif c in ('\x7f', '\x08'):     # Backspace
                         if self._buf:
                             self._buf = self._buf[:-1]
-                        self._draw()
+                            spinner = get_current_spinner()
+                            if spinner:
+                                if self._buf:
+                                    preview = self._buf[-40:] if len(self._buf) > 40 else self._buf
+                                    spinner.set_status(f"typing: {preview}")
+                                else:
+                                    spinner.set_status("")
                     elif ord(c) >= 32:              # Printable character
                         self._buf += c
-                        self._draw()
+                        # Show typing in spinner status
+                        spinner = get_current_spinner()
+                        if spinner:
+                            preview = self._buf[-40:] if len(self._buf) > 40 else self._buf
+                            spinner.set_status(f"typing: {preview}")
 
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -297,7 +277,10 @@ class SpinnerContext:
             if self._status_msg:
                 status_str = colored(f" {self._status_msg}", "yellow")
 
-            hint = colored(" (ESC to cancel)", "white", attrs=["dark"])
+            if _active_bottom_bar is not None:
+                hint = colored(" (type to queue, ESC to cancel)", "white", attrs=["dark"])
+            else:
+                hint = colored(" (ESC to cancel)", "white", attrs=["dark"])
             timer_display = colored(f" [{timer_str}]", "blue")
 
             line = f'\r{char} {self.message}...{timer_display}{token_str}{status_str}{hint}'
@@ -381,3 +364,218 @@ def wrap_text(text: str, width: int = 80) -> str:
     """Wrap text to specified width"""
     import textwrap
     return textwrap.fill(text, width=width)
+
+
+def ctx_editor(ctx_path, on_save=None):
+    """Field-level editor for .ctx files. Navigate with j/k, Enter opens field in $EDITOR."""
+    import yaml
+    import tty
+    import termios
+    import select
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    ctx_path = Path(ctx_path)
+    if not ctx_path.exists():
+        ctx_path.write_text("forenpc: \n")
+
+    with open(ctx_path) as f:
+        ctx_data = yaml.safe_load(f) or {}
+
+    ui = {'sel': 0, 'scroll': 0, 'status': '', 'dirty': False}
+
+    def term_size():
+        try:
+            s = os.get_terminal_size()
+            return s.columns, s.lines
+        except Exception:
+            return 80, 24
+
+    def fmt_val(raw, maxw):
+        if isinstance(raw, list):
+            v = ', '.join(str(x) for x in raw)
+        elif isinstance(raw, bool):
+            v = 'true' if raw else 'false'
+        elif raw is None:
+            v = ''
+        else:
+            v = str(raw).replace('\n', ' ')
+        if len(v) > maxw:
+            v = v[:maxw - 3] + '...'
+        return v
+
+    def wl(row, text):
+        return f"\033[{row};1H\033[K{text}"
+
+    def render():
+        W, H = term_size()
+        out = ["\033[H"]
+        hdr = f" {ctx_path.name} "
+        out.append(wl(1, f"\033[7;1m{'=' * W}\033[0m"))
+        out.append(f"\033[1;{max(1, (W - len(hdr)) // 2)}H\033[7;1m{hdr}\033[0m")
+        out.append(wl(2, f"\033[90m{'─' * W}\033[0m"))
+
+        fields = list(ctx_data.keys())
+        body_start = 3
+        body_h = H - 5
+        vis = fields[ui['scroll']:ui['scroll'] + body_h]
+
+        for r in range(body_h):
+            row = body_start + r
+            i = r + ui['scroll']
+            if r >= len(vis):
+                out.append(wl(row, ""))
+                continue
+            key = vis[r]
+            raw = ctx_data.get(key, '')
+            val = fmt_val(raw, W - 22)
+            if i == ui['sel']:
+                line = f"  {key}: {val}"
+                out.append(wl(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+            elif val:
+                out.append(wl(row, f"  {key}: \033[32m{val}\033[0m"))
+            else:
+                out.append(wl(row, f"  {key}: \033[90m(empty)\033[0m"))
+
+        if not fields:
+            out.append(wl(body_start, "  \033[90mNo fields. Press 'a' to add one.\033[0m"))
+
+        out.append(wl(H - 2, f"\033[90m{'─' * W}\033[0m"))
+        if ui['status']:
+            out.append(wl(H - 1, f" \033[33m{ui['status'][:W - 2]}\033[0m"))
+        else:
+            dm = " [unsaved]" if ui['dirty'] else ""
+            out.append(wl(H - 1, f" \033[90m{len(fields)} fields{dm}\033[0m"))
+        foot = " [j/k] Nav  [Enter] Edit field  [a] Add  [d] Delete  [s] Save  [q] Quit"
+        out.append(wl(H, f"\033[7m{foot[:W].ljust(W)}\033[0m"))
+
+        sys.stdout.write(''.join(out))
+        sys.stdout.flush()
+
+    def edit_field(key):
+        raw = ctx_data.get(key, '')
+        if isinstance(raw, list):
+            val_str = '\n'.join(str(x) for x in raw)
+        elif raw is None:
+            val_str = ''
+        else:
+            val_str = str(raw)
+
+        editor = os.environ.get('EDITOR', os.environ.get('VISUAL', 'vim'))
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+        sys.stdout.write('\033[?25h\033[2J\033[H')
+        sys.stdout.flush()
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix=f'.{key}.txt', delete=False) as tf:
+                tf.write(val_str)
+                tf_path = tf.name
+            subprocess.call([editor, tf_path])
+            with open(tf_path) as f:
+                result = f.read().rstrip('\n')
+            os.unlink(tf_path)
+
+            if isinstance(raw, list):
+                ctx_data[key] = [x.strip() for x in result.split('\n') if x.strip()]
+            elif isinstance(raw, bool):
+                ctx_data[key] = result.lower() in ('true', '1', 'yes')
+            else:
+                ctx_data[key] = result
+            ui['dirty'] = True
+            ui['status'] = f"Updated {key}"
+        except Exception as e:
+            ui['status'] = f"Editor error: {e}"
+        finally:
+            tty.setcbreak(fd)
+            sys.stdout.write('\033[?25l\033[2J\033[H')
+            sys.stdout.flush()
+
+    def add_field():
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+        sys.stdout.write('\033[?25h')
+        sys.stdout.write(f"\033[{term_size()[1]};1H\033[KNew field name: ")
+        sys.stdout.flush()
+        try:
+            name = input().strip()
+        except (EOFError, KeyboardInterrupt):
+            name = ''
+        finally:
+            tty.setcbreak(fd)
+            sys.stdout.write('\033[?25l')
+            sys.stdout.flush()
+        if name:
+            ctx_data[name] = ''
+            ui['dirty'] = True
+            ui['status'] = f"Added {name} — press Enter to edit"
+
+    def save():
+        with open(ctx_path, 'w') as f:
+            yaml.dump(ctx_data, f, default_flow_style=False)
+        ui['dirty'] = False
+        ui['status'] = f"Saved {ctx_path.name}"
+        if on_save:
+            on_save(ctx_data)
+
+    fd = sys.stdin.fileno()
+    old_attrs = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.write('\033[?25l\033[2J\033[H')
+        sys.stdout.flush()
+        render()
+        while True:
+            c = os.read(fd, 1).decode('latin-1')
+            fields = list(ctx_data.keys())
+            _, H = term_size()
+            body_h = H - 5
+
+            if c == '\x1b':
+                if select.select([fd], [], [], 0.05)[0]:
+                    c2 = os.read(fd, 1).decode('latin-1')
+                    if c2 == '[':
+                        c3 = os.read(fd, 1).decode('latin-1')
+                        if c3 == 'A':
+                            ui['sel'] = max(0, ui['sel'] - 1)
+                            if ui['sel'] < ui['scroll']:
+                                ui['scroll'] = ui['sel']
+                            ui['status'] = ""
+                        elif c3 == 'B':
+                            ui['sel'] = min(max(0, len(fields) - 1), ui['sel'] + 1)
+                            if ui['sel'] >= ui['scroll'] + body_h:
+                                ui['scroll'] = ui['sel'] - body_h + 1
+                            ui['status'] = ""
+                    render()
+                    continue
+                else:
+                    break
+            elif c == 'q':
+                break
+            elif c == 'k':
+                ui['sel'] = max(0, ui['sel'] - 1)
+                if ui['sel'] < ui['scroll']:
+                    ui['scroll'] = ui['sel']
+                ui['status'] = ""
+            elif c == 'j':
+                ui['sel'] = min(max(0, len(fields) - 1), ui['sel'] + 1)
+                if ui['sel'] >= ui['scroll'] + body_h:
+                    ui['scroll'] = ui['sel'] - body_h + 1
+                ui['status'] = ""
+            elif c in ('\r', '\n', 'e'):
+                if fields and ui['sel'] < len(fields):
+                    edit_field(fields[ui['sel']])
+            elif c == 'a':
+                add_field()
+            elif c == 'd':
+                if fields and ui['sel'] < len(fields):
+                    removed = fields[ui['sel']]
+                    del ctx_data[removed]
+                    ui['sel'] = min(ui['sel'], max(0, len(ctx_data) - 1))
+                    ui['dirty'] = True
+                    ui['status'] = f"Deleted {removed}"
+            elif c == 's':
+                save()
+            render()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+        sys.stdout.write('\033[?25h\033[2J\033[H')
+        sys.stdout.flush()
