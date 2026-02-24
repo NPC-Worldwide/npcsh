@@ -203,6 +203,8 @@ class SpinnerContext:
         self._stop = False
         self._interrupted = False
         self._start_time = time.time()
+        if os.environ.get("NPCSH_NO_SPINNER") or not sys.stdout.isatty():
+            return self
         self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
         # Only start the ESC listener when BottomBar is not managing stdin.
