@@ -111,8 +111,8 @@ def clean_task_artifacts():
         shutil.rmtree(d, ignore_errors=True)
 
 
-def _run_attempt(instruction: str, model: str, provider: str, state) -> tuple:
-    """Execute one instruction and return (final_state, output_str)."""
+def _setup_state(model: str, provider: str, state):
+    """One-time setup for a task: load team, register jinxes, configure model."""
     command_history, team, default_npc = setup_shell()
     if team and hasattr(team, 'jinxs_dict'):
         for jinx_name, jinx_obj in team.jinxs_dict.items():
@@ -127,6 +127,14 @@ def _run_attempt(instruction: str, model: str, provider: str, state) -> tuple:
     state.chat_provider = provider
     state.command_history = command_history
     state.current_path = os.getcwd()
+    state.messages = []
+    state._max_iterations = 10
+    return command_history
+
+
+def _run_attempt(instruction: str, state, command_history) -> tuple:
+    """Execute one instruction within an existing session."""
+    msg_count_before = len(state.messages)
 
     final_state, output = execute_command(
         instruction, state, router=router, command_history=command_history
@@ -148,15 +156,32 @@ def _run_attempt(instruction: str, model: str, provider: str, state) -> tuple:
         output_str = str(output)
         print(output_str)
 
-    return final_state, output_str
+    # Capture full conversation trace: every message the model sent/received
+    new_msgs = final_state.messages[msg_count_before:]
+    trace_parts = []
+    for msg in new_msgs:
+        role = msg.get("role", "?")
+        content = str(msg.get("content", "")).replace("\n", "\\n")
+        tool_calls = msg.get("tool_calls", [])
+        if content:
+            trace_parts.append(f"[{role}] {content}")
+        for tc in tool_calls:
+            fn = tc.get("function", {})
+            args = str(fn.get("arguments", "")).replace("\n", "\\n")
+            trace_parts.append(f"[tool_call] {fn.get('name', '?')}({args})")
+    trace = " | ".join(trace_parts)
+
+    full_output = f"{output_str} ---TRACE--- {trace}" if trace else output_str
+    return final_state, full_output
 
 
 def run_task(task: dict,
              model: str,
              provider: str,
              timeout: int = 1200,
+             max_attempts: int = 5,
              startup_overhead: float = 0.0) -> TaskResult:
-    """Run a task with retries until it passes or the timeout budget is exhausted."""
+    """Run a task with retries until it passes or the timeout/attempt budget is exhausted."""
 
     task_id = task["id"]
     instruction = task["instruction"]
@@ -170,33 +195,33 @@ def run_task(task: dict,
     all_outputs: list = []
     last_output = ""
 
-    while time.time() < deadline:
+    # Set up once per task — fresh messages, same session for retries
+    command_history = _setup_state(model, provider, initial_state)
+
+    while time.time() < deadline and attempt < max_attempts:
         attempt += 1
         clean_task_artifacts()
 
-        # On retries, give the model context about the previous failure
         if attempt == 1:
             current_instruction = instruction
         else:
             remaining = int(deadline - time.time())
             current_instruction = (
-                f"{instruction}\n\n"
-                f"[Retry {attempt}] Your previous attempt did not satisfy the "
-                f"verification check. Here is what your last attempt produced:\n"
+                f"The verification check failed. Here is what it produced:\n"
                 f"{last_output[:800]}\n\n"
-                f"Please try a different approach. {remaining}s remaining."
+                f"Fix it. {remaining}s remaining."
             )
 
         print(f"  [attempt {attempt}]", flush=True)
 
         try:
             _, output_str = _run_attempt(
-                current_instruction, model, provider, initial_state
+                current_instruction, initial_state, command_history
             )
         except Exception as e:
             output_str = f"Exception: {e}"
 
-        all_outputs.append(f"[attempt {attempt}]\n{output_str}")
+        all_outputs.append(f"[attempt {attempt}] {output_str}")
         last_output = output_str
 
         # Filesystem sync delay
@@ -229,7 +254,7 @@ def run_task(task: dict,
         passed=passed,
         duration=max(0, duration - startup_overhead),
         attempts=attempt,
-        npcsh_output="\n---\n".join(all_outputs),
+        npcsh_output=" ||| ".join(all_outputs),
     )
 
 
@@ -240,10 +265,50 @@ def run_benchmark(
     difficulty: Optional[str] = None,
     task_id: Optional[str] = None,
     timeout: int = 120,
+    resume: bool = False,
 ) -> BenchmarkReport:
 
     tasks = load_tasks(category=category, difficulty=difficulty, task_id=task_id)
     report = BenchmarkReport(model=model, provider=provider, total=len(tasks))
+
+    # Resume: load completed tasks from checkpoint CSV
+    import csv as csv_mod
+    csv_mod.field_size_limit(10**7)
+    report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
+    checkpoint_file = report_dir / f"{provider}_{model}_running.csv"
+    completed_ids = set()
+    if resume and checkpoint_file.exists():
+        with open(checkpoint_file) as f:
+            for row in csv_mod.DictReader(f):
+                completed_ids.add(row["task_id"])
+                report.results.append(TaskResult(
+                    task_id=row["task_id"],
+                    category=row["category"],
+                    difficulty=row["difficulty"],
+                    passed=row["passed"].lower() == "true",
+                    duration=float(row.get("duration", 0)),
+                    attempts=int(row.get("attempts", 1)),
+                    error=row.get("error") or None,
+                    npcsh_output=row.get("output", ""),
+                ))
+                if row["passed"].lower() == "true":
+                    report.passed += 1
+                else:
+                    report.failed += 1
+                report.duration += float(row.get("duration", 0))
+                cat = row["category"]
+                if cat not in report.by_category:
+                    report.by_category[cat] = {"total": 0, "passed": 0}
+                report.by_category[cat]["total"] += 1
+                if row["passed"].lower() == "true":
+                    report.by_category[cat]["passed"] += 1
+                diff = row["difficulty"]
+                if diff not in report.by_difficulty:
+                    report.by_difficulty[diff] = {"total": 0, "passed": 0}
+                report.by_difficulty[diff]["total"] += 1
+                if row["passed"].lower() == "true":
+                    report.by_difficulty[diff]["passed"] += 1
+        print(f"Resumed {len(completed_ids)} tasks from checkpoint", flush=True)
 
     # Calibrate startup overhead
     env = os.environ.copy()
@@ -262,22 +327,25 @@ def run_benchmark(
         cal_start = time.time()
         subprocess.run(
             ["npcsh", "-c", "echo ok"],
-            #stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, env=env, timeout=120,
         )
         cal_times.append(time.time() - cal_start)
     startup_overhead = sum(cal_times) / len(cal_times)
     print(f"Startup overhead: {startup_overhead:.1f}s (avg of 3)", flush=True)
 
-    print(f"Tasks: {len(tasks)}", flush=True)
+    print(f"Tasks: {len(tasks)} ({len(completed_ids)} already done)", flush=True)
     print("=" * 60, flush=True)
 
     for i, task in enumerate(tasks):
         tid = task["id"]
+        if tid in completed_ids:
+            print(f"\n[{i+1}/{len(tasks)}] {tid} — skipped (resumed)", flush=True)
+            continue
+
         print(f"\n[{i+1}/{len(tasks)}] {tid} ({task['category']}/{task['difficulty']})", flush=True)
         print(f"  {task['description']}", flush=True)
 
-        result = run_task(task, model, provider, timeout, startup_overhead)
+        result = run_task(task, model, provider, timeout, startup_overhead=startup_overhead)
         report.results.append(result)
 
         if result.passed:
@@ -531,6 +599,8 @@ def main():
                         help="Compare multiple local models")
     parser.add_argument("--rerun-failed", type=str, default=None,
                         help="Path to existing CSV — re-run only failed tasks and overwrite")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from _running.csv checkpoint, skip already-completed tasks")
 
     args = parser.parse_args()
 
@@ -578,6 +648,7 @@ def main():
             difficulty=args.difficulty,
             task_id=args.task_id,
             timeout=args.timeout,
+            resume=args.resume,
         )
 
 
