@@ -1114,7 +1114,7 @@ def validate_bash_command(command_parts: list) -> bool:
     if not command_parts:
         return False
 
-    base_command = command_parts[0].lower()
+    base_command = command_parts[0]
 
     # Commands that are always considered valid for direct execution (case-insensitive)
     ALWAYS_VALID_COMMANDS = BASH_COMMANDS + list(interactive_commands.keys()) + TERMINAL_EDITORS
@@ -3077,7 +3077,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
         try:
             if tool_capable:
                 iteration = 0
-                max_iterations = 50
+                max_iterations = getattr(state, '_max_iterations', 50)
                 total_usage = {"input_tokens": 0, "output_tokens": 0}
                 state._agent_nudges = 0
                 state._stop_requested = False

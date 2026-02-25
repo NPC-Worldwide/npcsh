@@ -3,11 +3,11 @@ shell-01,shell,easy,Count the number of files in /etc and write just the number 
 shell-02,shell,easy,List all .py files in the current directory recursively and write the list to /tmp/pyfiles.txt,test -f /tmp/pyfiles.txt && test -s /tmp/pyfiles.txt,Find + redirect
 shell-03,shell,easy,Write the output of 'uname -a' to /tmp/uname.txt,test -s /tmp/uname.txt && grep -qi 'darwin\|linux' /tmp/uname.txt,Simple command capture
 shell-04,shell,easy,"Create a file /tmp/nums.txt with the numbers 1 through 10, one per line",test $(wc -l < /tmp/nums.txt) -ge 10 && grep -q '^1$' /tmp/nums.txt && grep -q '^10$' /tmp/nums.txt,Sequence generation
-shell-05,shell,medium,"Find all directories in /usr/local and write their full paths to /tmp/dirs.txt, sorted alphabetically",test -s /tmp/dirs.txt,Directory listing with sort
+shell-05,shell,medium,"Find all directories in /usr and write their full paths to /tmp/dirs.txt, sorted alphabetically",test -s /tmp/dirs.txt,Directory listing with sort
 shell-06,shell,medium,Count how many lines in /etc/hosts contain a comment (lines starting with #) and write just the number to /tmp/comment_count.txt,test -f /tmp/comment_count.txt && grep -qE '[0-9]+' /tmp/comment_count.txt,Grep + count
-shell-07,shell,medium,"Get the top 5 largest files in /usr/bin by size, and write their names and sizes to /tmp/largest.txt",test -s /tmp/largest.txt && test $(wc -l < /tmp/largest.txt) -ge 5,Sort by size and limit
+shell-07,shell,medium,"Get the top 5 largest files in /etc by size, and write their names and sizes to /tmp/largest.txt",test -s /tmp/largest.txt && test $(wc -l < /tmp/largest.txt) -ge 5,Sort by size and limit
 shell-08,shell,easy,Write the current date and time to /tmp/now.txt,test -s /tmp/now.txt,Date output capture
-shell-09,shell,medium,Count how many unique file extensions exist in /usr/bin and write the count to /tmp/ext_count.txt,test -f /tmp/ext_count.txt && grep -qE '[0-9]+' /tmp/ext_count.txt,Extension counting with pipes
+shell-09,shell,medium,Count how many unique file extensions exist in /etc and write the count to /tmp/ext_count.txt,test -f /tmp/ext_count.txt && grep -qE '[0-9]+' /tmp/ext_count.txt,Extension counting with pipes
 shell-10,shell,hard,"Find all files in /etc that are larger than 10KB, sort them by size descending, and write the top 10 with their sizes to /tmp/big_etc.txt",test -s /tmp/big_etc.txt,Complex find with size filter and sort
 file-ops-01,file-ops,easy,Create a file /tmp/hello.txt containing exactly the text 'hello world' (no quotes),"test ""$(cat /tmp/hello.txt)"" = 'hello world'",Simple file creation
 file-ops-02,file-ops,easy,"Create a directory /tmp/mydir and inside it create three empty files: a.txt, b.txt, c.txt",test -d /tmp/mydir && test -f /tmp/mydir/a.txt && test -f /tmp/mydir/b.txt && test -f /tmp/mydir/c.txt,Directory and multiple files
