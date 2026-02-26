@@ -18,6 +18,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
+import concurrent.futures 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
 
 import pandas as pd
 from npcsh.routes import router
@@ -135,10 +138,20 @@ def _setup_state(model: str, provider: str, state):
 def _run_attempt(instruction: str, state, command_history) -> tuple:
     """Execute one instruction within an existing session."""
     msg_count_before = len(state.messages)
-
-    final_state, output = execute_command(
-        instruction, state, router=router, command_history=command_history
-    )
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(execute_command, instruction, state, router=router, command_history=command_history)
+        #try:
+        final_state, output = future.result(timeout=120)
+        print(output)
+        #except concurrent.futures.TimeoutError:
+        #    print("Model inference timed out after 120 seconds!", flush=True)
+        #    final_state = state
+        #    output = {"output": "Model inference timed out after 120 seconds! No response received."}
+        #except Exception as e:
+        #    print(f"Exception during execute_command: {e}", flush=True)
+        #    final_state = state
+        #    output = {"output": f"Exception during execute_command: {e}"}
 
     output_str = ""
     if isinstance(output, dict):
@@ -178,7 +191,7 @@ def _run_attempt(instruction: str, state, command_history) -> tuple:
 def run_task(task: dict,
              model: str,
              provider: str,
-             timeout: int = 1200,
+             timeout: int = 120,
              max_attempts: int = 5,
              startup_overhead: float = 0.0) -> TaskResult:
     """Run a task with retries until it passes or the timeout/attempt budget is exhausted."""
@@ -214,12 +227,12 @@ def run_task(task: dict,
 
         print(f"  [attempt {attempt}]", flush=True)
 
-        try:
-            _, output_str = _run_attempt(
-                current_instruction, initial_state, command_history
-            )
-        except Exception as e:
-            output_str = f"Exception: {e}"
+        #try:
+        _, output_str = _run_attempt(
+            current_instruction, initial_state, command_history
+        )
+        #except Exception as e:
+        #    output_str = f"Exception: {e}"
 
         all_outputs.append(f"[attempt {attempt}] {output_str}")
         last_output = output_str
@@ -228,15 +241,15 @@ def run_task(task: dict,
         time.sleep(5)
 
         # Verify
-        try:
-            verify = subprocess.run(
-                ["bash", "-c", verify_cmd],
-                capture_output=True, text=True, timeout=verify_timeout,
-            )
-            passed = verify.returncode == 0
-        except Exception as e:
-            passed = False
-            all_outputs.append(f"Verify error: {e}")
+        #try:
+        verify = subprocess.run(
+            ["bash", "-c", verify_cmd],
+            capture_output=True, text=True, timeout=verify_timeout,
+        )
+        passed = verify.returncode == 0
+        #except Exception as e:
+        #    passed = False
+        #    all_outputs.append(f"Verify error: {e}")
 
         if passed:
             break
@@ -497,7 +510,7 @@ def compare_models(
     return all_results
 
 
-def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 1200):
+def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120):
     """Re-run only the failed tasks from an existing CSV and overwrite results in-place."""
     import csv as csv_mod
     csv_mod.field_size_limit(10**7)
@@ -594,7 +607,7 @@ def main():
     parser.add_argument("--category", "-c", default=None)
     parser.add_argument("--difficulty", "-d", default=None)
     parser.add_argument("--task-id", "-t", default=None)
-    parser.add_argument("--timeout", type=int, default=1200)
+    parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--compare", action="store_true",
                         help="Compare multiple local models")
     parser.add_argument("--rerun-failed", type=str, default=None,
