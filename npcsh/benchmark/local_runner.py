@@ -141,17 +141,16 @@ def _run_attempt(instruction: str, state, command_history) -> tuple:
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(execute_command, instruction, state, router=router, command_history=command_history)
-        #try:
-        final_state, output = future.result(timeout=120)
-        print(output)
-        #except concurrent.futures.TimeoutError:
-        #    print("Model inference timed out after 120 seconds!", flush=True)
-        #    final_state = state
-        #    output = {"output": "Model inference timed out after 120 seconds! No response received."}
-        #except Exception as e:
-        #    print(f"Exception during execute_command: {e}", flush=True)
-        #    final_state = state
-        #    output = {"output": f"Exception during execute_command: {e}"}
+        try:
+            final_state, output = future.result(timeout=120)
+        except concurrent.futures.TimeoutError:
+            print("Model inference timed out after 120 seconds!", flush=True)
+            final_state = state
+            output = {"output": "Model inference timed out after 120 seconds! No response received."}
+        except Exception as e:
+            print(f"Exception during execute_command: {e}", flush=True)
+            final_state = state
+            output = {"output": f"Exception during execute_command: {e}"}
 
     output_str = ""
     if isinstance(output, dict):
@@ -227,12 +226,12 @@ def run_task(task: dict,
 
         print(f"  [attempt {attempt}]", flush=True)
 
-        #try:
-        _, output_str = _run_attempt(
-            current_instruction, initial_state, command_history
-        )
-        #except Exception as e:
-        #    output_str = f"Exception: {e}"
+        try:
+            _, output_str = _run_attempt(
+                current_instruction, initial_state, command_history
+            )
+        except Exception as e:
+            output_str = f"Exception: {e}"
 
         all_outputs.append(f"[attempt {attempt}] {output_str}")
         last_output = output_str
@@ -241,15 +240,15 @@ def run_task(task: dict,
         time.sleep(5)
 
         # Verify
-        #try:
-        verify = subprocess.run(
-            ["bash", "-c", verify_cmd],
-            capture_output=True, text=True, timeout=verify_timeout,
-        )
-        passed = verify.returncode == 0
-        #except Exception as e:
-        #    passed = False
-        #    all_outputs.append(f"Verify error: {e}")
+        try:
+            verify = subprocess.run(
+                ["bash", "-c", verify_cmd],
+                capture_output=True, text=True, timeout=verify_timeout,
+            )
+            passed = verify.returncode == 0
+        except Exception as e:
+            passed = False
+            all_outputs.append(f"Verify error: {e}")
 
         if passed:
             break
