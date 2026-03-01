@@ -217,6 +217,16 @@ steps:
                   _, out, _ = run_git('stash', 'list')
                   return out.splitlines()
 
+              def load_commit_files(commit_hash):
+                  """Load files changed in a commit with status."""
+                  _, out, _ = run_git('diff-tree', '--no-commit-id', '-r', '--name-status', commit_hash)
+                  files = []
+                  for line in out.splitlines():
+                      parts = line.split('\t')
+                      if len(parts) >= 2:
+                          files.append({'status': parts[0], 'path': parts[-1], 'selected': True})
+                  return files
+
               # ========== State ==========
               TABS = ['Status', 'Log', 'Branches', 'Stash']
 
@@ -236,9 +246,16 @@ steps:
                   # Stash
                   stashes = []
                   # Modes
-                  mode = 'list'  # list, diff, commit_msg, commit_detail
+                  mode = 'list'  # list, diff, commit_msg, commit_detail, cherry_pick
                   diff_lines = []
                   diff_scroll = 0
+                  prev_mode = 'list'  # track where to go back to from diff
+                  # Cherry-pick file selection
+                  cherry_hash = ''
+                  cherry_subject = ''
+                  cherry_files = []  # [{status, path, selected}, ...]
+                  cherry_sel = 0
+                  cherry_scroll = 0
                   msg = ''
                   msg_color = '33'
                   # Commit input
@@ -340,6 +357,8 @@ steps:
                       render_diff(out, width, height)
                   elif st.mode == 'commit_detail':
                       render_commit_detail(out, width, height)
+                  elif st.mode == 'cherry_pick':
+                      render_cherry_pick(out, width, height)
                   elif st.tab == 0:
                       render_status(out, width, height)
                   elif st.tab == 1:
@@ -361,11 +380,14 @@ steps:
                   elif st.mode == 'commit_msg':
                       foot = ' Type message, Enter to commit, Esc to cancel '
                   elif st.mode == 'commit_detail':
-                      foot = ' [b] Back  [j/k] Scroll  [q] Quit '
+                      foot = ' [b] Back  [j/k] Scroll  [d] File picker  [q] Quit '
+                  elif st.mode == 'cherry_pick':
+                      sel_count = sum(1 for f in st.cherry_files if f['selected'])
+                      foot = ' [Space] Toggle  [a] All  [n] None  [Enter] Apply ' + str(sel_count) + '/' + str(len(st.cherry_files)) + '  [d] Diff  [b] Back '
                   elif st.tab == 0:
                       foot = ' [j/k] Nav  [Enter] Open  [s] Stage  [a] StageAll  [u] UnstageAll  [c] Commit  [Tab] Switch  [q] Quit '
                   elif st.tab == 1:
-                      foot = ' [j/k] Nav  [Enter] Detail  [Tab] Switch  [q] Quit '
+                      foot = ' [j/k] Nav  [Enter] Detail  [p] Pick files  [Tab] Switch  [q] Quit '
                   elif st.tab == 2:
                       foot = ' [j/k] Nav  [Enter] Checkout  [Tab] Switch  [q] Quit '
                   elif st.tab == 3:
@@ -554,6 +576,42 @@ steps:
                       else:
                           out.append(line[:width-1])
 
+              def render_cherry_pick(out, width, height):
+                  vis = height - 9
+                  sel_count = sum(1 for f in st.cherry_files if f['selected'])
+
+                  # Commit info
+                  out.append('\033[4;1H\033[K \033[1mPick files from:\033[0m \033[36m' + st.cherry_hash[:7] + '\033[0m ' + st.cherry_subject[:width-25])
+                  out.append('\033[5;1H\033[K \033[90mSelected: ' + str(sel_count) + '/' + str(len(st.cherry_files)) + ' files\033[0m')
+                  out.append('\033[6;1H\033[K\033[90m' + ('-' * width) + '\033[0m')
+
+                  if not st.cherry_files:
+                      out.append('\033[8;4H\033[90mNo files in this commit.\033[0m')
+                      for i in range(1, vis):
+                          out.append('\033[' + str(8+i) + ';1H\033[K')
+                      return
+
+                  for i in range(vis):
+                      row = 7 + i
+                      out.append('\033[' + str(row) + ';1H\033[K')
+                      idx = st.cherry_scroll + i
+                      if idx >= len(st.cherry_files):
+                          continue
+
+                      f = st.cherry_files[idx]
+                      status_icon = {'A': '+', 'M': '~', 'D': '-', 'R': '>'}.get(f['status'], '?')
+                      status_color = {'A': '32', 'M': '33', 'D': '31', 'R': '36'}.get(f['status'], '90')
+
+                      if idx == st.cherry_sel:
+                          mark = '[x]' if f['selected'] else '[ ]'
+                          out.append('\033[7m ' + mark + ' ' + status_icon + ' ' + f['path'][:width-10] + ' \033[0m')
+                      else:
+                          if f['selected']:
+                              check = '\033[32m[x]\033[0m'
+                          else:
+                              check = '\033[90m[ ]\033[0m'
+                          out.append(' ' + check + ' \033[' + status_color + 'm' + status_icon + '\033[0m ' + f['path'][:width-10])
+
               # ========== Actions ==========
               def stage_file(entry):
                   rc, _, err = run_git('add', '--', entry['path'])
@@ -696,6 +754,37 @@ steps:
                   if st.tab == 2:
                       st.branches = load_branches()
 
+              def enter_cherry_pick(commit):
+                  """Enter cherry-pick file selection mode for a commit."""
+                  st.cherry_hash = commit['hash']
+                  st.cherry_subject = commit['subject']
+                  st.cherry_files = load_commit_files(commit['hash'])
+                  st.cherry_sel = 0
+                  st.cherry_scroll = 0
+                  st.mode = 'cherry_pick'
+                  st.msg = ''
+                  sys.stdout.write('\033[2J')
+
+              def apply_cherry_pick():
+                  """Apply selected files from the cherry-pick commit."""
+                  selected = [f for f in st.cherry_files if f['selected']]
+                  if not selected:
+                      st.msg = 'No files selected'
+                      st.msg_color = '33'
+                      return
+
+                  paths = [f['path'] for f in selected]
+                  rc, _, err = run_git('checkout', st.cherry_hash, '--', *paths)
+                  if rc == 0:
+                      st.msg = 'Applied ' + str(len(selected)) + ' file(s) from ' + st.cherry_hash[:7]
+                      st.msg_color = '32'
+                      st.mode = 'list'
+                      refresh_status()
+                      sys.stdout.write('\033[2J')
+                  else:
+                      st.msg = 'Apply failed: ' + err[:60]
+                      st.msg_color = '31'
+
               def show_diff_vs_main():
                   # Try main, then master
                   for base in ('main', 'master'):
@@ -707,6 +796,7 @@ steps:
                           if out.strip():
                               header += out.splitlines() + ['', '--- full diff ---', '']
                           st.diff_lines = header + patch.splitlines()
+                          st.prev_mode = 'list'
                           st.mode = 'diff'
                           st.diff_scroll = 0
                           sys.stdout.write('\033[2J')
@@ -771,10 +861,91 @@ steps:
                           st.commit_buf += c
                       return True
 
+                  # Cherry-pick file selection mode
+                  if st.mode == 'cherry_pick':
+                      if c == 'q' or c == '\x03':
+                          return False
+                      if c == 'b':
+                          st.mode = 'list'
+                          st.msg = ''
+                          sys.stdout.write('\033[2J')
+                          return True
+                      if c == '\x1b':
+                          if select.select([fd], [], [], 0.05)[0]:
+                              c2 = os.read(fd, 1).decode('latin-1')
+                              if c2 == '[':
+                                  c3 = os.read(fd, 1).decode('latin-1')
+                                  if c3 == 'A':  # Up
+                                      if st.cherry_sel > 0:
+                                          st.cherry_sel -= 1
+                                      _, h = get_size()
+                                      if st.cherry_sel < st.cherry_scroll:
+                                          st.cherry_scroll = st.cherry_sel
+                                  elif c3 == 'B':  # Down
+                                      if st.cherry_sel < len(st.cherry_files) - 1:
+                                          st.cherry_sel += 1
+                                      _, h = get_size()
+                                      vis = max(1, h - 9)
+                                      if st.cherry_sel >= st.cherry_scroll + vis:
+                                          st.cherry_scroll = st.cherry_sel - vis + 1
+                          else:
+                              # Standalone Esc - go back
+                              st.mode = 'list'
+                              st.msg = ''
+                              sys.stdout.write('\033[2J')
+                          return True
+                      if c == 'j':
+                          if st.cherry_sel < len(st.cherry_files) - 1:
+                              st.cherry_sel += 1
+                          _, h = get_size()
+                          vis = max(1, h - 9)
+                          if st.cherry_sel >= st.cherry_scroll + vis:
+                              st.cherry_scroll = st.cherry_sel - vis + 1
+                      elif c == 'k':
+                          if st.cherry_sel > 0:
+                              st.cherry_sel -= 1
+                          if st.cherry_sel < st.cherry_scroll:
+                              st.cherry_scroll = st.cherry_sel
+                      elif c == ' ' or c == 's':
+                          # Toggle selection
+                          if st.cherry_files and st.cherry_sel < len(st.cherry_files):
+                              st.cherry_files[st.cherry_sel]['selected'] = not st.cherry_files[st.cherry_sel]['selected']
+                      elif c == 'a':
+                          # Select all
+                          for f in st.cherry_files:
+                              f['selected'] = True
+                          st.msg = 'Selected all files'
+                          st.msg_color = '36'
+                      elif c == 'n':
+                          # Select none
+                          for f in st.cherry_files:
+                              f['selected'] = False
+                          st.msg = 'Deselected all files'
+                          st.msg_color = '36'
+                      elif c == 'd':
+                          # Show diff for selected file
+                          if st.cherry_files and st.cherry_sel < len(st.cherry_files):
+                              f = st.cherry_files[st.cherry_sel]
+                              _, diff_out, _ = run_git('show', st.cherry_hash, '--', f['path'], '--format=')
+                              st.diff_lines = diff_out.splitlines()
+                              st.prev_mode = 'cherry_pick'
+                              st.mode = 'diff'
+                              st.diff_scroll = 0
+                              st.msg = ''
+                              sys.stdout.write('\033[2J')
+                      elif c in ('\r', '\n'):
+                          # Apply selected files
+                          apply_cherry_pick()
+                      return True
+
                   # Diff / detail scroll mode
                   if st.mode in ('diff', 'commit_detail'):
                       if c == 'q' or c == '\x03':
                           return False
+                      # 'd' in commit_detail → enter cherry-pick file picker
+                      if c == 'd' and st.mode == 'commit_detail' and st.commits and st.sel < len(st.commits):
+                          enter_cherry_pick(st.commits[st.sel])
+                          return True
                       if c == 'b' or c == '\x1b':
                           if c == '\x1b':
                               if select.select([fd], [], [], 0.05)[0]:
@@ -785,7 +956,9 @@ steps:
                                   elif c3 == 'B':
                                       st.diff_scroll += 1
                                   return True
-                          st.mode = 'list'
+                          # Go back to previous mode
+                          st.mode = st.prev_mode if st.prev_mode != 'diff' else 'list'
+                          st.prev_mode = 'list'
                           st.diff_scroll = 0
                           sys.stdout.write('\033[2J')
                           return True
@@ -796,9 +969,6 @@ steps:
                       elif c == ' ':
                           _, h = get_size()
                           st.diff_scroll += h - 7
-                      elif c == 'b':
-                          _, h = get_size()
-                          st.diff_scroll = max(0, st.diff_scroll - (h - 7))
                       return True
 
                   # Normal list mode
@@ -865,6 +1035,10 @@ steps:
                       refresh_all()
                       st.msg = 'Refreshed'
                       st.msg_color = '36'
+                  elif c == 'p' and st.tab == 1:
+                      # Cherry-pick file selection from Log tab
+                      if st.commits and st.sel < len(st.commits):
+                          enter_cherry_pick(st.commits[st.sel])
                   elif c == 'p' and st.tab == 3:
                       if st.stashes:
                           stash_pop(st.sel)
@@ -904,6 +1078,7 @@ steps:
                               st.msg = 'No diff for: ' + e['path']
                               st.msg_color = '33'
                               return
+                          st.prev_mode = 'list'
                           st.mode = 'diff'
                           st.diff_scroll = 0
                           sys.stdout.write('\033[2J')
@@ -913,6 +1088,7 @@ steps:
                           c = st.commits[st.sel]
                           _, detail, _ = run_git('show', '--stat', '--format=fuller', c['hash'])
                           st.diff_lines = detail.splitlines()
+                          st.prev_mode = 'list'
                           st.mode = 'commit_detail'
                           st.diff_scroll = 0
                           sys.stdout.write('\033[2J')
@@ -927,6 +1103,7 @@ steps:
                       if st.stashes and st.sel < len(st.stashes):
                           _, detail, _ = run_git('stash', 'show', '-p', 'stash@{' + str(st.sel) + '}')
                           st.diff_lines = detail.splitlines()
+                          st.prev_mode = 'list'
                           st.mode = 'diff'
                           st.diff_scroll = 0
                           sys.stdout.write('\033[2J')
