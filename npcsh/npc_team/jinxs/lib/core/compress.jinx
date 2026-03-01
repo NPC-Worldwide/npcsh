@@ -15,7 +15,7 @@ steps:
       import sys
       import traceback
       from npcpy.llm_funcs import breathe
-      from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db
+      from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db, start_new_conversation, save_conversation_message
       from npcpy.memory.knowledge_graph import kg_sleep_process, kg_dream_process
 
       # --- Get all inputs from context ---
@@ -33,12 +33,48 @@ steps:
 
       # ========== Execution Functions ==========
       def do_compress():
-          """Compact conversation context via breathe()"""
+          """Compact conversation context via breathe(), starting a new linked conversation."""
           try:
-              result = breathe(**context)
-              if isinstance(result, dict):
-                  return result.get('output', 'Context compressed.')
-              return "Context compression process initiated."
+              current_npc = context.get('npc')
+              m = llm_model or (current_npc.model if current_npc and hasattr(current_npc, 'model') and current_npc.model else None)
+              p = llm_provider or (current_npc.provider if current_npc and hasattr(current_npc, 'provider') and current_npc.provider else None)
+              result = breathe(messages=output_messages, model=m, provider=p, npc=current_npc)
+              summary = result.get('output', 'Context compressed.') if isinstance(result, dict) else str(result)
+
+              # Link old conversation to new one
+              old_cid = state.conversation_id if state else None
+              last_msg_id = None
+              ch = None
+              try:
+                  db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
+                  ch = CommandHistory(db_path)
+                  if old_cid:
+                      last_msg_id = ch.get_last_message_id(old_cid)
+
+                  new_cid = start_new_conversation()
+                  if state:
+                      state.conversation_id = new_cid
+
+                  # Build new message list
+                  summary_content = "Session context (continued from " + str(old_cid) + "): " + summary
+                  recent = list(output_messages[-6:])
+                  context['messages'] = [{"role": "system", "content": summary_content}] + recent
+
+                  # Save linking message to DB
+                  npc_name = current_npc.name if current_npc else "npcsh"
+                  team_obj = context.get('team')
+                  team_name = team_obj.name if team_obj else "npcsh"
+                  save_conversation_message(
+                      ch, new_cid, "system", summary_content,
+                      npc=npc_name, team=team_name,
+                      parent_message_id=last_msg_id,
+                  )
+              finally:
+                  if ch:
+                      ch.close()
+
+              link_info = " (linked via " + str(last_msg_id) + ")" if last_msg_id else ""
+              return "Compressed. New conversation: " + str(state.conversation_id if state else new_cid) + link_info
           except Exception as e:
               traceback.print_exc()
               return "Error during context compression: " + str(e)
@@ -199,24 +235,37 @@ steps:
                   st.status = "Generating compression preview..."
                   render()
                   try:
-                      result = breathe(**context)
+                      current_npc = context.get('npc')
+                      m = llm_model or (current_npc.model if current_npc and hasattr(current_npc, 'model') and current_npc.model else None)
+                      p = llm_provider or (current_npc.provider if current_npc and hasattr(current_npc, 'provider') and current_npc.provider else None)
+                      result = breathe(messages=output_messages, model=m, provider=p, npc=current_npc)
+                      summary_data = result.get('summary', {}) if isinstance(result, dict) else {}
                       summary = result.get('output', '') if isinstance(result, dict) else str(result)
                   except Exception as e:
+                      summary_data = {}
                       summary = "Error generating preview: " + str(e)
 
                   lines.append(('Action', 'Compress (breathe)', False))
                   lines.append(('Messages', str(st.msg_count) + ' -> condensed summary', False))
                   lines.append(('', '', False))
-                  # Parse the summary into editable fields
-                  for part in summary.split('\n'):
-                      part = part.strip()
-                      if not part:
-                          continue
-                      if ':' in part:
-                          label, _, val = part.partition(':')
-                          lines.append((label.strip()[:20], val.strip(), True))
-                      else:
-                          lines.append(('Summary', part, True))
+                  if summary_data:
+                      obj = str(summary_data.get('high_level_objective', ''))
+                      task = str(summary_data.get('most_recent_task', ''))
+                      acc = summary_data.get('accomplishments', [])
+                      fail = summary_data.get('failures', [])
+                      lines.append(('Objective', obj, True))
+                      lines.append(('Current Task', task, True))
+                      lines.append(('', '', False))
+                      if acc:
+                          lines.append(('Accomplishments', '', False))
+                          for a in (acc if isinstance(acc, list) else [acc]):
+                              lines.append(('  -', str(a), True))
+                      if fail:
+                          lines.append(('Failures', '', False))
+                          for f in (fail if isinstance(fail, list) else [fail]):
+                              lines.append(('  -', str(f), True))
+                  else:
+                      lines.append(('Summary', summary[:200], True))
                   st._preview_summary = summary
 
               elif key == 'flush':
@@ -359,6 +408,8 @@ steps:
               elif st.mode == 'preview':
                   act = st.actions[st.sel]
                   out.append("\033[3;1H\033[36;1m " + act['name'] + " Plan \033[90m" + ("-" * (width - len(act['name']) - 9)) + "\033[0m")
+                  lcol = 18
+                  val_w = width - lcol - 8
                   vis = height - 7
                   for i in range(vis):
                       row = 4 + i
@@ -368,12 +419,12 @@ steps:
                           continue
                       label, val, editable = st.preview_lines[idx]
                       if not label and not val:
-                          continue  # blank separator
+                          continue
                       if label.startswith('---'):
                           out.append("  \033[90m" + label + "\033[0m")
                           continue
                       marker = " [e]" if editable else ""
-                      display = "  " + label.ljust(22) + val[:width-28] + "\033[90m" + marker + "\033[0m"
+                      display = "  " + label.ljust(lcol) + val[:val_w] + "\033[90m" + marker + "\033[0m"
                       if idx == st.preview_sel:
                           out.append("\033[7m>" + display + "\033[0m")
                       else:
@@ -382,6 +433,7 @@ steps:
               elif st.mode == 'preview_edit':
                   act = st.actions[st.sel]
                   out.append("\033[3;1H\033[36;1m " + act['name'] + " Plan \033[90m" + ("-" * (width - len(act['name']) - 9)) + "\033[0m")
+                  lcol = 18
                   vis = height - 7
                   for i in range(vis):
                       row = 4 + i
@@ -396,11 +448,12 @@ steps:
                           out.append("  \033[90m" + label + "\033[0m")
                           continue
                       if idx == st.preview_sel:
-                          display = "  " + label.ljust(22) + "\033[7m " + st.edit_buf + " \033[0m"
+                          display = "  " + label.ljust(lcol) + "\033[7m " + st.edit_buf + " \033[0m"
                           out.append(">" + display)
                       else:
                           marker = " [e]" if editable else ""
-                          display = "  " + label.ljust(22) + val[:width-28] + "\033[90m" + marker + "\033[0m"
+                          val_w = width - lcol - 8
+                          display = "  " + label.ljust(lcol) + val[:val_w] + "\033[90m" + marker + "\033[0m"
                           out.append(" " + display)
 
               elif st.mode == 'running':

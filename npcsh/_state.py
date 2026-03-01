@@ -3006,8 +3006,8 @@ def process_pipeline_command(
             except KeyboardInterrupt:
                 print(colored("\nBash command interrupted by user.", "yellow"))
                 return state, colored("Command interrupted.", "red")
-        
-        return state, result
+
+        return state, {"output": result, "_bash": True}
     else:
         full_llm_cmd = (
             f"{cmd_to_process} {stdin_input}" 
@@ -3734,6 +3734,25 @@ def process_result(
     msg_input_tokens = None
     msg_output_tokens = None
     msg_cost = None
+
+    # Fast path for bash output — skip markdown rendering, embeddings, and LLM message append
+    if isinstance(output, dict) and output.get('_bash'):
+        bash_out = output.get('output', '')
+        if bash_out:
+            print('\n')
+            print(bash_out)
+            save_conversation_message(
+                command_history,
+                result_state.conversation_id,
+                "assistant",
+                bash_out,
+                wd=result_state.current_path,
+                model=active_npc.model,
+                provider=active_npc.provider,
+                npc=npc_name,
+                team=team_name,
+            )
+        return
 
     if isinstance(output, dict):
         # Use None-safe check to not skip empty strings
