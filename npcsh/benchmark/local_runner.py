@@ -281,6 +281,7 @@ def run_task(task: dict,
     task_id = task["id"]
     instruction = task["instruction"]
     verify_cmd = task["verify_cmd"]
+    setup_cmd = task.get("setup_cmd", "")
     verify_timeout = task.get("verify_timeout", 30)
 
     deadline = time.time() + timeout
@@ -299,6 +300,16 @@ def run_task(task: dict,
     while time.time() < deadline and attempt < max_attempts:
         attempt += 1
         clean_task_artifacts(task)
+
+        # Run setup_cmd to create test fixtures before the model touches anything
+        if setup_cmd:
+            try:
+                subprocess.run(
+                    ["bash", "-c", setup_cmd],
+                    timeout=30, capture_output=True, text=True,
+                )
+            except Exception as e:
+                print(f"  setup_cmd failed: {e}", flush=True)
 
         if attempt == 1:
             current_instruction = instruction
