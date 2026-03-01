@@ -266,9 +266,9 @@ steps:
                   hints = [
                       "\033[90mWelcome to GUAC!\033[0m",
                       "", "Type Python code and press Enter",
-                      "Drop file paths or 'run file.py' to auto-load/execute", "",
-                      "\033[33mKeys:\033[0m Tab:NL  Ctrl+P:panels  Arrows:nav",
-                      "Ctrl+D:del  Ctrl+Q:quit",
+                      "Drop file paths to auto-load", "",
+                      "\033[33mKeys:\033[0m Tab:panels  Arrows:nav",
+                      "Ctrl+N:NL  Ctrl+S:save  Ctrl+Q:quit",
                   ]
                   for i, hint in enumerate(hints[:output_h]):
                       out.append(f"\033[{4+i};2H{hint}")
@@ -322,7 +322,7 @@ steps:
                       out.append(f"\033[{4+i};{right_x}H {name}")
               else:
                   out.append(f"\033[5;{right_x}H\033[90mNo plots\033[0m")
-                  out.append(f"\033[6;{right_x}H\033[90mCall save_plot() to save\033[0m")
+                  out.append(f"\033[6;{right_x}H\033[90mCtrl+S save\033[0m")
 
           # ===== INPUT LINE =====
           input_y = height - 2
@@ -337,7 +337,7 @@ steps:
           out.append(f"\033[{height-1};{cursor_col}H")
 
           # ===== FOOTER =====
-          hints = "Tab:NL  Ctrl+P:panels  Arrows:nav  Ctrl+D:del  Ctrl+Q:quit"
+          hints = "Tab:panels  Arrows:nav  Ctrl+N:NL  Ctrl+S:save  Ctrl+D:del  Ctrl+Q:quit"
           out.append(f"\033[{height};1H\033[90m{hints[:width]}\033[0m")
 
           sys.stdout.write(''.join(out))
@@ -348,16 +348,22 @@ steps:
           if c == '\x11':  # Ctrl+Q - quit
               return False
 
-          elif c == '\t':  # Tab - toggle natural language mode
-              state.mode = "natural" if state.mode == "code" else "code"
-              state.status = f"{state.mode} mode"
-              state.selected_var = 0 # Reset selection when mode changes
-              state.var_scroll = 0
-
-          elif c == '\x10':  # Ctrl+P - cycle panels (new key for panels)
+          elif c == '\t':  # Tab - cycle panels
               state.panel = (state.panel + 1) % 3
               state.selected_var = 0
               state.var_scroll = 0
+
+          elif c == '\x0e':  # Ctrl+N - toggle natural language
+              state.mode = "natural" if state.mode == "code" else "code"
+              state.status = f"{state.mode} mode"
+
+          elif c == '\x13':  # Ctrl+S - save plot
+              path = save_plot()
+              if path:
+                  state.output_lines.append(f"Plot saved: {path}")
+                  state.status = "Plot saved"
+              else:
+                  state.status = "No plot to save"
 
           elif c == '\x04':  # Ctrl+D - delete variable
               user_vars = get_user_vars()
@@ -421,27 +427,6 @@ steps:
                       name, msg = load_file(code.strip("'\""))
                       state.output_lines.append(msg)
                       state.status = "File loaded" if name else "Load failed"
-
-                  elif code.startswith("run ") and code.endswith(".py"):
-                      file_path = code[4:].strip()
-                      try:
-                          with open(file_path, 'r') as f:
-                              file_content = f.read()
-                          state.output_lines.append(f">>> Running file: {file_path}")
-                          output, error = execute_code(file_content)
-                          if output:
-                              state.output_lines.extend(output.split('\n'))
-                          if error:
-                              state.output_lines.extend(error.split('\n'))
-                              state.status = "Error running file"
-                          else:
-                              state.status = f"Successfully ran {file_path}"
-                      except FileNotFoundError:
-                          state.output_lines.append(f"Error: File not found: {file_path}")
-                          state.status = "File not found"
-                      except Exception as e:
-                          state.output_lines.append(f"Error reading file {file_path}: {e}")
-                          state.status = "Error reading file"
 
                   elif state.mode == "natural":
                       # Natural language -> code generation

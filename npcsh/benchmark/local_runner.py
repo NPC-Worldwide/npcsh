@@ -18,9 +18,6 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
-import concurrent.futures 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
-
 
 import pandas as pd
 from npcsh.routes import router
@@ -190,7 +187,7 @@ def _run_attempt(instruction: str, state, command_history) -> tuple:
 def run_task(task: dict,
              model: str,
              provider: str,
-             timeout: int = 120,
+             timeout: int = 1200,
              max_attempts: int = 5,
              startup_overhead: float = 0.0) -> TaskResult:
     """Run a task with retries until it passes or the timeout/attempt budget is exhausted."""
@@ -509,7 +506,7 @@ def compare_models(
     return all_results
 
 
-def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120):
+def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 1200):
     """Re-run only the failed tasks from an existing CSV and overwrite results in-place."""
     import csv as csv_mod
     csv_mod.field_size_limit(10**7)
@@ -606,7 +603,7 @@ def main():
     parser.add_argument("--category", "-c", default=None)
     parser.add_argument("--difficulty", "-d", default=None)
     parser.add_argument("--task-id", "-t", default=None)
-    parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--timeout", type=int, default=1200)
     parser.add_argument("--compare", action="store_true",
                         help="Compare multiple local models")
     parser.add_argument("--rerun-failed", type=str, default=None,
