@@ -987,33 +987,33 @@ npc_team/
 How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 categories — from basic shell commands to multi-step workflows, code debugging, and tool chaining — scored pass/fail.
 
 <table>
-<tr><th>Family</th><th>Model</th><th>npcsh Agent Score</th><th>opencode</th><th>claude code</th><th>nanocoder</th><th>Version</th><th>Results</th><th>Notes</th></tr>
-<tr><td rowspan="5"><b>Qwen3</b></td><td>0.6b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td>1.7b</td><td>69/125 (55%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>1.1.27</td><td></td><td></td></tr>
-<tr><td>4b</td><td><b>94/125 (75%)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>1.1.28</td><td></td><td></td></tr>
-<tr><td>8b</td><td><b>104/125 (83%)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>1.1.28</td><td></td><td></td></tr>
-<tr><td>30b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td rowspan="4"><b>Gemma3</b></td><td>1b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td>4b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td>12b</td><td>64/117</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>1.1.27</td><td></td><td>partial</td></tr>
-<tr><td>27b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td rowspan="3"><b>Llama</b></td><td>3.2:1b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td>3.2:3b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td>3.1:8b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td rowspan="2"><b>Mistral</b></td><td>small3.2</td><td>30/64</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>1.1.27</td><td></td><td>partial</td></tr>
-<tr><td>ministral</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td><b>Phi</b></td><td>phi4</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td><b>GPT-OSS</b></td><td>20b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td><b>OLMo</b></td><td>—</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td><b>Cogito</b></td><td>—</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td rowspan="3"><b>Gemini</b></td><td>2.5-flash</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td>3.1-flash</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td>3.1-pro</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td rowspan="2"><b>Claude</b></td><td>4.6-sonnet</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td>4.5-haiku</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td><b>GPT</b></td><td>5-mini</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td rowspan="2"><b>DeepSeek</b></td><td>chat</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
-<tr><td>reasoner</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>—</td><td></td><td></td></tr>
+<tr><th>Family</th><th>Model</th><th>npcsh Agent Score</th><th>opencode</th><th>claude code</th><th>nanocoder</th><th>Results</th><th>Notes</th></tr>
+<tr><td rowspan="5"><b>Qwen3</b></td><td>0.6b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>1.7b</td><td>69/125 (55%, v1.1.27)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>4b</td><td><b>94/125 (75%, v1.1.28)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>8b</td><td><b>104/125 (83%, v1.1.28)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>30b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="4"><b>Gemma3</b></td><td>1b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>4b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>12b</td><td>64/117 (v1.1.27)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td>partial</td></tr>
+<tr><td>27b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="3"><b>Llama</b></td><td>3.2:1b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>3.2:3b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>3.1:8b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="2"><b>Mistral</b></td><td>small3.2</td><td>30/64 (v1.1.27)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td>partial</td></tr>
+<tr><td>ministral</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td><b>Phi</b></td><td>phi4</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td><b>GPT-OSS</b></td><td>20b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td><b>OLMo</b></td><td>—</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td><b>Cogito</b></td><td>—</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="3"><b>Gemini</b></td><td>2.5-flash</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>3.1-flash</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>3.1-pro</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="2"><b>Claude</b></td><td>4.6-sonnet</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>4.5-haiku</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td><b>GPT</b></td><td>5-mini</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="2"><b>DeepSeek</b></td><td>chat</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>reasoner</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
 </table>
 
 <details><summary><b>Category breakdown</b></summary>
