@@ -16,10 +16,13 @@ except:
 from npcpy.npc_sysenv import (
     render_markdown,
 )
+from npcpy.gen.response import get_model_context_window
 from npcpy.memory.command_history import (
     CommandHistory,
-    load_kg_from_db, 
-    save_kg_to_db, 
+    load_kg_from_db,
+    save_kg_to_db,
+    start_new_conversation,
+    save_conversation_message,
 )
 from npcpy.npc_compiler import NPC
 from npcpy.memory.knowledge_graph import (
@@ -78,13 +81,19 @@ def display_usage(state: ShellState):
     print(colored("─────────────────────────────\n", "cyan"))
 
 
+def _gradient_line(text, r1, g1, b1, r2, g2, b2, t):
+    """Color a line with interpolated RGB gradient. t=0..1"""
+    r = int(r1 + (r2 - r1) * t)
+    g = int(g1 + (g2 - g1) * t)
+    b = int(b1 + (b2 - b1) * t)
+    return f"\033[38;2;{r};{g};{b}m{text}\033[0m"
+
+
 def print_welcome_art(npc=None):
     """Print welcome art - from NPC if available, otherwise default npcsh art."""
-    BLUE = "\033[1;94m"
-    RUST = "\033[1;38;5;202m"
     RESET = "\033[0m"
 
-    # If NPC has ascii_art, display it with colors
+    # If NPC has ascii_art, display it with gradient colors
     if npc and hasattr(npc, 'ascii_art') and npc.ascii_art:
         art = npc.ascii_art
         colors = getattr(npc, 'colors', {}) or {}
@@ -93,7 +102,7 @@ def print_welcome_art(npc=None):
             top = colors.get("top", "255,255,255")
             bottom = colors.get("bottom", "255,255,255")
             lines = art.strip().split("\n")
-            mid = len(lines) // 2
+            n = max(len(lines) - 1, 1)
 
             try:
                 tr, tg, tb = map(int, top.split(","))
@@ -103,23 +112,23 @@ def print_welcome_art(npc=None):
                 br, bg, bb = 255, 255, 255
 
             for i, line in enumerate(lines):
-                if i < mid:
-                    print(f"\033[38;2;{tr};{tg};{tb}m{line}\033[0m")
-                else:
-                    print(f"\033[38;2;{br};{bg};{bb}m{line}\033[0m")
+                print(_gradient_line(line, tr, tg, tb, br, bg, bb, i / n))
         else:
             print(art)
         print()
         return
 
     # Default npcsh art
+    BLUE = "\033[1;94m"
+    RUST = "\033[1;38;5;202m"
+
     print(f"""
 {BLUE}___________________________________________{RESET}
 
 Welcome to {BLUE}npc{RESET}{RUST}sh{RESET}!
-{BLUE}                    {RESET}{RUST}        _       \\\\{RESET}
-{BLUE} _ __   _ __    ___ {RESET}{RUST}  ___  | |___    \\\\{RESET}
-{BLUE}| '_ \\ | '_ \\  / __|{RESET}{RUST} / __/ | |_ _|    \\\\{RESET}
+{BLUE}                    {RESET}{RUST}        _       \\{RESET}
+{BLUE} _ __   _ __    ___ {RESET}{RUST}  ___  | |___    \\{RESET}
+{BLUE}| '_ \\ | '_ \\  / __|{RESET}{RUST} / __/ | |_ _|    \\{RESET}
 {BLUE}| | | || |_) |( |__ {RESET}{RUST} \\_  \\ | | | |    //{RESET}
 {BLUE}|_| |_|| .__/  \\___/{RESET}{RUST} |___/ |_| |_|   //{RESET}
        {BLUE}|🤖|          {RESET}{RUST}               //{RESET}
@@ -336,8 +345,10 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                     active_provider = state.npc.provider if hasattr(state, 'npc') and hasattr(state.npc, 'provider') and state.npc.provider else state.chat_provider
                     tok_in = state.session_input_tokens
                     tok_out = state.session_output_tokens
-                    tok_fmt = lambda n: f"{n/1000:.1f}k" if n >= 1000 else str(n)
-                    print(colored(f"  model: {active_model} ({active_provider})  tokens: {tok_fmt(tok_in)} in / {tok_fmt(tok_out)} out", "cyan"))
+                    tok_fmt = lambda n: f"{n/1_000_000:.1f}M" if n >= 1_000_000 else f"{n/1000:.1f}k" if n >= 1000 else str(n)
+                    ctx_window = get_model_context_window(active_model, active_provider)
+                    ctx_pct = f"  {tok_in * 100 // ctx_window}% of {tok_fmt(ctx_window)} context" if ctx_window > 0 else ""
+                    print(colored(f"  model: {active_model} ({active_provider})  tokens: {tok_fmt(tok_in)} in / {tok_fmt(tok_out)} out{ctx_pct}", "cyan"))
                     print(colored(f"  Context has {msg_count} messages (threshold: {compress_threshold}). Compressing to keep last 6.", "cyan"))
                     print(colored("  [Enter] compress  [s] skip  [f] flush N instead", "cyan"))
 
@@ -372,19 +383,45 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                             choice = ""
 
                     if choice not in ('s',) and not choice.startswith('f'):
-                        # Default: compress
+                        # Default: compress — start a new conversation linked to the old one
                         try:
                             compressed_state = state.npc.compress_planning_state(state.messages)
                         except Exception:
                             compressed_state = None
 
+                        # Get last message_id from old conversation for linking
+                        old_conversation_id = state.conversation_id
+                        last_msg_id = command_history.get_last_message_id(old_conversation_id)
+
+                        # Start new conversation
+                        state.conversation_id = start_new_conversation()
+
                         recent = state.messages[-6:]
                         recent = sanitize_messages(recent)
                         if compressed_state:
-                            state.messages = [{"role": "system", "content": f"Session context (earlier conversation summary): {compressed_state}"}] + recent
+                            summary_content = f"Session context (continued from {old_conversation_id}): {compressed_state}"
+                            state.messages = [{"role": "system", "content": summary_content}] + recent
                         else:
                             state.messages = recent
-                        print(colored(f"  Compressed. Context now {len(state.messages)} messages.", "green"))
+
+                        # Save the summary as first message of new conversation, linked to old
+                        if compressed_state:
+                            save_conversation_message(
+                                command_history,
+                                state.conversation_id,
+                                "system",
+                                summary_content,
+                                wd=state.current_path,
+                                model=active_model,
+                                provider=active_provider,
+                                npc=state.npc.name if isinstance(state.npc, NPC) else "npcsh",
+                                team=state.team.name if state.team else "npcsh",
+                                parent_message_id=last_msg_id,
+                            )
+
+                        print(colored(f"  Compressed. New conversation: {state.conversation_id}", "green"))
+                        if last_msg_id:
+                            print(colored(f"  Linked to previous via message {last_msg_id}", "green"))
 
                 try:
                     completer = make_completer(state, router)
