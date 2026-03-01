@@ -23,7 +23,7 @@ jinx_dynamic = [f"{name}=npcsh.npc:jinx_main" for name in jinx_entries]
 dynamic_entries = npc_dynamic + jinx_dynamic
 
 base_requirements = [
-    'npcpy>=1.3.28', 
+    'npcpy>=1.3.31', 
     "jinja2",
     "litellm",   
     "docx", 
