@@ -144,7 +144,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
     state = initial_state
 
     # Print welcome art - NPC art if launched with an agent, otherwise default
-    if not launched_jinx:
+    if launched_agent or not launched_jinx:
         print_welcome_art(state.npc if launched_agent else None)
 
     # If launched with a jinx mode, auto-execute that jinx
@@ -632,8 +632,14 @@ def main(npc_name: str = None) -> None:
             router.register_jinx(jinx_obj)
 
     # Determine which NPC to start with
-    # Special cases: these are jinxes/modes, not NPCs
-    jinx_modes = {"yap", "spool", "wander"}
+    # Pure jinx modes (no dedicated NPC)
+    jinx_modes = {"yap", "spool", "wander", "guac"}
+    # NPC-to-mode mapping: launching an NPC also auto-starts its mode
+    npc_mode_map = {
+        "corca": "mcp_shell",
+        "alicanto": "deep_research",
+        "plonk": "computer_use",
+    }
     target_npc_name = npc_name or args.npc
 
     if target_npc_name and target_npc_name.lower() in jinx_modes:
@@ -666,9 +672,12 @@ def main(npc_name: str = None) -> None:
          elif output is not None:
               print(output)
     else:
-        # Determine if launching an NPC or a jinx mode
+        # Determine if launching an NPC, a jinx mode, or NPC+mode
         if target_npc_name and target_npc_name.lower() in jinx_modes:
             run_repl(command_history, initial_state, router, launched_jinx=target_npc_name.lower())
+        elif target_npc_name and target_npc_name.lower() in npc_mode_map:
+            mode = npc_mode_map[target_npc_name.lower()]
+            run_repl(command_history, initial_state, router, launched_agent=npc_name, launched_jinx=mode)
         else:
             run_repl(command_history, initial_state, router, launched_agent=npc_name)
         
