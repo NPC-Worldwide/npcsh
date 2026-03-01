@@ -1,0 +1,152 @@
+jinx_name: repo_issues
+description: Fetch GitHub issues for a repo and run each through LLM loop analysis, producing a structured report.
+inputs:
+  - repo: ""
+  - state: "open"
+  - limit: "20"
+  - label: ""
+  - analysis_prompt: ""
+steps:
+  - name: fetch_and_analyze_issues
+    engine: python
+    code: |
+      import subprocess
+      import json
+      from npcpy.llm_funcs import get_llm_response
+
+      repo         = context.get('repo', '').strip()
+      state        = context.get('state', 'open').strip() or 'open'
+      limit        = int(context.get('limit', 20) or 20)
+      label        = context.get('label', '').strip()
+      analysis_prompt = context.get('analysis_prompt', '').strip()
+
+      _model    = npc.model    if npc else 'gemma3:4b'
+      _provider = npc.provider if npc else 'ollama'
+
+      def run_gh(*args):
+          r = subprocess.run(
+              ['gh'] + list(args),
+              capture_output=True, text=True, timeout=60
+          )
+          return r.returncode, r.stdout, r.stderr
+
+      # --- verify gh is available ---
+      rc, _, err = run_gh('--version')
+      if rc != 0:
+          context['output'] = 'Error: gh CLI not found. Install from https://cli.github.com'
+          exit()
+
+      # --- build issue list command ---
+      list_args = [
+          'issue', 'list',
+          '--state', state,
+          '--limit', str(limit),
+          '--json', 'number,title,body,labels,assignees,author,createdAt,updatedAt,url,comments',
+      ]
+      if repo:
+          list_args += ['--repo', repo]
+      if label:
+          list_args += ['--label', label]
+
+      rc, issues_json, err = run_gh(*list_args)
+      if rc != 0:
+          context['output'] = 'Error fetching issues: ' + err[:300]
+          exit()
+
+      try:
+          issues = json.loads(issues_json)
+      except json.JSONDecodeError as e:
+          context['output'] = f'Failed to parse issues JSON: {e}'
+          exit()
+
+      if not issues:
+          context['output'] = f'No {state} issues found' + (f' for repo {repo}' if repo else '') + '.'
+          exit()
+      print('issues', issues)
+
+      # --- default analysis prompt ---
+      if not analysis_prompt:
+          analysis_prompt = (
+              'Analyze this GitHub issue and provide a structured assessment covering:\n'
+              '## Summary\n'
+              'One sentence describing the issue.\n\n'
+              '## Root Cause / Problem\n'
+              'What is the underlying problem or request?\n\n'
+              '## Priority Assessment\n'
+              'CRITICAL / HIGH / MEDIUM / LOW — with brief justification.\n\n'
+              '## Suggested Next Steps\n'
+              'Concrete actionable steps to resolve or move forward.\n\n'
+              '## Labels / Category\n'
+              'Suggested labels if none are set (bug, enhancement, docs, question, etc.).'
+          )
+
+      # --- loop over each issue and analyze ---
+      results = []
+
+      {% for i in range(issues | length) %}
+      _issue = issues[{{ i }}]
+
+      _num    = _issue.get('number', '?')
+      _title  = _issue.get('title', '')
+      _body   = (_issue.get('body') or '(no description)')[:3000]
+      _labels = ', '.join(lbl.get('name', '') for lbl in _issue.get('labels', []))
+      _author = _issue.get('author', {})
+      _author_login = _author.get('login', '') if isinstance(_author, dict) else str(_author)
+      _created = _issue.get('createdAt', '')[:10]
+      _url     = _issue.get('url', '')
+      _comments_count = len(_issue.get('comments', []))
+
+      _prompt = (
+          f'Issue #{_num}: {_title}\n'
+          f'Author: {_author_login}  |  Created: {_created}  |  Labels: {_labels or "(none)"}  |  Comments: {_comments_count}\n'
+          f'URL: {_url}\n\n'
+          f'Description:\n{_body}\n\n'
+          + analysis_prompt
+      )
+      print(_prompt)
+      _resp = get_llm_response(
+          _prompt,
+          model=_model,
+          provider=_provider,
+          npc=npc,
+          temperature=0.3,
+      )
+      print(_resp)
+      _analysis = str(_resp.get('response', '(no response)'))
+
+      results.append({
+          'number': _num,
+          'title': _title,
+          'url': _url,
+          'author': _author_login,
+          'created': _created,
+          'labels': _labels,
+          'comments': _comments_count,
+          'analysis': _analysis,
+      })
+      {% endfor %}
+
+      # --- build final report ---
+      repo_label = repo if repo else '(current repo)'
+      header = (
+          f'# Issue Analysis Report\n'
+          f'**Repo:** {repo_label}  |  **State:** {state}  |  **Issues analyzed:** {len(results)}\n'
+          + ('**Label filter:** ' + label + '\n' if label else '')
+          + '\n---\n'
+      )
+
+      sections = []
+      for r in results:
+          section = (
+              f"## Issue #{r['number']}: {r['title']}\n"
+              f"**Author:** {r['author']}  |  **Created:** {r['created']}  |  "
+              f"**Labels:** {r['labels'] or '(none)'}  |  **Comments:** {r['comments']}\n"
+              f"**URL:** {r['url']}\n\n"
+              f"{r['analysis']}\n\n"
+              + '---\n'
+          )
+          sections.append(section)
+
+      context['output'] = header + '\n'.join(sections)
+      context['issues'] = issues
+      context['results'] = results
