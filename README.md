@@ -986,34 +986,35 @@ npc_team/
 
 125 tasks across 15 categories, run via `npcsh -c`. Each task is verified by checking file system state and command output.
 
-| Model | Family | Score |
-|-------|--------|:-----:|
-| qwen3:0.6b | Qwen3 | — |
-| qwen3:1.7b | Qwen3 | — |
-| qwen3:4b | Qwen3 | **94/125 (75%)** |
-| qwen3:8b | Qwen3 | — |
-| qwen3:30b | Qwen3 | — |
-| gemma3:1b | Gemma3 | — |
-| gemma3:4b | Gemma3 | — |
-| gemma3:12b | Gemma3 | — |
-| gemma3:27b | Gemma3 | — |
-| llama3.2:1b | Llama | — |
-| llama3.2:3b | Llama | — |
-| llama3.1:8b | Llama | — |
-| mistral-small3.2 | Mistral | — |
-| ministral | Mistral | — |
-| phi4 | Phi | — |
-| gpt-oss:20b | GPT-OSS | — |
-| olmo | OLMo | — |
-| cogito | Cogito | — |
-| gemini-2.5-flash | Gemini | — |
-| gemini-3.1-flash | Gemini | — |
-| gemini-3.1-pro | Gemini | — |
-| claude-4.6-sonnet | Claude | — |
-| claude-4.5-haiku | Claude | — |
-| gpt-5-mini | GPT | — |
-| deepseek-chat | DeepSeek | — |
-| deepseek-reasoner | DeepSeek | — |
+<table>
+<tr><th>Family</th><th>Model</th><th>Score</th></tr>
+<tr><td rowspan="5"><b>Qwen3</b></td><td>0.6b</td><td>—</td></tr>
+<tr><td>1.7b</td><td>—</td></tr>
+<tr><td>4b</td><td><b>94/125 (75%)</b></td></tr>
+<tr><td>8b</td><td>—</td></tr>
+<tr><td>30b</td><td>—</td></tr>
+<tr><td rowspan="4"><b>Gemma3</b></td><td>1b</td><td>—</td></tr>
+<tr><td>4b</td><td>—</td></tr>
+<tr><td>12b</td><td>—</td></tr>
+<tr><td>27b</td><td>—</td></tr>
+<tr><td rowspan="3"><b>Llama</b></td><td>3.2:1b</td><td>—</td></tr>
+<tr><td>3.2:3b</td><td>—</td></tr>
+<tr><td>3.1:8b</td><td>—</td></tr>
+<tr><td rowspan="2"><b>Mistral</b></td><td>small3.2</td><td>—</td></tr>
+<tr><td>ministral</td><td>—</td></tr>
+<tr><td><b>Phi</b></td><td>phi4</td><td>—</td></tr>
+<tr><td><b>GPT-OSS</b></td><td>20b</td><td>—</td></tr>
+<tr><td><b>OLMo</b></td><td>—</td><td>—</td></tr>
+<tr><td><b>Cogito</b></td><td>—</td><td>—</td></tr>
+<tr><td rowspan="3"><b>Gemini</b></td><td>2.5-flash</td><td>—</td></tr>
+<tr><td>3.1-flash</td><td>—</td></tr>
+<tr><td>3.1-pro</td><td>—</td></tr>
+<tr><td rowspan="2"><b>Claude</b></td><td>4.6-sonnet</td><td>—</td></tr>
+<tr><td>4.5-haiku</td><td>—</td></tr>
+<tr><td><b>GPT</b></td><td>5-mini</td><td>—</td></tr>
+<tr><td rowspan="2"><b>DeepSeek</b></td><td>chat</td><td>—</td></tr>
+<tr><td>reasoner</td><td>—</td></tr>
+</table>
 
 <details><summary><b>Category breakdown</b></summary>
 
