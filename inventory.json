@@ -1,7 +1,0 @@
-[
-  {"item": "Book", "quantity": 5, "price": 10},
-  {"item": "Laptop", "quantity": 2, "price": 800},
-  {"item": "Mouse", "quantity": 10, "price": 25},
-  {"item": "Keyboard", "quantity": 1, "price": 100},
-  {"item": "Chair", "quantity": 1, "price": 150}
-]

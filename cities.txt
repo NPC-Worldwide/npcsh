@@ -1,5 +1,0 @@
-Name, City, Stat
-Name, City, Stat
-Name, City, Stat
-Name, City, Stat
-Name, City, Stat

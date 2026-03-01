@@ -1,0 +1,120 @@
+jinx_name: new
+description: Create a new NPC, jinx, or file. Usage - /new npc, /new jinx, /new file
+inputs:
+- type
+- name: ""
+- primary_directive: ""
+- description: ""
+- code: ""
+- model: ""
+- provider: ""
+- jinxs: ""
+- path: "lib/core"
+- inputs: ""
+- file_path: ""
+- edit_instructions: ""
+steps:
+  - name: "create_resource"
+    engine: "python"
+    code: |
+      import os
+      import yaml
+      from pathlib import Path
+
+      resource_type = {{ type | tojson }}.strip().lower()
+      name = {{ name | tojson }}.strip()
+
+      if resource_type == 'npc':
+          if not name:
+              context['output'] = "Error: name is required. Usage: /new npc name=mybot primary_directive='You are...'"
+          else:
+              team_path = state.team.team_path if state and state.team else os.path.expanduser('~/.npcsh/npc_team')
+              npc_path = os.path.join(team_path, name + '.npc')
+              if os.path.exists(npc_path):
+                  context['output'] = "Error: NPC '" + name + "' already exists at " + npc_path
+              else:
+                  directive = {{ primary_directive | tojson }}.strip() or "You are " + name + ", a helpful assistant."
+                  npc_model = {{ model | tojson }}.strip()
+                  npc_provider = {{ provider | tojson }}.strip()
+                  jinxs_str = {{ jinxs | tojson }}.strip()
+                  if jinxs_str:
+                      jinxs_list = [j.strip() for j in jinxs_str.split(',')]
+                  else:
+                      jinxs_list = ['lib/core/python', 'lib/core/sh', 'lib/core/edit_file', 'lib/utils/chat', 'lib/utils/stop']
+
+                  npc_data = {'name': name, 'primary_directive': directive, 'jinxs': jinxs_list}
+                  if npc_model:
+                      npc_data['model'] = npc_model
+                  if npc_provider:
+                      npc_data['provider'] = npc_provider
+
+                  class BlockDumper(yaml.SafeDumper):
+                      pass
+                  def _str_rep(dumper, data):
+                      if '\n' in data:
+                          return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+                      return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+                  BlockDumper.add_representer(str, _str_rep)
+
+                  with open(npc_path, 'w') as f:
+                      yaml.dump(npc_data, f, Dumper=BlockDumper, default_flow_style=False, sort_keys=False)
+                  context['output'] = "Created NPC '" + name + "' at " + npc_path + "\nRun /reload to make it available."
+
+      elif resource_type == 'jinx':
+          if not name:
+              context['output'] = "Error: name is required. Usage: /new jinx name=hello description='Says hi' code=\"context['output']='Hi'\""
+          else:
+              team_path = state.team.team_path if state and state.team else os.path.expanduser('~/.npcsh/npc_team')
+              sub_path = {{ path | tojson }}.strip() or 'lib/core'
+              jinx_dir = os.path.join(team_path, 'jinxs', sub_path)
+              os.makedirs(jinx_dir, exist_ok=True)
+              jinx_path = os.path.join(jinx_dir, name + '.jinx')
+              if os.path.exists(jinx_path):
+                  context['output'] = "Error: Jinx '" + name + "' already exists at " + jinx_path
+              else:
+                  desc = {{ description | tojson }}.strip() or name + " jinx"
+                  code_str = {{ code | tojson }}.strip()
+                  inputs_str = {{ inputs | tojson }}.strip()
+                  inputs_list = [i.strip() for i in inputs_str.split(',')] if inputs_str else []
+
+                  jinx_data = {
+                      'jinx_name': name,
+                      'description': desc,
+                      'inputs': inputs_list,
+                      'steps': [{'name': name, 'engine': 'python', 'code': code_str or "context['output'] = 'Hello from " + name + "'"}]
+                  }
+
+                  class BlockDumper(yaml.SafeDumper):
+                      pass
+                  def _str_rep(dumper, data):
+                      if '\n' in data:
+                          return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+                      return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+                  BlockDumper.add_representer(str, _str_rep)
+
+                  with open(jinx_path, 'w') as f:
+                      yaml.dump(jinx_data, f, Dumper=BlockDumper, default_flow_style=False, sort_keys=False)
+                  context['output'] = "Created jinx '" + name + "' at " + jinx_path + "\nRun /reload to make it available."
+
+      elif resource_type == 'file':
+          fp = {{ file_path | tojson }}.strip() or name
+          instructions = {{ edit_instructions | tojson }}.strip() or {{ primary_directive | tojson }}.strip()
+          if not fp:
+              context['output'] = "Error: file_path (or name) is required. Usage: /new file name=app.py edit_instructions='Create a flask app'"
+          elif not instructions:
+              context['output'] = "Error: edit_instructions is required. Usage: /new file file_path=app.py edit_instructions='Create a flask app'"
+          else:
+              from npcpy.llm_funcs import get_llm_response
+              fp = os.path.expanduser(fp)
+              os.makedirs(os.path.dirname(fp) or '.', exist_ok=True)
+              prompt = "Create the content for a new file based on these instructions:\n\n" + instructions + "\n\nReturn ONLY the file content, no explanation."
+              m = npc.model if npc else None
+              p = npc.provider if npc else None
+              result = get_llm_response(prompt, model=m, provider=p, npc=npc)
+              content = result.get('response', '') if isinstance(result, dict) else str(result)
+              with open(fp, 'w') as f:
+                  f.write(content)
+              context['output'] = "Created file: " + fp
+
+      else:
+          context['output'] = "Unknown type '" + resource_type + "'. Use: /new npc, /new jinx, or /new file"
