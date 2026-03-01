@@ -976,6 +976,153 @@ npc_team/
     <img src="gh_images/jinx_ui.png" alt="Jinx detail view", width=500>
 </p>
 
+# Benchmark Results
+
+125 tasks across 15 categories, run via `npcsh -c` with local ollama models. Each task is verified by checking file system state and command output.
+
+<details open><summary><b>Qwen3</b> — 4b: 94/125 (75%) | 0.6b, 1.7b, 8b, 30b: TBD</summary>
+
+| Category | 0.6b | 1.7b | 4b | 8b | 30b |
+|----------|:---:|:---:|:---:|:---:|:---:|
+| shell (10) | — | — | 8 | — | — |
+| file-ops (10) | — | — | 10 | — | — |
+| python (10) | — | — | 5 | — | — |
+| data (10) | — | — | 4 | — | — |
+| system (10) | — | — | 9 | — | — |
+| text (10) | — | — | 10 | — | — |
+| debug (10) | — | — | 4 | — | — |
+| git (10) | — | — | 9 | — | — |
+| multi-step (10) | — | — | 6 | — | — |
+| scripting (10) | — | — | 7 | — | — |
+| image-gen (5) | — | — | 5 | — | — |
+| audio-gen (5) | — | — | 5 | — | — |
+| web-search (5) | — | — | 5 | — | — |
+| delegation (5) | — | — | 2 | — | — |
+| tool-chain (5) | — | — | 5 | — | — |
+| **Total (125)** | — | — | **94** | — | — |
+
+</details>
+
+<details><summary><b>Gemma3</b> — 1b, 4b, 12b, 27b: TBD</summary>
+
+| Category | 1b | 4b | 12b | 27b |
+|----------|:---:|:---:|:---:|:---:|
+| shell (10) | — | — | — | — |
+| file-ops (10) | — | — | — | — |
+| python (10) | — | — | — | — |
+| data (10) | — | — | — | — |
+| system (10) | — | — | — | — |
+| text (10) | — | — | — | — |
+| debug (10) | — | — | — | — |
+| git (10) | — | — | — | — |
+| multi-step (10) | — | — | — | — |
+| scripting (10) | — | — | — | — |
+| image-gen (5) | — | — | — | — |
+| audio-gen (5) | — | — | — | — |
+| web-search (5) | — | — | — | — |
+| delegation (5) | — | — | — | — |
+| tool-chain (5) | — | — | — | — |
+| **Total (125)** | — | — | — | — |
+
+</details>
+
+<details><summary><b>Llama</b> — 3.2:1b, 3.2:3b, 3.1:8b: TBD</summary>
+
+| Category | 3.2:1b | 3.2:3b | 3.1:8b |
+|----------|:---:|:---:|:---:|
+| shell (10) | — | — | — |
+| file-ops (10) | — | — | — |
+| python (10) | — | — | — |
+| data (10) | — | — | — |
+| system (10) | — | — | — |
+| text (10) | — | — | — |
+| debug (10) | — | — | — |
+| git (10) | — | — | — |
+| multi-step (10) | — | — | — |
+| scripting (10) | — | — | — |
+| image-gen (5) | — | — | — |
+| audio-gen (5) | — | — | — |
+| web-search (5) | — | — | — |
+| delegation (5) | — | — | — |
+| tool-chain (5) | — | — | — |
+| **Total (125)** | — | — | — |
+
+</details>
+
+<details><summary><b>Mistral</b> — small3.2: TBD</summary>
+
+| Category | small3.2 |
+|----------|:---:|
+| shell (10) | — |
+| file-ops (10) | — |
+| python (10) | — |
+| data (10) | — |
+| system (10) | — |
+| text (10) | — |
+| debug (10) | — |
+| git (10) | — |
+| multi-step (10) | — |
+| scripting (10) | — |
+| image-gen (5) | — |
+| audio-gen (5) | — |
+| web-search (5) | — |
+| delegation (5) | — |
+| tool-chain (5) | — |
+| **Total (125)** | — |
+
+</details>
+
+<details><summary><b>Phi</b> — phi4: TBD</summary>
+
+| Category | phi4 |
+|----------|:---:|
+| shell (10) | — |
+| file-ops (10) | — |
+| python (10) | — |
+| data (10) | — |
+| system (10) | — |
+| text (10) | — |
+| debug (10) | — |
+| git (10) | — |
+| multi-step (10) | — |
+| scripting (10) | — |
+| image-gen (5) | — |
+| audio-gen (5) | — |
+| web-search (5) | — |
+| delegation (5) | — |
+| tool-chain (5) | — |
+| **Total (125)** | — |
+
+</details>
+
+<details><summary><b>GPT-OSS</b> — 20b: TBD</summary>
+
+| Category | 20b |
+|----------|:---:|
+| shell (10) | — |
+| file-ops (10) | — |
+| python (10) | — |
+| data (10) | — |
+| system (10) | — |
+| text (10) | — |
+| debug (10) | — |
+| git (10) | — |
+| multi-step (10) | — |
+| scripting (10) | — |
+| image-gen (5) | — |
+| audio-gen (5) | — |
+| web-search (5) | — |
+| delegation (5) | — |
+| tool-chain (5) | — |
+| **Total (125)** | — |
+
+</details>
+
+```bash
+python -m npcsh.benchmark.local_runner --model qwen3:4b --provider ollama
+python -m npcsh.benchmark.local_runner --compare  # run all models
+```
+
 ## Contributing
 Contributions are welcome! Please submit issues and pull requests on the GitHub repository.
 
