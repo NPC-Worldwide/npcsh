@@ -261,70 +261,8 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
 
     def exit_shell(current_state: ShellState):
         print("\nGoodbye!")
-
-        if current_state.turn_count <= 10:
-            sys.exit(0)
-
-        print(colored("Processing and archiving all session knowledge...", "cyan"))
-
-        engine = command_history.engine
-
-        try:
-            for team_name, npc_name, path in session_scopes:
-                try:
-                    print(f"  -> Archiving knowledge for: T='{team_name}', N='{npc_name}', P='{path}'")
-
-                    # Only build KG from approved memories, not raw conversation
-                    memory_examples = command_history.get_memory_examples_for_context(
-                        npc=npc_name, team=team_name, directory_path=path
-                    )
-                    approved = memory_examples.get("approved", []) + memory_examples.get("edited", [])
-
-                    if not approved:
-                        print("     ...No approved memories for this scope, skipping.")
-                        continue
-
-                    memory_statements = []
-                    for mem in approved:
-                        statement = mem.get("final_memory") or mem.get("initial_memory")
-                        if statement:
-                            memory_statements.append(statement)
-
-                    if not memory_statements:
-                        continue
-
-                    memory_text = "\n".join(f"- {s}" for s in memory_statements)
-                    print(colored(f"     evolving KG from {len(memory_statements)} approved memories...", "cyan"))
-
-                    current_kg = load_kg_from_db(engine, team_name, npc_name, path)
-
-                    evolved_kg, _ = kg_evolve_incremental(
-                        existing_kg=current_kg,
-                        new_content_text=memory_text,
-                        model=current_state.npc.model,
-                        provider=current_state.npc.provider,
-                        npc=current_state.npc,
-                        get_concepts=True,
-                        link_concepts_facts=True,
-                        link_concepts_concepts=True,
-                        link_facts_facts=True,
-                    )
-
-                    save_kg_to_db(engine,
-                                  evolved_kg,
-                                  team_name,
-                                  npc_name,
-                                  path,
-                                  conversation_id=current_state.conversation_id,
-                                  message_id=f"{current_state.conversation_id}_exit")
-
-                except Exception as e:
-                    import traceback
-                    print(colored(f"Failed to process KG for scope ({team_name}, {npc_name}, {path}): {e}", "red"))
-                    traceback.print_exc()
-        except KeyboardInterrupt:
-            print(colored("\nSkipping knowledge archival.", "yellow"))
-
+        # Auto KG archival on exit disabled —
+        # memory/KG processing is now controlled via scheduled jobs / cron instead
         sys.exit(0)
 
     while True:

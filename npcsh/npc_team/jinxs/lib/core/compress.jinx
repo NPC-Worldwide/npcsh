@@ -5,6 +5,7 @@ inputs:
 - sleep: False
 - dream: False
 - ops: ""
+- context: ""
 - model: ""
 - provider: ""
 steps:
@@ -23,6 +24,7 @@ steps:
       is_sleeping = context.get('sleep')
       is_dreaming = context.get('dream')
       operations_str = context.get('ops')
+      user_context = context.get('context', '') or ''
       llm_model = context.get('model')
       llm_provider = context.get('provider')
       output_messages = context.get('messages', [])
@@ -38,7 +40,7 @@ steps:
               current_npc = context.get('npc')
               m = llm_model or (current_npc.model if current_npc and hasattr(current_npc, 'model') and current_npc.model else None)
               p = llm_provider or (current_npc.provider if current_npc and hasattr(current_npc, 'provider') and current_npc.provider else None)
-              result = breathe(messages=output_messages, model=m, provider=p, npc=current_npc)
+              result = breathe(messages=output_messages, model=m, provider=p, npc=current_npc, context=user_context)
               summary = result.get('output', 'Context compressed.') if isinstance(result, dict) else str(result)
 
               # Link old conversation to new one
@@ -117,10 +119,10 @@ steps:
                   return "Knowledge graph for the current scope is empty. Nothing to process.\n- Scope: " + scope_str
               original_facts = len(current_kg.get('facts', []))
               original_concepts = len(current_kg.get('concepts', []))
-              evolved_kg, _ = kg_sleep_process(existing_kg=current_kg, model=model, provider=provider, npc=current_npc, operations_config=operations_config)
+              evolved_kg, _ = kg_sleep_process(existing_kg=current_kg, model=model, provider=provider, npc=current_npc, context=user_context, operations_config=operations_config)
               process_type = "Sleep"
               if dream:
-                  evolved_kg, _ = kg_dream_process(existing_kg=evolved_kg, model=model, provider=provider, npc=current_npc)
+                  evolved_kg, _ = kg_dream_process(existing_kg=evolved_kg, model=model, provider=provider, npc=current_npc, context=user_context)
                   process_type += " & Dream"
               save_kg_to_db(engine, evolved_kg, team_name, npc_name, current_path)
               new_facts = len(evolved_kg.get('facts', []))
@@ -238,7 +240,7 @@ steps:
                       current_npc = context.get('npc')
                       m = llm_model or (current_npc.model if current_npc and hasattr(current_npc, 'model') and current_npc.model else None)
                       p = llm_provider or (current_npc.provider if current_npc and hasattr(current_npc, 'provider') and current_npc.provider else None)
-                      result = breathe(messages=output_messages, model=m, provider=p, npc=current_npc)
+                      result = breathe(messages=output_messages, model=m, provider=p, npc=current_npc, context=user_context)
                       summary_data = result.get('summary', {}) if isinstance(result, dict) else {}
                       summary = result.get('output', '') if isinstance(result, dict) else str(result)
                   except Exception as e:
