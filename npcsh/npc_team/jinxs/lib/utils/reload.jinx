@@ -1,0 +1,131 @@
+jinx_name: reload
+description: Reload team jinxes and NPCs. Usage - /reload (all), /reload npc name, /reload jinx name
+inputs:
+- type: ""
+- name: ""
+steps:
+  - name: "reload_team"
+    engine: "python"
+    code: |
+      import os
+      from pathlib import Path
+      from npcpy.npc_compiler import NPC, load_jinxs_from_directory, build_jinx_tool_catalog
+
+      resource_type = {{ type | tojson }}.strip().lower()
+      target_name = {{ name | tojson }}.strip()
+
+      team = state.team if state else None
+      if not team:
+          context['output'] = "Error: No team loaded."
+      elif not resource_type or resource_type == 'all':
+          # Full reload
+          jinxs_dir = os.path.join(team.team_path, 'jinxs')
+
+          # Reload all jinxes
+          team._raw_jinxs_list = []
+          if os.path.exists(jinxs_dir):
+              for jinx_obj in load_jinxs_from_directory(jinxs_dir):
+                  team._raw_jinxs_list.append(jinx_obj)
+
+          # Reload skills if configured
+          if hasattr(team, 'skills_directory') and team.skills_directory:
+              skills_path = os.path.expanduser(team.skills_directory)
+              if not os.path.isabs(skills_path):
+                  skills_path = os.path.join(team.team_path, skills_path)
+              if os.path.exists(skills_path):
+                  for jinx_obj in load_jinxs_from_directory(skills_path):
+                      team._raw_jinxs_list.append(jinx_obj)
+
+          # Re-render and rebuild catalog
+          team._perform_first_pass_jinx_rendering()
+          team.jinx_tool_catalog = build_jinx_tool_catalog(team.jinxs_dict)
+
+          # Reload NPC files
+          old_npcs = set(team.npcs.keys())
+          new_npcs = set()
+          for f in Path(team.team_path).glob('*.npc'):
+              npc_name = f.stem
+              new_npcs.add(npc_name)
+              npc_obj = NPC(str(f), db_conn=team.db_conn, team=team)
+              # Preserve model/provider overrides if NPC existed before
+              if npc_name in team.npcs:
+                  old = team.npcs[npc_name]
+                  if old.model and not npc_obj.model:
+                      npc_obj.model = old.model
+                  if old.provider and not npc_obj.provider:
+                      npc_obj.provider = old.provider
+              team.npcs[npc_name] = npc_obj
+
+          # Remove NPCs whose files were deleted
+          for removed in old_npcs - new_npcs:
+              del team.npcs[removed]
+
+          # Re-init jinxes for all NPCs
+          for npc_obj in team.npcs.values():
+              npc_obj.initialize_jinxs(team_raw_jinxs=team._raw_jinxs_list)
+
+          added = new_npcs - old_npcs
+          removed = old_npcs - new_npcs
+          parts = ["Reloaded: " + str(len(team.jinxs_dict)) + " jinxes, " + str(len(team.npcs)) + " NPCs"]
+          if added:
+              parts.append("  New NPCs: " + ", ".join(sorted(added)))
+          if removed:
+              parts.append("  Removed NPCs: " + ", ".join(sorted(removed)))
+          context['output'] = "\n".join(parts)
+
+      elif resource_type == 'npc':
+          if not target_name:
+              context['output'] = "Error: name required. Usage: /reload npc name=sibiji"
+          else:
+              npc_path = os.path.join(team.team_path, target_name + '.npc')
+              if not os.path.exists(npc_path):
+                  context['output'] = "Error: NPC file not found: " + npc_path
+              else:
+                  npc_obj = NPC(npc_path, db_conn=team.db_conn, team=team)
+                  # Preserve runtime overrides
+                  if target_name in team.npcs:
+                      old = team.npcs[target_name]
+                      if old.model and not npc_obj.model:
+                          npc_obj.model = old.model
+                      if old.provider and not npc_obj.provider:
+                          npc_obj.provider = old.provider
+                  team.npcs[target_name] = npc_obj
+                  npc_obj.initialize_jinxs(team_raw_jinxs=team._raw_jinxs_list)
+                  # If this is the active NPC, update state reference
+                  if state.npc and hasattr(state.npc, 'name') and state.npc.name == target_name:
+                      state.npc = npc_obj
+                  context['output'] = "Reloaded NPC: " + target_name + " (" + str(len(npc_obj.jinxs_dict)) + " jinxes)"
+
+      elif resource_type == 'jinx':
+          if not target_name:
+              context['output'] = "Error: name required. Usage: /reload jinx name=compress"
+          else:
+              # Find and reload a single jinx
+              jinxs_dir = os.path.join(team.team_path, 'jinxs')
+              found = None
+              for root, dirs, files in os.walk(jinxs_dir):
+                  for f in files:
+                      if f == target_name + '.jinx':
+                          found = os.path.join(root, f)
+                          break
+                  if found:
+                      break
+              if not found:
+                  context['output'] = "Error: Jinx '" + target_name + "' not found under " + jinxs_dir
+              else:
+                  from npcpy.npc_compiler import Jinx
+                  new_jinx = Jinx(jinx_path=found)
+                  # Replace in raw list
+                  team._raw_jinxs_list = [j for j in team._raw_jinxs_list if j.jinx_name != target_name]
+                  team._raw_jinxs_list.append(new_jinx)
+                  # Re-render all (needed for macro dependencies)
+                  team._perform_first_pass_jinx_rendering()
+                  team.jinx_tool_catalog = build_jinx_tool_catalog(team.jinxs_dict)
+                  # Update NPCs that use this jinx
+                  for npc_obj in team.npcs.values():
+                      if target_name in npc_obj.jinxs_dict:
+                          npc_obj.initialize_jinxs(team_raw_jinxs=team._raw_jinxs_list)
+                  context['output'] = "Reloaded jinx: " + target_name
+
+      else:
+          context['output'] = "Unknown type '" + resource_type + "'. Use: /reload, /reload npc name=X, /reload jinx name=X"
