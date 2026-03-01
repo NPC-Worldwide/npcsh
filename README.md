@@ -984,7 +984,38 @@ npc_team/
 
 # Benchmark Results
 
-125 tasks across 15 categories, run via `npcsh -c` with local ollama models. Each task is verified by checking file system state and command output.
+125 tasks across 15 categories, run via `npcsh -c`. Each task is verified by checking file system state and command output.
+
+| Model | Family | Score |
+|-------|--------|:-----:|
+| qwen3:0.6b | Qwen3 | — |
+| qwen3:1.7b | Qwen3 | — |
+| qwen3:4b | Qwen3 | **94/125 (75%)** |
+| qwen3:8b | Qwen3 | — |
+| qwen3:30b | Qwen3 | — |
+| gemma3:1b | Gemma3 | — |
+| gemma3:4b | Gemma3 | — |
+| gemma3:12b | Gemma3 | — |
+| gemma3:27b | Gemma3 | — |
+| llama3.2:1b | Llama | — |
+| llama3.2:3b | Llama | — |
+| llama3.1:8b | Llama | — |
+| mistral-small3.2 | Mistral | — |
+| ministral | Mistral | — |
+| phi4 | Phi | — |
+| gpt-oss:20b | GPT-OSS | — |
+| olmo | OLMo | — |
+| cogito | Cogito | — |
+| gemini-2.5-flash | Gemini | — |
+| gemini-3.1-flash | Gemini | — |
+| gemini-3.1-pro | Gemini | — |
+| claude-4.6-sonnet | Claude | — |
+| claude-4.5-haiku | Claude | — |
+| gpt-5-mini | GPT | — |
+| deepseek-chat | DeepSeek | — |
+| deepseek-reasoner | DeepSeek | — |
+
+<details><summary><b>Category breakdown</b></summary>
 
 <table>
 <tr>
@@ -992,35 +1023,49 @@ npc_team/
 <th colspan="5">Qwen3</th>
 <th colspan="4">Gemma3</th>
 <th colspan="3">Llama</th>
-<th>Mistral</th>
+<th colspan="2">Mistral</th>
 <th>Phi</th>
 <th>GPT-OSS</th>
+<th>OLMo</th>
+<th>Cogito</th>
+<th colspan="3">Gemini</th>
+<th colspan="2">Claude</th>
+<th>GPT</th>
+<th colspan="2">DeepSeek</th>
 </tr>
 <tr>
 <th>0.6b</th><th>1.7b</th><th>4b</th><th>8b</th><th>30b</th>
 <th>1b</th><th>4b</th><th>12b</th><th>27b</th>
 <th>3.2:1b</th><th>3.2:3b</th><th>3.1:8b</th>
-<th>small3.2</th>
+<th>small3.2</th><th>ministral</th>
 <th>phi4</th>
 <th>20b</th>
+<th>—</th>
+<th>—</th>
+<th>2.5-flash</th><th>3.1-flash</th><th>3.1-pro</th>
+<th>4.6-sonnet</th><th>4.5-haiku</th>
+<th>5-mini</th>
+<th>chat</th><th>reasoner</th>
 </tr>
-<tr><td>shell (10)</td><td>—</td><td>—</td><td>8</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>file-ops (10)</td><td>—</td><td>—</td><td>10</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>python (10)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>data (10)</td><td>—</td><td>—</td><td>4</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>system (10)</td><td>—</td><td>—</td><td>9</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>text (10)</td><td>—</td><td>—</td><td>10</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>debug (10)</td><td>—</td><td>—</td><td>4</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>git (10)</td><td>—</td><td>—</td><td>9</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>multi-step (10)</td><td>—</td><td>—</td><td>6</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>scripting (10)</td><td>—</td><td>—</td><td>7</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>image-gen (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>audio-gen (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>web-search (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>delegation (5)</td><td>—</td><td>—</td><td>2</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>tool-chain (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td><b>Total (125)</b></td><td>—</td><td>—</td><td><b>94</b></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>shell (10)</td><td>—</td><td>—</td><td>8</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>file-ops (10)</td><td>—</td><td>—</td><td>10</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>python (10)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>data (10)</td><td>—</td><td>—</td><td>4</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>system (10)</td><td>—</td><td>—</td><td>9</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>text (10)</td><td>—</td><td>—</td><td>10</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>debug (10)</td><td>—</td><td>—</td><td>4</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>git (10)</td><td>—</td><td>—</td><td>9</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>multi-step (10)</td><td>—</td><td>—</td><td>6</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>scripting (10)</td><td>—</td><td>—</td><td>7</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>image-gen (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>audio-gen (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>web-search (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>delegation (5)</td><td>—</td><td>—</td><td>2</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>tool-chain (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><b>Total (125)</b></td><td>—</td><td>—</td><td><b>94</b></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
 </table>
+
+</details>
 
 ```bash
 python -m npcsh.benchmark.local_runner --model qwen3:4b --provider ollama
