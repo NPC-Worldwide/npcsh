@@ -172,56 +172,68 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
     npc_names = [f"@{n}" for n in state.team.npcs.keys()]
     print(f"  {DIM}npcs:{RESET} {BLUE}{('  ').join(npc_names)}{RESET}")
 
-    # Jinxs - organized by group, hiding incognide, computer_use, and browser
-    hidden_folders = {'incognide', 'computer_use', 'browser'}
-    jinxs_by_group = {}
+    # Jinxs - organized by group/subgroup with sub-directory lines
+    hidden_folders = {'computer_use', 'browser'}
+    # jinxs_tree[(group, subgroup)][subdir] = [jinx_names]
+    jinxs_tree = {}
     if hasattr(state.team, 'jinxs_dict'):
         for jinx_name, jinx_obj in state.team.jinxs_dict.items():
             group = 'other'
             subgroup = None
+            subdir = None
             if hasattr(jinx_obj, '_source_path') and jinx_obj._source_path:
                 parts = jinx_obj._source_path.split(os.sep)
                 if 'jinxs' in parts:
                     idx = parts.index('jinxs')
-                    remaining = parts[idx + 1:]  # e.g. ['lib', 'core', 'sh.jinx']
+                    remaining = parts[idx + 1:]
                     if any(seg in hidden_folders for seg in remaining):
                         continue
                     if len(remaining) > 1:
                         group = remaining[0]
-                        # For lib, use the subfolder as subgroup
                         if group == 'lib' and len(remaining) > 2:
                             subgroup = remaining[1]
+                            if len(remaining) > 3:
+                                subdir = remaining[2]
+                        elif len(remaining) > 2:
+                            subdir = remaining[1]
                     else:
                         group = 'root'
             key = (group, subgroup)
-            if key not in jinxs_by_group:
-                jinxs_by_group[key] = []
-            jinxs_by_group[key].append(jinx_name)
+            if key not in jinxs_tree:
+                jinxs_tree[key] = {}
+            if subdir not in jinxs_tree[key]:
+                jinxs_tree[key][subdir] = []
+            jinxs_tree[key][subdir].append(jinx_name)
 
-    if jinxs_by_group:
+    if jinxs_tree:
         print()
-        # Collect top-level groups and their subgroups
-        group_order = ['bin', 'modes', 'lib', 'npc_studio', 'root', 'other']
-        # Sort keys: by group order, then subgroup alphabetically
+        group_order = ['bin', 'modes', 'lib', 'skills', 'npc_studio', 'root', 'other']
         sorted_keys = sorted(
-            jinxs_by_group.keys(),
+            jinxs_tree.keys(),
             key=lambda k: (group_order.index(k[0]) if k[0] in group_order else 99, k[1] or '')
         )
         last_group = None
         for group, subgroup in sorted_keys:
-            names = sorted(jinxs_by_group[(group, subgroup)])
-            prefixed = [f"/{n}" for n in names]
             if group != last_group:
-                label = group
-                if group == 'lib' and subgroup:
-                    label = f"lib/{subgroup}"
+                label = f"lib/{subgroup}" if group == 'lib' and subgroup else group
                 print(f"  {RUST}{label}/{RESET}")
             elif subgroup:
                 print(f"  {RUST}lib/{subgroup}/{RESET}")
             else:
                 print(f"  {RUST}{group}/{RESET}")
-            print(_wrap_names(prefixed))
             last_group = group
+
+            subdirs = jinxs_tree[(group, subgroup)]
+            # Top-level names (no subdir)
+            if None in subdirs:
+                top_names = sorted(subdirs[None])
+                print(_wrap_names([f"/{n}" for n in top_names]))
+            # Sub-directory groups as "subdir: /name  /name" lines
+            for sd in sorted(k for k in subdirs if k is not None):
+                sd_names = sorted(subdirs[sd])
+                prefixed = "  ".join(f"/{n}" for n in sd_names)
+                print(f"      {DIM}{sd}:{RESET} {prefixed}")
+
         print(f"\n  {DIM}/jinxs for full list{RESET}")
     print()
     
@@ -313,25 +325,66 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
         # EOFError means Ctrl+D on an empty line.
         try:
             if state.messages is not None:
-                if len(state.messages) > 20:
+                compress_threshold = getattr(state, '_compress_threshold', 20)
+                if len(state.messages) > compress_threshold:
                     # Display usage before compacting
                     display_usage(state)
 
-                    # Pass actual messages so compress_planning_state summarizes real conversation
-                    try:
-                        compressed_state = state.npc.compress_planning_state(state.messages)
-                    except Exception:
-                        # Fallback: just keep recent messages if summarization fails
-                        compressed_state = None
+                    msg_count = len(state.messages)
+                    # Show model and context usage
+                    active_model = state.npc.model if hasattr(state, 'npc') and hasattr(state.npc, 'model') and state.npc.model else state.chat_model
+                    active_provider = state.npc.provider if hasattr(state, 'npc') and hasattr(state.npc, 'provider') and state.npc.provider else state.chat_provider
+                    tok_in = state.session_input_tokens
+                    tok_out = state.session_output_tokens
+                    tok_fmt = lambda n: f"{n/1000:.1f}k" if n >= 1000 else str(n)
+                    print(colored(f"  model: {active_model} ({active_provider})  tokens: {tok_fmt(tok_in)} in / {tok_fmt(tok_out)} out", "cyan"))
+                    print(colored(f"  Context has {msg_count} messages (threshold: {compress_threshold}). Compressing to keep last 6.", "cyan"))
+                    print(colored("  [Enter] compress  [s] skip  [f] flush N instead", "cyan"))
 
-                    # Keep last 6 messages (3 exchanges) without splitting
-                    # tool call/response pairs (sanitize_messages handles that).
-                    recent = state.messages[-6:]
-                    recent = sanitize_messages(recent)
-                    if compressed_state:
-                        state.messages = [{"role": "system", "content": f"Session context (earlier conversation summary): {compressed_state}"}] + recent
-                    else:
-                        state.messages = recent
+                    try:
+                        choice = input("  > ").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        choice = ""
+
+                    if choice == 's':
+                        # Skip - bump threshold for this session
+                        state._compress_threshold = compress_threshold + 10
+                        print(colored(f"  Skipped. Next threshold: {state._compress_threshold}", "yellow"))
+                    elif choice.startswith('f'):
+                        # Flush N messages
+                        flush_part = choice[1:].strip() if len(choice) > 1 else ""
+                        if not flush_part:
+                            try:
+                                flush_part = input("  Flush how many? ").strip()
+                            except (EOFError, KeyboardInterrupt):
+                                flush_part = ""
+                        try:
+                            n = int(flush_part)
+                            if n > 0:
+                                if state.messages and state.messages[0].get("role") == "system":
+                                    keep = [state.messages[0]] + state.messages[1:][:-n] if n < len(state.messages) - 1 else [state.messages[0]]
+                                else:
+                                    keep = state.messages[:-n] if n < len(state.messages) else []
+                                state.messages = keep
+                                print(colored(f"  Flushed {n} message(s). Now {len(state.messages)} messages.", "green"))
+                        except ValueError:
+                            print(colored("  Invalid number, compressing normally.", "yellow"))
+                            choice = ""
+
+                    if choice not in ('s',) and not choice.startswith('f'):
+                        # Default: compress
+                        try:
+                            compressed_state = state.npc.compress_planning_state(state.messages)
+                        except Exception:
+                            compressed_state = None
+
+                        recent = state.messages[-6:]
+                        recent = sanitize_messages(recent)
+                        if compressed_state:
+                            state.messages = [{"role": "system", "content": f"Session context (earlier conversation summary): {compressed_state}"}] + recent
+                        else:
+                            state.messages = recent
+                        print(colored(f"  Compressed. Context now {len(state.messages)} messages.", "green"))
 
                 try:
                     completer = make_completer(state, router)
