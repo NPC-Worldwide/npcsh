@@ -1,0 +1,177 @@
+jinx_name: edit
+description: Edit an NPC, jinx, context, or file. Usage - /edit npc, /edit jinx, /edit ctx, /edit file
+inputs:
+- type
+- name: ""
+- field: ""
+- value: ""
+- file_path: ""
+- edit_instructions: ""
+- backup: "false"
+steps:
+  - name: "edit_resource"
+    engine: "python"
+    code: |
+      import os
+      import yaml
+      from pathlib import Path
+
+      resource_type = {{ type | tojson }}.strip().lower()
+      name = {{ name | tojson }}.strip()
+      field = {{ field | tojson }}.strip()
+      value = {{ value | tojson }}.strip()
+
+      team_path = state.team.team_path if state and state.team else os.path.expanduser('~/.npcsh/npc_team')
+
+      class BlockDumper(yaml.SafeDumper):
+          pass
+      def _str_rep(dumper, data):
+          if '\n' in data:
+              return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+          return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+      BlockDumper.add_representer(str, _str_rep)
+
+      def load_yaml(path):
+          with open(path) as f:
+              return yaml.safe_load(f) or {}
+
+      def save_yaml(path, data):
+          with open(path, 'w') as f:
+              yaml.dump(data, f, Dumper=BlockDumper, default_flow_style=False, sort_keys=False)
+
+      def parse_value(v):
+          """Try to parse as list or bool, otherwise keep as string."""
+          if v.lower() in ('true', 'yes'):
+              return True
+          if v.lower() in ('false', 'no'):
+              return False
+          if ',' in v and not v.startswith('{'):
+              return [x.strip() for x in v.split(',')]
+          try:
+              return int(v)
+          except ValueError:
+              pass
+          try:
+              return float(v)
+          except ValueError:
+              pass
+          return v
+
+      if resource_type == 'npc':
+          if not name:
+              context['output'] = "Error: name is required. Usage: /edit npc name=sibiji field=model value=gpt-4o"
+          elif not field:
+              # Show current NPC config
+              npc_path = os.path.join(team_path, name + '.npc')
+              if not os.path.exists(npc_path):
+                  context['output'] = "Error: NPC '" + name + "' not found at " + npc_path
+              else:
+                  data = load_yaml(npc_path)
+                  lines = ["NPC: " + name]
+                  for k, v in data.items():
+                      lines.append("  " + str(k) + ": " + str(v)[:80])
+                  context['output'] = "\n".join(lines)
+          else:
+              npc_path = os.path.join(team_path, name + '.npc')
+              if not os.path.exists(npc_path):
+                  context['output'] = "Error: NPC '" + name + "' not found at " + npc_path
+              else:
+                  data = load_yaml(npc_path)
+                  data[field] = parse_value(value)
+                  save_yaml(npc_path, data)
+                  context['output'] = "Updated " + name + ".npc: " + field + " = " + str(data[field])
+
+      elif resource_type == 'jinx':
+          if not name:
+              context['output'] = "Error: name is required. Usage: /edit jinx name=compress field=description value='New desc'"
+          else:
+              # Find jinx file by searching jinxs directory
+              jinx_dir = os.path.join(team_path, 'jinxs')
+              found = None
+              for root, dirs, files in os.walk(jinx_dir):
+                  for f in files:
+                      if f == name + '.jinx':
+                          found = os.path.join(root, f)
+                          break
+                  if found:
+                      break
+              if not found:
+                  context['output'] = "Error: Jinx '" + name + "' not found under " + jinx_dir
+              elif not field:
+                  # Show current jinx config
+                  data = load_yaml(found)
+                  lines = ["Jinx: " + name + " (" + found + ")"]
+                  for k, v in data.items():
+                      val_str = str(v)[:80]
+                      lines.append("  " + str(k) + ": " + val_str)
+                  context['output'] = "\n".join(lines)
+              else:
+                  data = load_yaml(found)
+                  data[field] = parse_value(value)
+                  save_yaml(found, data)
+                  context['output'] = "Updated " + name + ".jinx: " + field + " = " + str(data[field])
+
+      elif resource_type == 'ctx':
+          # Find the .ctx file
+          ctx_path = None
+          for f in sorted(Path(team_path).glob('*.ctx')):
+              ctx_path = str(f)
+              break
+          if not ctx_path:
+              ctx_path = os.path.join(team_path, 'npcsh.ctx')
+          if not field:
+              if os.path.exists(ctx_path):
+                  data = load_yaml(ctx_path)
+                  lines = ["Context: " + ctx_path]
+                  for k, v in data.items():
+                      lines.append("  " + str(k) + ": " + str(v)[:80])
+                  context['output'] = "\n".join(lines)
+              else:
+                  context['output'] = "No .ctx file found. Create one with: /edit ctx field=forenpc value=sibiji"
+          else:
+              data = load_yaml(ctx_path) if os.path.exists(ctx_path) else {}
+              data[field] = parse_value(value)
+              save_yaml(ctx_path, data)
+              context['output'] = "Updated " + os.path.basename(ctx_path) + ": " + field + " = " + str(data[field])
+
+      elif resource_type == 'file':
+          fp = {{ file_path | tojson }}.strip() or name
+          instructions = {{ edit_instructions | tojson }}.strip()
+          if not fp:
+              context['output'] = "Error: file_path (or name) is required. Usage: /edit file file_path=app.py edit_instructions='Add logging'"
+          elif not instructions:
+              context['output'] = "Error: edit_instructions is required. Usage: /edit file file_path=app.py edit_instructions='Add logging'"
+          else:
+              fp = os.path.expanduser(fp)
+              if not os.path.exists(fp):
+                  context['output'] = "Error: File not found: " + fp + ". Use /new file to create it."
+              else:
+                  from npcpy.llm_funcs import get_llm_response
+                  import json as _json
+                  with open(fp) as f:
+                      current = f.read()
+                  prompt = ("You are a code editing assistant. Here is the current file:\n\n"
+                           + current + "\n\nApply these changes:\n" + instructions
+                           + "\n\nReturn the COMPLETE updated file content. No explanation, just the code.")
+                  m = npc.model if npc else None
+                  p = npc.provider if npc else None
+                  result = get_llm_response(prompt, model=m, provider=p, npc=npc)
+                  new_content = result.get('response', '') if isinstance(result, dict) else str(result)
+                  # Strip markdown code fences if present
+                  if new_content.startswith('```'):
+                      lines = new_content.split('\n')
+                      if lines[-1].strip() == '```':
+                          lines = lines[1:-1]
+                      elif lines[0].startswith('```'):
+                          lines = lines[1:]
+                      new_content = '\n'.join(lines)
+                  backup_flag = {{ backup | tojson }}.strip().lower() not in ('false', 'no', '0', '')
+                  if backup_flag:
+                      import shutil
+                      shutil.copy2(fp, fp + '.bak')
+                  with open(fp, 'w') as f:
+                      f.write(new_content)
+                  context['output'] = "Updated file: " + fp
+
+      else:
+          context['output'] = "Unknown type '" + resource_type + "'. Use: /edit npc, /edit jinx, /edit ctx, or /edit file"

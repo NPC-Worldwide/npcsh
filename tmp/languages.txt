@@ -1,5 +1,0 @@
-Python
-Java
-C#
-JavaScript
-Ruby
