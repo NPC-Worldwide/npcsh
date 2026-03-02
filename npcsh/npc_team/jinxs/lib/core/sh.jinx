@@ -16,7 +16,7 @@ steps:
       # read it; commands that don't (ls, mkdir) ignore it. Unix standard.
       stdin_data = context.get('previous_output') or None
 
-      cwd = context.get('current_path') or os.getcwd()
+      cwd = getattr(context.get('state'), 'current_path', None) or os.getcwd()
       process = subprocess.Popen(
           cmd,
           shell=True,
