@@ -224,6 +224,9 @@ class ShellState:
     pending_edits: Dict[str, Dict[str, str]] = field(default_factory=dict)
     # Command history for jinx execution logging
     command_history: Optional[Any] = None
+    # Thinking mode: None = model default, False = disabled, True = enabled
+    # For ollama qwen3/deepseek: True/False; for gpt-oss: "low"/"medium"/"high"
+    think: Optional[Any] = None
 
     def get_model_for_command(self, model_type: str = "chat"):
         if model_type == "chat":
@@ -3089,6 +3092,10 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     if iter_prompt:
                         print(colored(f"  [iter {iteration}] prompt: {iter_prompt[:120]}{'...' if len(iter_prompt) > 120 else ''}", "white", attrs=["dark"]))
 
+                    think_kwargs = {}
+                    if state.think is not None:
+                        think_kwargs["think"] = state.think
+
                     with SpinnerContext(f"{npc_name} thinking...", style="dots_pulse"):
                         llm_result = get_llm_response(
                             iter_prompt,
@@ -3102,6 +3109,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                             context=info if iteration == 1 else None,
                             tools=tools_for_llm,
                             tool_choice="auto",
+                            **think_kwargs,
                         )
 
                     # Accumulate usage
