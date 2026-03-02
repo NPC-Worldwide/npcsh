@@ -96,18 +96,13 @@ from npcpy.data.web import search_web
 from npcpy.llm_funcs import (
     check_llm_command,
     get_llm_response,
-    execute_llm_command,
-    breathe,
 )
 from npcpy.memory.command_history import (
     CommandHistory,
     start_new_conversation,
     save_conversation_message,
     load_kg_from_db,
-    save_kg_to_db,
-    format_memory_context,
 )
-from npcpy.memory.knowledge_graph import kg_evolve_incremental
 from npcpy.memory.search import execute_rag_command, execute_brainblast_command
 from npcpy.npc_compiler import NPC, Team, build_jinx_tool_catalog
 from npcpy.npc_sysenv import (
@@ -642,8 +637,6 @@ def get_team_ctx_path(team_path: str) -> Optional[str]:
 
 from npcpy.memory.memory_processor import  memory_approval_ui
 from npcpy.ft.memory_trainer import MemoryTrainer
-from npcpy.llm_funcs import get_facts
-
 def get_relevant_memories(
     command_history: CommandHistory,
     npc_name: str,
@@ -3577,8 +3570,6 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     forenpc_name = team_ctx.get("forenpc", default_forenpc_name)
     if forenpc_name is None:
         forenpc_name = "sibiji"
-
-    forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
 
     try:
         team = Team(team_path=team_dir, db_conn=command_history.engine)
