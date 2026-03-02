@@ -989,7 +989,7 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 <table>
 <tr><th>Family</th><th>Model</th><th>npcsh Agent Score</th><th>opencode</th><th>claude code</th><th>nanocoder</th><th>Results</th><th>Notes</th></tr>
 <tr><td rowspan="5"><b>Qwen3</b></td><td>0.6b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
-<tr><td>1.7b</td><td>69/125 (55%, v1.1.27)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>1.7b</td><td>42/125 (34%, v1.1.28)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
 <tr><td>4b</td><td><b>94/125 (75%, v1.1.28)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
 <tr><td>8b</td><td><b>104/125 (83%, v1.1.28)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
 <tr><td>30b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
