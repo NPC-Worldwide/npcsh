@@ -14,6 +14,7 @@ Usage:
 
 import os
 import re
+import signal
 import subprocess
 import tempfile
 import threading
@@ -31,6 +32,7 @@ from npcsh._state import (
     execute_command,
     setup_shell,
 )
+import npcsh.ui as _ui
 @dataclass
 class TaskResult:
     task_id: str
@@ -157,11 +159,7 @@ def clean_task_artifacts(task: dict = None):
 
 
 def _setup_state(model: str, provider: str, state, work_dir: str = None):
-    """One-time setup for a task: load team, register jinxes, configure model.
-
-    If work_dir is given the task runs there instead of cwd, so git tasks
-    and other side-effects don't pollute the real repo.
-    """
+    """One-time setup for a task: load team, register jinxes, configure model."""
     command_history, team, default_npc = setup_shell()
     if team and hasattr(team, 'jinxs_dict'):
         for jinx_name, jinx_obj in team.jinxs_dict.items():
@@ -182,17 +180,32 @@ def _setup_state(model: str, provider: str, state, work_dir: str = None):
 
 
 def _kill_child_processes():
-    """Best-effort SIGTERM of child subprocesses (hung ollama calls, sh commands)."""
-    import signal
+    """SIGKILL child subprocesses and reap zombies."""
     try:
         import psutil
         current = psutil.Process()
         for child in current.children(recursive=True):
             try:
-                child.send_signal(signal.SIGTERM)
+                child.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
+        # Reap zombies so they don't accumulate
+        for child in current.children(recursive=True):
+            try:
+                if child.status() == psutil.STATUS_ZOMBIE:
+                    child.wait(timeout=0)
+            except (psutil.NoSuchProcess, psutil.AccessDenied,
+                    psutil.TimeoutExpired, ChildProcessError):
+                pass
     except ImportError:
+        pass
+    # Also reap at OS level
+    try:
+        while True:
+            pid, _ = os.waitpid(-1, os.WNOHANG)
+            if pid == 0:
+                break
+    except ChildProcessError:
         pass
 
 
@@ -200,8 +213,8 @@ def _run_attempt(instruction: str, state, command_history,
                  attempt_timeout: float = 120) -> tuple:
     """Execute one instruction within an existing session.
 
-    Uses a daemon thread so that timeouts actually release the main thread
-    instead of blocking forever.
+    Uses a daemon thread with hard SIGKILL on child processes when the
+    timeout fires so ollama/sh calls actually die.
     """
     msg_count_before = len(state.messages)
     result_box = {}
@@ -219,18 +232,29 @@ def _run_attempt(instruction: str, state, command_history,
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
-    t.join(timeout=attempt_timeout)
+    # Poll so we can kill the spinner the instant the deadline hits —
+    # a single blocking join leaves the spinner running the whole time.
+    deadline_at = time.time() + attempt_timeout
+    while t.is_alive() and time.time() < deadline_at:
+        t.join(timeout=1)
 
     if t.is_alive():
-        print(f"Model inference timed out after {attempt_timeout:.0f}s!", flush=True)
+        print(f"  TIMEOUT after {attempt_timeout:.0f}s — killing", flush=True)
+        # Kill spinner FIRST so it stops writing to stdout immediately
+        spinner = _ui._current_spinner
+        if spinner is not None:
+            spinner._stop = True
+            _ui._current_spinner = None
         _kill_child_processes()
+        _kill_child_processes()
+        state.messages = state.messages[:msg_count_before]
         final_state = state
-        output = {"output": "Model inference timed out after 120 seconds! No response received."}
+        output = {"output": f"Timed out after {attempt_timeout:.0f}s"}
     elif "error" in result_box:
         err = result_box["error"]
-        print(f"Exception during execute_command: {err}", flush=True)
+        print(f"  Exception during execute_command: {err}", flush=True)
         final_state = state
-        output = {"output": f"Exception during execute_command: {err}"}
+        output = {"output": f"Exception: {err}"}
     else:
         final_state = result_box.get("state", state)
         output = result_box.get("output", {"output": ""})
@@ -238,7 +262,7 @@ def _run_attempt(instruction: str, state, command_history,
     output_str = ""
     if isinstance(output, dict):
         output_str = output.get('output') or output.get('response') or str(output)
-        print(output_str)
+        print(output_str[:2000])
     elif final_state.stream_output and output is not None:
         chunks = []
         for chunk in output:
@@ -249,7 +273,7 @@ def _run_attempt(instruction: str, state, command_history,
         output_str = "".join(chunks)
     elif output is not None:
         output_str = str(output)
-        print(output_str)
+        print(output_str[:2000])
 
     # Capture full conversation trace
     new_msgs = final_state.messages[msg_count_before:]
@@ -273,7 +297,7 @@ def _run_attempt(instruction: str, state, command_history,
 def run_task(task: dict,
              model: str,
              provider: str,
-             timeout: int = 1200,
+             timeout: int = 120,
              max_attempts: int = 5,
              startup_overhead: float = 0.0) -> TaskResult:
     """Run a task with retries until it passes or the timeout/attempt budget is exhausted."""
@@ -281,7 +305,9 @@ def run_task(task: dict,
     task_id = task["id"]
     instruction = task["instruction"]
     verify_cmd = task["verify_cmd"]
-    setup_cmd = task.get("setup_cmd", "")
+    setup_cmd = task.get("setup_cmd", "") or ""
+    if not isinstance(setup_cmd, str):
+        setup_cmd = ""
     verify_timeout = task.get("verify_timeout", 30)
 
     deadline = time.time() + timeout
@@ -297,34 +323,45 @@ def run_task(task: dict,
     # Set up once per task — fresh messages, same session for retries
     command_history = _setup_state(model, provider, initial_state, work_dir=task_dir)
 
-    while time.time() < deadline and attempt < max_attempts:
+    while attempt < max_attempts:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+
         attempt += 1
         clean_task_artifacts(task)
 
-        # Run setup_cmd to create test fixtures before the model touches anything
+        # Run setup_cmd — bounded by remaining time
         if setup_cmd:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
             try:
                 subprocess.run(
                     ["bash", "-c", setup_cmd],
-                    timeout=30, capture_output=True, text=True,
+                    timeout=min(remaining, 15), capture_output=True, text=True,
                 )
             except Exception as e:
                 print(f"  setup_cmd failed: {e}", flush=True)
 
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+
         if attempt == 1:
             current_instruction = instruction
         else:
-            remaining = int(deadline - time.time())
             current_instruction = (
                 f"The verification check failed. Here is what it produced:\n"
                 f"{last_output[:800]}\n\n"
-                f"Fix it. {remaining}s remaining."
+                f"Fix it. {int(remaining)}s remaining."
             )
 
-        print(f"  [attempt {attempt}]", flush=True)
+        attempt_timeout = remaining
+        if attempt_timeout <= 0:
+            break
 
-        # Cap each attempt at 120s or whatever time remains, whichever is less
-        attempt_timeout = min(120, max(10, deadline - time.time()))
+        print(f"  [attempt {attempt}, {attempt_timeout:.0f}s cap]", flush=True)
 
         try:
             _, output_str = _run_attempt(
@@ -337,14 +374,23 @@ def run_task(task: dict,
         all_outputs.append(f"[attempt {attempt}] {output_str}")
         last_output = output_str
 
-        # Filesystem sync delay
-        time.sleep(5)
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
 
-        # Verify
+        # Filesystem sync — only if we have time
+        time.sleep(min(2, remaining))
+
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+
+        # Verify — bounded by remaining time
         try:
             verify = subprocess.run(
                 ["bash", "-c", verify_cmd],
-                capture_output=True, text=True, timeout=verify_timeout,
+                capture_output=True, text=True,
+                timeout=min(remaining, verify_timeout),
             )
             passed = verify.returncode == 0
         except Exception as e:
@@ -439,7 +485,7 @@ def run_benchmark(
         env.setdefault("OLLAMA_HOST", "http://localhost:11434")
         env["NPCSH_OLLAMA_NUM_CTX"] = "16384"
 
-    print(f"\nnpcsh benchmark: {provider}/{model}", flush=True)
+    print(f"\nnpcsh benchmark: {provider}/{model} (timeout={timeout}s per task)", flush=True)
     print("Calibrating startup overhead...", flush=True)
     cal_times = []
     for _ in range(3):
@@ -616,7 +662,7 @@ def compare_models(
     return all_results
 
 
-def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 1200):
+def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120):
     """Re-run only the failed tasks from an existing CSV and overwrite results in-place."""
     setup_bench_env()
     import csv as csv_mod
@@ -714,7 +760,8 @@ def main():
     parser.add_argument("--category", "-c", default=None)
     parser.add_argument("--difficulty", "-d", default=None)
     parser.add_argument("--task-id", "-t", default=None)
-    parser.add_argument("--timeout", type=int, default=1200)
+    parser.add_argument("--timeout", type=int, default=120,
+                        help="Per-task wall-clock budget in seconds (default: 120)")
     parser.add_argument("--compare", action="store_true",
                         help="Compare multiple local models")
     parser.add_argument("--rerun-failed", type=str, default=None,
