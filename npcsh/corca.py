@@ -20,7 +20,7 @@ def main():
     # Setup shell to get team and default NPC
     command_history, team, default_npc = setup_shell()
 
-    if not team or "corca" not in team.jinxs_dict:
+    if not team or "mcp_shell" not in team.jinxs_dict:
         print("Error: corca jinx not found. Ensure npc_team/jinxs/modes/corca.jinx exists.")
         sys.exit(1)
 
@@ -38,7 +38,7 @@ def main():
     }
 
     # Execute the jinx
-    corca_jinx = team.jinxs_dict["corca"]
+    corca_jinx = team.jinxs_dict["mcp_shell"]
     result = corca_jinx.execute(context=context, npc=default_npc)
 
     if isinstance(result, dict) and result.get("output"):

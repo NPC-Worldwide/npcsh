@@ -62,7 +62,7 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
   - **Computer Use**
 
     ```bash
-    /plonk 
+    /computer_use
     ```
     <p align="center">
         <img src="gh_images/plonk.png" alt="Plonk GUI automation TUI — task entry" width=500>
@@ -133,8 +133,8 @@ Once installed, run `npcsh` to enter the NPC shell. The pip installation also pr
     ```
   - **MCP-powered agentic shell**: full tabbed TUI with chat, tool management, and server controls.
     ```bash
-    /corca
-    /corca mcp_server_path=/path/to/server.py
+    /mcp_shell
+    /mcp_shell mcp_server_path=/path/to/server.py
     ```
 
   - **Build an NPC Team**: Generate deployment artifacts for your team.
@@ -329,9 +329,9 @@ The `/delegate` jinx sends a task to another NPC with automatic review and feedb
    task complete
 ```
 
-## Deep Research with Alicanto
+## Deep Research
 
-The `/alicanto` mode runs multi-agent deep research — generates hypotheses, assigns persona-based sub-agents, runs iterative tool-calling loops, and synthesizes findings.
+The `/deep_research` mode runs multi-agent deep research — generates hypotheses, assigns persona-based sub-agents, runs iterative tool-calling loops, and synthesizes findings.
 
 <p align="center">
     <img src="gh_images/alicanto.png" alt="Alicanto deep research mode", width=500>
@@ -548,7 +548,7 @@ The NPC responds using their persona and available jinxs, then control returns t
 | `sibiji` | Orchestrator/coordinator | delegate, convene, python, sh |
 | `corca` | Coding and development | python, sh, edit_file, load_file |
 | `plonk` | Browser/GUI automation | browser_action, screenshot, click, key_press |
-| `alicanto` | Research and analysis | python, sh, load_file |
+| `alicanto` | Research and analysis | python, sh, sql, load_file |
 | `frederic` | Math, physics, music | python, vixynt, roll, sample |
 | `guac` | General assistant | python, sh, edit_file, load_file |
 | `kadiefa` | Creative generation | vixynt |
@@ -573,12 +573,12 @@ npc sample "a sunset over mountains"
 
 | Command | Description |
 |---------|-------------|
-| `/alicanto` | Multi-agent deep research — hypotheses, persona sub-agents, paper writing |
-| `/corca` | MCP-powered agentic shell — chat, tool management, server controls |
+| `/deep_research` | Multi-agent deep research — hypotheses, persona sub-agents, paper writing |
+| `/mcp_shell` | MCP-powered agentic shell — chat, tool management, server controls |
 | `/convene` | Multi-NPC structured discussion with live trains of thought |
 | `/spool` | Chat session with fresh context, file attachments, and RAG |
 | `/pti` | Pardon-the-interruption reasoning mode |
-| `/plonk` | GUI automation with vision |
+| `/computer_use` | GUI automation with vision |
 | `/wander` | Exploratory thinking with temperature shifts |
 | `/yap` | Voice chat — continuous VAD listening, auto-transcribe, TTS |
 | `/guac` | Interactive Python REPL with LLM code generation |
@@ -589,7 +589,7 @@ npc sample "a sunset over mountains"
 | `/nql` | Database browser and NQL SQL model runner |
 | `/papers` | Multi-platform research paper browser |
 | `/arxiv` | ArXiv paper browser |
-| `/git` | Git integration TUI |
+| `/git` | Git integration TUI — status, log, branches, stash, cherry-pick file picker |
 | `/build` | Build team to deployable format (flask, docker, cli, static) |
 | `/team` | Team config browser — context, NPCs, jinxs |
 | `/config` | Interactive config editor |
@@ -611,6 +611,12 @@ npc sample "a sunset over mountains"
 | `/chat` | Switch to chat mode |
 | `/cmd` | Switch to command mode |
 | `/switch` | Switch NPC |
+| `/edit` | Edit NPC, jinx, context, or file — `/edit npc`, `/edit jinx`, `/edit ctx` |
+| `/new` | Create new NPC, jinx, or file — `/new npc`, `/new jinx`, `/new file` |
+| `/ask_form` | Structured form input for agents to gather user data |
+| `/extract_memories` | Extract memories from recent conversations |
+| `/reload` | Reload team jinxes and NPCs — `/reload`, `/reload npc name` |
+| `/repo_issues` | Fetch GitHub issues and run LLM analysis on each |
 | `/sync` | Sync npc_team files from repo to home |
 
 Most commands launch full-screen TUIs — just type and interact. For CLI usage with `npc`, common flags include `--model (-mo)`, `--provider (-pr)`, `--npc (-np)`, and `--temperature (-t)`. Run `npc --help` for the full list.
@@ -623,7 +629,7 @@ Wander mode shifts the model's temperature up and down as it explores a problem,
 </p>
 
 ### `/guac` — Interactive Python REPL
-Guac is an LLM-powered Python REPL with a live variable inspector, DataFrame viewer, and inline code execution. Describe what you want in natural language and the model writes and runs the code. Variables persist across turns.
+Guac is an LLM-powered Python REPL with a live variable inspector, DataFrame viewer, and inline code execution. Describe what you want in natural language and the model writes and runs the code. Variables persist across turns. Drop file paths or type `run file.py` to load and execute scripts. Keys: Tab toggles natural language mode, Ctrl+P cycles panels.
 
 <p align="center">
     <img src="gh_images/guac_session.png" alt="Guac Python REPL", width=500>
@@ -698,7 +704,7 @@ Multi-tab TUI for managing cron jobs, systemd user daemons, and system processes
 
 ### Memory Lifecycle
 
-Memories are extracted from conversations and follow this lifecycle:
+Memories are extracted from conversations via the `/extract_memories` jinx and follow this lifecycle:
 
 1. **pending_approval** - New memories awaiting review
 2. **human-approved** - Approved and ready for KG integration
@@ -942,7 +948,7 @@ export PERPLEXITY_API_KEY='your_perplexity_key'
 ```
 npc_team/
 ├── jinxs/
-│   ├── modes/            # TUI modes (alicanto, corca, kg, yap, etc.)
+│   ├── modes/            # TUI modes (deep_research, mcp_shell, computer_use, guac, kg, yap, etc.)
 │   ├── skills/           # Skills — knowledge-content jinxs
 │   │   ├── code-review/  # SKILL.md folder format
 │   │   │   └── SKILL.md
@@ -975,6 +981,97 @@ npc_team/
     <img src="gh_images/jinx_folder_viewer.png" alt="Jinx folder viewer", width=500>
     <img src="gh_images/jinx_ui.png" alt="Jinx detail view", width=500>
 </p>
+
+# Benchmark Results
+
+How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 categories — from basic shell commands to multi-step workflows, code debugging, and tool chaining — scored pass/fail.
+
+<table>
+<tr><th>Family</th><th>Model</th><th>npcsh Agent Score</th><th>opencode</th><th>claude code</th><th>nanocoder</th><th>Results</th><th>Notes</th></tr>
+<tr><td rowspan="5"><b>Qwen3</b></td><td>0.6b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>1.7b</td><td>69/125 (55%, v1.1.27)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>4b</td><td><b>94/125 (75%, v1.1.28)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>8b</td><td><b>104/125 (83%, v1.1.28)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>30b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="4"><b>Gemma3</b></td><td>1b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>4b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>12b</td><td>64/117 (v1.1.27)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td>partial</td></tr>
+<tr><td>27b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="3"><b>Llama</b></td><td>3.2:1b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>3.2:3b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>3.1:8b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="2"><b>Mistral</b></td><td>small3.2</td><td>30/64 (v1.1.27)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td>partial</td></tr>
+<tr><td>ministral</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td><b>Phi</b></td><td>phi4</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td><b>GPT-OSS</b></td><td>20b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td><b>OLMo</b></td><td>—</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td><b>Cogito</b></td><td>—</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="3"><b>Gemini</b></td><td>2.5-flash</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>3.1-flash</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>3.1-pro</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="2"><b>Claude</b></td><td>4.6-sonnet</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>4.5-haiku</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td><b>GPT</b></td><td>5-mini</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td rowspan="2"><b>DeepSeek</b></td><td>chat</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+<tr><td>reasoner</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td><td></td></tr>
+</table>
+
+<details><summary><b>Category breakdown</b></summary>
+
+<table>
+<tr>
+<th rowspan="2">Category</th>
+<th colspan="5">Qwen3</th>
+<th colspan="4">Gemma3</th>
+<th colspan="3">Llama</th>
+<th colspan="2">Mistral</th>
+<th>Phi</th>
+<th>GPT-OSS</th>
+<th>OLMo</th>
+<th>Cogito</th>
+<th colspan="3">Gemini</th>
+<th colspan="2">Claude</th>
+<th>GPT</th>
+<th colspan="2">DeepSeek</th>
+</tr>
+<tr>
+<th>0.6b</th><th>1.7b</th><th>4b</th><th>8b</th><th>30b</th>
+<th>1b</th><th>4b</th><th>12b</th><th>27b</th>
+<th>3.2:1b</th><th>3.2:3b</th><th>3.1:8b</th>
+<th>small3.2</th><th>ministral</th>
+<th>phi4</th>
+<th>20b</th>
+<th>—</th>
+<th>—</th>
+<th>2.5-flash</th><th>3.1-flash</th><th>3.1-pro</th>
+<th>4.6-sonnet</th><th>4.5-haiku</th>
+<th>5-mini</th>
+<th>chat</th><th>reasoner</th>
+</tr>
+<tr><td>shell (10)</td><td>—</td><td>—</td><td>8</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>file-ops (10)</td><td>—</td><td>—</td><td>10</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>python (10)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>data (10)</td><td>—</td><td>—</td><td>4</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>system (10)</td><td>—</td><td>—</td><td>9</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>text (10)</td><td>—</td><td>—</td><td>10</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>debug (10)</td><td>—</td><td>—</td><td>4</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>git (10)</td><td>—</td><td>—</td><td>9</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>multi-step (10)</td><td>—</td><td>—</td><td>6</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>scripting (10)</td><td>—</td><td>—</td><td>7</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>image-gen (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>audio-gen (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>web-search (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>delegation (5)</td><td>—</td><td>—</td><td>2</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>tool-chain (5)</td><td>—</td><td>—</td><td>5</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><b>Total (125)</b></td><td>—</td><td>—</td><td><b>94</b></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+</table>
+
+</details>
+
+```bash
+python -m npcsh.benchmark.local_runner --model qwen3:4b --provider ollama
+python -m npcsh.benchmark.local_runner --compare  # run all models
+```
 
 ## Contributing
 Contributions are welcome! Please submit issues and pull requests on the GitHub repository.
