@@ -105,7 +105,21 @@ def setup_bench_env():
     atexit.register(_remove_sudo_trap)
 
     os.environ["MPLBACKEND"] = "Agg"
-    print("Bench env: sudo trap + headless matplotlib (process-local)", flush=True)
+
+    # Redirect stdin to /dev/null so input() calls in python jinx get EOF
+    # instead of blocking forever.
+    import sys
+    sys.stdin = open(os.devnull, 'r')
+
+    # Set a hard timeout on the ollama HTTP client so requests can't block forever.
+    # ollama.chat() is bound to a module-level Client whose httpx timeout is None (infinite).
+    try:
+        import ollama as _ollama
+        import httpx
+        _ollama.chat.__self__._client.timeout = httpx.Timeout(90.0)
+        print("Bench env: sudo trap + headless matplotlib + ollama timeout=90s", flush=True)
+    except Exception:
+        print("Bench env: sudo trap + headless matplotlib", flush=True)
 
 
 def _remove_sudo_trap():
@@ -157,7 +171,8 @@ def clean_task_artifacts(task: dict = None):
                 pass
 
 
-def _setup_state(model: str, provider: str, state, work_dir: str = None):
+def _setup_state(model: str, provider: str, state, work_dir: str = None,
+                 think=None):
     """One-time setup for a task: load team, register jinxes, configure model."""
     command_history, team, default_npc = setup_shell()
     if team and hasattr(team, 'jinxs_dict'):
@@ -175,6 +190,7 @@ def _setup_state(model: str, provider: str, state, work_dir: str = None):
     state.current_path = work_dir or os.getcwd()
     state.messages = []
     state._max_iterations = 10
+    state.think = think
     return command_history
 
 
@@ -206,6 +222,38 @@ def _kill_child_processes():
                 break
     except ChildProcessError:
         pass
+
+
+def _reset_ollama_client():
+    """Kill the in-flight ollama HTTP request and create a fresh client.
+
+    After a timeout, the old HTTP request is still in-flight.  Ollama
+    processes inference sequentially, so every new request queues behind
+    the stale one.  We close the old httpx connection pool (aborts the
+    TCP stream so ollama cancels the generation), then create a brand-new
+    ollama.Client and rebind the module-level functions (chat, generate,
+    etc.) so subsequent calls use the clean connection.
+    """
+    try:
+        import ollama as _ollama
+        import httpx
+        import inspect
+
+        old = _ollama.chat.__self__
+        # Close old httpx pool — aborts any in-flight TCP stream
+        try:
+            old._client.close()
+        except Exception:
+            pass
+        # Create a fresh Client (makes its own httpx client internally)
+        new = _ollama.Client(timeout=httpx.Timeout(90.0))
+        # Rebind every module-level function that was bound to the old client
+        for name, obj in inspect.getmembers(_ollama):
+            if hasattr(obj, '__self__') and obj.__self__ is old:
+                setattr(_ollama, name, getattr(new, name))
+        print("  [ollama] client reset — stale request aborted", flush=True)
+    except Exception as e:
+        print(f"  [warn] ollama client reset failed: {e}", flush=True)
 
 
 def _run_attempt(instruction: str, state, command_history,
@@ -246,6 +294,10 @@ def _run_attempt(instruction: str, state, command_history,
             _ui._current_spinner = None
         _kill_child_processes()
         _kill_child_processes()
+        # Abort the stale ollama HTTP request by closing and recreating the
+        # httpx connection pool.  Without this, the in-flight request blocks
+        # ollama's inference queue and every subsequent task hangs behind it.
+        _reset_ollama_client()
         state.messages = state.messages[:msg_count_before]
         final_state = state
         output = {"output": f"Timed out after {attempt_timeout:.0f}s"}
@@ -298,7 +350,7 @@ def run_task(task: dict,
              provider: str,
              timeout: int = 120,
              max_attempts: int = 5,
-             startup_overhead: float = 0.0) -> TaskResult:
+             think=None) -> TaskResult:
     """Run a task with retries until it passes or the timeout/attempt budget is exhausted."""
 
     task_id = task["id"]
@@ -320,7 +372,8 @@ def run_task(task: dict,
     task_dir = tempfile.mkdtemp(prefix=f"npcsh_bench_{task_id}_")
 
     # Set up once per task — fresh messages, same session for retries
-    command_history = _setup_state(model, provider, initial_state, work_dir=task_dir)
+    command_history = _setup_state(model, provider, initial_state, work_dir=task_dir,
+                                   think=think)
 
     while attempt < max_attempts:
         remaining = deadline - time.time()
@@ -415,7 +468,7 @@ def run_task(task: dict,
         category=task["category"],
         difficulty=task["difficulty"],
         passed=passed,
-        duration=max(0, duration - startup_overhead),
+        duration=duration,
         attempts=attempt,
         npcsh_output=" ||| ".join(all_outputs),
     )
@@ -429,6 +482,7 @@ def run_benchmark(
     task_id: Optional[str] = None,
     timeout: int = 120,
     resume: bool = False,
+    think=None,
 ) -> BenchmarkReport:
 
     setup_bench_env()
@@ -474,29 +528,7 @@ def run_benchmark(
                     report.by_difficulty[diff]["passed"] += 1
         print(f"Resumed {len(completed_ids)} tasks from checkpoint", flush=True)
 
-    # Calibrate startup overhead
-    env = os.environ.copy()
-    env["NPCSH_CHAT_MODEL"] = model
-    env["NPCSH_CHAT_PROVIDER"] = provider
-    env["NPCSH_STREAM_OUTPUT"] = "0"
-    env["NPCSH_NO_EMBEDDINGS"] = "1"
-    if provider == "ollama":
-        env.setdefault("OLLAMA_HOST", "http://localhost:11434")
-        env["NPCSH_OLLAMA_NUM_CTX"] = "16384"
-
     print(f"\nnpcsh benchmark: {provider}/{model} (timeout={timeout}s per task)", flush=True)
-    print("Calibrating startup overhead...", flush=True)
-    cal_times = []
-    for _ in range(3):
-        cal_start = time.time()
-        subprocess.run(
-            ["npcsh", "-c", "echo ok"],
-            text=True, env=env, timeout=120,
-        )
-        cal_times.append(time.time() - cal_start)
-    startup_overhead = sum(cal_times) / len(cal_times)
-    print(f"Startup overhead: {startup_overhead:.1f}s (avg of 3)", flush=True)
-
     print(f"Tasks: {len(tasks)} ({len(completed_ids)} already done)", flush=True)
     print("=" * 60, flush=True)
 
@@ -509,7 +541,7 @@ def run_benchmark(
         print(f"\n[{i+1}/{len(tasks)}] {tid} ({task['category']}/{task['difficulty']})", flush=True)
         print(f"  {task['description']}", flush=True)
 
-        result = run_task(task, model, provider, timeout, startup_overhead=startup_overhead)
+        result = run_task(task, model, provider, timeout, think=think)
         report.results.append(result)
 
         if result.passed:
@@ -598,6 +630,7 @@ def compare_models(
     category: Optional[str] = None,
     difficulty: Optional[str] = None,
     timeout: int = 120,
+    think=None,
 ) -> dict:
     """Run benchmark across multiple models and print comparison."""
     all_results = {}
@@ -613,6 +646,7 @@ def compare_models(
             category=category,
             difficulty=difficulty,
             timeout=timeout,
+            think=think,
         )
         all_results[key] = report
 
@@ -661,7 +695,8 @@ def compare_models(
     return all_results
 
 
-def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120):
+def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
+                 think=None):
     """Re-run only the failed tasks from an existing CSV and overwrite results in-place."""
     setup_bench_env()
     import csv as csv_mod
@@ -686,29 +721,6 @@ def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120):
     all_tasks = load_tasks()
     task_lookup = {t["id"]: t for t in all_tasks}
 
-    # Calibrate startup overhead
-    env = os.environ.copy()
-    env["NPCSH_CHAT_MODEL"] = model
-    env["NPCSH_CHAT_PROVIDER"] = provider
-    env["NPCSH_STREAM_OUTPUT"] = "0"
-    env["NPCSH_NO_EMBEDDINGS"] = "1"
-    if provider == "ollama":
-        env.setdefault("OLLAMA_HOST", "http://localhost:11434")
-        env["NPCSH_OLLAMA_NUM_CTX"] = "16384"
-
-    print("Calibrating startup overhead...", flush=True)
-    cal_times = []
-    for _ in range(3):
-        cal_start = time.time()
-        subprocess.run(
-            ["npcsh", "-c", "echo ok"],
-            #stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=env, timeout=120,
-        )
-        cal_times.append(time.time() - cal_start)
-    startup_overhead = sum(cal_times) / len(cal_times)
-    print(f"Startup overhead: {startup_overhead:.1f}s", flush=True)
-
     # Build index: task_id -> row index
     row_index = {}
     for i, r in enumerate(rows):
@@ -723,7 +735,7 @@ def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120):
         task = task_lookup[tid]
         print(f"\n  [{j+1}/{len(failed_ids)}] {tid} ({task['category']}/{task['difficulty']})", flush=True)
 
-        result = run_task(task, model, provider, timeout, startup_overhead)
+        result = run_task(task, model, provider, timeout, think=think)
 
         if result.passed:
             print(f"    PASS ({result.duration:.1f}s) — upgraded!", flush=True)
@@ -767,8 +779,20 @@ def main():
                         help="Path to existing CSV — re-run only failed tasks and overwrite")
     parser.add_argument("--resume", action="store_true",
                         help="Resume from _running.csv checkpoint, skip already-completed tasks")
+    parser.add_argument("--think", default=None,
+                        help="Control thinking mode for ollama models (true/false, default: model default)")
 
     args = parser.parse_args()
+
+    # Parse --think: "true"->True, "false"->False, None->None (model default)
+    think_val = None
+    if args.think is not None:
+        if args.think.lower() in ("true", "1", "yes"):
+            think_val = True
+        elif args.think.lower() in ("false", "0", "no"):
+            think_val = False
+        else:
+            think_val = args.think  # pass through strings like "low"/"medium"/"high"
 
     if args.rerun_failed:
         rerun_failed(
@@ -776,6 +800,7 @@ def main():
             model=args.model,
             provider=args.provider,
             timeout=args.timeout,
+            think=think_val,
         )
     elif args.compare:
         models = [
@@ -805,6 +830,7 @@ def main():
             category=args.category,
             difficulty=args.difficulty,
             timeout=args.timeout,
+            think=think_val,
         )
     else:
         run_benchmark(
@@ -815,6 +841,7 @@ def main():
             task_id=args.task_id,
             timeout=args.timeout,
             resume=args.resume,
+            think=think_val,
         )
 
 
