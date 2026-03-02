@@ -25,7 +25,7 @@ def main():
     # Setup shell to get team and default NPC
     command_history, team, default_npc = setup_shell()
 
-    if not team or "plonk" not in team.jinxs_dict:
+    if not team or "computer_use" not in team.jinxs_dict:
         print("Error: plonk jinx not found. Ensure npc_team/jinxs/modes/plonk.jinx exists.")
         sys.exit(1)
 
@@ -42,7 +42,7 @@ def main():
     }
 
     # Execute the jinx
-    plonk_jinx = team.jinxs_dict["plonk"]
+    plonk_jinx = team.jinxs_dict["computer_use"]
     result = plonk_jinx.execute(context=context, npc=default_npc)
 
     if isinstance(result, dict) and result.get("output"):

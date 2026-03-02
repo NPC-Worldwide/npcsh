@@ -96,18 +96,13 @@ from npcpy.data.web import search_web
 from npcpy.llm_funcs import (
     check_llm_command,
     get_llm_response,
-    execute_llm_command,
-    breathe,
 )
 from npcpy.memory.command_history import (
     CommandHistory,
     start_new_conversation,
     save_conversation_message,
     load_kg_from_db,
-    save_kg_to_db,
-    format_memory_context,
 )
-from npcpy.memory.knowledge_graph import kg_evolve_incremental
 from npcpy.memory.search import execute_rag_command, execute_brainblast_command
 from npcpy.npc_compiler import NPC, Team, build_jinx_tool_catalog
 from npcpy.npc_sysenv import (
@@ -642,8 +637,6 @@ def get_team_ctx_path(team_path: str) -> Optional[str]:
 
 from npcpy.memory.memory_processor import  memory_approval_ui
 from npcpy.ft.memory_trainer import MemoryTrainer
-from npcpy.llm_funcs import get_facts
-
 def get_relevant_memories(
     command_history: CommandHistory,
     npc_name: str,
@@ -3006,8 +2999,8 @@ def process_pipeline_command(
             except KeyboardInterrupt:
                 print(colored("\nBash command interrupted by user.", "yellow"))
                 return state, colored("Command interrupted.", "red")
-        
-        return state, result
+
+        return state, {"output": result, "_bash": True}
     else:
         full_llm_cmd = (
             f"{cmd_to_process} {stdin_input}" 
@@ -3578,8 +3571,6 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     if forenpc_name is None:
         forenpc_name = "sibiji"
 
-    forenpc_path = os.path.join(team_dir, f"{forenpc_name}.npc")
-
     try:
         team = Team(team_path=team_dir, db_conn=command_history.engine)
     except FileNotFoundError as e:
@@ -3735,6 +3726,25 @@ def process_result(
     msg_output_tokens = None
     msg_cost = None
 
+    # Fast path for bash output — skip markdown rendering, embeddings, and LLM message append
+    if isinstance(output, dict) and output.get('_bash'):
+        bash_out = output.get('output', '')
+        if bash_out:
+            print('\n')
+            print(bash_out)
+            save_conversation_message(
+                command_history,
+                result_state.conversation_id,
+                "assistant",
+                bash_out,
+                wd=result_state.current_path,
+                model=active_npc.model,
+                provider=active_npc.provider,
+                npc=npc_name,
+                team=team_name,
+            )
+        return
+
     if isinstance(output, dict):
         # Use None-safe check to not skip empty strings
         output_content = output.get('output') if 'output' in output else output.get('response')
@@ -3824,255 +3834,8 @@ def process_result(
 
         result_state.turn_count += 1
 
-        if result_state.turn_count > 10 and result_state.turn_count % 10 == 0:
-          try:
-            approved_facts = []
-
-            conversation_turn_text = f"User: {user_input}\nAssistant: {final_output_str}"
-            engine = command_history.engine
-
-            memory_examples = command_history.get_memory_examples_for_context(
-                npc=npc_name,
-                team=team_name,
-                directory_path=result_state.current_path
-            )
-
-            memory_context = format_memory_context(memory_examples)
-            
-            try:
-                facts = get_facts(
-                    conversation_turn_text,
-                    model=active_npc.model,
-                    provider=active_npc.provider,
-                    npc=active_npc,
-                    context=memory_context + 'Memories should be fully self contained. They should not use vague pronouns or words like that or this or it.  Do not generate more than 1-2 memories at a time.'
-                )
-                
-                if facts:
-                    num_memories = len(facts)
-                    print(colored(
-                        f"\nThere are {num_memories} potential memories. Do you want to review them now?", 
-                        "cyan"
-                    ))
-                    review_choice = _shell_input("[y/N]: ").strip().lower()
-                    
-                    if review_choice == 'y':
-                        memories_for_approval = []
-                        for i, fact in enumerate(facts):
-                            memories_for_approval.append({
-                                "memory_id": f"temp_{i}",
-                                "content": fact['statement'],
-                                "context": f"Type: {fact.get('type', 'unknown')}, Source: {fact.get('source_text', '')}",
-                                "npc": npc_name,
-                                "fact_data": fact
-                            })
-                        
-                        approvals = memory_approval_ui(memories_for_approval)
-                        
-                        for approval in approvals:
-                            fact_data = next(
-                                m['fact_data'] for m in memories_for_approval 
-                                if m['memory_id'] == approval['memory_id']
-                            )
-                            
-                            command_history.add_memory_to_database(
-                                message_id=f"{result_state.conversation_id}_{len(result_state.messages)}",
-                                conversation_id=result_state.conversation_id,
-                                npc=npc_name,
-                                team=team_name,
-                                directory_path=result_state.current_path,
-                                initial_memory=fact_data['statement'],
-                                status=approval['decision'],
-                                model=active_npc.model,
-                                provider=active_npc.provider,
-                                final_memory=approval.get('final_memory')
-                            )
-                            
-                            if approval['decision'] in ['human-approved', 'human-edited']:
-                                approved_fact = {
-                                    'statement': approval.get('final_memory') or fact_data['statement'],
-                                    'source_text': fact_data.get('source_text', ''),
-                                    'type': fact_data.get('type', 'explicit'),
-                                    'generation': 0
-                                }
-                                approved_facts.append(approved_fact)
-                    else:
-                        for i, fact in enumerate(facts):
-                            command_history.add_memory_to_database(
-                                message_id=f"{result_state.conversation_id}_{len(result_state.messages)}",
-                                conversation_id=result_state.conversation_id,
-                                npc=npc_name,
-                                team=team_name,
-                                directory_path=result_state.current_path,
-                                initial_memory=fact['statement'],
-                                status='skipped',
-                                model=active_npc.model,
-                                provider=active_npc.provider,
-                                final_memory=None
-                            )
-                        
-                        print(colored(
-                            f"Marked {num_memories} memories as skipped.", 
-                            "yellow"
-                        ))
-                    
-            except Exception as e:
-                print(colored(f"Memory generation error: {e}", "yellow"))
-
-            if result_state.build_kg and approved_facts:
-                try:
-                    if not should_skip_kg_processing(user_input, final_output_str):
-                        npc_kg = load_kg_from_db(
-                            engine, 
-                            team_name, 
-                            npc_name, 
-                            result_state.current_path
-                        )
-                        evolved_npc_kg, _ = kg_evolve_incremental(
-                            existing_kg=npc_kg,
-                            new_facts=approved_facts,
-                            model=active_npc.model,
-                            provider=active_npc.provider,
-                            npc=active_npc,
-                            get_concepts=True,
-                            link_concepts_facts=result_state.kg_link_facts,
-                            link_concepts_concepts=result_state.kg_link_concepts,
-                            link_facts_facts=result_state.kg_link_facts_facts,
-                        )
-                        save_kg_to_db(
-                            engine,
-                            evolved_npc_kg,
-                            team_name,
-                            npc_name,
-                            result_state.current_path,
-                            conversation_id=result_state.conversation_id,
-                            message_id=f"{result_state.conversation_id}_{len(result_state.messages)}"
-                        )
-                except Exception as e:
-                    print(colored(
-                        f"Error during real-time KG evolution: {e}", 
-                        "red"
-                    ))
-
-            print(colored(
-                "\nChecking for potential team improvements...", 
-                "cyan"
-            ))
-            try:
-                summary = breathe(
-                    messages=result_state.messages[-20:], 
-                    npc=active_npc
-                )
-                characterization = summary.get('output')
-
-                if characterization and result_state.team:
-                    team_ctx_path = get_team_ctx_path(
-                        result_state.team.team_path
-                    )
-                    if not team_ctx_path:
-                        team_ctx_path = os.path.join(
-                            result_state.team.team_path, 
-                            "team.ctx"
-                        )
-                    
-                    ctx_data = {}
-                    if os.path.exists(team_ctx_path):
-                        with open(team_ctx_path, 'r') as f:
-                            ctx_data = yaml.safe_load(f) or {}
-                    
-                    current_context = ctx_data.get('context', '')
-
-                    prompt = f"""Based on this characterization: {characterization},
-                    suggest changes (additions, deletions, edits) to the team's context. 
-                    Additions need not be fully formed sentences and can simply be equations, relationships, or other plain clear items.
-                    
-                    Current Context: "{current_context}". 
-                    
-                    Respond with JSON: {{"suggestion": "Your sentence."}}"""
-                    
-                    response = get_llm_response(
-                        prompt, 
-                        npc=active_npc, 
-                        format="json"
-                    )
-                    suggestion = response.get("response", {}).get("suggestion")
-
-                    if suggestion:
-                        new_context = (
-                            current_context + " " + suggestion
-                        ).strip()
-                        print(colored(
-                            f"{npc_name} suggests updating team context:",
-                            "yellow"
-                        ))
-                        # Show a proper unified diff with color highlighting
-                        import difflib
-                        old_lines = current_context.splitlines(keepends=True)
-                        new_lines = new_context.splitlines(keepends=True)
-                        # Ensure trailing newline for clean diff
-                        if old_lines and not old_lines[-1].endswith('\n'):
-                            old_lines[-1] += '\n'
-                        if new_lines and not new_lines[-1].endswith('\n'):
-                            new_lines[-1] += '\n'
-                        diff = list(difflib.unified_diff(
-                            old_lines, new_lines,
-                            fromfile='current', tofile='proposed', lineterm=''
-                        ))
-                        if diff:
-                            for line in diff:
-                                line = line.rstrip('\n')
-                                if line.startswith('+++') or line.startswith('---'):
-                                    print(colored(line, 'white', attrs=['bold']))
-                                elif line.startswith('@@'):
-                                    print(colored(line, 'cyan'))
-                                elif line.startswith('+'):
-                                    print(colored(line, 'green'))
-                                elif line.startswith('-'):
-                                    print(colored(line, 'red'))
-                                else:
-                                    print(line)
-                        else:
-                            # Fallback if no line-level diff (e.g. single-line append)
-                            print(colored(f"  - OLD: {current_context}", "red"))
-                            print(colored(f"  + NEW: {new_context}", "green"))
-                        
-                        choice = _shell_input(
-                            "Apply? [y/N/e(dit)]: "
-                        ).strip().lower()
-                        
-                        if choice == 'y':
-                            ctx_data['context'] = new_context
-                            with open(team_ctx_path, 'w') as f:
-                                yaml.dump(ctx_data, f, Dumper=_yaml_block_dumper(), default_flow_style=False, allow_unicode=True)
-                            print(colored("Team context updated.", "green"))
-                        elif choice == 'e':
-                            edited_context = input(
-                                f"Edit context [{new_context}]: "
-                            ).strip()
-                            if edited_context:
-                                ctx_data['context'] = edited_context
-                            else:
-                                ctx_data['context'] = new_context
-                            with open(team_ctx_path, 'w') as f:
-                                yaml.dump(ctx_data, f, Dumper=_yaml_block_dumper(), default_flow_style=False, allow_unicode=True)
-                            print(colored(
-                                "Team context updated with edits.", 
-                                "green"
-                            ))
-                        else:
-                            print("Suggestion declined.")
-            except Exception as e:
-                import traceback
-                print(colored(
-                    f"Could not generate team suggestions: {e}",
-                    "yellow"
-                ))
-                traceback.print_exc()
-          except KeyboardInterrupt:
-            print(colored(
-                "\nMemory/knowledge extraction interrupted. Returning to shell.",
-                "yellow"
-            ))
+        # Memory extraction, KG evolution, and context compression
+        # are handled by scheduled jinxs via cron — not inline here.
 
 initial_state = ShellState(
     conversation_id=start_new_conversation(),
