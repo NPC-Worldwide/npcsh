@@ -268,6 +268,9 @@ def _run_attempt(instruction: str, state, command_history,
 
     def _worker():
         try:
+            # chdir into the task's temp dir so sh/git commands
+            # can't touch the real repo.
+            os.chdir(state.current_path)
             fs, out = execute_command(
                 instruction, state, router=router,
                 command_history=command_history,
