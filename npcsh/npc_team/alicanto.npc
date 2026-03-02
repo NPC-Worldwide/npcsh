@@ -21,6 +21,7 @@ jinxs:
   - lib/core/search/db_search
   - lib/core/sh
   - lib/core/python
+  - lib/core/sql
   - lib/core/load_file
   - lib/core/edit_file
   - lib/utils/chat
