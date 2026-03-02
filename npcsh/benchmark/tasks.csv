@@ -1,5 +1,5 @@
 id,category,difficulty,setup_cmd,instruction,verify_cmd,description
-shell-01,shell,easy,"mkdir -p /tmp/countme && touch /tmp/countme/{a,b,c,d,e,f,g}.txt",Count the number of files in /tmp/countme and write just the number to /tmp/result.txt,test -f /tmp/result.txt && grep -qE '[0-9]+' /tmp/result.txt,Basic shell command with file output
+shell-01,shell,easy,"mkdir -p /tmp/countme && for f in a b c d e f g; do echo ""file $f"" > /tmp/countme/${f}.txt; done",Count the number of files in /tmp/countme and write just the number to /tmp/result.txt,test -f /tmp/result.txt && grep -qE '[0-9]+' /tmp/result.txt,Basic shell command with file output
 shell-02,shell,easy,mkdir -p /tmp/pydir/sub && touch /tmp/pydir/a.py /tmp/pydir/b.py /tmp/pydir/sub/c.py,List all .py files under /tmp/pydir recursively and write the list to /tmp/pyfiles.txt,test -f /tmp/pyfiles.txt && test $(wc -l < /tmp/pyfiles.txt) -ge 3,Find + redirect
 shell-03,shell,easy,,Write the output of 'uname -a' to /tmp/uname.txt,test -s /tmp/uname.txt && grep -qi 'darwin\|linux' /tmp/uname.txt,Simple command capture
 shell-04,shell,easy,,"Create a file /tmp/nums.txt with the numbers 1 through 10, one per line",test $(wc -l < /tmp/nums.txt) -ge 10 && grep -q '^1$' /tmp/nums.txt && grep -q '^10$' /tmp/nums.txt,Sequence generation

@@ -10,8 +10,15 @@ def stub_available_models(monkeypatch):
 
 
 def test_model_supports_tool_calls_uses_heuristics(monkeypatch):
-    # Force ollama inspection to be inconclusive so heuristics are used.
-    monkeypatch.setattr(state_module, "_ollama_supports_tools", lambda model: None)
+    # Mock ollama module with a fake show() that returns capabilities per model.
+    import types
+
+    def fake_show(model):
+        caps = ["tools"] if model == "qwen3:0.6b" else []
+        return types.SimpleNamespace(capabilities=caps)
+
+    fake_ollama = types.SimpleNamespace(show=fake_show)
+    monkeypatch.setattr(state_module, "ollama", fake_ollama)
     assert not state_module.model_supports_tool_calls("gemma3:4b", "ollama")
     assert state_module.model_supports_tool_calls("qwen3:0.6b", "ollama")
 
