@@ -13,21 +13,14 @@ try:
     from termcolor import colored
 except: 
     pass
-from npcpy.npc_sysenv import (
-    render_markdown,
-)
+
 from npcpy.gen.response import get_model_context_window
 from npcpy.memory.command_history import (
     CommandHistory,
-    load_kg_from_db,
-    save_kg_to_db,
     start_new_conversation,
     save_conversation_message,
 )
 from npcpy.npc_compiler import NPC
-from npcpy.memory.knowledge_graph import (
-    kg_evolve_incremental
-)
 
 try:
     import readline
@@ -283,7 +276,12 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                     active_provider = state.npc.provider if hasattr(state, 'npc') and hasattr(state.npc, 'provider') and state.npc.provider else state.chat_provider
                     tok_in = state.session_input_tokens
                     tok_out = state.session_output_tokens
-                    tok_fmt = lambda n: f"{n/1_000_000:.1f}M" if n >= 1_000_000 else f"{n/1000:.1f}k" if n >= 1000 else str(n)
+                    def tok_fmt(n):
+                        if n >= 1_000_000:
+                            return f"{n/1_000_000:.1f}M"
+                        if n >= 1000:
+                            return f"{n/1000:.1f}k"
+                        return str(n)
                     ctx_window = get_model_context_window(active_model, active_provider)
                     ctx_pct = f"  {tok_in * 100 // ctx_window}% of {tok_fmt(ctx_window)} context" if ctx_window > 0 else ""
                     print(colored(f"  model: {active_model} ({active_provider})  tokens: {tok_fmt(tok_in)} in / {tok_fmt(tok_out)} out{ctx_pct}", "cyan"))
