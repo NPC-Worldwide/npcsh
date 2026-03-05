@@ -3199,7 +3199,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
 
             else:
                 flat_msgs = flatten_tool_messages(state.messages)
-                flat_count = len(flat_msgs)
                 with SpinnerContext(f"{npc_name} processing with {exec_model}", style="dots_pulse"):
                     llm_result = check_llm_command(
                         full_llm_cmd,
