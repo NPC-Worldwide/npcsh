@@ -16,7 +16,10 @@ steps:
       # read it; commands that don't (ls, mkdir) ignore it. Unix standard.
       stdin_data = context.get('previous_output') or None
 
-      cwd = getattr(context.get('state'), 'current_path', None) or os.getcwd()
+      try:
+          cwd = state.current_path
+      except (NameError, AttributeError):
+          cwd = os.getcwd()
       process = subprocess.Popen(
           cmd,
           shell=True,
@@ -34,6 +37,6 @@ steps:
       elif stdout.strip():
           output = stdout.decode('utf-8')
       else:
-          output = f"Command executed successfully (exit code {process.returncode})"
+          output = "(no output)"
 
 

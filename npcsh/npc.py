@@ -58,14 +58,8 @@ def main():
     from npcsh.routes import router
     
     parser = argparse.ArgumentParser(
-        description=(
-            "NPC Command Line Utilities. "
-            "Call a command or provide a prompt for the default NPC."
-        ),
-        usage=(
-            "npc <command> [command_args...] | "
-            "<prompt> [--npc NAME] [--model MODEL] [--provider PROV]"
-        )
+        description="NPC Command Line Utilities. Call a command or provide a prompt for the default NPC.",
+        usage="npc <command> [command_args...] | <prompt> [--npc NAME] [--model MODEL] [--provider PROV]",
     )
     parser.add_argument(
         "--model", 

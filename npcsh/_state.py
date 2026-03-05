@@ -105,6 +105,7 @@ from npcpy.memory.command_history import (
 )
 from npcpy.memory.search import execute_rag_command, execute_brainblast_command
 from npcpy.npc_compiler import NPC, Team, build_jinx_tool_catalog
+from npcpy.tools import flatten_tool_messages
 from npcpy.npc_sysenv import (
     print_and_process_stream_with_markdown,
     render_markdown,
@@ -3024,10 +3025,7 @@ def process_pipeline_command(
             ls_files = 'Files in the current directory (full paths):\n' + file_list
         else:
             ls_files = 'No files found in the current directory.'
-        platform_info = (
-            f"Platform: {platform.system()} {platform.release()} "
-            f"({platform.machine()})"
-        )
+        platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
         info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n'
         # Note: Don't append user message here - get_llm_response/check_llm_command handle it
 
@@ -3200,6 +3198,8 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     llm_result['usage'] = total_usage
 
             else:
+                flat_msgs = flatten_tool_messages(state.messages)
+                flat_count = len(flat_msgs)
                 with SpinnerContext(f"{npc_name} processing with {exec_model}", style="dots_pulse"):
                     llm_result = check_llm_command(
                         full_llm_cmd,
@@ -3209,13 +3209,36 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                         api_key=state.api_key,
                         npc=state.npc,
                         team=state.team,
-                        messages=state.messages,
+                        messages=flat_msgs,
                         images=state.attachments,
                         stream=stream_final,
                         context=info,
                         extra_globals=application_globals_for_jinx,
                         tool_capable=tool_capable,
                     )
+                # Convert jinx_calls to tool_calls format on state.messages
+                if isinstance(llm_result, dict):
+                    for jc in llm_result.get("jinx_calls", []):
+                        call_id = f"jinx_{jc['name']}"
+                        state.messages.append({
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [{
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": jc["name"],
+                                    "arguments": json.dumps(jc["arguments"], default=str),
+                                },
+                            }],
+                        })
+                        state.messages.append({
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "name": jc["name"],
+                            "content": jc.get("result", ""),
+                        })
+                    llm_result["messages"] = state.messages
         except KeyboardInterrupt:
             print(colored("\nLLM processing interrupted by user.", "yellow"))
             state.messages = sanitize_messages(state.messages)
