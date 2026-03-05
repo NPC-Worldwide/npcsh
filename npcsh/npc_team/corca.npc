@@ -17,11 +17,11 @@ primary_directive: |
   When counting things, use wc -l. When debugging, read the error, fix it, retry.
   Keep it simple. Do the task, report the result.
 jinxs:
-  - lib/core/sh
-  - lib/core/python
-  - lib/core/edit_file
-  - lib/core/load_file
-  - lib/core/explore
-  - lib/utils/chat
-  - lib/utils/stop
+  - {{ Jinx('sh') }}
+  - {{ Jinx('python') }}
+  - {{ Jinx('edit_file') }}
+  - {{ Jinx('load_file') }}
+  - {{ Jinx('explore') }}
+  - {{ Jinx('chat') }}
+  - {{ Jinx('stop') }}
     
