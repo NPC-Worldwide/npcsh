@@ -105,6 +105,11 @@ def setup_bench_env():
     atexit.register(_remove_sudo_trap)
 
     os.environ["MPLBACKEND"] = "Agg"
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+    except ImportError:
+        pass
 
     # Redirect stdin to /dev/null so input() calls in python jinx get EOF
     # instead of blocking forever.
@@ -268,9 +273,6 @@ def _run_attempt(instruction: str, state, command_history,
 
     def _worker():
         try:
-            # chdir into the task's temp dir so sh/git commands
-            # can't touch the real repo.
-            os.chdir(state.current_path)
             fs, out = execute_command(
                 instruction, state, router=router,
                 command_history=command_history,
@@ -316,7 +318,7 @@ def _run_attempt(instruction: str, state, command_history,
     output_str = ""
     if isinstance(output, dict):
         output_str = output.get('output') or output.get('response') or str(output)
-        print(output_str[:2000])
+        print(output_str)
     elif final_state.stream_output and output is not None:
         chunks = []
         for chunk in output:
@@ -327,7 +329,7 @@ def _run_attempt(instruction: str, state, command_history,
         output_str = "".join(chunks)
     elif output is not None:
         output_str = str(output)
-        print(output_str[:2000])
+        print(output_str)
 
     # Capture full conversation trace
     new_msgs = final_state.messages[msg_count_before:]
@@ -378,6 +380,8 @@ def run_task(task: dict,
     command_history = _setup_state(model, provider, initial_state, work_dir=task_dir,
                                    think=think)
 
+    msg_count_before = len(initial_state.messages)
+
     while attempt < max_attempts:
         remaining = deadline - time.time()
         if remaining <= 0:
@@ -406,17 +410,35 @@ def run_task(task: dict,
         if attempt == 1:
             current_instruction = instruction
         else:
-            current_instruction = (
-                f"The verification check failed. Here is what it produced:\n"
-                f"{last_output[:800]}\n\n"
-                f"Fix it. {int(remaining)}s remaining."
-            )
+            # Build summary of previous actions from state.messages
+            prev_msgs = initial_state.messages[msg_count_before:]
+            prev_summary_parts = []
+            for msg in prev_msgs:
+                role = msg.get("role", "")
+                for tc in msg.get("tool_calls", []):
+                    fn = tc.get("function", {})
+                    name = fn.get("name", "?")
+                    args = fn.get("arguments", "")
+                    prev_summary_parts.append(f"Called {name} with: {args}")
+                if role == "tool":
+                    content = msg.get("content", "")
+                    prev_summary_parts.append(f"Result: {content}")
+            prev_summary = "\n".join(prev_summary_parts) if prev_summary_parts else last_output
+
+            current_instruction = f"""{instruction}
+
+Your previous attempt did not produce the correct result. Here is what you did and what it produced:
+{prev_summary}
+
+Try a different approach. Do not search the web about this."""
 
         attempt_timeout = remaining
         if attempt_timeout <= 0:
             break
 
         print(f"  [attempt {attempt}, {attempt_timeout:.0f}s cap]", flush=True)
+        if attempt > 1:
+            print(f"  [retry prompt] {current_instruction}", flush=True)
 
         try:
             _, output_str = _run_attempt(
@@ -669,8 +691,7 @@ def compare_models(
     for key, report in sorted_results:
         pct = 100 * report.passed / report.total if report.total else 0
         print(
-            f"{key:<30} {pct:>7.0f}% {report.passed:>5}/{report.total:<5} "
-            f"{report.duration:>7.0f}s",
+            f"{key:<30} {pct:>7.0f}% {report.passed:>5}/{report.total:<5} {report.duration:>7.0f}s",
             flush=True,
         )
 
