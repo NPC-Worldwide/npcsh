@@ -3217,7 +3217,8 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     )
                 # Convert jinx_calls to tool_calls format on state.messages
                 if isinstance(llm_result, dict):
-                    for jc in llm_result.get("jinx_calls", []):
+                    jinx_calls = llm_result.get("jinx_calls", [])
+                    for jc in jinx_calls:
                         call_id = f"jinx_{jc['name']}"
                         state.messages.append({
                             "role": "assistant",
@@ -3237,7 +3238,8 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                             "name": jc["name"],
                             "content": jc.get("result", ""),
                         })
-                    llm_result["messages"] = state.messages
+                    if jinx_calls:
+                        llm_result["messages"] = state.messages
         except KeyboardInterrupt:
             print(colored("\nLLM processing interrupted by user.", "yellow"))
             state.messages = sanitize_messages(state.messages)
