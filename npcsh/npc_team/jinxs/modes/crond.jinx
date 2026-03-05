@@ -118,7 +118,7 @@ steps:
                       else:
                           sched = ''
                           cmd = line
-                      is_npcsh = '/.npcsh/jobs/' in line or 'npcsh' in line.lower()
+                      is_npcsh = '/.npcsh/npc_team/jobs/' in line or 'npcsh' in line.lower()
                       items.append({
                           'idx': i,
                           'raw': line,
@@ -593,7 +593,7 @@ steps:
                   "\033[1mNPCSH:\033[0m     " + ("Yes" if item['npcsh'] else "No"),
               ]
               # Check for log file
-              if item['npcsh'] and '/.npcsh/jobs/' in item['command']:
+              if item['npcsh'] and '/.npcsh/npc_team/jobs/' in item['command']:
                   import re
                   m = re.search(r'(~?/[^\s]+\.log)', item['command'])
                   if m:
@@ -647,7 +647,7 @@ steps:
               item = filtered[ui.sel]
               if platform.system() == 'Darwin':
                   # macOS: check common log locations
-                  log_path = os.path.expanduser('~/.npcsh/logs/daemon_' + item['name'] + '.log')
+                  log_path = os.path.expanduser('~/.npcsh/npc_team/logs/daemon_' + item['name'] + '.log')
                   ui.detail_lines = [
                       "\033[1mLogs: " + item['name'] + "\033[0m",
                       "",
@@ -958,7 +958,7 @@ steps:
                   "\033[1mDescription:\033[0m",
                   "  " + job['description'],
               ]
-              logs_dir = os.path.expanduser('~/.npcsh/logs')
+              logs_dir = os.path.expanduser('~/.npcsh/npc_team/logs')
               if job['type'] == 'cron':
                   log_path = os.path.join(logs_dir, job['name'] + '.log')
               else:

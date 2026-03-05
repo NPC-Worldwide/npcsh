@@ -1,0 +1,354 @@
+jinx_name: init
+description: Interactive wizard for initializing NPC projects with model detection and configuration
+inputs:
+  - directory: ""
+  - templates: ""
+  - team_ctx: ""
+  - model: ""
+  - provider: ""
+steps:
+  - name: init_wizard
+    engine: python
+    code: |
+      import os
+      import sys
+      from pathlib import Path
+
+      # Direct mode: if directory passed explicitly or non-interactive
+      _direct_dir = (context.get('directory') or '').strip()
+      _direct = bool(_direct_dir) or not sys.stdin.isatty()
+
+      if _direct:
+          from npcpy.npc_compiler import initialize_npc_project
+          try:
+              initialize_npc_project(
+                  directory=_direct_dir or '.',
+                  templates=context.get('templates'),
+                  context=context.get('team_ctx'),
+                  model=context.get('model'),
+                  provider=context.get('provider')
+              )
+              context['output'] = f"NPC project initialized in {os.path.abspath(_direct_dir or '.')}"
+          except Exception as e:
+              context['output'] = f"Error: {e}"
+          context['messages'] = context.get('messages', [])
+
+      else:
+          # ========== Detection Functions ==========
+          def detect_ollama_models():
+              models = []
+              try:
+                  import ollama
+                  result = ollama.list()
+                  for model in result.get('models', []):
+                      name = model.get('model', model.get('name', ''))
+                      if name:
+                          models.append(name)
+              except:
+                  pass
+              return models
+
+          def detect_lm_studio():
+              try:
+                  import requests
+                  resp = requests.get('http://localhost:1234/v1/models', timeout=2)
+                  if resp.status_code == 200:
+                      return [m.get('id', '') for m in resp.json().get('data', [])]
+              except:
+                  pass
+              return []
+
+          def detect_api_keys():
+              keys = {}
+              for key in ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'DEEPSEEK_API_KEY']:
+                  if os.environ.get(key):
+                      keys[key] = True
+              return keys
+
+          def get_cloud_models(api_keys):
+              models = []
+              if api_keys.get('ANTHROPIC_API_KEY'):
+                  models.extend([('anthropic', 'claude-sonnet-4-20250514'), ('anthropic', 'claude-3-5-haiku-20241022')])
+              if api_keys.get('GEMINI_API_KEY'):
+                  models.extend([('gemini', 'gemini-2.5-flash'), ('gemini', 'gemini-1.5-pro')])
+              if api_keys.get('DEEPSEEK_API_KEY'):
+                  models.extend([('deepseek', 'deepseek-chat')])
+              return models
+
+          def prompt_input(label, default=''):
+              suffix = f' [{default}]' if default else ''
+              try:
+                  val = input(f'  {label}{suffix}: ').strip()
+              except EOFError:
+                  val = ''
+              return val or default
+
+          # ========== Banner ==========
+          print()
+          print('  ██╗███╗   ██╗██╗████████╗')
+          print('  ██║████╗  ██║██║╚══██╔══╝')
+          print('  ██║██╔██╗ ██║██║   ██║')
+          print('  ██║██║╚██╗██║██║   ██║')
+          print('  ██║██║ ╚████║██║   ██║')
+          print('  ╚═╝╚═╝  ╚═══╝╚═╝   ╚═╝')
+          print()
+          print('  NPC Project Initialization')
+          print('  ──────────────────────────')
+          print()
+
+          # ========== Step 1: Directory ==========
+          default_dir = os.path.abspath(context.get('directory') or '.')
+          directory = prompt_input('Project directory', default_dir)
+          directory = os.path.abspath(os.path.expanduser(directory))
+
+          exists = os.path.exists(directory)
+          status = '(exists)' if exists else '(will create)'
+          print(f'  -> {directory} {status}')
+          print()
+
+          # Preview structure
+          print('  This will create:')
+          print(f'  {directory}/')
+          print( '  └── npc_team/')
+          print( '      ├── forenpc.npc')
+          print( '      ├── team.ctx')
+          print( '      ├── jinxs/')
+          print( '      ├── tools/')
+          print( '      ├── images/')
+          print( '      ├── models/')
+          print( '      ├── attachments/')
+          print( '      └── mcp_servers/')
+          print()
+
+          # ========== Step 2: Detect Models ==========
+          print('  Detecting available models...')
+
+          sys.stdout.write('    Checking Ollama... ')
+          sys.stdout.flush()
+          ollama_models = detect_ollama_models()
+          print(f'{len(ollama_models)} found' if ollama_models else 'not available')
+
+          sys.stdout.write('    Checking LM Studio... ')
+          sys.stdout.flush()
+          lm_studio_models = detect_lm_studio()
+          print(f'{len(lm_studio_models)} found' if lm_studio_models else 'not available')
+
+          sys.stdout.write('    Checking API keys... ')
+          sys.stdout.flush()
+          api_keys = detect_api_keys()
+          cloud_models = get_cloud_models(api_keys)
+          if api_keys:
+              found = [k.replace('_API_KEY', '').lower() for k in api_keys]
+              print(', '.join(found))
+          else:
+              print('none set')
+
+          # Build all_models list
+          all_models = []
+          for m in ollama_models:
+              all_models.append(('ollama', m))
+          for m in lm_studio_models:
+              all_models.append(('lm_studio', m))
+          all_models.extend(cloud_models)
+
+          print(f'  Found {len(all_models)} model(s) total.')
+          print()
+
+          # ========== Step 3: Model Selection ==========
+          selected_model = context.get('model') or ''
+          selected_provider = context.get('provider') or ''
+
+          if all_models:
+              print('  Available models:')
+              for i, (provider, model) in enumerate(all_models):
+                  print(f'    {i+1:3d}. {model:<40s} ({provider})')
+              print(f'    {"":>3s}  Enter number to select, or press Enter to skip')
+              print()
+
+              choice = prompt_input('Model selection', '1' if all_models else '')
+              if choice.isdigit() and 1 <= int(choice) <= len(all_models):
+                  idx = int(choice) - 1
+                  selected_provider, selected_model = all_models[idx]
+                  print(f'  -> {selected_model} ({selected_provider})')
+              else:
+                  print('  -> Skipped model selection')
+              print()
+          elif not selected_model:
+              print('  No models detected. You can configure one manually later.')
+              print()
+
+          # ========== Step 4: Team Configuration ==========
+          print('  Team Configuration')
+          print('  ──────────────────')
+          team_name = prompt_input('Team name', 'npc_team')
+          forenpc = prompt_input('Coordinator NPC name', 'forenpc')
+          description = prompt_input('Team description', 'A team of AI agents')
+          print()
+
+          # ========== Step 5: Select Jinx Groups ==========
+          # Dynamically walk the global jinxs directory tree
+          import npcsh
+          _pkg_jinxs = os.path.join(os.path.dirname(os.path.abspath(npcsh.__file__)), 'npc_team', 'jinxs')
+          _global_jinxs = os.path.expanduser('~/.npcsh/npc_team/jinxs')
+          _jinxs_root = _global_jinxs if os.path.isdir(_global_jinxs) else _pkg_jinxs
+
+          def scan_jinx_dir(dirpath):
+              """Scan a directory and return {name, jinxs: [names], subs: [{name, jinxs}]}"""
+              jinxs = []
+              subs = []
+              if not os.path.isdir(dirpath):
+                  return {'name': os.path.basename(dirpath), 'jinxs': [], 'subs': []}
+              for entry in sorted(os.listdir(dirpath)):
+                  full = os.path.join(dirpath, entry)
+                  if os.path.isfile(full) and entry.endswith('.jinx'):
+                      jinxs.append(entry[:-5])  # strip .jinx
+                  elif os.path.isdir(full) and not entry.startswith('.'):
+                      sub = scan_jinx_dir(full)
+                      if sub['jinxs'] or sub['subs']:
+                          subs.append(sub)
+              return {'name': os.path.basename(dirpath), 'jinxs': jinxs, 'subs': subs}
+
+          def count_all(node):
+              """Count total jinxs in a node and all children."""
+              n = len(node['jinxs'])
+              for s in node['subs']:
+                  n += count_all(s)
+              return n
+
+          # Build top-level categories from the directory tree
+          tree = scan_jinx_dir(_jinxs_root)
+          # Flatten: top-level subdirs become categories; root jinxs (if any) become an extra category
+          categories = []
+          for sub in tree['subs']:
+              categories.append(sub)
+          if tree['jinxs']:
+              categories.append({'name': 'other', 'jinxs': tree['jinxs'], 'subs': []})
+
+          total_jinxs = sum(count_all(c) for c in categories)
+
+          print(f'  Include jinxs? ({total_jinxs} available)')
+          print(f'  Select categories (numbers, "all", or "none"):')
+          print()
+          for i, cat in enumerate(categories):
+              cnt = count_all(cat)
+              sub_names = ', '.join(s['name'] for s in cat['subs'][:4])
+              if cat['subs']:
+                  desc = sub_names + (', ...' if len(cat['subs']) > 4 else '')
+              else:
+                  desc = ', '.join(cat['jinxs'][:5]) + (', ...' if len(cat['jinxs']) > 5 else '')
+              print(f'    {i+1}. {cat["name"]:<16s} ({cnt:2d}) - {desc}')
+          print()
+
+          choice = prompt_input('Categories', 'all')
+          selected_jinxs = set()
+
+          def collect_all(node):
+              selected_jinxs.update(node['jinxs'])
+              for s in node['subs']:
+                  collect_all(s)
+
+          if choice.strip().lower() == 'none':
+              pass
+          elif choice.strip().lower() == 'all':
+              for cat in categories:
+                  collect_all(cat)
+          else:
+              picked_cats = []
+              for token in choice.replace(',', ' ').split():
+                  if token.isdigit() and 1 <= int(token) <= len(categories):
+                      picked_cats.append(categories[int(token) - 1])
+
+              for cat in picked_cats:
+                  # If category has subgroups, let user drill down
+                  if cat['subs']:
+                      # Merge root jinxs as a virtual "general" subgroup
+                      groups = list(cat['subs'])
+                      if cat['jinxs']:
+                          groups.append({'name': 'general', 'jinxs': cat['jinxs'], 'subs': []})
+
+                      if len(groups) == 1:
+                          collect_all(groups[0])
+                          print(f'  -> {cat["name"]}: included all')
+                      else:
+                          print()
+                          print(f'  {cat["name"]} - select groups (numbers or "all"):')
+                          for j, grp in enumerate(groups):
+                              cnt = count_all(grp)
+                              preview = ', '.join(grp['jinxs'][:4])
+                              if len(grp['jinxs']) > 4:
+                                  preview += ', ...'
+                              # Also mention nested subs if any
+                              if grp['subs']:
+                                  sub_preview = ' + ' + ', '.join(s['name'] for s in grp['subs'])
+                                  preview += sub_preview
+                              print(f'    {j+1}. {grp["name"]:<14s} ({cnt}) - {preview}')
+
+                          sub_choice = prompt_input(f'  {cat["name"]}', 'all')
+                          if sub_choice.strip().lower() == 'all':
+                              for grp in groups:
+                                  collect_all(grp)
+                          else:
+                              for token in sub_choice.replace(',', ' ').split():
+                                  if token.isdigit() and 1 <= int(token) <= len(groups):
+                                      collect_all(groups[int(token) - 1])
+                  else:
+                      # No subgroups, just include all jinxs
+                      selected_jinxs.update(cat['jinxs'])
+                      print(f'  -> {cat["name"]}: included all ({len(cat["jinxs"])})')
+
+          if selected_jinxs:
+              print(f'  -> {len(selected_jinxs)} jinxs selected')
+          else:
+              print('  -> No jinxs copied (use_global_jinxs in team.ctx still gives runtime access)')
+          print()
+
+          # ========== Step 6: Summary & Confirm ==========
+          print('  Summary')
+          print('  ───────')
+          print(f'    Directory:   {directory}')
+          if selected_model:
+              print(f'    Model:       {selected_model} ({selected_provider})')
+          else:
+              print(f'    Model:       (none)')
+          print(f'    Team:        {team_name}')
+          print(f'    Coordinator: {forenpc}')
+          print(f'    Description: {description}')
+          if selected_jinxs:
+              print(f'    Jinxs:       {len(selected_jinxs)} selected')
+          else:
+              print(f'    Jinxs:       none (global jinxs available at runtime)')
+          print()
+
+          confirm = prompt_input('Create project? (y/n)', 'y')
+          if confirm.lower() not in ('y', 'yes'):
+              print('  Cancelled.')
+              context['output'] = 'Init cancelled.'
+              context['messages'] = context.get('messages', [])
+          else:
+              # ========== Step 7: Initialize ==========
+              print()
+              print('  Initializing...')
+              from npcpy.npc_compiler import initialize_npc_project
+              try:
+                  initialize_npc_project(
+                      directory=directory,
+                      templates=context.get('templates'),
+                      context=description,
+                      model=selected_model,
+                      provider=selected_provider,
+                      include_jinx_names=selected_jinxs if selected_jinxs else None,
+                  )
+                  result = f"Project initialized at {os.path.abspath(directory)}"
+                  print(f'  {result}')
+                  print()
+                  print('  Next steps:')
+                  print(f'    cd {directory}')
+                  print(f'    npcsh')
+                  print()
+                  print(f'  Add more NPCs by creating .npc files in {team_name}/')
+                  context['output'] = result
+              except Exception as e:
+                  print(f'  Error: {e}')
+                  context['output'] = f"Error: {e}"
+
+              context['messages'] = context.get('messages', [])

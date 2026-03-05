@@ -1,15 +1,16 @@
-jinx_name: "roll"
-description: "Video creation studio TUI - generate and manage videos with parameter controls"
+jinx_name: "vixynt"
+description: "Image creation studio TUI - generate and manage images with parameter controls"
 inputs:
   - prompt: null
   - model: null
   - provider: null
-  - output_path: null
-  - num_frames: null
-  - width: null
+  - output_name: null
+  - attachments: null
+  - n_images: null
   - height: null
+  - width: null
 steps:
-  - name: "roll_tui"
+  - name: "vixynt_tui"
     engine: "python"
     code: |
       import os
@@ -22,25 +23,27 @@ steps:
           termios = None
       import select
       from datetime import datetime
+      from PIL import Image
 
-      from npcpy.llm_funcs import gen_video
+      from npcpy.llm_funcs import gen_image
 
       npc = context.get('npc')
       if isinstance(npc, str):
           npc = None
 
       # ========== State ==========
-      class RollState:
+      class VixyntState:
           def __init__(self):
               self.prompt = ""
               self.model = ""
               self.provider = ""
-              self.width_val = 256
-              self.height_val = 256
-              self.num_frames = 125
-              self.output_path = ""
+              self.width_val = 1024
+              self.height_val = 1024
+              self.n_images = 1
+              self.output_name = ""
+              self.attachments = ""
               # UI state
-              self.params = ['prompt', 'model', 'provider', 'width', 'height', 'num_frames', 'output']
+              self.params = ['prompt', 'model', 'provider', 'width', 'height', 'n_images', 'output', 'attachments']
               self.sel = 0
               self.scroll = 0
               self.mode = 'params'  # params, editing, gallery, generating
@@ -51,40 +54,33 @@ steps:
               self.gallery_sel = 0
               self.gallery_scroll = 0
 
-      ui = RollState()
+      ui = VixyntState()
 
       # Load from context
       ui.prompt = str(context.get('prompt') or '')
-      ui.model = str(context.get('model') or os.getenv('NPCSH_VIDEO_GEN_MODEL', ''))
-      ui.provider = str(context.get('provider') or os.getenv('NPCSH_VIDEO_GEN_PROVIDER', ''))
-      if not ui.model and npc and hasattr(npc, 'model') and npc.model:
-          ui.model = npc.model
-      if not ui.provider and npc and hasattr(npc, 'provider') and npc.provider:
-          ui.provider = npc.provider
-      if not ui.model:
-          ui.model = "stable-video-diffusion"
-      if not ui.provider:
-          ui.provider = "diffusers"
+      ui.model = str(context.get('model') or os.getenv('NPCSH_IMAGE_GEN_MODEL', ''))
+      ui.provider = str(context.get('provider') or os.getenv('NPCSH_IMAGE_GEN_PROVIDER', ''))
       try:
-          ui.width_val = int(context.get('width') or 256)
+          ui.width_val = int(context.get('width') or 1024)
       except:
           pass
       try:
-          ui.height_val = int(context.get('height') or 256)
+          ui.height_val = int(context.get('height') or 1024)
       except:
           pass
       try:
-          ui.num_frames = int(context.get('num_frames') or 125)
+          ui.n_images = int(context.get('n_images') or 1)
       except:
           pass
-      ui.output_path = str(context.get('output_path') or '')
+      ui.output_name = str(context.get('output_name') or '')
+      ui.attachments = str(context.get('attachments') or '')
 
       # Load existing gallery
-      vid_dir = os.path.expanduser("~/.npcsh/videos/")
-      if os.path.isdir(vid_dir):
-          for f in sorted(os.listdir(vid_dir), reverse=True)[:50]:
-              if f.lower().endswith(('.mp4', '.webm', '.avi', '.mov', '.mkv')):
-                  ui.gallery.append({"path": os.path.join(vid_dir, f), "prompt": "", "timestamp": f})
+      img_dir = os.path.expanduser("~/.npcsh/npc_team/images/")
+      if os.path.isdir(img_dir):
+          for f in sorted(os.listdir(img_dir), reverse=True)[:50]:
+              if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                  ui.gallery.append({"path": os.path.join(img_dir, f), "prompt": "", "timestamp": f})
 
       def get_size():
           try:
@@ -96,12 +92,13 @@ steps:
       def get_param_value(idx):
           p = ui.params[idx]
           if p == 'prompt': return ui.prompt
-          if p == 'model': return ui.model or '(default)'
-          if p == 'provider': return ui.provider or '(default)'
+          if p == 'model': return ui.model or '(env default)'
+          if p == 'provider': return ui.provider or '(env default)'
           if p == 'width': return str(ui.width_val)
           if p == 'height': return str(ui.height_val)
-          if p == 'num_frames': return str(ui.num_frames)
-          if p == 'output': return ui.output_path or '(auto)'
+          if p == 'n_images': return str(ui.n_images)
+          if p == 'output': return ui.output_name or '(auto)'
+          if p == 'attachments': return ui.attachments or '(none)'
           return ''
 
       def set_param_value(idx, val):
@@ -115,12 +112,13 @@ steps:
           elif p == 'height':
               try: ui.height_val = int(val)
               except: pass
-          elif p == 'num_frames':
-              try: ui.num_frames = max(1, int(val))
+          elif p == 'n_images':
+              try: ui.n_images = max(1, int(val))
               except: pass
-          elif p == 'output': ui.output_path = val
+          elif p == 'output': ui.output_name = val
+          elif p == 'attachments': ui.attachments = val
 
-      def generate_videos():
+      def generate_images():
           ui.mode = 'generating'
           ui.status = "Generating..."
           render_screen()
@@ -130,32 +128,44 @@ steps:
               ui.mode = 'params'
               return
 
-          try:
-              if ui.output_path and ui.output_path.strip():
-                  out_file = os.path.expanduser(ui.output_path)
-              else:
-                  os.makedirs(vid_dir, exist_ok=True)
-                  out_file = os.path.join(vid_dir, "roll_" + datetime.now().strftime('%Y%m%d_%H%M%S') + ".mp4")
+          input_images = []
+          if ui.attachments.strip():
+              input_images = [p.strip() for p in ui.attachments.split(',')]
 
-              result = gen_video(
+          try:
+              result = gen_image(
                   prompt=ui.prompt,
                   model=ui.model or None,
                   provider=ui.provider or None,
                   npc=npc,
-                  num_frames=ui.num_frames,
-                  width=ui.width_val,
                   height=ui.height_val,
-                  output_path=out_file,
-                  **context.get('api_kwargs', {})
+                  width=ui.width_val,
+                  n_images=ui.n_images,
+                  input_images=input_images if input_images else None
               )
 
-              if isinstance(result, dict):
-                  msg = result.get('output', 'Video generated.')
+              if not isinstance(result, list):
+                  images_list = [result] if result is not None else []
               else:
-                  msg = str(result)
+                  images_list = result
 
-              ui.gallery.insert(0, {"path": out_file, "prompt": ui.prompt, "timestamp": os.path.basename(out_file)})
-              ui.status = "Generated: " + os.path.basename(out_file)
+              saved = []
+              for i, image in enumerate(images_list):
+                  if image is None:
+                      continue
+                  if ui.output_name and ui.output_name.strip():
+                      base, ext = os.path.splitext(os.path.expanduser(ui.output_name))
+                      if not ext:
+                          ext = ".png"
+                      out_file = base + ("_" + str(i) if len(images_list) > 1 else "") + ext
+                  else:
+                      os.makedirs(img_dir, exist_ok=True)
+                      out_file = os.path.join(img_dir, "vixynt_" + datetime.now().strftime('%Y%m%d_%H%M%S') + "_" + str(i) + ".png")
+                  image.save(out_file)
+                  saved.append(out_file)
+                  ui.gallery.insert(0, {"path": out_file, "prompt": ui.prompt, "timestamp": os.path.basename(out_file)})
+
+              ui.status = "Generated " + str(len(saved)) + " image(s): " + ", ".join(os.path.basename(f) for f in saved)
           except Exception as e:
               ui.status = "Error: " + str(e)[:60]
 
@@ -167,7 +177,7 @@ steps:
           out = []
           out.append("\033[H")
 
-          header = " ROLL - Video Creation Studio "
+          header = " VIXYNT - Image Creation Studio "
           out.append("\033[1;1H\033[7;1m" + header.ljust(width) + "\033[0m")
 
           if ui.mode in ('params', 'editing', 'generating'):
@@ -195,7 +205,7 @@ steps:
               out.append("\033[" + str(gallery_row) + ";1H\033[33;1m Gallery (" + str(len(ui.gallery)) + ") \033[90m" + ("-" * (width - 20)) + "\033[0m")
 
               gallery_h = height - gallery_row - 4
-              for i in range(max(0, gallery_h)):
+              for i in range(gallery_h):
                   idx = ui.gallery_scroll + i
                   row = gallery_row + 1 + i
                   out.append("\033[" + str(row) + ";1H\033[K")
@@ -229,7 +239,7 @@ steps:
           if ui.mode == 'editing':
               footer = " Type value, Enter:Confirm  Esc:Cancel "
           elif ui.mode == 'gallery':
-              footer = " j/k:Nav  o:Open  b:Back  q:Quit "
+              footer = " j/k:Nav  o:Open  Enter:Select  b:Back  q:Quit "
           elif ui.mode == 'generating':
               footer = " Generating... "
           else:
@@ -266,11 +276,11 @@ steps:
           elif c == 'e' or c in ('\r', '\n'):
               if c in ('\r', '\n') and ui.sel == 0 and ui.prompt:
                   # Enter on prompt with existing prompt = generate
-                  generate_videos()
+                  generate_images()
               else:
                   ui.mode = 'editing'
                   ui.edit_buf = get_param_value(ui.sel)
-                  if ui.edit_buf in ('(default)', '(auto)'):
+                  if ui.edit_buf in ('(env default)', '(auto)', '(none)'):
                       ui.edit_buf = ""
                   ui.edit_cursor = len(ui.edit_buf)
           elif c == 'g':
@@ -278,7 +288,7 @@ steps:
               ui.gallery_sel = 0
               ui.gallery_scroll = 0
           elif c == 'G':
-              generate_videos()
+              generate_images()
 
           return True
 
@@ -333,7 +343,7 @@ steps:
                   subprocess.Popen(['xdg-open', path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                   ui.status = "Opened: " + os.path.basename(path)
               except:
-                  ui.status = "Could not open video"
+                  ui.status = "Could not open image"
 
           # Keep gallery_scroll in range
           _, height = get_size()
@@ -348,13 +358,13 @@ steps:
       # ========== One-shot mode ==========
       if ui.prompt and context.get('prompt'):
           # If prompt provided via CLI args, generate immediately
-          generate_videos()
+          generate_images()
           context['output'] = ui.status
           context['messages'] = context.get('messages', [])
 
       # ========== Main TUI Loop ==========
       elif not sys.stdin.isatty():
-          context['output'] = "Roll requires an interactive terminal."
+          context['output'] = "Vixynt requires an interactive terminal."
       else:
           fd = sys.stdin.fileno()
           old_settings = termios.tcgetattr(fd)

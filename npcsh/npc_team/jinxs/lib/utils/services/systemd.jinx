@@ -19,7 +19,7 @@ steps:
       restart = {{ restart_on_failure | default("true") | tojson }}.lower() in ('true', '1', 'yes')
 
       is_mac = platform.system() == 'Darwin'
-      logs_dir = os.path.expanduser('~/.npcsh/logs')
+      logs_dir = os.path.expanduser('~/.npcsh/npc_team/logs')
       os.makedirs(logs_dir, exist_ok=True)
 
       def plist_path(n):
