@@ -18,7 +18,7 @@
 
 ---
 
-`npcsh` makes the most of multi-modal LLMs and agents through slash commands and interactive modes, all from the command line. Build teams of agents, schedule them on jobs, engineer context, and design custom Jinja Execution templates (Jinxs) for you and your agents to invoke.
+`npcsh` makes the most of multi-modal LLMs and agents through slash commands and interactive modes, all from the command line. Build teams of agents, schedule them on jobs, engineer context, and design custom Jinja Execution templates (Jinxes) for you and your agents to invoke.
 
 ```bash
 pip install 'npcsh[lite]'
@@ -188,8 +188,8 @@ python -m npcsh.benchmark.local_runner --model qwen3:4b --provider ollama
 
 - **[Agents (NPCs)](https://npc-shell.readthedocs.io/en/latest/guide/#working-with-npcs-agents)** — AI agents with personas, directives, and tool sets
 - **[Team Orchestration](https://npc-shell.readthedocs.io/en/latest/guide/#team-orchestration)** — Delegation, review loops, multi-NPC discussions
-- **[Jinxs](https://npc-shell.readthedocs.io/en/latest/guide/#all-commands)** — Jinja Execution templates — reusable tools for users and agents
-- **[Skills](https://npc-shell.readthedocs.io/en/latest/guide/#skills-knowledge-content-for-agents)** — Knowledge-content jinxs with progressive section disclosure
+- **[Jinxes](https://npc-shell.readthedocs.io/en/latest/guide/#all-commands)** — Jinja Execution templates — reusable tools for users and agents
+- **[Skills](https://npc-shell.readthedocs.io/en/latest/guide/#skills-knowledge-content-for-agents)** — Knowledge-content jinxes with progressive section disclosure
 - **[NQL](https://npc-shell.readthedocs.io/en/latest/guide/#nql---sql-models-with-ai-functions)** — SQL models with embedded AI functions (Snowflake, BigQuery, Databricks, SQLite)
 - **[Knowledge Graphs](https://npc-shell.readthedocs.io/en/latest/guide/#memory--knowledge-graph)** — Build and evolve knowledge graphs from conversations
 - **[Deep Research](https://npc-shell.readthedocs.io/en/latest/guide/#deep-research)** — Multi-agent hypothesis generation, persona sub-agents, paper writing

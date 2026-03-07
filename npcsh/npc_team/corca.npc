@@ -16,7 +16,7 @@ primary_directive: |
   Always use FULL ABSOLUTE PATHS. Run pwd first if you need the working directory.
   When counting things, use wc -l. When debugging, read the error, fix it, retry.
   Keep it simple. Do the task, report the result.
-jinxs:
+jinxes:
   - lib/core/sh
   - lib/core/python
   - lib/core/edit_file

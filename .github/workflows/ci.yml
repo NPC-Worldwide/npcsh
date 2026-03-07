@@ -56,7 +56,7 @@ jobs:
     - name: Run ruff
       run: ruff check npcsh/ --output-format=github
 
-  validate-jinxs:
+  validate-jinxes:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -72,12 +72,12 @@ jobs:
     - name: Validate jinx files
       run: |
         python -c "
-        from npcpy.npc_compiler import load_jinxs_from_directory
+        from npcpy.npc_compiler import load_jinxes_from_directory
         import sys
 
         try:
-            jinxs = load_jinxs_from_directory('npcsh/npc_team/jinxs')
-            print(f'Loaded {len(jinxs)} jinx files successfully')
+            jinxes = load_jinxes_from_directory('npcsh/npc_team/jinxes')
+            print(f'Loaded {len(jinxes)} jinx files successfully')
         except Exception as e:
             print(f'Jinx validation error: {e}')
             sys.exit(1)

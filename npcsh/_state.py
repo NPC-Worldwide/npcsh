@@ -481,10 +481,10 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
 
     user_npc_team_dir = os.path.expanduser("~/.npcsh/npc_team")
 
-    user_jinxs_dir = os.path.join(user_npc_team_dir, "jinxs")
+    user_jinxes_dir = os.path.join(user_npc_team_dir, "jinxes")
     user_templates_dir = os.path.join(user_npc_team_dir, "templates")
     os.makedirs(user_npc_team_dir, exist_ok=True)
-    os.makedirs(user_jinxs_dir, exist_ok=True)
+    os.makedirs(user_jinxes_dir, exist_ok=True)
     os.makedirs(user_templates_dir, exist_ok=True)
 
     # Copy .npc and .ctx files
@@ -506,34 +506,34 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                 shutil.copy2(source_path, destination_path)
                 print(f"Copied ctx {filename} to {destination_path}")
 
-    # Copy jinxs directory RECURSIVELY with manifest tracking
-    # This ensures we only sync package jinxs and can clean up old ones
-    package_jinxs_dir = os.path.join(package_npc_team_dir, "jinxs")
-    manifest_path = os.path.join(user_jinxs_dir, ".package_manifest.json")
+    # Copy jinxes directory RECURSIVELY with manifest tracking
+    # This ensures we only sync package jinxes and can clean up old ones
+    package_jinxes_dir = os.path.join(package_npc_team_dir, "jinxes")
+    manifest_path = os.path.join(user_jinxes_dir, ".package_manifest.json")
 
-    # Load existing manifest of package-synced jinxs
-    old_package_jinxs = set()
+    # Load existing manifest of package-synced jinxes
+    old_package_jinxes = set()
     if os.path.exists(manifest_path):
         try:
 
             with open(manifest_path, 'r') as f:
-                old_package_jinxs = set(json.load(f).get('jinxs', []))
+                old_package_jinxes = set(json.load(f).get('jinxes', []))
         except Exception:
             pass
 
-    # Track current package jinxs
-    current_package_jinxs = set()
+    # Track current package jinxes
+    current_package_jinxes = set()
 
-    if os.path.exists(package_jinxs_dir):
-        for root, dirs, files in os.walk(package_jinxs_dir):
-            # Calculate relative path from package_jinxs_dir
-            rel_path = os.path.relpath(root, package_jinxs_dir)
+    if os.path.exists(package_jinxes_dir):
+        for root, dirs, files in os.walk(package_jinxes_dir):
+            # Calculate relative path from package_jinxes_dir
+            rel_path = os.path.relpath(root, package_jinxes_dir)
 
-            # Create corresponding directory in user jinxs
+            # Create corresponding directory in user jinxes
             if rel_path == '.':
-                dest_dir = user_jinxs_dir
+                dest_dir = user_jinxes_dir
             else:
-                dest_dir = os.path.join(user_jinxs_dir, rel_path)
+                dest_dir = os.path.join(user_jinxes_dir, rel_path)
             os.makedirs(dest_dir, exist_ok=True)
 
             # Copy all .jinx files in this directory
@@ -542,7 +542,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                     source_jinx_path = os.path.join(root, filename)
                     destination_jinx_path = os.path.join(dest_dir, filename)
                     jinx_rel_path = os.path.join(rel_path, filename) if rel_path != '.' else filename
-                    current_package_jinxs.add(jinx_rel_path)
+                    current_package_jinxes.add(jinx_rel_path)
 
                     if not os.path.exists(destination_jinx_path) or file_has_changed(
                         source_jinx_path, destination_jinx_path
@@ -550,18 +550,18 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                         shutil.copy2(source_jinx_path, destination_jinx_path)
                         print(f"Copied jinx {jinx_rel_path} to {destination_jinx_path}")
 
-    # Clean up old package jinxs that are no longer in the package
-    # (but preserve user-created jinxs that were never in the manifest)
-    stale_jinxs = old_package_jinxs - current_package_jinxs
-    for stale_jinx in stale_jinxs:
-        stale_path = os.path.join(user_jinxs_dir, stale_jinx)
+    # Clean up old package jinxes that are no longer in the package
+    # (but preserve user-created jinxes that were never in the manifest)
+    stale_jinxes = old_package_jinxes - current_package_jinxes
+    for stale_jinx in stale_jinxes:
+        stale_path = os.path.join(user_jinxes_dir, stale_jinx)
         if os.path.exists(stale_path):
             try:
                 os.remove(stale_path)
                 print(f"Removed stale package jinx: {stale_jinx}")
                 # Remove empty parent directories
                 parent_dir = os.path.dirname(stale_path)
-                while parent_dir != user_jinxs_dir:
+                while parent_dir != user_jinxes_dir:
                     if os.path.isdir(parent_dir) and not os.listdir(parent_dir):
                         os.rmdir(parent_dir)
                         print(f"Removed empty directory: {parent_dir}")
@@ -573,7 +573,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     try:
         
         with open(manifest_path, 'w') as f:
-            json.dump({'jinxs': list(current_package_jinxs), 'updated': str(__import__('datetime').datetime.now())}, f, indent=2)
+            json.dump({'jinxes': list(current_package_jinxes), 'updated': str(__import__('datetime').datetime.now())}, f, indent=2)
     except Exception as e:
         print(f"Could not save jinx manifest: {e}")
 
@@ -1531,8 +1531,8 @@ def get_slash_commands(state: ShellState, router: Any) -> List[str]:
         completion_logger.debug(f"Router commands: {router_cmds}")
     
   
-    if state.team and hasattr(state.team, 'jinxs_dict'):
-        jinx_cmds = [f"/{jinx}" for jinx in state.team.jinxs_dict.keys()]
+    if state.team and hasattr(state.team, 'jinxes_dict'):
+        jinx_cmds = [f"/{jinx}" for jinx in state.team.jinxes_dict.keys()]
         commands.extend(jinx_cmds)
         completion_logger.debug(f"Jinx commands: {jinx_cmds}")
     
@@ -1634,9 +1634,9 @@ def readline_safe_prompt(prompt: str) -> str:
     ansi_escape = re.compile(r"(\033\[[0-9;]*[a-zA-Z])")
     return ansi_escape.sub(r"\001\1\002", prompt)
 
-def print_jinxs(jinxs):
-    output = "Available jinxs:\n"
-    for jinx in jinxs:
+def print_jinxes(jinxes):
+    output = "Available jinxes:\n"
+    for jinx in jinxes:
         output += f"  {jinx.jinx_name}\n"
         output += f"   Description: {jinx.description}\n"
         output += f"   Inputs: {jinx.inputs}\n"
@@ -2169,8 +2169,8 @@ def _get_slash_commands_set(state, router, prefix='/') -> set:
         'trigger', 'type_text', 'wait',
     }
     cmds = {'help', 'set', 'agent', 'chat', 'cmd', 'sq', 'quit', 'exit', 'clear', 'npc', 'reattach'}
-    if state and state.team and hasattr(state.team, 'jinxs_dict'):
-        cmds.update(state.team.jinxs_dict.keys())
+    if state and state.team and hasattr(state.team, 'jinxes_dict'):
+        cmds.update(state.team.jinxes_dict.keys())
     if router and hasattr(router, 'jinx_routes'):
         cmds.update(router.jinx_routes.keys())
     cmds -= _HIDDEN_CMDS
@@ -2702,7 +2702,7 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
 
 def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str, Callable]]:
     """
-    Assemble tool definitions + executable map from NPC tools, Jinxs, and MCP servers.
+    Assemble tool definitions + executable map from NPC tools, Jinxes, and MCP servers.
     This mirrors the auto-translation used in the Flask server path.
     """
     tools: List[Dict[str, Any]] = []
@@ -2722,18 +2722,18 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
     elif npc_obj and getattr(npc_obj, "tool_map", None):
         tool_map.update(npc_obj.tool_map)
 
-    # Jinx tools from NPC only (NPC.jinxs_dict is already filtered by jinxs_spec
-    # during initialize_jinxs - don't add the full team catalog which overwhelms small models)
-    aggregated_jinxs: Dict[str, Any] = {}
-    if npc_obj and getattr(npc_obj, "jinxs_dict", None):
-        aggregated_jinxs.update(npc_obj.jinxs_dict)
+    # Jinx tools from NPC only (NPC.jinxes_dict is already filtered by jinxes_spec
+    # during initialize_jinxes - don't add the full team catalog which overwhelms small models)
+    aggregated_jinxes: Dict[str, Any] = {}
+    if npc_obj and getattr(npc_obj, "jinxes_dict", None):
+        aggregated_jinxes.update(npc_obj.jinxes_dict)
 
-    if aggregated_jinxs:
+    if aggregated_jinxes:
         jinx_catalog: Dict[str, Dict[str, Any]] = {}
         if npc_obj and getattr(npc_obj, "jinx_tool_catalog", None):
             jinx_catalog.update(npc_obj.jinx_tool_catalog or {})
         if not jinx_catalog:
-            jinx_catalog = build_jinx_tool_catalog(aggregated_jinxs)
+            jinx_catalog = build_jinx_tool_catalog(aggregated_jinxes)
 
         tools.extend(list(jinx_catalog.values()))
 
@@ -2752,7 +2752,7 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
             "get_relevant_memories": get_relevant_memories,
         }
 
-        for name, jinx_obj in aggregated_jinxs.items():
+        for name, jinx_obj in aggregated_jinxes.items():
             def _make_runner(jinx=jinx_obj, jinja_env=jinja_env_for_jinx, tool_name=name, extras=jinx_globals):
                 def runner(**kwargs):
                     input_values = kwargs if isinstance(kwargs, dict) else {}
@@ -3454,7 +3454,7 @@ def execute_command(
     original_command_for_embedding = command
 
     # Agent mode processes commands directly
-    # Other modes route to their respective jinxs
+    # Other modes route to their respective jinxes
     if state.current_mode == 'agent':
         try:
             state, output = process_pipeline_command(
@@ -3501,8 +3501,8 @@ def execute_command(
 
         # Check if mode jinx exists in team or router
         mode_jinx = None
-        if state.team and hasattr(state.team, 'jinxs_dict') and mode_jinx_name in state.team.jinxs_dict:
-            mode_jinx = state.team.jinxs_dict[mode_jinx_name]
+        if state.team and hasattr(state.team, 'jinxes_dict') and mode_jinx_name in state.team.jinxes_dict:
+            mode_jinx = state.team.jinxes_dict[mode_jinx_name]
         elif router and mode_jinx_name in router.jinx_routes:
             # Execute via router
             try:
@@ -3616,10 +3616,10 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
 
         global_team_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
         if team_dir == global_team_path:
-            user_jinxs_dir = os.path.join(global_team_path, "jinxs")
-            if os.path.exists(user_jinxs_dir):
-                print(f"Removing stale jinxs directory: {user_jinxs_dir}")
-                shutil.rmtree(user_jinxs_dir)
+            user_jinxes_dir = os.path.join(global_team_path, "jinxes")
+            if os.path.exists(user_jinxes_dir):
+                print(f"Removing stale jinxes directory: {user_jinxes_dir}")
+                shutil.rmtree(user_jinxes_dir)
             initialize_base_npcs_if_needed(db_path)
             print("npc_team files refreshed. Retrying team initialization...")
             try:
@@ -3661,15 +3661,15 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         team.name = "npcsh"
 
     return command_history, team, forenpc_obj
-def initialize_router_with_jinxs(team, router):
-    """Load global and team Jinxs into router"""
-    global_jinxs_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
-    router.load_jinx_routes(global_jinxs_dir)
+def initialize_router_with_jinxes(team, router):
+    """Load global and team Jinxes into router"""
+    global_jinxes_dir = os.path.expanduser("~/.npcsh/npc_team/jinxes")
+    router.load_jinx_routes(global_jinxes_dir)
     
     if team and team.team_path:
-        team_jinxs_dir = os.path.join(team.team_path, "jinxs")
-        if os.path.exists(team_jinxs_dir):
-            router.load_jinx_routes(team_jinxs_dir)
+        team_jinxes_dir = os.path.join(team.team_path, "jinxes")
+        if os.path.exists(team_jinxes_dir):
+            router.load_jinx_routes(team_jinxes_dir)
     
     return router
                 
@@ -3872,7 +3872,7 @@ def process_result(
         result_state.turn_count += 1
 
         # Memory extraction, KG evolution, and context compression
-        # are handled by scheduled jinxs via cron — not inline here.
+        # are handled by scheduled jinxes via cron — not inline here.
 
 initial_state = ShellState(
     conversation_id=start_new_conversation(),

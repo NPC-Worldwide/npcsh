@@ -1,5 +1,5 @@
 jinx_name: teamviz
-description: "Visualize NPC team structure - NPCs, jinxs, and their relationships"
+description: "Visualize NPC team structure - NPCs, jinxes, and their relationships"
 inputs:
 - team_path: ""
 - save: ""
@@ -37,7 +37,7 @@ steps:
               with open(npc_file, 'r') as f:
                   data = yaml.safe_load(f)
               npcs[npc_file.stem] = {
-                  'jinxs': data.get('jinxs', []),
+                  'jinxes': data.get('jinxes', []),
                   'directive': data.get('primary_directive', '')[:100],
                   'model': data.get('model', ''),
               }
@@ -56,12 +56,12 @@ steps:
           except:
               pass
 
-      # Discover all jinxs
-      jinxs_dir = team_path / "jinxs"
-      all_jinxs = {}
-      if jinxs_dir.exists():
-          for jinx_file in jinxs_dir.rglob("*.jinx"):
-              rel_path = jinx_file.relative_to(jinxs_dir)
+      # Discover all jinxes
+      jinxes_dir = team_path / "jinxes"
+      all_jinxes = {}
+      if jinxes_dir.exists():
+          for jinx_file in jinxes_dir.rglob("*.jinx"):
+              rel_path = jinx_file.relative_to(jinxes_dir)
               jinx_name = jinx_file.stem
               # Categorize by location
               if 'bin' in str(rel_path):
@@ -71,7 +71,7 @@ steps:
                   category = parts[1] if len(parts) > 1 else 'lib'
               else:
                   category = 'other'
-              all_jinxs[jinx_name] = {'path': str(rel_path), 'category': category}
+              all_jinxes[jinx_name] = {'path': str(rel_path), 'category': category}
 
       # Build graph
       G = nx.DiGraph()
@@ -90,29 +90,29 @@ steps:
       npc_jinx_patterns = {}
 
       for npc_name, npc_data in npcs.items():
-          patterns = npc_data.get('jinxs', [])
+          patterns = npc_data.get('jinxes', [])
           npc_jinx_patterns[npc_name] = patterns
 
-          # Resolve patterns to actual jinxs
+          # Resolve patterns to actual jinxes
           for pattern in patterns:
               pattern = str(pattern)
               if '*' in pattern:
                   # Glob pattern like lib/browser/*
                   base = pattern.replace('/*', '').replace('*', '')
-                  for jname, jdata in all_jinxs.items():
+                  for jname, jdata in all_jinxes.items():
                       if base in jdata['path']:
                           jinx_users[jname].append(npc_name)
               else:
                   # Exact match
                   jname = pattern.split('/')[-1]
-                  if jname in all_jinxs:
+                  if jname in all_jinxes:
                       jinx_users[jname].append(npc_name)
 
       # Add jinx nodes (only ones that are used)
       jinx_categories = defaultdict(list)
       for jname, users in jinx_users.items():
-          if jname in all_jinxs:
-              cat = all_jinxs[jname]['category']
+          if jname in all_jinxes:
+              cat = all_jinxes[jname]['category']
               jinx_categories[cat].append(jname)
 
               # Size based on usage
@@ -191,12 +191,12 @@ steps:
       summary += "Team: {}\n".format(team_name)
       summary += "ForeNPC: {}\n".format(forenpc or 'None')
       summary += "NPCs ({}): {}\n".format(len(npcs), ', '.join(sorted(npcs.keys())))
-      summary += "Total Jinxs: {}\n".format(len(all_jinxs))
-      summary += "\nJinxs by category:\n"
+      summary += "Total Jinxes: {}\n".format(len(all_jinxes))
+      summary += "\nJinxes by category:\n"
       for cat, jlist in sorted(jinx_categories.items()):
-          summary += "  {}: {} jinxs\n".format(cat, len(jlist))
+          summary += "  {}: {} jinxes\n".format(cat, len(jlist))
 
-      summary += "\nMost shared jinxs:\n"
+      summary += "\nMost shared jinxes:\n"
       shared = sorted(jinx_users.items(), key=lambda x: len(x[1]), reverse=True)[:10]
       for jname, users in shared:
           if len(users) > 1:

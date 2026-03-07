@@ -104,12 +104,12 @@ def get_slash_commands(state: Any, router: Any) -> List[str]:
         '/sq', '/quit', '/exit', '/clear',
     ])
 
-    # Team jinxs
-    if state.team and hasattr(state.team, 'jinxs_dict'):
-        for name in state.team.jinxs_dict:
+    # Team jinxes
+    if state.team and hasattr(state.team, 'jinxes_dict'):
+        for name in state.team.jinxes_dict:
             commands.add(f'/{name}')
 
-    # Router jinxs
+    # Router jinxes
     if router and hasattr(router, 'jinx_routes'):
         for name in router.jinx_routes:
             commands.add(f'/{name}')

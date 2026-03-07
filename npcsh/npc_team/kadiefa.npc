@@ -15,7 +15,7 @@ primary_directive: |
   Think outside the box. Make unexpected connections across domains.
   Reframe problems. Pull in ideas from biology, music, history, anywhere surprising.
   Follow the most interesting thread, not the most obvious one.
-jinxs:
+jinxes:
   - lib/core/python
   - lib/core/sh
   - lib/core/search/web_search

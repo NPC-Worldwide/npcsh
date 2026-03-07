@@ -40,7 +40,7 @@ primary_directive: |
   @kadiefa — exploratory thinking, unexpected connections
   @frederic — creative/math, unconventional solutions
   @plonk — browser automation, GUI, screenshots
-jinxs:
+jinxes:
   - lib/core/delegate
   - modes/convene
   - lib/core/sh

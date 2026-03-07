@@ -1,17 +1,17 @@
 # npcsh Guide
 
-Full documentation for the NPC Shell — agents, jinxs, orchestration, NQL, knowledge graphs, and more.
+Full documentation for the NPC Shell — agents, jinxes, orchestration, NQL, knowledge graphs, and more.
 
 ## NPC Data Layer
 
-The core of npcsh's capabilities is powered by the NPC Data Layer. Upon initialization, a user will be prompted to make a team in the current directory or to use a global team stored in `~/.npcsh/` which houses the NPC team with its jinxs, models, contexts, assembly lines. By implementing these components as simple data structures, users can focus on tweaking the relevant parts of their multi-agent systems.
+The core of npcsh's capabilities is powered by the NPC Data Layer. Upon initialization, a user will be prompted to make a team in the current directory or to use a global team stored in `~/.npcsh/` which houses the NPC team with its jinxes, models, contexts, assembly lines. By implementing these components as simple data structures, users can focus on tweaking the relevant parts of their multi-agent systems.
 
 ### Creating Custom Components
 
 Users can extend NPC capabilities through simple YAML files:
 
 - **NPCs** (.npc): are defined with a name, primary directive, and optional model specifications
-- **Jinxs** (.jinx): Jinja execution templates that provide function-like capabilities and scaleable extensibility through Jinja references to call other jinxs to build upon. Jinxs are executed through prompt-based flows, allowing them to be used by models regardless of their tool-calling capabilities, making it possible then to enable agents at the edge of computing through this simple methodology.
+- **Jinxes** (.jinx): Jinja execution templates that provide function-like capabilities and scaleable extensibility through Jinja references to call other jinxes to build upon. Jinxes are executed through prompt-based flows, allowing them to be used by models regardless of their tool-calling capabilities, making it possible then to enable agents at the edge of computing through this simple methodology.
 - **Context** (.ctx): Specify contextual information, team preferences, MCP server paths, database connections, and other environment variables that are loaded for the team or for specific agents (e.g. `GUAC_FORENPC`). Teams are specified by their path and the team name in the `<team>.ctx` file. Teams organize collections of NPCs with shared context and specify a coordinator within the team context who is used whenever the team is called upon for orchestration.
 - **SQL Models** (.sql): NQL (NPC Query Language) models combine SQL with AI-powered transformations. Place `.sql` files in `npc_team/models/` to create data pipelines with embedded LLM calls.
 
@@ -19,15 +19,15 @@ The NPC Shell system integrates the capabilities of `npcpy` to maintain conversa
 
 This architecture enables users to build complex AI workflows while maintaining a simple, declarative syntax that abstracts away implementation complexity. By organizing AI capabilities in composable data structures rather than code, `npcsh` creates a more accessible and adaptable framework for AI automation that can scale more intentionally. Within teams can be subteams, and these sub-teams may be called upon for orchestration, but importantly, when the orchestrator is deciding between using one of its own team's NPCs versus yielding to a sub-team, they see only the descriptions of the subteams rather than the full persona descriptions for each of the sub-team's agents, making it easier for the orchestrator to better delineate and keep their attention focused by restricting the number of options in each decisino step. Thus, they may yield to the sub-team's orchestrator, letting them decide which sub-team NPC to use based on their own team's agents.
 
-Importantly, users can switch easily between the NPCs they are chatting with by typing `/n npc_name` within the NPC shell. Likewise, they can create Jinxs and then use them from within the NPC shell by invoking the jinx name and the arguments required for the Jinx;  `/<jinx_name> arg1 arg2`
+Importantly, users can switch easily between the NPCs they are chatting with by typing `/n npc_name` within the NPC shell. Likewise, they can create Jinxes and then use them from within the NPC shell by invoking the jinx name and the arguments required for the Jinx;  `/<jinx_name> arg1 arg2`
 
 ## Team Orchestration
 
 NPCs work together through orchestration patterns. The **forenpc** (specified in your team's `.ctx` file) acts as the coordinator, delegating tasks to specialized NPCs and convening group discussions.
 
-### How NPCs and Jinxs Relate
+### How NPCs and Jinxes Relate
 
-Each NPC has a set of **jinxs** they can use, defined in their `.npc` file:
+Each NPC has a set of **jinxes** they can use, defined in their `.npc` file:
 
 ```yaml
 # corca.npc
@@ -35,14 +35,14 @@ name: corca
 primary_directive: "You are a coding specialist..."
 model: claude-sonnet-4-20250514
 provider: anthropic
-jinxs:
+jinxes:
   - lib/core/python
   - lib/core/sh
   - lib/core/edit_file
   - lib/core/load_file
 ```
 
-When an NPC is invoked, they can only use the jinxs assigned to them. This creates **specialization**:
+When an NPC is invoked, they can only use the jinxes assigned to them. This creates **specialization**:
 - `corca` has coding tools (python, sh, edit_file, load_file)
 - `plonk` has browser automation (browser_action, screenshot, click)
 - `alicanto` has research tools (python, sh, load_file)
@@ -56,15 +56,15 @@ The forenpc (orchestrator) can delegate to any team member based on their specia
 
 ### Skills — Knowledge Content for Agents
 
-Skills are jinxs that serve instructional content instead of executing code. They use the `skill.jinx` sub-jinx (just like code jinxs use `python.jinx` or `sh.jinx`) and return sections of methodology on demand.
+Skills are jinxes that serve instructional content instead of executing code. They use the `skill.jinx` sub-jinx (just like code jinxes use `python.jinx` or `sh.jinx`) and return sections of methodology on demand.
 
-Because skills are jinxs, they're assigned to agents the same way — through the `jinxs:` list in `.npc` files:
+Because skills are jinxes, they're assigned to agents the same way — through the `jinxes:` list in `.npc` files:
 
 ```yaml
 # reviewer.npc
 name: reviewer
 primary_directive: "You review code and provide feedback."
-jinxs:
+jinxes:
   - lib/core/sh
   - lib/core/python
   - skills/code-review
@@ -78,7 +78,7 @@ The agent sees `code-review` and `debugging` in its tool catalog alongside `sh` 
 **SKILL.md folder** — a folder with a `SKILL.md` file (folder name = skill name):
 
 ```
-jinxs/skills/debugging/
+jinxes/skills/debugging/
   SKILL.md             # YAML frontmatter + ## sections
   scripts/             # Optional
   references/          # Optional
@@ -154,7 +154,7 @@ forenpc: lead-dev
 SKILLS_DIRECTORY: ~/shared-skills
 ```
 
-All `SKILL.md` folders and `.jinx` skill files in that directory are loaded alongside the team's own jinxs. This lets you maintain a single skills library shared across multiple teams.
+All `SKILL.md` folders and `.jinx` skill files in that directory are loaded alongside the team's own jinxes. This lets you maintain a single skills library shared across multiple teams.
 
 ### Delegation with Review Loop
 
@@ -166,7 +166,7 @@ The `/delegate` jinx sends a task to another NPC with automatic review and feedb
 
 **How it works:**
 1. The orchestrator sends the task to the target NPC (e.g., `corca`)
-2. The target NPC works on the task using their available jinxs
+2. The target NPC works on the task using their available jinxes
 3. The orchestrator **reviews** the output and decides: COMPLETE or needs more work
 4. If incomplete, the orchestrator provides feedback and the target NPC iterates
 5. This continues until complete or max iterations reached
@@ -176,7 +176,7 @@ The `/delegate` jinx sends a task to another NPC with automatic review and feedb
 │   Orchestrator  │ ────────────▶ │   Target NPC    │
 │    (sibiji)     │               │    (corca)      │
 │                 │ ◀──────────── │                 │
-│   Reviews work  │    output     │  Uses jinxs:    │
+│   Reviews work  │    output     │  Uses jinxes:    │
 │   Gives feedback│               │  - python       │
 └─────────────────┘               │  - sh           │
         │                         │  - edit_file    │
@@ -211,7 +211,7 @@ The `/convene` jinx brings multiple NPCs together for a structured discussion:
 
 ### Visualizing Team Structure
 
-Use `/teamviz` to see how your NPCs and jinxs are connected:
+Use `/teamviz` to see how your NPCs and jinxes are connected:
 
 ```bash
 /teamviz save=team_structure.png
@@ -219,7 +219,7 @@ Use `/teamviz` to see how your NPCs and jinxs are connected:
 
 This generates two views:
 - **Network view**: Organic layout showing NPC-jinx relationships
-- **Ordered view**: NPCs on left, jinxs grouped by category on right
+- **Ordered view**: NPCs on left, jinxes grouped by category on right
 
 <p align="center">
     <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/teamviz.png" alt="Team structure visualization", width=700>
@@ -281,7 +281,7 @@ Write models locally with SQLite, deploy to Snowflake/Databricks/BigQuery with z
 - `nql.generate_text(prompt, npc, alias)` - General text generation
 - `nql.translate(text, npc, alias)` - Translate between languages
 
-**Team jinxs as functions**: Any jinx in your team can be called as `nql.<jinx_name>(...)`:
+**Team jinxes as functions**: Any jinx in your team can be called as `nql.<jinx_name>(...)`:
 ```sql
 nql.sample('Generate variations of: {text}', 'frederic', 'variations')
 ```
@@ -336,11 +336,11 @@ Use `@<npc_name>` to ask a specific NPC a one-time question without switching yo
 @alicanto search for recent papers on transformer architectures
 ```
 
-The NPC responds using their persona and available jinxs, then control returns to your current NPC.
+The NPC responds using their persona and available jinxes, then control returns to your current NPC.
 
 ### Available NPCs
 
-| NPC | Specialty | Key Jinxs |
+| NPC | Specialty | Key Jinxes |
 |-----|-----------|-----------|
 | `sibiji` | Orchestrator/coordinator | delegate, convene, python, sh |
 | `corca` | Coding and development | python, sh, edit_file, load_file |
@@ -372,7 +372,7 @@ The NPC responds using their persona and available jinxs, then control returns t
 | `/arxiv` | ArXiv paper browser |
 | `/git` | Git integration TUI — status, log, branches, stash, cherry-pick file picker |
 | `/build` | Build team to deployable format (flask, docker, cli, static) |
-| `/team` | Team config browser — context, NPCs, jinxs |
+| `/team` | Team config browser — context, NPCs, jinxes |
 | `/config` | Interactive config editor |
 | `/reattach` | Resume previous conversation sessions |
 | `/delegate` | Delegate task to NPC with review loop |
@@ -545,7 +545,7 @@ This exposes your NPC team as a full agentic server with:
 - **NPC management**
   - `GET /npcs` - List team NPCs with their capabilities
   - `POST /chat` - Direct chat with NPC selection
-- **Jinx controls** - Execute jinxs remotely via API
+- **Jinx controls** - Execute jinxes remotely via API
 - **Team orchestration** - Delegate tasks and convene discussions programmatically
 
 ## Installation
@@ -610,9 +610,9 @@ The global team lives in `~/.npcsh/npc_team/`. You can also create a project-spe
 
 ```
 npc_team/
-├── jinxs/
+├── jinxes/
 │   ├── modes/            # TUI modes (deep_research, mcp_shell, computer_use, guac, kg, yap, etc.)
-│   ├── skills/           # Skills — knowledge-content jinxs
+│   ├── skills/           # Skills — knowledge-content jinxes
 │   │   ├── code-review/  # SKILL.md folder format
 │   │   │   └── SKILL.md
 │   │   ├── debugging/
@@ -621,10 +621,10 @@ npc_team/
 │   ├── lib/
 │   │   ├── core/         # Core tools (python, sh, sql, skill, edit_file, delegate, etc.)
 │   │   │   └── search/   # Search tools (web_search, db_search, file_search)
-│   │   ├── utils/        # Utility jinxs (set, compile, serve, teamviz, etc.)
+│   │   ├── utils/        # Utility jinxes (set, compile, serve, teamviz, etc.)
 │   │   ├── browser/      # Browser automation (browser_action, screenshot, etc.)
 │   │   └── computer_use/ # Computer use (click, key_press, screenshot, etc.)
-│   └── incognide/        # Incognide desktop workspace jinxs
+│   └── incognide/        # Incognide desktop workspace jinxes
 ├── models/               # NQL SQL models
 │   ├── base/             # Base statistics models
 │   └── insights/         # Models with nql.* AI functions
