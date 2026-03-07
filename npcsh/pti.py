@@ -21,8 +21,8 @@ def main():
     # Setup shell to get team and default NPC
     command_history, team, default_npc = setup_shell()
 
-    if not team or "pti" not in team.jinxs_dict:
-        print("Error: pti jinx not found. Ensure npc_team/jinxs/modes/pti.jinx exists.")
+    if not team or "pti" not in team.jinxes_dict:
+        print("Error: pti jinx not found. Ensure npc_team/jinxes/modes/pti.jinx exists.")
         sys.exit(1)
 
     # Build context for jinx execution
@@ -42,7 +42,7 @@ def main():
         context["messages"] = [{"role": "user", "content": initial}]
 
     # Execute the jinx
-    pti_jinx = team.jinxs_dict["pti"]
+    pti_jinx = team.jinxes_dict["pti"]
     result = pti_jinx.execute(context=context, npc=default_npc)
 
     if isinstance(result, dict) and result.get("output"):

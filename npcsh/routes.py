@@ -26,12 +26,12 @@ class CommandRouter:
             return wrapped_func
         return wrapper
 
-    def load_jinx_routes(self, jinxs_dir: str):
-        if not os.path.exists(jinxs_dir):
-            print(f"Jinxs directory not found: {jinxs_dir}")
+    def load_jinx_routes(self, jinxes_dir: str):
+        if not os.path.exists(jinxes_dir):
+            print(f"Jinxs directory not found: {jinxes_dir}")
             return
         
-        for root, dirs, files in os.walk(jinxs_dir):
+        for root, dirs, files in os.walk(jinxes_dir):
             for filename in files:
                 if filename.endswith('.jinx'):
                     jinx_path = os.path.join(root, filename)

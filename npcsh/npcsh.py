@@ -176,17 +176,17 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
 
     # Jinxs - organized by group/subgroup with sub-directory lines
     hidden_folders = {'computer_use', 'browser'}
-    # jinxs_tree[(group, subgroup)][subdir] = [jinx_names]
-    jinxs_tree = {}
-    if hasattr(state.team, 'jinxs_dict'):
-        for jinx_name, jinx_obj in state.team.jinxs_dict.items():
+    # jinxes_tree[(group, subgroup)][subdir] = [jinx_names]
+    jinxes_tree = {}
+    if hasattr(state.team, 'jinxes_dict'):
+        for jinx_name, jinx_obj in state.team.jinxes_dict.items():
             group = 'other'
             subgroup = None
             subdir = None
             if hasattr(jinx_obj, '_source_path') and jinx_obj._source_path:
                 parts = jinx_obj._source_path.split(os.sep)
-                if 'jinxs' in parts:
-                    idx = parts.index('jinxs')
+                if 'jinxes' in parts:
+                    idx = parts.index('jinxes')
                     remaining = parts[idx + 1:]
                     if any(seg in hidden_folders for seg in remaining):
                         continue
@@ -201,17 +201,17 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                     else:
                         group = 'root'
             key = (group, subgroup)
-            if key not in jinxs_tree:
-                jinxs_tree[key] = {}
-            if subdir not in jinxs_tree[key]:
-                jinxs_tree[key][subdir] = []
-            jinxs_tree[key][subdir].append(jinx_name)
+            if key not in jinxes_tree:
+                jinxes_tree[key] = {}
+            if subdir not in jinxes_tree[key]:
+                jinxes_tree[key][subdir] = []
+            jinxes_tree[key][subdir].append(jinx_name)
 
-    if jinxs_tree:
+    if jinxes_tree:
         print()
         group_order = ['bin', 'modes', 'lib', 'skills', 'npc_studio', 'root', 'other']
         sorted_keys = sorted(
-            jinxs_tree.keys(),
+            jinxes_tree.keys(),
             key=lambda k: (group_order.index(k[0]) if k[0] in group_order else 99, k[1] or '')
         )
         last_group = None
@@ -225,7 +225,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                 print(f"  {RUST}{group}/{RESET}")
             last_group = group
 
-            subdirs = jinxs_tree[(group, subgroup)]
+            subdirs = jinxes_tree[(group, subgroup)]
             # Top-level names (no subdir)
             if None in subdirs:
                 top_names = sorted(subdirs[None])
@@ -236,7 +236,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                 prefixed = "  ".join(f"/{n}" for n in sd_names)
                 print(f"      {DIM}{sd}:{RESET} {prefixed}")
 
-        print(f"\n  {DIM}/jinxs for full list{RESET}")
+        print(f"\n  {DIM}/jinxes for full list{RESET}")
     print()
     
     is_windows = platform.system().lower().startswith("win")
@@ -525,7 +525,7 @@ def main(npc_name: str = None) -> None:
          "-n", "--npc", type=str, help="Start with a specific NPC active."
     )
     parser.add_argument(
-         "--refresh", action="store_true", help="Force refresh of NPCs and jinxs from package."
+         "--refresh", action="store_true", help="Force refresh of NPCs and jinxes from package."
     )
     args = parser.parse_args()
 
@@ -544,12 +544,12 @@ def main(npc_name: str = None) -> None:
 
         os.environ["NPCSH_INITIALIZED"] = "0"
 
-        # Remove existing jinxs and NPCs to force fresh copy
+        # Remove existing jinxes and NPCs to force fresh copy
         user_npc_team = os.path.expanduser("~/.npcsh/npc_team")
-        jinxs_dir = os.path.join(user_npc_team, "jinxs")
-        if os.path.exists(jinxs_dir):
-            shutil.rmtree(jinxs_dir)
-            print("Cleared existing jinxs directory")
+        jinxes_dir = os.path.join(user_npc_team, "jinxes")
+        if os.path.exists(jinxes_dir):
+            shutil.rmtree(jinxes_dir)
+            print("Cleared existing jinxes directory")
 
         for f in os.listdir(user_npc_team) if os.path.exists(user_npc_team) else []:
             if f.endswith(".npc"):
@@ -557,14 +557,14 @@ def main(npc_name: str = None) -> None:
                 print(f"Removed {f}")
 
         db_path = os.path.expanduser("~/npcsh_history.db")
-        print("Reinitializing NPCs and jinxs...")
+        print("Reinitializing NPCs and jinxes...")
         initialize_base_npcs_if_needed(db_path)
         print("Refresh complete!")
 
     command_history, team, default_npc = setup_shell()
 
-    if team and hasattr(team, 'jinxs_dict'):
-        for jinx_name, jinx_obj in team.jinxs_dict.items():
+    if team and hasattr(team, 'jinxes_dict'):
+        for jinx_name, jinx_obj in team.jinxes_dict.items():
             router.register_jinx(jinx_obj)
 
     # Determine which NPC to start with

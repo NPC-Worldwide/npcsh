@@ -19,8 +19,8 @@ def main():
     # Setup shell to get team and default NPC
     command_history, team, default_npc = setup_shell()
 
-    if not team or "guac" not in team.jinxs_dict:
-        print("Error: guac jinx not found. Ensure npc_team/jinxs/modes/guac.jinx exists.")
+    if not team or "guac" not in team.jinxes_dict:
+        print("Error: guac jinx not found. Ensure npc_team/jinxes/modes/guac.jinx exists.")
         sys.exit(1)
 
     # Build context for jinx execution
@@ -34,7 +34,7 @@ def main():
     }
 
     # Execute the jinx
-    guac_jinx = team.jinxs_dict["guac"]
+    guac_jinx = team.jinxes_dict["guac"]
     result = guac_jinx.execute(context=context, npc=default_npc)
 
     if isinstance(result, dict) and result.get("output"):
