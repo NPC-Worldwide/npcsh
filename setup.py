@@ -11,10 +11,10 @@ def package_files(directory):
     return paths
 
 
-# Auto-discover NPCs and bin jinxs for console_scripts entry points
+# Auto-discover NPCs and bin jinxes for console_scripts entry points
 npc_team_dir = Path(__file__).parent / "npcsh" / "npc_team"
 npc_entries = [f.stem for f in npc_team_dir.glob("*.npc")] if npc_team_dir.exists() else []
-jinx_bin_dir = npc_team_dir / "jinxs" / "bin"
+jinx_bin_dir = npc_team_dir / "jinxes" / "bin"
 jinx_entries = [f.stem for f in jinx_bin_dir.glob("*.jinx")] if jinx_bin_dir.exists() else []
 
 # NPC entries use npcsh:main, bin jinx entries use npc:jinx_main
@@ -148,8 +148,8 @@ setup(
         "npcsh": [
             "npc_team/*.npc",
             "npc_team/*.ctx",
-            "npc_team/jinxs/**/*.jinx",
-            "npc_team/jinxs/**/*",
+            "npc_team/jinxes/**/*.jinx",
+            "npc_team/jinxes/**/*",
             "npc_team/templates/*",
             "benchmark/templates/*.j2",
         ],

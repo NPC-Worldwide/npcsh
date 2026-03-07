@@ -93,12 +93,12 @@ def main():
     global_model = args.model
     global_provider = args.provider
 
-    # Load team early so we can check for jinxs
+    # Load team early so we can check for jinxes
     try:
         command_history, team, forenpc_obj = setup_shell()
-        # Load jinxs into router so they're recognized as commands
-        from npcsh._state import initialize_router_with_jinxs
-        initialize_router_with_jinxs(team, router)
+        # Load jinxes into router so they're recognized as commands
+        from npcsh._state import initialize_router_with_jinxes
+        initialize_router_with_jinxes(team, router)
     except Exception as e:
         print(f"Warning: Could not set up full npcsh environment: {e}", file=sys.stderr)
         team = None
@@ -305,7 +305,7 @@ def main():
 
 
 def jinx_main():
-    """Entry point for bin jinxs called directly from CLI.
+    """Entry point for bin jinxes called directly from CLI.
 
     Parses arguments as key=value pairs and executes the jinx.
     Example: nql show=1 model=daily_summary
@@ -339,8 +339,8 @@ def jinx_main():
     try:
         _, team, forenpc_obj = setup_shell()
 
-        from npcsh._state import initialize_router_with_jinxs
-        initialize_router_with_jinxs(team, router)
+        from npcsh._state import initialize_router_with_jinxes
+        initialize_router_with_jinxes(team, router)
 
         # Update the global initial_state with team/npc context
         initial_state.team = team
