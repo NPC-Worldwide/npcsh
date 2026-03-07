@@ -6,6 +6,7 @@
 
 
 ## Quick Links
+- [Full Guide](guide.md) — Agents, jinxs, orchestration, NQL, knowledge graphs, and more
 - [Installation Guide](installation.md)
 - [NPC Data Layer](npc_data_layer.md)
 - [API Reference](api/index.md)
