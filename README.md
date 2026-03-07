@@ -986,39 +986,41 @@ npc_team/
 
 How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 categories — from basic shell commands to multi-step workflows, code debugging, and tool chaining — scored pass/fail.
 
+Comparisons with other agent coders coming soon.
+
 <table>
-<tr><th>Family</th><th>Model</th><th>npcsh Agent Score</th><th>opencode</th><th>claude code</th><th>nanocoder</th><th>Notes</th></tr>
-<tr><td rowspan="4"><b>Qwen3.5</b></td><td>0.8b</td><td>31/125 (24%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>2b</td><td>81/125 (65%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>9b</td><td><b>100/125 (80%)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>35b</td><td><b>111/125 (88%)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td rowspan="5"><b>Qwen3</b></td><td>0.6b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>1.7b</td><td>42/125 (34%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>4b</td><td><b>94/125 (75%)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>8b</td><td>76/125 (60%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>30b</td><td><b>103/125 (82%)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td rowspan="4"><b>Gemma3</b></td><td>1b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>4b</td><td>37/125 (30%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>12b</td><td>77/125 (62%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>27b</td><td>73/125 (58%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td rowspan="3"><b>Llama</b></td><td>3.2:1b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>3.2:3b</td><td>26/125 (20%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>3.1:8b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td rowspan="2"><b>Mistral</b></td><td>small3.2</td><td>72/125 (57%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>ministral-3</td><td>51/125 (40%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td><b>Phi</b></td><td>phi4</td><td>58/125 (46%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td><b>GPT-OSS</b></td><td>20b</td><td>94/125 (75%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td><b>OLMo</b></td><td>—</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td><b>Cogito</b></td><td>3b</td><td>10/125 (8%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td><b>GLM</b></td><td>4.7-flash</td><td><b>102/125 (82%)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td rowspan="3"><b>Gemini</b></td><td>2.5-flash</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>3.1-flash</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>3.1-pro</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td rowspan="2"><b>Claude</b></td><td>4.6-sonnet</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>4.5-haiku</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td><b>GPT</b></td><td>5-mini</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td rowspan="2"><b>DeepSeek</b></td><td>chat</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>reasoner</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
+<tr><th>Family</th><th>Model</th><th>Score</th></tr>
+<tr><td rowspan="4"><b>Qwen3.5</b></td><td>0.8b</td><td>31/125 (24%)</td></tr>
+<tr><td>2b</td><td>81/125 (65%)</td></tr>
+<tr><td>9b</td><td><b>100/125 (80%)</b></td></tr>
+<tr><td>35b</td><td><b>111/125 (88%)</b></td></tr>
+<tr><td rowspan="5"><b>Qwen3</b></td><td>0.6b</td><td>—</td></tr>
+<tr><td>1.7b</td><td>42/125 (34%)</td></tr>
+<tr><td>4b</td><td><b>94/125 (75%)</b></td></tr>
+<tr><td>8b</td><td>76/125 (60%)</td></tr>
+<tr><td>30b</td><td><b>103/125 (82%)</b></td></tr>
+<tr><td rowspan="4"><b>Gemma3</b></td><td>1b</td><td>—</td></tr>
+<tr><td>4b</td><td>37/125 (30%)</td></tr>
+<tr><td>12b</td><td>77/125 (62%)</td></tr>
+<tr><td>27b</td><td>73/125 (58%)</td></tr>
+<tr><td rowspan="3"><b>Llama</b></td><td>3.2:1b</td><td>—</td></tr>
+<tr><td>3.2:3b</td><td>26/125 (20%)</td></tr>
+<tr><td>3.1:8b</td><td>—</td></tr>
+<tr><td rowspan="2"><b>Mistral</b></td><td>small3.2</td><td>72/125 (57%)</td></tr>
+<tr><td>ministral-3</td><td>51/125 (40%)</td></tr>
+<tr><td><b>Phi</b></td><td>phi4</td><td>58/125 (46%)</td></tr>
+<tr><td><b>GPT-OSS</b></td><td>20b</td><td>94/125 (75%)</td></tr>
+<tr><td><b>OLMo</b></td><td>—</td><td>—</td></tr>
+<tr><td><b>Cogito</b></td><td>3b</td><td>10/125 (8%)</td></tr>
+<tr><td><b>GLM</b></td><td>4.7-flash</td><td><b>102/125 (82%)</b></td></tr>
+<tr><td rowspan="3"><b>Gemini</b></td><td>2.5-flash</td><td>—</td></tr>
+<tr><td>3.1-flash</td><td>—</td></tr>
+<tr><td>3.1-pro</td><td>—</td></tr>
+<tr><td rowspan="2"><b>Claude</b></td><td>4.6-sonnet</td><td>—</td></tr>
+<tr><td>4.5-haiku</td><td>—</td></tr>
+<tr><td><b>GPT</b></td><td>5-mini</td><td>—</td></tr>
+<tr><td rowspan="2"><b>DeepSeek</b></td><td>chat</td><td>—</td></tr>
+<tr><td>reasoner</td><td>—</td></tr>
 </table>
 
 <details><summary><b>Category breakdown (completed models)</b></summary>
