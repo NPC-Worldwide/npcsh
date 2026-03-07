@@ -29,8 +29,8 @@ def main():
     # Setup shell to get team and default NPC
     command_history, team, default_npc = setup_shell()
 
-    if not team or "wander" not in team.jinxs_dict:
-        print("Error: wander jinx not found. Ensure npc_team/jinxs/modes/wander.jinx exists.")
+    if not team or "wander" not in team.jinxes_dict:
+        print("Error: wander jinx not found. Ensure npc_team/jinxes/modes/wander.jinx exists.")
         sys.exit(1)
 
     # Build context for jinx execution
@@ -50,7 +50,7 @@ def main():
     }
 
     # Execute the jinx
-    wander_jinx = team.jinxs_dict["wander"]
+    wander_jinx = team.jinxes_dict["wander"]
     result = wander_jinx.execute(context=context, npc=default_npc)
 
     if isinstance(result, dict) and result.get("output"):

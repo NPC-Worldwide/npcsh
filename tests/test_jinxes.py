@@ -6,7 +6,7 @@ import pytest
 
 def get_jinx_files():
     """Get all jinx files in the npc_team directory."""
-    base_path = os.path.join(os.path.dirname(__file__), '..', 'npcsh', 'npc_team', 'jinxs')
+    base_path = os.path.join(os.path.dirname(__file__), '..', 'npcsh', 'npc_team', 'jinxes')
     return glob.glob(os.path.join(base_path, '**', '*.jinx'), recursive=True)
 
 
@@ -42,10 +42,10 @@ def test_jinx_has_required_fields(jinx_file):
     assert 'steps' in data or 'description' in data
 
 
-def test_search_jinxs_exist():
-    """Test that the search jinxs exist."""
+def test_search_jinxes_exist():
+    """Test that the search jinxes exist."""
     search_dir = os.path.join(
-        os.path.dirname(__file__), '..', 'npcsh', 'npc_team', 'jinxs', 'lib', 'core', 'search',
+        os.path.dirname(__file__), '..', 'npcsh', 'npc_team', 'jinxes', 'lib', 'core', 'search',
     )
 
     assert os.path.exists(os.path.join(search_dir, 'web_search.jinx'))

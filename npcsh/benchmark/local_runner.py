@@ -175,8 +175,8 @@ def _setup_state(model: str, provider: str, state, work_dir: str = None,
                  think=None):
     """One-time setup for a task: load team, register jinxes, configure model."""
     command_history, team, default_npc = setup_shell()
-    if team and hasattr(team, 'jinxs_dict'):
-        for jinx_name, jinx_obj in team.jinxs_dict.items():
+    if team and hasattr(team, 'jinxes_dict'):
+        for jinx_name, jinx_obj in team.jinxes_dict.items():
             router.register_jinx(jinx_obj)
     state.npc = default_npc
     state.npc.model = model
