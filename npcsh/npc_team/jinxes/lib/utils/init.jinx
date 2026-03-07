@@ -234,7 +234,7 @@ steps:
               out.append(f'\033[{y+1};5H\033[90m├── npc_team/\033[0m')
               out.append(f'\033[{y+2};5H\033[90m│   ├── forenpc.npc\033[0m')
               out.append(f'\033[{y+3};5H\033[90m│   ├── team.ctx\033[0m')
-              out.append(f'\033[{y+4};5H\033[90m│   ├── jinxs/\033[0m')
+              out.append(f'\033[{y+4};5H\033[90m│   ├── jinxes/\033[0m')
               out.append(f'\033[{y+5};5H\033[90m│   └── tools/\033[0m')
               out.append(f'\033[{y+6};5H\033[90m├── images/\033[0m')
               out.append(f'\033[{y+7};5H\033[90m├── models/\033[0m')
@@ -342,7 +342,7 @@ steps:
               files = [
                   f'{ui.directory}/{ui.config["team_name"]}/team.ctx',
                   f'{ui.directory}/{ui.config["team_name"]}/{ui.config["forenpc"]}.npc',
-                  f'{ui.directory}/{ui.config["team_name"]}/jinxs/',
+                  f'{ui.directory}/{ui.config["team_name"]}/jinxes/',
                   f'{ui.directory}/{ui.config["team_name"]}/tools/',
                   f'{ui.directory}/images/',
                   f'{ui.directory}/models/',

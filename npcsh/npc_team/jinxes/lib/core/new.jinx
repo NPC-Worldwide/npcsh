@@ -8,7 +8,7 @@ inputs:
 - code: ""
 - model: ""
 - provider: ""
-- jinxs: ""
+- jinxes: ""
 - path: "lib/core"
 - inputs: ""
 - file_path: ""
@@ -36,13 +36,13 @@ steps:
                   directive = {{ primary_directive | tojson }}.strip() or "You are " + name + ", a helpful assistant."
                   npc_model = {{ model | tojson }}.strip()
                   npc_provider = {{ provider | tojson }}.strip()
-                  jinxs_str = {{ jinxs | tojson }}.strip()
-                  if jinxs_str:
-                      jinxs_list = [j.strip() for j in jinxs_str.split(',')]
+                  jinxes_str = {{ jinxes | tojson }}.strip()
+                  if jinxes_str:
+                      jinxes_list = [j.strip() for j in jinxes_str.split(',')]
                   else:
-                      jinxs_list = ['lib/core/python', 'lib/core/sh', 'lib/core/edit_file', 'lib/utils/chat', 'lib/utils/stop']
+                      jinxes_list = ['lib/core/python', 'lib/core/sh', 'lib/core/edit_file', 'lib/utils/chat', 'lib/utils/stop']
 
-                  npc_data = {'name': name, 'primary_directive': directive, 'jinxs': jinxs_list}
+                  npc_data = {'name': name, 'primary_directive': directive, 'jinxes': jinxes_list}
                   if npc_model:
                       npc_data['model'] = npc_model
                   if npc_provider:
@@ -66,7 +66,7 @@ steps:
           else:
               team_path = state.team.team_path if state and state.team else os.path.expanduser('~/.npcsh/npc_team')
               sub_path = {{ path | tojson }}.strip() or 'lib/core'
-              jinx_dir = os.path.join(team_path, 'jinxs', sub_path)
+              jinx_dir = os.path.join(team_path, 'jinxes', sub_path)
               os.makedirs(jinx_dir, exist_ok=True)
               jinx_path = os.path.join(jinx_dir, name + '.jinx')
               if os.path.exists(jinx_path):

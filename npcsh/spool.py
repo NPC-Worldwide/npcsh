@@ -20,8 +20,8 @@ def main():
     # Setup shell to get team and default NPC
     command_history, team, default_npc = setup_shell()
 
-    if not team or "spool" not in team.jinxs_dict:
-        print("Error: spool jinx not found. Ensure npc_team/jinxs/modes/spool.jinx exists.")
+    if not team or "spool" not in team.jinxes_dict:
+        print("Error: spool jinx not found. Ensure npc_team/jinxes/modes/spool.jinx exists.")
         sys.exit(1)
 
     # Build context for jinx execution
@@ -36,7 +36,7 @@ def main():
     }
 
     # Execute the jinx
-    spool_jinx = team.jinxs_dict["spool"]
+    spool_jinx = team.jinxes_dict["spool"]
     result = spool_jinx.execute(context=context, npc=default_npc)
 
     if isinstance(result, dict) and result.get("output"):
