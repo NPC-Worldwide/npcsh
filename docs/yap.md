@@ -48,7 +48,7 @@ When using the NPC shell, you can switch to voice control mode:
 - **Automatic silence detection**: Stops listening when you stop speaking
 - **Maximum duration limit**: Prevents unnecessarily long recordings
 - **Adjustable sensitivity**: Can be calibrated for different environments
-- **Full NPC integration**: Works with all NPC capabilities, including jinxs and tools
+- **Full NPC integration**: Works with all NPC capabilities, including jinxes and tools
 
 ## Requirements
 

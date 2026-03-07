@@ -253,7 +253,7 @@ steps:
               # Check standard locations
               for base in [
                   os.path.expanduser('~/.npcsh/team'),
-                  os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0]))), 'npc_team', 'jinxs') if sys.argv else None,
+                  os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0]))), 'npc_team', 'jinxes') if sys.argv else None,
               ]:
                   if base:
                       jd = os.path.join(base, 'jobs')
@@ -263,7 +263,7 @@ steps:
               # Also check the package's own jobs directory
               try:
                   import npcsh
-                  pkg_jobs = os.path.join(os.path.dirname(npcsh.__file__), 'npc_team', 'jinxs', 'jobs')
+                  pkg_jobs = os.path.join(os.path.dirname(npcsh.__file__), 'npc_team', 'jinxes', 'jobs')
                   if os.path.isdir(pkg_jobs) and pkg_jobs not in jobs_dirs:
                       jobs_dirs.append(pkg_jobs)
               except:
@@ -817,7 +817,7 @@ steps:
           def _get_cron_jinx():
               """Get the cron utility jinx from the team."""
               if state and hasattr(state, 'team') and state.team:
-                  return state.team.jinxs_dict.get('cron')
+                  return state.team.jinxes_dict.get('cron')
               return None
 
           def _get_job_step_params(job):
@@ -904,7 +904,7 @@ steps:
               jinx_cmd = cmd.lstrip('/')
               if state and hasattr(state, 'team') and state.team:
                   jinx_name = jinx_cmd.split()[0]
-                  target_jinx = state.team.jinxs_dict.get(jinx_name)
+                  target_jinx = state.team.jinxes_dict.get(jinx_name)
                   if target_jinx:
                       try:
                           # Parse any args from the command string

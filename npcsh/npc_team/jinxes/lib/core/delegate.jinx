@@ -38,7 +38,7 @@ steps:
           exit()
 
       target_npc = team_obj.npcs[target_name]
-      target_jinxs = dict((k, v) for k, v in target_npc.jinxs_dict.items() if k != 'delegate')
+      target_jinxes = dict((k, v) for k, v in target_npc.jinxes_dict.items() if k != 'delegate')
 
       sep = '-' * 60
       print(colored("\n" + sep, "cyan"))
@@ -46,8 +46,8 @@ steps:
       print(colored("  Task: " + task_request, "white", attrs=["dark"]))
       print(colored(sep + "\n", "cyan"))
       print(colored("  [{}] Model: {}".format(target_name, target_npc.model), "white", attrs=["dark"]))
-      jinx_list = ', '.join(list(target_jinxs.keys())[:8])
-      print(colored("  [{}] Jinxs: {}...".format(target_name, jinx_list), "white", attrs=["dark"]))
+      jinx_list = ', '.join(list(target_jinxes.keys())[:8])
+      print(colored("  [{}] Jinxes: {}...".format(target_name, jinx_list), "white", attrs=["dark"]))
 
       # Update spinner to show sub-agent
       if spinner:
@@ -76,7 +76,7 @@ steps:
                   current_task,
                   context=context,
                   team=team_obj,
-                  jinxs=target_jinxs,
+                  jinxes=target_jinxes,
                   stream=False,
               )
 
