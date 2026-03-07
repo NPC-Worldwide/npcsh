@@ -13,18 +13,14 @@ try:
     from termcolor import colored
 except: 
     pass
-from npcpy.npc_sysenv import (
-    render_markdown,
-)
+
+from npcpy.gen.response import get_model_context_window
 from npcpy.memory.command_history import (
     CommandHistory,
-    load_kg_from_db, 
-    save_kg_to_db, 
+    start_new_conversation,
+    save_conversation_message,
 )
 from npcpy.npc_compiler import NPC
-from npcpy.memory.knowledge_graph import (
-    kg_evolve_incremental
-)
 
 try:
     import readline
@@ -78,13 +74,19 @@ def display_usage(state: ShellState):
     print(colored("─────────────────────────────\n", "cyan"))
 
 
+def _gradient_line(text, r1, g1, b1, r2, g2, b2, t):
+    """Color a line with interpolated RGB gradient. t=0..1"""
+    r = int(r1 + (r2 - r1) * t)
+    g = int(g1 + (g2 - g1) * t)
+    b = int(b1 + (b2 - b1) * t)
+    return f"\033[38;2;{r};{g};{b}m{text}\033[0m"
+
+
 def print_welcome_art(npc=None):
     """Print welcome art - from NPC if available, otherwise default npcsh art."""
-    BLUE = "\033[1;94m"
-    RUST = "\033[1;38;5;202m"
     RESET = "\033[0m"
 
-    # If NPC has ascii_art, display it with colors
+    # If NPC has ascii_art, display it with gradient colors
     if npc and hasattr(npc, 'ascii_art') and npc.ascii_art:
         art = npc.ascii_art
         colors = getattr(npc, 'colors', {}) or {}
@@ -93,7 +95,7 @@ def print_welcome_art(npc=None):
             top = colors.get("top", "255,255,255")
             bottom = colors.get("bottom", "255,255,255")
             lines = art.strip().split("\n")
-            mid = len(lines) // 2
+            n = max(len(lines) - 1, 1)
 
             try:
                 tr, tg, tb = map(int, top.split(","))
@@ -103,23 +105,23 @@ def print_welcome_art(npc=None):
                 br, bg, bb = 255, 255, 255
 
             for i, line in enumerate(lines):
-                if i < mid:
-                    print(f"\033[38;2;{tr};{tg};{tb}m{line}\033[0m")
-                else:
-                    print(f"\033[38;2;{br};{bg};{bb}m{line}\033[0m")
+                print(_gradient_line(line, tr, tg, tb, br, bg, bb, i / n))
         else:
             print(art)
         print()
         return
 
     # Default npcsh art
+    BLUE = "\033[1;94m"
+    RUST = "\033[1;38;5;202m"
+
     print(f"""
 {BLUE}___________________________________________{RESET}
 
 Welcome to {BLUE}npc{RESET}{RUST}sh{RESET}!
-{BLUE}                    {RESET}{RUST}        _       \\\\{RESET}
-{BLUE} _ __   _ __    ___ {RESET}{RUST}  ___  | |___    \\\\{RESET}
-{BLUE}| '_ \\ | '_ \\  / __|{RESET}{RUST} / __/ | |_ _|    \\\\{RESET}
+{BLUE}                    {RESET}{RUST}        _       \\{RESET}
+{BLUE} _ __   _ __    ___ {RESET}{RUST}  ___  | |___    \\{RESET}
+{BLUE}| '_ \\ | '_ \\  / __|{RESET}{RUST} / __/ | |_ _|    \\{RESET}
 {BLUE}| | | || |_) |( |__ {RESET}{RUST} \\_  \\ | | | |    //{RESET}
 {BLUE}|_| |_|| .__/  \\___/{RESET}{RUST} |___/ |_| |_|   //{RESET}
        {BLUE}|🤖|          {RESET}{RUST}               //{RESET}
@@ -135,7 +137,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
     state = initial_state
 
     # Print welcome art - NPC art if launched with an agent, otherwise default
-    if not launched_jinx:
+    if launched_agent or not launched_jinx:
         print_welcome_art(state.npc if launched_agent else None)
 
     # If launched with a jinx mode, auto-execute that jinx
@@ -172,56 +174,68 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
     npc_names = [f"@{n}" for n in state.team.npcs.keys()]
     print(f"  {DIM}npcs:{RESET} {BLUE}{('  ').join(npc_names)}{RESET}")
 
-    # Jinxs - organized by group, hiding incognide, computer_use, and browser
-    hidden_folders = {'incognide', 'computer_use', 'browser'}
-    jinxs_by_group = {}
+    # Jinxs - organized by group/subgroup with sub-directory lines
+    hidden_folders = {'computer_use', 'browser'}
+    # jinxs_tree[(group, subgroup)][subdir] = [jinx_names]
+    jinxs_tree = {}
     if hasattr(state.team, 'jinxs_dict'):
         for jinx_name, jinx_obj in state.team.jinxs_dict.items():
             group = 'other'
             subgroup = None
+            subdir = None
             if hasattr(jinx_obj, '_source_path') and jinx_obj._source_path:
                 parts = jinx_obj._source_path.split(os.sep)
                 if 'jinxs' in parts:
                     idx = parts.index('jinxs')
-                    remaining = parts[idx + 1:]  # e.g. ['lib', 'core', 'sh.jinx']
+                    remaining = parts[idx + 1:]
                     if any(seg in hidden_folders for seg in remaining):
                         continue
                     if len(remaining) > 1:
                         group = remaining[0]
-                        # For lib, use the subfolder as subgroup
                         if group == 'lib' and len(remaining) > 2:
                             subgroup = remaining[1]
+                            if len(remaining) > 3:
+                                subdir = remaining[2]
+                        elif len(remaining) > 2:
+                            subdir = remaining[1]
                     else:
                         group = 'root'
             key = (group, subgroup)
-            if key not in jinxs_by_group:
-                jinxs_by_group[key] = []
-            jinxs_by_group[key].append(jinx_name)
+            if key not in jinxs_tree:
+                jinxs_tree[key] = {}
+            if subdir not in jinxs_tree[key]:
+                jinxs_tree[key][subdir] = []
+            jinxs_tree[key][subdir].append(jinx_name)
 
-    if jinxs_by_group:
+    if jinxs_tree:
         print()
-        # Collect top-level groups and their subgroups
-        group_order = ['bin', 'modes', 'lib', 'npc_studio', 'root', 'other']
-        # Sort keys: by group order, then subgroup alphabetically
+        group_order = ['bin', 'modes', 'lib', 'skills', 'npc_studio', 'root', 'other']
         sorted_keys = sorted(
-            jinxs_by_group.keys(),
+            jinxs_tree.keys(),
             key=lambda k: (group_order.index(k[0]) if k[0] in group_order else 99, k[1] or '')
         )
         last_group = None
         for group, subgroup in sorted_keys:
-            names = sorted(jinxs_by_group[(group, subgroup)])
-            prefixed = [f"/{n}" for n in names]
             if group != last_group:
-                label = group
-                if group == 'lib' and subgroup:
-                    label = f"lib/{subgroup}"
+                label = f"lib/{subgroup}" if group == 'lib' and subgroup else group
                 print(f"  {RUST}{label}/{RESET}")
             elif subgroup:
                 print(f"  {RUST}lib/{subgroup}/{RESET}")
             else:
                 print(f"  {RUST}{group}/{RESET}")
-            print(_wrap_names(prefixed))
             last_group = group
+
+            subdirs = jinxs_tree[(group, subgroup)]
+            # Top-level names (no subdir)
+            if None in subdirs:
+                top_names = sorted(subdirs[None])
+                print(_wrap_names([f"/{n}" for n in top_names]))
+            # Sub-directory groups as "subdir: /name  /name" lines
+            for sd in sorted(k for k in subdirs if k is not None):
+                sd_names = sorted(subdirs[sd])
+                prefixed = "  ".join(f"/{n}" for n in sd_names)
+                print(f"      {DIM}{sd}:{RESET} {prefixed}")
+
         print(f"\n  {DIM}/jinxs for full list{RESET}")
     print()
     
@@ -240,70 +254,8 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
 
     def exit_shell(current_state: ShellState):
         print("\nGoodbye!")
-
-        if current_state.turn_count <= 10:
-            sys.exit(0)
-
-        print(colored("Processing and archiving all session knowledge...", "cyan"))
-
-        engine = command_history.engine
-
-        try:
-            for team_name, npc_name, path in session_scopes:
-                try:
-                    print(f"  -> Archiving knowledge for: T='{team_name}', N='{npc_name}', P='{path}'")
-
-                    # Only build KG from approved memories, not raw conversation
-                    memory_examples = command_history.get_memory_examples_for_context(
-                        npc=npc_name, team=team_name, directory_path=path
-                    )
-                    approved = memory_examples.get("approved", []) + memory_examples.get("edited", [])
-
-                    if not approved:
-                        print("     ...No approved memories for this scope, skipping.")
-                        continue
-
-                    memory_statements = []
-                    for mem in approved:
-                        statement = mem.get("final_memory") or mem.get("initial_memory")
-                        if statement:
-                            memory_statements.append(statement)
-
-                    if not memory_statements:
-                        continue
-
-                    memory_text = "\n".join(f"- {s}" for s in memory_statements)
-                    print(colored(f"     evolving KG from {len(memory_statements)} approved memories...", "cyan"))
-
-                    current_kg = load_kg_from_db(engine, team_name, npc_name, path)
-
-                    evolved_kg, _ = kg_evolve_incremental(
-                        existing_kg=current_kg,
-                        new_content_text=memory_text,
-                        model=current_state.npc.model,
-                        provider=current_state.npc.provider,
-                        npc=current_state.npc,
-                        get_concepts=True,
-                        link_concepts_facts=True,
-                        link_concepts_concepts=True,
-                        link_facts_facts=True,
-                    )
-
-                    save_kg_to_db(engine,
-                                  evolved_kg,
-                                  team_name,
-                                  npc_name,
-                                  path,
-                                  conversation_id=current_state.conversation_id,
-                                  message_id=f"{current_state.conversation_id}_exit")
-
-                except Exception as e:
-                    import traceback
-                    print(colored(f"Failed to process KG for scope ({team_name}, {npc_name}, {path}): {e}", "red"))
-                    traceback.print_exc()
-        except KeyboardInterrupt:
-            print(colored("\nSkipping knowledge archival.", "yellow"))
-
+        # Auto KG archival on exit disabled —
+        # memory/KG processing is now controlled via scheduled jobs / cron instead
         sys.exit(0)
 
     while True:
@@ -313,25 +265,99 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
         # EOFError means Ctrl+D on an empty line.
         try:
             if state.messages is not None:
-                if len(state.messages) > 20:
+                compress_threshold = getattr(state, '_compress_threshold', 20)
+                if len(state.messages) > compress_threshold:
                     # Display usage before compacting
                     display_usage(state)
 
-                    # Pass actual messages so compress_planning_state summarizes real conversation
-                    try:
-                        compressed_state = state.npc.compress_planning_state(state.messages)
-                    except Exception:
-                        # Fallback: just keep recent messages if summarization fails
-                        compressed_state = None
+                    msg_count = len(state.messages)
+                    # Show model and context usage
+                    active_model = state.npc.model if hasattr(state, 'npc') and hasattr(state.npc, 'model') and state.npc.model else state.chat_model
+                    active_provider = state.npc.provider if hasattr(state, 'npc') and hasattr(state.npc, 'provider') and state.npc.provider else state.chat_provider
+                    tok_in = state.session_input_tokens
+                    tok_out = state.session_output_tokens
+                    def tok_fmt(n):
+                        if n >= 1_000_000:
+                            return f"{n/1_000_000:.1f}M"
+                        if n >= 1000:
+                            return f"{n/1000:.1f}k"
+                        return str(n)
+                    ctx_window = get_model_context_window(active_model, active_provider)
+                    ctx_pct = f"  {tok_in * 100 // ctx_window}% of {tok_fmt(ctx_window)} context" if ctx_window > 0 else ""
+                    print(colored(f"  model: {active_model} ({active_provider})  tokens: {tok_fmt(tok_in)} in / {tok_fmt(tok_out)} out{ctx_pct}", "cyan"))
+                    print(colored(f"  Context has {msg_count} messages (threshold: {compress_threshold}). Compressing to keep last 6.", "cyan"))
+                    print(colored("  [Enter] compress  [s] skip  [f] flush N instead", "cyan"))
 
-                    # Keep last 6 messages (3 exchanges) without splitting
-                    # tool call/response pairs (sanitize_messages handles that).
-                    recent = state.messages[-6:]
-                    recent = sanitize_messages(recent)
-                    if compressed_state:
-                        state.messages = [{"role": "system", "content": f"Session context (earlier conversation summary): {compressed_state}"}] + recent
-                    else:
-                        state.messages = recent
+                    try:
+                        choice = input("  > ").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        choice = ""
+
+                    if choice == 's':
+                        # Skip - bump threshold for this session
+                        state._compress_threshold = compress_threshold + 10
+                        print(colored(f"  Skipped. Next threshold: {state._compress_threshold}", "yellow"))
+                    elif choice.startswith('f'):
+                        # Flush N messages
+                        flush_part = choice[1:].strip() if len(choice) > 1 else ""
+                        if not flush_part:
+                            try:
+                                flush_part = input("  Flush how many? ").strip()
+                            except (EOFError, KeyboardInterrupt):
+                                flush_part = ""
+                        try:
+                            n = int(flush_part)
+                            if n > 0:
+                                if state.messages and state.messages[0].get("role") == "system":
+                                    keep = [state.messages[0]] + state.messages[1:][:-n] if n < len(state.messages) - 1 else [state.messages[0]]
+                                else:
+                                    keep = state.messages[:-n] if n < len(state.messages) else []
+                                state.messages = keep
+                                print(colored(f"  Flushed {n} message(s). Now {len(state.messages)} messages.", "green"))
+                        except ValueError:
+                            print(colored("  Invalid number, compressing normally.", "yellow"))
+                            choice = ""
+
+                    if choice not in ('s',) and not choice.startswith('f'):
+                        # Default: compress — start a new conversation linked to the old one
+                        try:
+                            compressed_state = state.npc.compress_planning_state(state.messages)
+                        except Exception:
+                            compressed_state = None
+
+                        # Get last message_id from old conversation for linking
+                        old_conversation_id = state.conversation_id
+                        last_msg_id = command_history.get_last_message_id(old_conversation_id)
+
+                        # Start new conversation
+                        state.conversation_id = start_new_conversation()
+
+                        recent = state.messages[-6:]
+                        recent = sanitize_messages(recent)
+                        if compressed_state:
+                            summary_content = f"Session context (continued from {old_conversation_id}): {compressed_state}"
+                            state.messages = [{"role": "system", "content": summary_content}] + recent
+                        else:
+                            state.messages = recent
+
+                        # Save the summary as first message of new conversation, linked to old
+                        if compressed_state:
+                            save_conversation_message(
+                                command_history,
+                                state.conversation_id,
+                                "system",
+                                summary_content,
+                                wd=state.current_path,
+                                model=active_model,
+                                provider=active_provider,
+                                npc=state.npc.name if isinstance(state.npc, NPC) else "npcsh",
+                                team=state.team.name if state.team else "npcsh",
+                                parent_message_id=last_msg_id,
+                            )
+
+                        print(colored(f"  Compressed. New conversation: {state.conversation_id}", "green"))
+                        if last_msg_id:
+                            print(colored(f"  Linked to previous via message {last_msg_id}", "green"))
 
                 try:
                     completer = make_completer(state, router)
@@ -542,8 +568,14 @@ def main(npc_name: str = None) -> None:
             router.register_jinx(jinx_obj)
 
     # Determine which NPC to start with
-    # Special cases: these are jinxes/modes, not NPCs
-    jinx_modes = {"yap", "spool", "wander"}
+    # Pure jinx modes (no dedicated NPC)
+    jinx_modes = {"yap", "spool", "wander", "guac"}
+    # NPC-to-mode mapping: launching an NPC also auto-starts its mode
+    npc_mode_map = {
+        "corca": "mcp_shell",
+        "alicanto": "deep_research",
+        "plonk": "computer_use",
+    }
     target_npc_name = npc_name or args.npc
 
     if target_npc_name and target_npc_name.lower() in jinx_modes:
@@ -576,9 +608,12 @@ def main(npc_name: str = None) -> None:
          elif output is not None:
               print(output)
     else:
-        # Determine if launching an NPC or a jinx mode
+        # Determine if launching an NPC, a jinx mode, or NPC+mode
         if target_npc_name and target_npc_name.lower() in jinx_modes:
             run_repl(command_history, initial_state, router, launched_jinx=target_npc_name.lower())
+        elif target_npc_name and target_npc_name.lower() in npc_mode_map:
+            mode = npc_mode_map[target_npc_name.lower()]
+            run_repl(command_history, initial_state, router, launched_agent=npc_name, launched_jinx=mode)
         else:
             run_repl(command_history, initial_state, router, launched_agent=npc_name)
         

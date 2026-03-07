@@ -32,7 +32,7 @@ def main():
     # Setup shell to get team and default NPC
     _, team, default_npc = setup_shell()
 
-    if not team or "alicanto" not in team.jinxs_dict:
+    if not team or "deep_research" not in team.jinxs_dict:
         print("Error: alicanto jinx not found. Ensure npc_team/jinxs/modes/alicanto.jinx exists.")
         sys.exit(1)
 
@@ -54,7 +54,7 @@ def main():
     }
 
     # Execute the jinx
-    alicanto_jinx = team.jinxs_dict["alicanto"]
+    alicanto_jinx = team.jinxs_dict["deep_research"]
     result = alicanto_jinx.execute(context=context, npc=default_npc)
 
     if isinstance(result, dict) and result.get("output"):

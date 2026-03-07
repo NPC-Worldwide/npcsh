@@ -16,12 +16,13 @@ primary_directive: |
   Use web_search and file_search to find sources. Use python to analyze data.
   Say RESEARCH_COMPLETE when you have enough evidence to answer.
 jinxs:
-  - lib/core/search/web_search
-  - lib/core/search/file_search
-  - lib/core/search/db_search
-  - lib/core/sh
-  - lib/core/python
-  - lib/core/load_file
-  - lib/core/edit_file
-  - lib/utils/chat
-  - lib/utils/stop
+  - {{ Jinx('web_search') }}
+  - {{ Jinx('file_search') }}
+  - {{ Jinx('db_search') }}
+  - {{ Jinx('sh') }}
+  - {{ Jinx('python') }}
+  - {{ Jinx('sql') }}
+  - {{ Jinx('load_file') }}
+  - {{ Jinx('edit_file') }}
+  - {{ Jinx('chat') }}
+  - {{ Jinx('stop') }}
