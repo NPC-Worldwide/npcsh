@@ -989,7 +989,7 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 <table>
 <tr><th>Family</th><th>Model</th><th>npcsh Agent Score</th><th>opencode</th><th>claude code</th><th>nanocoder</th><th>Notes</th></tr>
 <tr><td rowspan="4"><b>Qwen3.5</b></td><td>0.8b</td><td>31/125 (24%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td>2b</td><td>57/125 (45%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
+<tr><td>2b</td><td>81/125 (65%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
 <tr><td>9b</td><td><b>100/125 (80%)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
 <tr><td>35b</td><td><b>111/125 (88%)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
 <tr><td rowspan="5"><b>Qwen3</b></td><td>0.6b</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
@@ -1009,7 +1009,8 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 <tr><td><b>Phi</b></td><td>phi4</td><td>58/125 (46%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
 <tr><td><b>GPT-OSS</b></td><td>20b</td><td>94/125 (75%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
 <tr><td><b>OLMo</b></td><td>—</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
-<tr><td><b>Cogito</b></td><td>—</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
+<tr><td><b>Cogito</b></td><td>3b</td><td>10/125 (8%)</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
+<tr><td><b>GLM</b></td><td>4.7-flash</td><td><b>102/125 (82%)</b></td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
 <tr><td rowspan="3"><b>Gemini</b></td><td>2.5-flash</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
 <tr><td>3.1-flash</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
 <tr><td>3.1-pro</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td>coming soon</td><td></td></tr>
@@ -1032,6 +1033,8 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 <th colspan="2">Mistral</th>
 <th>Phi</th>
 <th>GPT-OSS</th>
+<th>Cogito</th>
+<th>GLM</th>
 </tr>
 <tr>
 <th>0.8b</th><th>2b</th><th>9b</th><th>35b</th>
@@ -1041,23 +1044,25 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 <th>small3.2</th><th>ministral-3</th>
 <th>phi4</th>
 <th>20b</th>
+<th>3b</th>
+<th>4.7-flash</th>
 </tr>
-<tr><td>shell (10)</td><td>5</td><td>5</td><td>10</td><td>10</td><td>8</td><td>8</td><td>9</td><td>9</td><td>—</td><td>6</td><td>6</td><td>9</td><td>6</td><td>10</td><td>7</td><td>9</td><td>10</td></tr>
-<tr><td>file-ops (10)</td><td>8</td><td>10</td><td>10</td><td>10</td><td>8</td><td>10</td><td>9</td><td>10</td><td>—</td><td>6</td><td>9</td><td>10</td><td>2</td><td>6</td><td>10</td><td>10</td><td>10</td></tr>
-<tr><td>python (10)</td><td>0</td><td>2</td><td>9</td><td>10</td><td>0</td><td>5</td><td>6</td><td>6</td><td>—</td><td>0</td><td>3</td><td>1</td><td>0</td><td>3</td><td>6</td><td>4</td><td>10</td></tr>
-<tr><td>data (10)</td><td>0</td><td>2</td><td>4</td><td>6</td><td>2</td><td>4</td><td>5</td><td>6</td><td>—</td><td>1</td><td>5</td><td>7</td><td>0</td><td>5</td><td>9</td><td>4</td><td>6</td></tr>
-<tr><td>system (10)</td><td>2</td><td>7</td><td>9</td><td>10</td><td>7</td><td>9</td><td>7</td><td>10</td><td>—</td><td>5</td><td>9</td><td>7</td><td>2</td><td>9</td><td>6</td><td>6</td><td>9</td></tr>
-<tr><td>text (10)</td><td>1</td><td>2</td><td>6</td><td>8</td><td>2</td><td>10</td><td>6</td><td>7</td><td>—</td><td>3</td><td>9</td><td>8</td><td>1</td><td>7</td><td>0</td><td>4</td><td>8</td></tr>
-<tr><td>debug (10)</td><td>2</td><td>5</td><td>10</td><td>10</td><td>0</td><td>4</td><td>2</td><td>10</td><td>—</td><td>0</td><td>3</td><td>0</td><td>0</td><td>4</td><td>0</td><td>0</td><td>9</td></tr>
-<tr><td>git (10)</td><td>0</td><td>4</td><td>6</td><td>9</td><td>2</td><td>9</td><td>9</td><td>8</td><td>—</td><td>4</td><td>6</td><td>9</td><td>4</td><td>8</td><td>4</td><td>6</td><td>8</td></tr>
-<tr><td>multi-step (10)</td><td>0</td><td>3</td><td>7</td><td>6</td><td>0</td><td>6</td><td>3</td><td>7</td><td>—</td><td>3</td><td>5</td><td>5</td><td>2</td><td>3</td><td>0</td><td>5</td><td>4</td></tr>
-<tr><td>scripting (10)</td><td>1</td><td>2</td><td>8</td><td>10</td><td>0</td><td>7</td><td>2</td><td>6</td><td>—</td><td>0</td><td>2</td><td>1</td><td>0</td><td>3</td><td>1</td><td>3</td><td>7</td></tr>
-<tr><td>image-gen (5)</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>—</td><td>3</td><td>5</td><td>3</td><td>5</td><td>5</td><td>1</td><td>2</td><td>5</td></tr>
-<tr><td>audio-gen (5)</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>—</td><td>4</td><td>5</td><td>5</td><td>4</td><td>5</td><td>1</td><td>5</td><td>5</td></tr>
-<tr><td>web-search (5)</td><td>1</td><td>4</td><td>4</td><td>5</td><td>1</td><td>5</td><td>4</td><td>5</td><td>—</td><td>1</td><td>5</td><td>5</td><td>0</td><td>4</td><td>5</td><td>0</td><td>3</td></tr>
-<tr><td>delegation (5)</td><td>0</td><td>0</td><td>3</td><td>3</td><td>0</td><td>2</td><td>2</td><td>4</td><td>—</td><td>0</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
-<tr><td>tool-chain (5)</td><td>1</td><td>1</td><td>4</td><td>4</td><td>2</td><td>5</td><td>2</td><td>5</td><td>—</td><td>1</td><td>3</td><td>3</td><td>0</td><td>0</td><td>1</td><td>0</td><td>0</td></tr>
-<tr><td><b>Total (125)</b></td><td><b>31</b></td><td><b>57</b></td><td><b>100</b></td><td><b>111</b></td><td><b>42</b></td><td><b>94</b></td><td><b>76</b></td><td><b>103</b></td><td>—</td><td><b>37</b></td><td><b>77</b></td><td><b>73</b></td><td><b>26</b></td><td><b>72</b></td><td><b>51</b></td><td><b>58</b></td><td><b>94</b></td></tr>
+<tr><td>shell (10)</td><td>5</td><td>6</td><td>10</td><td>10</td><td>8</td><td>8</td><td>9</td><td>9</td><td>—</td><td>6</td><td>6</td><td>9</td><td>6</td><td>10</td><td>7</td><td>9</td><td>10</td><td>0</td><td>10</td></tr>
+<tr><td>file-ops (10)</td><td>8</td><td>9</td><td>10</td><td>10</td><td>8</td><td>10</td><td>9</td><td>10</td><td>—</td><td>6</td><td>9</td><td>10</td><td>2</td><td>6</td><td>10</td><td>10</td><td>10</td><td>0</td><td>10</td></tr>
+<tr><td>python (10)</td><td>0</td><td>3</td><td>9</td><td>10</td><td>0</td><td>5</td><td>6</td><td>6</td><td>—</td><td>0</td><td>3</td><td>1</td><td>0</td><td>3</td><td>6</td><td>4</td><td>10</td><td>0</td><td>10</td></tr>
+<tr><td>data (10)</td><td>0</td><td>2</td><td>4</td><td>6</td><td>2</td><td>4</td><td>5</td><td>6</td><td>—</td><td>1</td><td>5</td><td>7</td><td>0</td><td>5</td><td>9</td><td>4</td><td>6</td><td>0</td><td>5</td></tr>
+<tr><td>system (10)</td><td>2</td><td>8</td><td>9</td><td>10</td><td>7</td><td>9</td><td>7</td><td>10</td><td>—</td><td>5</td><td>9</td><td>7</td><td>2</td><td>9</td><td>6</td><td>6</td><td>9</td><td>0</td><td>10</td></tr>
+<tr><td>text (10)</td><td>1</td><td>7</td><td>6</td><td>8</td><td>2</td><td>10</td><td>6</td><td>7</td><td>—</td><td>3</td><td>9</td><td>8</td><td>1</td><td>7</td><td>0</td><td>4</td><td>8</td><td>0</td><td>7</td></tr>
+<tr><td>debug (10)</td><td>2</td><td>6</td><td>10</td><td>10</td><td>0</td><td>4</td><td>2</td><td>10</td><td>—</td><td>0</td><td>3</td><td>0</td><td>0</td><td>4</td><td>0</td><td>0</td><td>9</td><td>0</td><td>9</td></tr>
+<tr><td>git (10)</td><td>0</td><td>8</td><td>6</td><td>9</td><td>2</td><td>9</td><td>9</td><td>8</td><td>—</td><td>4</td><td>6</td><td>9</td><td>4</td><td>8</td><td>4</td><td>6</td><td>8</td><td>0</td><td>5</td></tr>
+<tr><td>multi-step (10)</td><td>0</td><td>6</td><td>7</td><td>6</td><td>0</td><td>6</td><td>3</td><td>7</td><td>—</td><td>3</td><td>5</td><td>5</td><td>2</td><td>3</td><td>0</td><td>5</td><td>4</td><td>0</td><td>5</td></tr>
+<tr><td>scripting (10)</td><td>1</td><td>5</td><td>8</td><td>10</td><td>0</td><td>7</td><td>2</td><td>6</td><td>—</td><td>0</td><td>2</td><td>1</td><td>0</td><td>3</td><td>1</td><td>3</td><td>7</td><td>0</td><td>8</td></tr>
+<tr><td>image-gen (5)</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>—</td><td>3</td><td>5</td><td>3</td><td>5</td><td>5</td><td>1</td><td>2</td><td>5</td><td>5</td><td>5</td></tr>
+<tr><td>audio-gen (5)</td><td>5</td><td>4</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>—</td><td>4</td><td>5</td><td>5</td><td>4</td><td>5</td><td>1</td><td>5</td><td>5</td><td>5</td><td>5</td></tr>
+<tr><td>web-search (5)</td><td>1</td><td>5</td><td>4</td><td>5</td><td>1</td><td>5</td><td>4</td><td>5</td><td>—</td><td>1</td><td>5</td><td>5</td><td>0</td><td>4</td><td>5</td><td>0</td><td>3</td><td>0</td><td>5</td></tr>
+<tr><td>delegation (5)</td><td>0</td><td>2</td><td>3</td><td>3</td><td>0</td><td>2</td><td>2</td><td>4</td><td>—</td><td>0</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>3</td></tr>
+<tr><td>tool-chain (5)</td><td>1</td><td>5</td><td>4</td><td>4</td><td>2</td><td>5</td><td>2</td><td>5</td><td>—</td><td>1</td><td>3</td><td>3</td><td>0</td><td>0</td><td>1</td><td>0</td><td>0</td><td>0</td><td>5</td></tr>
+<tr><td><b>Total (125)</b></td><td><b>31</b></td><td><b>81</b></td><td><b>100</b></td><td><b>111</b></td><td><b>42</b></td><td><b>94</b></td><td><b>76</b></td><td><b>103</b></td><td>—</td><td><b>37</b></td><td><b>77</b></td><td><b>73</b></td><td><b>26</b></td><td><b>72</b></td><td><b>51</b></td><td><b>58</b></td><td><b>94</b></td><td><b>10</b></td><td><b>102</b></td></tr>
 </table>
 
 </details>
