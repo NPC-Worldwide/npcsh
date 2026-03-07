@@ -5,7 +5,6 @@ import sys
 import threading
 import time
 import collections
-import shutil
 import os
 import signal
 from termcolor import colored
