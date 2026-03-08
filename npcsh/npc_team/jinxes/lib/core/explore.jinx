@@ -30,8 +30,12 @@ steps:
       elif isinstance(_npc, str):
           _npc = None
 
-      _model = context.get('model') or (_npc.model if _npc and hasattr(_npc, 'model') else None)
-      _provider = context.get('provider') or (_npc.provider if _npc and hasattr(_npc, 'provider') else None)
+      _model = (context.get('model')
+               or (_npc.model if _npc and hasattr(_npc, 'model') else None)
+               or os.environ.get('NPCSH_CHAT_MODEL'))
+      _provider = (context.get('provider')
+                   or (_npc.provider if _npc and hasattr(_npc, 'provider') else None)
+                   or os.environ.get('NPCSH_CHAT_PROVIDER'))
 
       base_path = os.path.expanduser(context.get('path') or '.')
       if not os.path.isabs(base_path):
@@ -62,7 +66,7 @@ steps:
               provider=_provider,
               npc=_npc,
               temperature=temperature,
-              think=False,
+              thinking={'type': 'enabled', 'budget_tokens': 128},
           )
           elapsed = _time.time() - t0
           print(colored("    LLM: {:.1f}s".format(elapsed), "white", attrs=["dark"]))
