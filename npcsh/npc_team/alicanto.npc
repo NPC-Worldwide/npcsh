@@ -15,7 +15,7 @@ primary_directive: |
   Search multiple sources, read papers, gather evidence, then synthesize into a report.
   Use web_search and file_search to find sources. Use python to analyze data.
   Say RESEARCH_COMPLETE when you have enough evidence to answer.
-jinxs:
+jinxes:
   - {{ Jinx('web_search') }}
   - {{ Jinx('file_search') }}
   - {{ Jinx('db_search') }}

@@ -2072,6 +2072,33 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                 buf = buf[:pos]
                 draw()
 
+            elif c == '\x0c':  # Ctrl-L - reprint recent messages
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                sys.stdout.write('\033[?2004l')
+                print()
+                _lb_msgs = state.messages[-10:] if state and state.messages else []
+                if not _lb_msgs:
+                    print("(no messages in current conversation)")
+                for _m in _lb_msgs:
+                    _r, _c = _m.get('role',''), _m.get('content','')
+                    if isinstance(_c, list):
+                        _c = '\n'.join(p.get('text','') for p in _c if isinstance(p, dict) and p.get('text'))
+                    if _r == 'user':
+                        print(f"\n\033[32m> {_c}\033[0m")
+                    elif _r == 'assistant':
+                        print(f"\n{_c}")
+                print()
+                sys.stdout.write('\033[?2004h')
+                sys.stdout.write(prompt)
+                if buf:
+                    sys.stdout.write(buf)
+                sys.stdout.flush()
+                tty.setcbreak(fd)
+                _cbreak_settings = termios.tcgetattr(fd)
+                _cbreak_settings[3] &= ~termios.ISIG
+                termios.tcsetattr(fd, termios.TCSADRAIN, _cbreak_settings)
+                draw()
+
             elif c == '\x17':  # Ctrl-W - delete word back
                 while pos > 0 and buf[pos-1] == ' ':
                     buf = buf[:pos-1] + buf[pos:]

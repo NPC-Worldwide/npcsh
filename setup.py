@@ -1,5 +1,6 @@
 from setuptools import setup, find_packages
 import os
+import sys
 from pathlib import Path
 
 
@@ -11,11 +12,32 @@ def package_files(directory):
     return paths
 
 
+def conflicts_with_system(name):
+    """Return True if `name` would shadow a system executable outside this Python env."""
+    env_bin = os.path.dirname(os.path.realpath(sys.executable))
+    for dir_path in os.environ.get("PATH", "").split(os.pathsep):
+        if not dir_path:
+            continue
+        try:
+            resolved = os.path.realpath(dir_path)
+        except (OSError, ValueError):
+            continue
+        if resolved == env_bin:
+            continue
+        candidate = os.path.join(dir_path, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return True
+    return False
+
+
 # Auto-discover NPCs and bin jinxes for console_scripts entry points
 npc_team_dir = Path(__file__).parent / "npcsh" / "npc_team"
 npc_entries = [f.stem for f in npc_team_dir.glob("*.npc")] if npc_team_dir.exists() else []
 jinx_bin_dir = npc_team_dir / "jinxes" / "bin"
 jinx_entries = [f.stem for f in jinx_bin_dir.glob("*.jinx")] if jinx_bin_dir.exists() else []
+
+# Filter out jinx names that would shadow system executables
+jinx_entries = [name for name in jinx_entries if not conflicts_with_system(name)]
 
 # NPC entries use npcsh:main, bin jinx entries use npc:jinx_main
 npc_dynamic = [f"{name}=npcsh.npcsh:main" for name in npc_entries]
