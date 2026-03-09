@@ -1,4 +1,4 @@
-jinx_name: "sync"
+jinx_name: "nsync"
 description: "Sync npc_team files from the npcsh repo to ~/.npcsh/npc_team. Detects local modifications before overwriting."
 inputs:
 - force: ""
