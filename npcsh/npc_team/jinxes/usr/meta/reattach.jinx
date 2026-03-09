@@ -301,7 +301,16 @@ steps:
                               pass
                           state.messages = loaded_msgs
                           msg_count = len(loaded_msgs)
-                          context['output'] = f"Reattached to: {cid} ({msg_count} messages loaded)"
+                          # Build replay of last 10 messages into output
+                          replay = []
+                          for m in loaded_msgs[-10:]:
+                              r, c = m.get('role',''), m.get('content','')
+                              if r == 'user':
+                                  replay.append(f"\033[32m> {c}\033[0m")
+                              elif r == 'assistant':
+                                  replay.append(c)
+                          replay.append(f"Reattached to: {cid} ({msg_count} messages loaded)")
+                          context['output'] = '\n\n'.join(replay)
                       else:
                           context['output'] = f"Selected: {cid}\n\nRun: /set conversation_id={cid}"
                       break
