@@ -17,9 +17,17 @@ primary_directive: |
   Desktop: screenshot, click, type_text, key_press, launch_app, wait.
   Use get_elements to find selectors. Use xpath:// for XPath. Screenshot after each step to verify.
 jinxes:
-  - lib/browser/*
-  - lib/computer_use/*
-  - lib/core/sh
-  - lib/core/python
-  - lib/utils/chat
-  - lib/utils/stop
+{% for j in jinxes_list('lib/browser_*') %}
+  - {{ j }}
+{% endfor %}
+  - {{ Jinx('click') }}
+  - {{ Jinx('key_press') }}
+  - {{ Jinx('launch_app') }}
+  - {{ Jinx('screenshot') }}
+  - {{ Jinx('trigger') }}
+  - {{ Jinx('type_text') }}
+  - {{ Jinx('wait') }}
+  - {{ Jinx('sh') }}
+  - {{ Jinx('python') }}
+  - {{ Jinx('chat') }}
+  - {{ Jinx('stop') }}

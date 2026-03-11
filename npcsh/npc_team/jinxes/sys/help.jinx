@@ -148,7 +148,7 @@ steps:
           "/reattach  # browse and rejoin previous conversations",
           "/set conversation_id=abc123  # switch to a specific conversation",
           "/clear  # clear the screen",
-          "/exit  # quit npcsh",
+          "/exit  # quit the shell",
           "/help arxiv  # get detailed help on a specific command",
           "/reattach  # pick up where you left off in a prior session",
           "/spool -m gpt-4o  # isolated chat with a specific model",
@@ -182,7 +182,7 @@ steps:
       topic = context.get('topic')
 
       if not topic:
-          output_lines = ["# npcsh - Available Commands\n\n"]
+          output_lines = ["# npc - Available Commands\n\n"]
 
           output_lines.append("## Quick Start\n\n")
           output_lines.append("- Type naturally to talk to your NPC\n")
