@@ -12,7 +12,7 @@ npc brainblast 'executing a mirror in the wonderous moon'
 # Compile NPCs for use without re-loading
 npc compile /path/to/npc
 
-# Show help for commands, NPCs, or Jinxs
+# Show help for commands, NPCs, or Jinxes
 npc help
 npc help alicanto
 npc help search
@@ -20,8 +20,8 @@ npc help search
 # Initialize NPC project
 npc init
 
-# Show available jinxs for current NPC/Team
-npc jinxs
+# Show available jinxes for current NPC/Team
+npc jinxes
 
 # Take screenshot and analyze with vision model
 npc ots

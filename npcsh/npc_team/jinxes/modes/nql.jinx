@@ -55,7 +55,7 @@ steps:
       nql_dir = None
       for base in [npc_dir, os.path.expanduser('~/.npcsh/npc_team')]:
           if base:
-              candidate = os.path.join(base, 'jinxs', 'nql', 'models')
+              candidate = os.path.join(base, 'jinxes', 'nql', 'models')
               if os.path.isdir(candidate):
                   nql_dir = candidate
                   break

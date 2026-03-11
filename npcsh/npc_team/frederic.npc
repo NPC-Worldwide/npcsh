@@ -15,7 +15,7 @@ primary_directive: |
   Make the complex simple and beautiful. Find elegance in structure.
   Use analogies, strip away jargon, show why things are beautiful not just correct.
   Use python to demonstrate ideas visually when math is involved.
-jinxs:
+jinxes:
   - lib/core/python
   - lib/core/sql
   - lib/core/sh

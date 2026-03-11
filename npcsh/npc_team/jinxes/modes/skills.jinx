@@ -125,8 +125,8 @@ steps:
 
           def load_skills():
               ui.skills = []
-              # Scan jinxs directory for skills
-              jdir = TEAM_DIR / 'jinxs'
+              # Scan jinxes directory for skills
+              jdir = TEAM_DIR / 'jinxes'
               if not jdir.exists():
                   return
               for root, dirs, files in os.walk(str(jdir)):
@@ -297,7 +297,7 @@ steps:
                       out.append(wline(row, f"    {sk.name:<18} \033[90m{tag:<6} {nsec}s\033[0m  \033[36m{desc}\033[0m"))
               if not ui.skills:
                   out.append(wline(start, "  \033[90mNo skills found.\033[0m"))
-                  out.append(wline(start + 1, "  \033[90mAdd SKILL.md folders or .jinx files to jinxs/skills/\033[0m"))
+                  out.append(wline(start + 1, "  \033[90mAdd SKILL.md folders or .jinx files to jinxes/skills/\033[0m"))
 
           def render_sections(out, W, start, body_h):
               if not ui.cur_skill:

@@ -16,7 +16,7 @@ primary_directive: |
   browser_action: click, type, type_and_enter, select, wait, scroll, get_text, get_page, get_elements, press_key.
   Desktop: screenshot, click, type_text, key_press, launch_app, wait.
   Use get_elements to find selectors. Use xpath:// for XPath. Screenshot after each step to verify.
-jinxs:
+jinxes:
   - lib/browser/*
   - lib/computer_use/*
   - lib/core/sh

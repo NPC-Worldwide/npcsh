@@ -18,7 +18,7 @@
 
 ---
 
-`npcsh` makes the most of multi-modal LLMs and agents through slash commands and interactive modes, all from the command line. Build teams of agents, schedule them on jobs, engineer context, and design custom Jinja Execution templates (Jinxs) for you and your agents to invoke.
+`npcsh` makes the most of multi-modal LLMs and agents through slash commands and interactive modes, all from the command line. Build teams of agents, schedule them on jobs, engineer context, and design custom Jinja Execution templates (Jinxes) for you and your agents to invoke.
 
 ```bash
 pip install 'npcsh[lite]'
@@ -34,14 +34,15 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 
 <table>
 <tr><th>Family</th><th>Model</th><th>Score</th></tr>
-<tr><td rowspan="4"><b>Qwen3.5</b></td><td>0.8b</td><td>31/125 (24%)</td></tr>
+<tr><td rowspan="5"><b>Qwen3.5</b></td><td>0.8b</td><td>31/125 (24%)</td></tr>
 <tr><td>2b</td><td>81/125 (65%)</td></tr>
+<tr><td>4b</td><td>77/125 (62%)</td></tr>
 <tr><td>9b</td><td><b>100/125 (80%)</b></td></tr>
 <tr><td>35b</td><td><b>111/125 (88%)</b></td></tr>
 <tr><td rowspan="5"><b>Qwen3</b></td><td>0.6b</td><td>—</td></tr>
 <tr><td>1.7b</td><td>42/125 (34%)</td></tr>
 <tr><td>4b</td><td><b>94/125 (75%)</b></td></tr>
-<tr><td>8b</td><td>76/125 (60%)</td></tr>
+<tr><td>8b</td><td>85/125 (68%)</td></tr>
 <tr><td>30b</td><td><b>103/125 (82%)</b></td></tr>
 <tr><td rowspan="4"><b>Gemma3</b></td><td>1b</td><td>—</td></tr>
 <tr><td>4b</td><td>37/125 (30%)</td></tr>
@@ -49,12 +50,13 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 <tr><td>27b</td><td>73/125 (58%)</td></tr>
 <tr><td rowspan="3"><b>Llama</b></td><td>3.2:1b</td><td>—</td></tr>
 <tr><td>3.2:3b</td><td>26/125 (20%)</td></tr>
-<tr><td>3.1:8b</td><td>—</td></tr>
+<tr><td>3.1:8b</td><td>60/125 (48%)</td></tr>
 <tr><td rowspan="2"><b>Mistral</b></td><td>small3.2</td><td>72/125 (57%)</td></tr>
 <tr><td>ministral-3</td><td>51/125 (40%)</td></tr>
 <tr><td><b>Phi</b></td><td>phi4</td><td>58/125 (46%)</td></tr>
 <tr><td><b>GPT-OSS</b></td><td>20b</td><td>94/125 (75%)</td></tr>
-<tr><td><b>OLMo</b></td><td>—</td><td>—</td></tr>
+<tr><td rowspan="2"><b>OLMo2</b></td><td>7b</td><td>13/125 (10%)</td></tr>
+<tr><td>13b</td><td>47/125 (38%)</td></tr>
 <tr><td><b>Cogito</b></td><td>3b</td><td>10/125 (8%)</td></tr>
 <tr><td><b>GLM</b></td><td>4.7-flash</td><td><b>102/125 (82%)</b></td></tr>
 <tr><td rowspan="3"><b>Gemini</b></td><td>2.5-flash</td><td>—</td></tr>
@@ -188,8 +190,8 @@ python -m npcsh.benchmark.local_runner --model qwen3:4b --provider ollama
 
 - **[Agents (NPCs)](https://npc-shell.readthedocs.io/en/latest/guide/#working-with-npcs-agents)** — AI agents with personas, directives, and tool sets
 - **[Team Orchestration](https://npc-shell.readthedocs.io/en/latest/guide/#team-orchestration)** — Delegation, review loops, multi-NPC discussions
-- **[Jinxs](https://npc-shell.readthedocs.io/en/latest/guide/#all-commands)** — Jinja Execution templates — reusable tools for users and agents
-- **[Skills](https://npc-shell.readthedocs.io/en/latest/guide/#skills-knowledge-content-for-agents)** — Knowledge-content jinxs with progressive section disclosure
+- **[Jinxes](https://npc-shell.readthedocs.io/en/latest/guide/#all-commands)** — Jinja Execution templates — reusable tools for users and agents
+- **[Skills](https://npc-shell.readthedocs.io/en/latest/guide/#skills-knowledge-content-for-agents)** — Knowledge-content jinxes with progressive section disclosure
 - **[NQL](https://npc-shell.readthedocs.io/en/latest/guide/#nql---sql-models-with-ai-functions)** — SQL models with embedded AI functions (Snowflake, BigQuery, Databricks, SQLite)
 - **[Knowledge Graphs](https://npc-shell.readthedocs.io/en/latest/guide/#memory--knowledge-graph)** — Build and evolve knowledge graphs from conversations
 - **[Deep Research](https://npc-shell.readthedocs.io/en/latest/guide/#deep-research)** — Multi-agent hypothesis generation, persona sub-agents, paper writing
