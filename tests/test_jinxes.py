@@ -44,10 +44,10 @@ def test_jinx_has_required_fields(jinx_file):
 
 def test_search_jinxes_exist():
     """Test that the search jinxes exist."""
-    search_dir = os.path.join(
-        os.path.dirname(__file__), '..', 'npcsh', 'npc_team', 'jinxes', 'lib', 'core', 'search',
+    lib_dir = os.path.join(
+        os.path.dirname(__file__), '..', 'npcsh', 'npc_team', 'jinxes', 'lib',
     )
 
-    assert os.path.exists(os.path.join(search_dir, 'web_search.jinx'))
-    assert os.path.exists(os.path.join(search_dir, 'file_search.jinx'))
-    assert os.path.exists(os.path.join(search_dir, 'db_search.jinx'))
+    assert os.path.exists(os.path.join(lib_dir, 'web_search.jinx'))
+    assert os.path.exists(os.path.join(lib_dir, 'file_search.jinx'))
+    assert os.path.exists(os.path.join(lib_dir, 'db_search.jinx'))
