@@ -167,7 +167,7 @@
     A guac session progresses through a series of stages, each of equal length. Each stage adjusts the emoji input prompt. Once the stages have passed, it is time to refresh. Stage 1: `🥑`, Stage 2: `🥑🔪` Stage 3: `🥑🥣` Stage:4 `🥑🥣🧂`, `Stage 5: 🥘 TIME TO REFRESH`. At stage 5, the user is reminded to refresh with the /refresh macro. This will evaluate the session so farand suggest and implement new functions or automations that will aid in future sessions, with the ultimate approval of the user.
 
 
-- ## `/help`: Show help for commands, NPCs, or Jinxs. 
+- ## `/help`: Show help for commands, NPCs, or Jinxes. 
 
       ```bash
       /help 
@@ -190,19 +190,19 @@
     ```
 
 
-- ## `/jinxs` : show available jinxs for team
+- ## `/jinxes` : show available jinxes for team
 
-    Jinxs are Jinja execution templates that let users develop small programs that can build on each other and reference each other through jinja templating. Jinx methods allow us to give smaller LLMs the scaffolding to perform `tool calling`, so to speak, reliably
+    Jinxes are Jinja execution templates that let users develop small programs that can build on each other and reference each other through jinja templating. Jinx methods allow us to give smaller LLMs the scaffolding to perform `tool calling`, so to speak, reliably
     ```bash
     # npcsh 
-    /jinxs
+    /jinxes
     # bash 
-    npc jinxs
+    npc jinxes
     ```
 
     ```python
-    Available Jinxs:     
-    --- Jinxs for NPC: sibiji ---                                                                                                                                                                                                           
+    Available Jinxes:     
+    --- Jinxes for NPC: sibiji ---                                                                                                                                                                                                           
 
     • /bash_executor: Execute bash queries.                                                                                                                                                                                                
 
@@ -226,9 +226,9 @@
 
 
 
-- ## Skills: Knowledge-content jinxs
+- ## Skills: Knowledge-content jinxes
 
-    Skills are jinxs that serve instructional content. They live in `jinxs/skills/` and are invoked like any other slash command:
+    Skills are jinxes that serve instructional content. They live in `jinxes/skills/` and are invoked like any other slash command:
 
     ```bash
     /debugging                       # All sections
@@ -238,7 +238,7 @@
     /git-workflow -s commits          # Commits section
     ```
 
-    Skills are assigned to agents through the same `jinxs:` list in `.npc` files. See the [Skills guide](skills.md) for authoring details and the two supported formats (SKILL.md folders and .jinx files).
+    Skills are assigned to agents through the same `jinxes:` list in `.npc` files. See the [Skills guide](skills.md) for authoring details and the two supported formats (SKILL.md folders and .jinx files).
 
 
 - ## `/ots`: Over-the-shoulder screen shot analysis

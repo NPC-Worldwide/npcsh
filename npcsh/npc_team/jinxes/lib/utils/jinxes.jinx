@@ -1,8 +1,8 @@
-jinx_name: jinxs
-description: Interactive jinx browser - browse, search, and preview available jinxs
+jinx_name: jinxes
+description: Interactive jinx browser - browse, search, and preview available jinxes
 inputs: []
 steps:
-  - name: jinxs_browser
+  - name: jinxes_browser
     engine: python
     code: |
       import os
@@ -18,15 +18,15 @@ steps:
       from pathlib import Path
 
       if not sys.stdin.isatty():
-          context['output'] = "Jinxs browser requires an interactive terminal."
+          context['output'] = "Jinxes browser requires an interactive terminal."
 
       elif not state or not state.team:
           context['output'] = "No team loaded."
 
       else:
           # ── data loading ─────────────────────────────────────
-          def load_jinxs():
-              """Load jinxs from team directory and global ~/.npcsh directory."""
+          def load_jinxes():
+              """Load jinxes from team directory and global ~/.npcsh directory."""
               items = []
               seen_paths = set()
 
@@ -57,12 +57,12 @@ steps:
                                   'source': source_label,
                               })
 
-              # Team jinxs
-              team_dir = Path(state.team.team_path) / 'jinxs'
+              # Team jinxes
+              team_dir = Path(state.team.team_path) / 'jinxes'
               scan_dir(team_dir, 'team')
 
-              # Global jinxs
-              global_dir = Path.home() / '.npcsh' / 'npc_team' / 'jinxs'
+              # Global jinxes
+              global_dir = Path.home() / '.npcsh' / 'npc_team' / 'jinxes'
               if global_dir.resolve() != team_dir.resolve():
                   scan_dir(global_dir, 'global')
 
@@ -75,7 +75,7 @@ steps:
                   self.tabs = ['All', 'Bin', 'Modes', 'Interactive']
                   self.sel = 0
                   self.scroll = 0
-                  self.all_jinxs = []
+                  self.all_jinxes = []
                   self.filtered = []
                   self.search_mode = False
                   self.search_buf = ""
@@ -95,7 +95,7 @@ steps:
 
           def apply_filters():
               """Apply tab filter and search query to the full jinx list."""
-              items = ui.all_jinxs
+              items = ui.all_jinxes
 
               # Tab filter
               if ui.tab == 1:
@@ -130,7 +130,7 @@ steps:
               out.append("\033[H")
 
               # ── header ──
-              hdr = " Jinxs "
+              hdr = " Jinxes "
               pad = '=' * W
               out.append(wline(1, f"\033[7;1m{pad}\033[0m"))
               out.append(f"\033[1;{max(1, (W - len(hdr)) // 2)}H\033[7;1m{hdr}\033[0m")
@@ -146,13 +146,13 @@ steps:
 
               # ── count line ──
               count = len(ui.filtered)
-              total = len(ui.all_jinxs)
+              total = len(ui.all_jinxes)
               if ui.search_query:
                   count_text = f"  {count} matching (of {total}) | search: \"{ui.search_query}\""
               elif ui.tab == 0:
-                  count_text = f"  {total} jinxs loaded"
+                  count_text = f"  {total} jinxes loaded"
               else:
-                  count_text = f"  {count} jinxs ({ui.tabs[ui.tab].lower()})"
+                  count_text = f"  {count} jinxes ({ui.tabs[ui.tab].lower()})"
               out.append(wline(3, f"\033[90m{'─' * W}\033[0m"))
               out.append(wline(4, count_text))
               out.append(wline(5, f"\033[90m{'─' * W}\033[0m"))
@@ -217,7 +217,7 @@ steps:
                   else:
                       out.append(wline(row, f"   {label:<{name_col}} \033[36m{marker}\033[0m\033[90m{desc}\033[0m"))
               if not ui.filtered:
-                  out.append(wline(start, "  \033[90mNo jinxs match the current filter.\033[0m"))
+                  out.append(wline(start, "  \033[90mNo jinxes match the current filter.\033[0m"))
                   for r in range(1, body_h):
                       out.append(wline(start + r, ""))
 
@@ -385,7 +385,7 @@ steps:
                   ui.status = ""
 
           # ── main loop ──────────────────────────────────────────
-          ui.all_jinxs = load_jinxs()
+          ui.all_jinxes = load_jinxes()
           apply_filters()
 
           fd = sys.stdin.fileno()
@@ -407,4 +407,4 @@ steps:
               sys.stdout.write('\033[?25h\033[2J\033[H')
               sys.stdout.flush()
 
-          context['output'] = "Jinxs browser closed."
+          context['output'] = "Jinxes browser closed."
