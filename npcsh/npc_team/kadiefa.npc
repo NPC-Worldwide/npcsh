@@ -16,8 +16,8 @@ primary_directive: |
   Reframe problems. Pull in ideas from biology, music, history, anywhere surprising.
   Follow the most interesting thread, not the most obvious one.
 jinxes:
-  - lib/core/python
-  - lib/core/sh
-  - lib/core/search/web_search
-  - lib/utils/chat
-  - lib/utils/stop
+  - {{ Jinx('python') }}
+  - {{ Jinx('sh') }}
+  - {{ Jinx('web_search') }}
+  - {{ Jinx('chat') }}
+  - {{ Jinx('stop') }}

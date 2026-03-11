@@ -41,9 +41,10 @@ primary_directive: |
   @frederic — creative/math, unconventional solutions
   @plonk — browser automation, GUI, screenshots
 jinxes:
-  - lib/core/delegate
-  - modes/convene
-  - lib/core/sh
-  - lib/core/search/web_search
-  - lib/utils/chat
-  - lib/utils/stop
+  - {{ Jinx('delegate') }}
+  - {{ Jinx('convene') }}
+  - {{ Jinx('sh') }}
+  - {{ Jinx('python') }}
+  - {{ Jinx('web_search') }}
+  - {{ Jinx('chat') }}
+  - {{ Jinx('stop') }}
