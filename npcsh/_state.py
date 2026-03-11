@@ -105,6 +105,7 @@ from npcpy.memory.command_history import (
 )
 from npcpy.memory.search import execute_rag_command, execute_brainblast_command
 from npcpy.npc_compiler import NPC, Team, build_jinx_tool_catalog
+from npcpy.tools import flatten_tool_messages
 from npcpy.npc_sysenv import (
     print_and_process_stream_with_markdown,
     render_markdown,
@@ -501,7 +502,6 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
         if os.path.exists(old_jinxs_dir):
             shutil.rmtree(old_jinxs_dir)
         print("Migrated ~/.npcsh/npc_team/jinxs -> jinxes")
-
     user_templates_dir = os.path.join(user_npc_team_dir, "templates")
     os.makedirs(user_npc_team_dir, exist_ok=True)
     os.makedirs(user_jinxes_dir, exist_ok=True)
@@ -2637,6 +2637,11 @@ def model_supports_tool_calls(model: Optional[str], provider: Optional[str]) -> 
 
     # Ollama: use the capabilities field from the model metadata
     if provider == "ollama":
+        # Models that advertise tool support but don't actually work
+        broken_tool_models = {"lfm2"}
+        base = model.split(":")[0].lower()
+        if base in broken_tool_models:
+            return False
         try:
             details = ollama.show(model)
             caps = getattr(details, "capabilities", None) or []
@@ -2744,7 +2749,7 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
 
 def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str, Callable]]:
     """
-    Assemble tool definitions + executable map from NPC tools, Jinxs, and MCP servers.
+    Assemble tool definitions + executable map from NPC tools, Jinxes, and MCP servers.
     This mirrors the auto-translation used in the Flask server path.
     """
     tools: List[Dict[str, Any]] = []
@@ -3072,10 +3077,7 @@ def process_pipeline_command(
             ls_files = 'Files in the current directory (full paths):\n' + file_list
         else:
             ls_files = 'No files found in the current directory.'
-        platform_info = (
-            f"Platform: {platform.system()} {platform.release()} "
-            f"({platform.machine()})"
-        )
+        platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
         info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n'
         # Note: Don't append user message here - get_llm_response/check_llm_command handle it
 
@@ -3248,6 +3250,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     llm_result['usage'] = total_usage
 
             else:
+                flat_msgs = flatten_tool_messages(state.messages)
                 with SpinnerContext(f"{npc_name} processing with {exec_model}", style="dots_pulse"):
                     llm_result = check_llm_command(
                         full_llm_cmd,
@@ -3257,13 +3260,38 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                         api_key=state.api_key,
                         npc=state.npc,
                         team=state.team,
-                        messages=state.messages,
+                        messages=flat_msgs,
                         images=state.attachments,
                         stream=stream_final,
                         context=info,
                         extra_globals=application_globals_for_jinx,
                         tool_capable=tool_capable,
                     )
+                # Convert jinx_calls to tool_calls format on state.messages
+                if isinstance(llm_result, dict):
+                    jinx_calls = llm_result.get("jinx_calls", [])
+                    for jc in jinx_calls:
+                        call_id = f"jinx_{jc['name']}"
+                        state.messages.append({
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [{
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": jc["name"],
+                                    "arguments": json.dumps(jc["arguments"], default=str),
+                                },
+                            }],
+                        })
+                        state.messages.append({
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "name": jc["name"],
+                            "content": jc.get("result", ""),
+                        })
+                    if jinx_calls:
+                        llm_result["messages"] = state.messages
         except KeyboardInterrupt:
             print(colored("\nLLM processing interrupted by user.", "yellow"))
             state.messages = sanitize_messages(state.messages)
@@ -3681,7 +3709,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
 
     return command_history, team, forenpc_obj
 def initialize_router_with_jinxes(team, router):
-    """Load global and team Jinxs into router"""
+    """Load global and team Jinxes into router"""
     global_jinxes_dir = os.path.expanduser("~/.npcsh/npc_team/jinxes")
     router.load_jinx_routes(global_jinxes_dir)
     

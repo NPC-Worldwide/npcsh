@@ -28,7 +28,7 @@ class CommandRouter:
 
     def load_jinx_routes(self, jinxes_dir: str):
         if not os.path.exists(jinxes_dir):
-            print(f"Jinxs directory not found: {jinxes_dir}")
+            print(f"Jinxes directory not found: {jinxes_dir}")
             return
         
         for root, dirs, files in os.walk(jinxes_dir):

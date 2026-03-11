@@ -187,7 +187,7 @@ print(f"Attempting to read file: {input_values['file']}")
 print(f"File exists: {os.path.exists(input_values['file'])}")
 
 # Execute the jinx
-output = jinx.execute(input_values, npcjinxs_dict, jinja_env, npc=npc, messages= messages)
+output = jinx.execute(input_values, npcjinxes_dict, jinja_env, npc=npc, messages= messages)
 
 print('Jinx Output:', output)
 ```
@@ -264,21 +264,21 @@ analytics_team = [
         "primary_directive": "You analyze sales performance data, focusing on revenue trends, customer behavior metrics, and market indicators. Your expertise is in extracting actionable insights from complex datasets.",
         "model": "gpt-4o-mini",
         "provider": "openai",
-        "jinxs": [code_execution_jinx],
+        "jinxes": [code_execution_jinx],
     },
     {
         "name": "researcher",
         "primary_directive": "You specialize in causal analysis and experimental design. Given data insights, you determine what factors drive observed patterns and design tests to validate hypotheses.",
         "model": "gpt-4o-mini",
         "provider": "openai",
-        "jinxs": [code_execution_jinx],
+        "jinxes": [code_execution_jinx],
     },
     {
         "name": "engineer",
         "primary_directive": "You implement data pipelines and optimize data processing. When given analysis requirements, you create efficient workflows to automate insights generation.",
         "model": "gpt-4o-mini",
         "provider": "openai",
-        "jinxs": [code_execution_jinx],
+        "jinxes": [code_execution_jinx],
     },
 ]
 
@@ -292,7 +292,7 @@ def create_analytics_team():
             primary_directive=npc_data["primary_directive"],
             model=npc_data["model"],
             provider=npc_data["provider"],
-            jinxs=[code_execution_jinx],
+            jinxes=[code_execution_jinx],
         )
         npcs.append(npc)
 
@@ -302,7 +302,7 @@ def create_analytics_team():
         primary_directive="You coordinate the analytics team, ensuring each specialist contributes their expertise effectively. You synthesize insights and manage the workflow.",
         model="gpt-4o-mini",
         provider="openai",
-        jinxs=[code_execution_jinx],
+        jinxes=[code_execution_jinx],
     )
 
   
