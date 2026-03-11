@@ -85,8 +85,8 @@ steps:
           if not name:
               context['output'] = "Error: name is required. Usage: /edit jinx name=compress field=description value='New desc'"
           else:
-              # Find jinx file by searching jinxs directory
-              jinx_dir = os.path.join(team_path, 'jinxs')
+              # Find jinx file by searching jinxes directory
+              jinx_dir = os.path.join(team_path, 'jinxes')
               found = None
               for root, dirs, files in os.walk(jinx_dir):
                   for f in files:

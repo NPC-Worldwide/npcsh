@@ -24,8 +24,8 @@ def main():
     # Setup shell to get team and default NPC
     command_history, team, default_npc = setup_shell()
 
-    if not team or "yap" not in team.jinxs_dict:
-        print("Error: yap jinx not found. Ensure npc_team/jinxs/modes/yap.jinx exists.")
+    if not team or "yap" not in team.jinxes_dict:
+        print("Error: yap jinx not found. Ensure npc_team/jinxes/modes/yap.jinx exists.")
         sys.exit(1)
 
     # Read saved TTS preferences from env (set by ~/.npcshrc)
@@ -56,7 +56,7 @@ def main():
     }
 
     # Execute the jinx
-    yap_jinx = team.jinxs_dict["yap"]
+    yap_jinx = team.jinxes_dict["yap"]
     result = yap_jinx.execute(context=context, npc=default_npc)
 
     if isinstance(result, dict) and result.get("output"):

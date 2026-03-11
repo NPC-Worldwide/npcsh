@@ -6,7 +6,7 @@
 
 
 ## Quick Links
-- [Full Guide](guide.md) — Agents, jinxs, orchestration, NQL, knowledge graphs, and more
+- [Full Guide](guide.md) — Agents, jinxes, orchestration, NQL, knowledge graphs, and more
 - [Installation Guide](installation.md)
 - [NPC Data Layer](npc_data_layer.md)
 - [API Reference](api/index.md)
@@ -15,7 +15,7 @@
 ## Guides for NPC Shell programs
 - [NPC Shell](npcsh.md)
 - [NPC CLI ](api/npc_cli.md)
-- [Skills](skills.md) — Knowledge-content jinxs with progressive section disclosure
+- [Skills](skills.md) — Knowledge-content jinxes with progressive section disclosure
 - [Alicanto](alicanto.md)
 - [Guac](guac.md)
 - [PTI](pti.md)

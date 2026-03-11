@@ -1,5 +1,5 @@
 jinx_name: team
-description: Interactive TUI for managing team context, NPCs, and jinxs
+description: Interactive TUI for managing team context, NPCs, and jinxes
 inputs: []
 steps:
   - name: team_manager
@@ -35,7 +35,7 @@ steps:
           class TUIState:
               def __init__(self):
                   self.tab = 0
-                  self.tabs = ['Context', 'NPCs', 'Jinxs']
+                  self.tabs = ['Context', 'NPCs', 'Jinxes']
                   self.sel = 0
                   self.scroll = 0
                   self.editing = False
@@ -46,7 +46,7 @@ steps:
                   self.team_ctx = {}
                   self.npcs = []
                   self.npc_data = {}
-                  self.jinxs = []
+                  self.jinxes = []
                   self.jinx_data = {}
                   self.detail = False
                   self.detail_idx = 0
@@ -73,14 +73,14 @@ steps:
                           ui.npc_data[name] = yaml.safe_load(f) or {}
                   except:
                       ui.npc_data[name] = {}
-              ui.jinxs = []
+              ui.jinxes = []
               ui.jinx_data = {}
-              jdir = TEAM_DIR / 'jinxs'
+              jdir = TEAM_DIR / 'jinxes'
               if jdir.exists():
                   for sub in sorted(jdir.iterdir()):
                       if sub.is_dir():
                           for jf in sorted(sub.glob('*.jinx')):
-                              ui.jinxs.append((sub.name, jf.stem))
+                              ui.jinxes.append((sub.name, jf.stem))
                               try:
                                   with open(jf) as f:
                                       ui.jinx_data[f"{sub.name}/{jf.stem}"] = yaml.safe_load(f) or {}
@@ -114,7 +114,7 @@ steps:
 
           def save_jinx(key):
               folder, name = key.split('/', 1)
-              p = TEAM_DIR / 'jinxs' / folder / f"{name}.jinx"
+              p = TEAM_DIR / 'jinxes' / folder / f"{name}.jinx"
               with open(p, 'w') as f:
                   yaml.dump(ui.jinx_data[key], f, default_flow_style=False)
               ui.status = f"Saved {key}.jinx"
@@ -164,7 +164,7 @@ steps:
               elif ui.tab == 1:
                   render_npcs(out, W, body_start, body_h)
               else:
-                  render_jinxs(out, W, body_start, body_h)
+                  render_jinxes(out, W, body_start, body_h)
 
               # clear any leftover body lines
               # (handled per-line in each render_ function)
@@ -239,8 +239,8 @@ steps:
               if not ui.npcs:
                   out.append(wline(start, "  \033[90mNo NPCs found.\033[0m"))
 
-          def render_jinxs(out, W, start, body_h):
-              vis = ui.jinxs[ui.scroll:ui.scroll + body_h]
+          def render_jinxes(out, W, start, body_h):
+              vis = ui.jinxes[ui.scroll:ui.scroll + body_h]
               for r in range(body_h):
                   row = start + r
                   i = r + ui.scroll
@@ -256,16 +256,16 @@ steps:
                       out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
                   else:
                       out.append(wline(row, f"    {label:<24} \033[90m{desc}\033[0m"))
-              if not ui.jinxs:
-                  out.append(wline(start, "  \033[90mNo jinxs found.\033[0m"))
+              if not ui.jinxes:
+                  out.append(wline(start, "  \033[90mNo jinxes found.\033[0m"))
 
           def render_detail(out, W, start, body_h):
               if ui.tab == 1 and ui.npcs:
                   name = ui.npcs[ui.sel]
                   data = ui.npc_data.get(name, {})
                   title = f"NPC: {name}"
-              elif ui.tab == 2 and ui.jinxs:
-                  folder, name = ui.jinxs[ui.sel]
+              elif ui.tab == 2 and ui.jinxes:
+                  folder, name = ui.jinxes[ui.sel]
                   key = f"{folder}/{name}"
                   data = ui.jinx_data.get(key, {})
                   title = f"Jinx: {key}"
@@ -407,8 +407,8 @@ steps:
                   if ui.tab == 1 and ui.npcs:
                       n = ui.npcs[ui.sel]
                       mx = max(0, len(ui.npc_data.get(n, {})) - 1)
-                  elif ui.tab == 2 and ui.jinxs:
-                      f, n = ui.jinxs[ui.sel]
+                  elif ui.tab == 2 and ui.jinxes:
+                      f, n = ui.jinxes[ui.sel]
                       mx = max(0, len(ui.jinx_data.get(f"{f}/{n}", {})) - 1)
                   else:
                       mx = 0
@@ -421,7 +421,7 @@ steps:
                   elif ui.tab == 1:
                       mx = max(0, len(ui.npcs) - 1)
                   else:
-                      mx = max(0, len(ui.jinxs) - 1)
+                      mx = max(0, len(ui.jinxes) - 1)
                   ui.sel = min(mx, ui.sel + 1)
                   if ui.sel >= ui.scroll + body_h:
                       ui.scroll = ui.sel - body_h + 1
@@ -437,7 +437,7 @@ steps:
                       ui.detail_scroll = 0
                   else:
                       start_detail_edit()
-              elif ui.tab == 2 and ui.jinxs:
+              elif ui.tab == 2 and ui.jinxes:
                   if not ui.detail:
                       ui.detail = True
                       ui.detail_idx = 0
@@ -498,7 +498,7 @@ steps:
                   name = ui.npcs[ui.sel]
                   data = ui.npc_data.get(name, {})
               elif ui.tab == 2:
-                  f, n = ui.jinxs[ui.sel]
+                  f, n = ui.jinxes[ui.sel]
                   data = ui.jinx_data.get(f"{f}/{n}", {})
               else:
                   return
@@ -546,7 +546,7 @@ steps:
                   else:
                       ui.npc_data[name][ui.edit_field] = ui.edit_buf
               elif ui.tab == 2 and ui.detail:
-                  f, n = ui.jinxs[ui.sel]
+                  f, n = ui.jinxes[ui.sel]
                   key = f"{f}/{n}"
                   old = ui.jinx_data[key].get(ui.edit_field)
                   if isinstance(old, list):
@@ -565,8 +565,8 @@ steps:
                   save_ctx()
               elif ui.tab == 1 and ui.detail and ui.npcs:
                   save_npc(ui.npcs[ui.sel])
-              elif ui.tab == 2 and ui.detail and ui.jinxs:
-                  f, n = ui.jinxs[ui.sel]
+              elif ui.tab == 2 and ui.detail and ui.jinxes:
+                  f, n = ui.jinxes[ui.sel]
                   save_jinx(f"{f}/{n}")
 
           # ── main loop ──────────────────────────────────────────

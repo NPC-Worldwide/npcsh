@@ -1,8 +1,8 @@
 # Skills
 
-Skills are jinxs that serve knowledge content instead of executing code. They use the `skill.jinx` sub-jinx (like `python.jinx` or `sh.jinx`) and return sections of instructional methodology on demand.
+Skills are jinxes that serve knowledge content instead of executing code. They use the `skill.jinx` sub-jinx (like `python.jinx` or `sh.jinx`) and return sections of instructional methodology on demand.
 
-Skills are not a separate system. They live in `jinxs/skills/`, load through the same compiler, and end up in `jinxs_dict` alongside every other jinx. Agents get skills through the same `jinxs:` list in `.npc` files — no separate configuration needed.
+Skills are not a separate system. They live in `jinxes/skills/`, load through the same compiler, and end up in `jinxes_dict` alongside every other jinx. Agents get skills through the same `jinxes:` list in `.npc` files — no separate configuration needed.
 
 ## Using Skills in npcsh
 
@@ -76,10 +76,10 @@ Use conventional commits if the project uses them:
 
 ### SKILL.md folder (recommended)
 
-Create a folder in `jinxs/skills/` with a `SKILL.md` file. The folder name becomes the skill name.
+Create a folder in `jinxes/skills/` with a `SKILL.md` file. The folder name becomes the skill name.
 
 ```
-jinxs/skills/deployment/
+jinxes/skills/deployment/
   SKILL.md
   scripts/          # Optional
   references/       # Optional
@@ -147,7 +147,7 @@ steps:
 
 ## Assigning Skills to Agents
 
-Skills are jinxs, so assign them through the `jinxs:` list in `.npc` files:
+Skills are jinxes, so assign them through the `jinxes:` list in `.npc` files:
 
 ```yaml
 # reviewer.npc
@@ -156,7 +156,7 @@ primary_directive: |
   You review code and provide actionable feedback.
 model: llama3.2
 provider: ollama
-jinxs:
+jinxes:
   - lib/core/sh
   - lib/core/python
   - skills/code-review
@@ -165,7 +165,7 @@ jinxs:
 
 The agent sees `code-review` and `debugging` as tools alongside `sh` and `python`. When it encounters a review task, it can call `code-review(section=correctness)` to get methodology, then use `python` or `sh` to inspect the actual code.
 
-Team-level skills work the same way: any skill in the team's `jinxs/skills/` directory is available to all NPCs on the team, just like any other team jinx.
+Team-level skills work the same way: any skill in the team's `jinxes/skills/` directory is available to all NPCs on the team, just like any other team jinx.
 
 ## Importing External Skills
 
@@ -178,7 +178,7 @@ forenpc: lead-dev
 SKILLS_DIRECTORY: ~/shared-skills
 ```
 
-The path can be absolute or relative to the team directory. All `SKILL.md` folders and `.jinx` files in that directory are loaded alongside the team's own jinxs.
+The path can be absolute or relative to the team directory. All `SKILL.md` folders and `.jinx` files in that directory are loaded alongside the team's own jinxes.
 
 This lets you maintain a shared skills library across multiple teams without copying files.
 
@@ -188,7 +188,7 @@ Skills flow through the same pipeline as every other jinx:
 
 1. `SKILL.md` folders are compiled into Jinx objects with `engine: skill` steps
 2. `.jinx` skill files are loaded directly (they already have `engine: skill` steps)
-3. Both end up in `jinxs_dict` alongside regular jinxs
+3. Both end up in `jinxes_dict` alongside regular jinxes
 4. During first-pass rendering, `engine: skill` expands through `skill.jinx`
 5. At execution time, `skill.jinx` receives the structured data and returns the requested section
 
