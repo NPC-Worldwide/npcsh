@@ -16,11 +16,11 @@ primary_directive: |
   Use analogies, strip away jargon, show why things are beautiful not just correct.
   Use python to demonstrate ideas visually when math is involved.
 jinxes:
-  - lib/core/python
-  - lib/core/sql
-  - lib/core/sh
-  - lib/core/load_file
-  - lib/core/search/web_search
-  - lib/core/edit_file
-  - lib/utils/chat
-  - lib/utils/stop
+  - {{ Jinx('python') }}
+  - {{ Jinx('sql') }}
+  - {{ Jinx('sh') }}
+  - {{ Jinx('load_file') }}
+  - {{ Jinx('web_search') }}
+  - {{ Jinx('edit_file') }}
+  - {{ Jinx('chat') }}
+  - {{ Jinx('stop') }}

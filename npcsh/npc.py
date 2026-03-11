@@ -113,30 +113,8 @@ def main():
             all_args = all_args[1:]
 
     if is_valid_command:
-        subparsers = parser.add_subparsers(
-            dest="command", 
-            title="Available Commands",
-            help="Run 'npc <command> --help' for command-specific help"
-        )
-
-        for cmd_name, help_text in router.help_info.items():
-            cmd_parser = subparsers.add_parser(
-                cmd_name, 
-                help=help_text, 
-                add_help=False
-            )
-            cmd_parser.add_argument(
-                'command_args', 
-                nargs=argparse.REMAINDER,
-                help='Arguments passed directly to the command handler'
-            )
-
-        args = parser.parse_args([command_name.lstrip('/')] + all_args)
-        command_args = (
-            args.command_args 
-            if hasattr(args, 'command_args') 
-            else []
-        )
+        args.command = command_name.lstrip('/')
+        command_args = all_args
         unknown_args = []
     else:
         args.command = None

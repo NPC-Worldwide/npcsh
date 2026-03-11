@@ -481,7 +481,27 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
 
     user_npc_team_dir = os.path.expanduser("~/.npcsh/npc_team")
 
+    # Migrate old jinxs -> jinxes directory if user has one from a prior install
+    old_jinxs_dir = os.path.join(user_npc_team_dir, "jinxs")
     user_jinxes_dir = os.path.join(user_npc_team_dir, "jinxes")
+    if os.path.exists(old_jinxs_dir):
+        if os.path.exists(user_jinxes_dir):
+            # Merge: copy any user-created jinxes from old dir that don't exist in new
+            for root, dirs, files in os.walk(old_jinxs_dir):
+                rel = os.path.relpath(root, old_jinxs_dir)
+                dest_dir = user_jinxes_dir if rel == '.' else os.path.join(user_jinxes_dir, rel)
+                os.makedirs(dest_dir, exist_ok=True)
+                for f in files:
+                    dest_file = os.path.join(dest_dir, f)
+                    if not os.path.exists(dest_file):
+                        shutil.copy2(os.path.join(root, f), dest_file)
+        else:
+            # Simple rename
+            shutil.move(old_jinxs_dir, user_jinxes_dir)
+        # Clean up old directory if it still exists after merge
+        if os.path.exists(old_jinxs_dir):
+            shutil.rmtree(old_jinxs_dir)
+        print("Migrated ~/.npcsh/npc_team/jinxs -> jinxes")
     user_templates_dir = os.path.join(user_npc_team_dir, "templates")
     os.makedirs(user_npc_team_dir, exist_ok=True)
     os.makedirs(user_jinxes_dir, exist_ok=True)
@@ -2050,6 +2070,33 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
 
             elif c == '\x0b':  # Ctrl-K
                 buf = buf[:pos]
+                draw()
+
+            elif c == '\x0c':  # Ctrl-L - reprint recent messages
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                sys.stdout.write('\033[?2004l')
+                print()
+                _lb_msgs = state.messages[-10:] if state and state.messages else []
+                if not _lb_msgs:
+                    print("(no messages in current conversation)")
+                for _m in _lb_msgs:
+                    _r, _c = _m.get('role',''), _m.get('content','')
+                    if isinstance(_c, list):
+                        _c = '\n'.join(p.get('text','') for p in _c if isinstance(p, dict) and p.get('text'))
+                    if _r == 'user':
+                        print(f"\n\033[32m> {_c}\033[0m")
+                    elif _r == 'assistant':
+                        print(f"\n{_c}")
+                print()
+                sys.stdout.write('\033[?2004h')
+                sys.stdout.write(prompt)
+                if buf:
+                    sys.stdout.write(buf)
+                sys.stdout.flush()
+                tty.setcbreak(fd)
+                _cbreak_settings = termios.tcgetattr(fd)
+                _cbreak_settings[3] &= ~termios.ISIG
+                termios.tcsetattr(fd, termios.TCSADRAIN, _cbreak_settings)
                 draw()
 
             elif c == '\x17':  # Ctrl-W - delete word back
