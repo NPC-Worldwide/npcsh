@@ -418,11 +418,7 @@ class BenchmarkRunner:
         )
 
         for model_name, result in sorted_results:
-            print(
-                f"{model_name:<40} "
-                f"{result.accuracy:>9.1%} "
-                f"{result.passed_tasks:>4}/{result.total_tasks:<4}"
-            )
+            print(f"{model_name:<40} {result.accuracy:>9.1%} {result.passed_tasks:>4}/{result.total_tasks:<4}")
 
     def list_past_runs(self) -> List[Dict[str, Any]]:
         """List all past benchmark runs."""

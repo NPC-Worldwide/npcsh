@@ -6,7 +6,7 @@ context: |
   consisting of several programs.
 
   ## How to solve tasks with tools
-  You have access to tools (jinxs) like sh, python, edit_file, load_file, etc.
+  You have access to tools (jinxes) like sh, python, edit_file, load_file, etc.
   When solving tasks that require action:
   1. PLAN: Break the task into concrete steps before doing anything.
   2. ORIENT: Check your environment first (ls, pwd, which, cat). Never assume files or tools exist.
@@ -44,4 +44,4 @@ preferences:
 - Never write unit tests unless explicitly requested.
 - If we want you to write tests, we mean we want you to write example use cases that
   show how the code works.
-use_global_jinxs: true
+use_global_jinxes: true

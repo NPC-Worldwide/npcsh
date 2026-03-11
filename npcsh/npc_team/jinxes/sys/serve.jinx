@@ -77,13 +77,13 @@ steps:
               {'category': 'Conversations', 'method': 'GET', 'path': '/api/memory/list', 'desc': 'List stored memories'},
               {'category': 'Conversations', 'method': 'POST', 'path': '/api/memory/add', 'desc': 'Add a memory'},
               {'category': 'Conversations', 'method': 'DELETE', 'path': '/api/memory/delete', 'desc': 'Delete a memory'},
-              # Jinxs
-              {'category': 'Jinxs', 'method': 'GET', 'path': '/api/jinxs/available', 'desc': 'List available jinxs'},
-              {'category': 'Jinxs', 'method': 'POST', 'path': '/api/jinx/execute', 'desc': 'Execute a jinx'},
-              {'category': 'Jinxs', 'method': 'POST', 'path': '/api/jinx/test', 'desc': 'Test a jinx'},
-              {'category': 'Jinxs', 'method': 'POST', 'path': '/api/jinxs/save', 'desc': 'Save a jinx'},
-              {'category': 'Jinxs', 'method': 'GET', 'path': '/api/jinxs/global', 'desc': 'List global jinxs'},
-              {'category': 'Jinxs', 'method': 'GET', 'path': '/api/jinxs/project', 'desc': 'List project jinxs'},
+              # Jinxes
+              {'category': 'Jinxes', 'method': 'GET', 'path': '/api/jinxes/available', 'desc': 'List available jinxes'},
+              {'category': 'Jinxes', 'method': 'POST', 'path': '/api/jinx/execute', 'desc': 'Execute a jinx'},
+              {'category': 'Jinxes', 'method': 'POST', 'path': '/api/jinx/test', 'desc': 'Test a jinx'},
+              {'category': 'Jinxes', 'method': 'POST', 'path': '/api/jinxes/save', 'desc': 'Save a jinx'},
+              {'category': 'Jinxes', 'method': 'GET', 'path': '/api/jinxes/global', 'desc': 'List global jinxes'},
+              {'category': 'Jinxes', 'method': 'GET', 'path': '/api/jinxes/project', 'desc': 'List project jinxes'},
               # NPC Team
               {'category': 'NPC Team', 'method': 'GET', 'path': '/api/npcsh/team', 'desc': 'Get team info'},
               {'category': 'NPC Team', 'method': 'POST', 'path': '/api/npcsh/command', 'desc': 'Execute npcsh command'},

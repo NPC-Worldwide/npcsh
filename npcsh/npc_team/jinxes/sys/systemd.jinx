@@ -66,7 +66,7 @@ steps:
           if not command or not svc_name:
               context['output'] = 'Usage: /systemd action=create name="my_daemon" command="/some_jinx"'
           else:
-              full_cmd = 'npcsh -c "' + command + '"' if command.startswith('/') else command
+              full_cmd = 'npc "' + command + '"' if command.startswith('/') else command
               log_path = os.path.join(logs_dir, 'daemon_' + svc_name + '.log')
 
               if is_mac:

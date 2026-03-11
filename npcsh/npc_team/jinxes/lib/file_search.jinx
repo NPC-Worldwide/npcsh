@@ -336,7 +336,7 @@ steps:
                           elif c == 'i' and display_files:
                               f = display_files[selected]
                               try:
-                                  subprocess.run(['npcsh', '-c', f'/navigate url=file://{f["path"]}'], check=False, capture_output=True)
+                                  subprocess.run(['npc', f'/navigate url=file://{f["path"]}'], check=False, capture_output=True)
                               except:
                                   pass
                           elif c == 'c' and display_files:

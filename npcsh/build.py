@@ -204,10 +204,7 @@ def build_cli_executable(config, **kwargs):
     '''))
     
     return {
-        "output": (
-            f"CLI executable built in {output_dir}. "
-            f"Run: pyinstaller npc_cli.spec"
-        ), 
+        "output": f"CLI executable built in {output_dir}. Run: pyinstaller npc_cli.spec",
         "messages": kwargs.get('messages', [])
     }
 
@@ -281,9 +278,6 @@ def build_static_site(config, **kwargs):
     '''))
     
     return {
-        "output": (
-            f"Static site built in {output_dir}. "
-            f"Serve with: python -m http.server 8000"
-        ), 
+        "output": f"Static site built in {output_dir}. Serve with: python -m http.server 8000",
         "messages": kwargs.get('messages', [])
     }

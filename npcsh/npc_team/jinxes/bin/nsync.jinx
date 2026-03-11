@@ -3,7 +3,7 @@ description: "Sync npc_team files from the npcsh repo to ~/.npcsh/npc_team. Dete
 inputs:
 - force: ""
 - dry_run: ""
-- jinxs: ""
+- jinxes: ""
 - npcs: ""
 - ctx: ""
 - images: ""
@@ -19,7 +19,7 @@ steps:
 
       force = context.get('force', False)
       dry_run = context.get('dry_run', False)
-      sync_jinxs = context.get('jinxs', False)
+      sync_jinxes = context.get('jinxes', False)
       sync_npcs = context.get('npcs', False)
       sync_ctx = context.get('ctx', False)
       sync_images = context.get('images', False)
@@ -34,13 +34,13 @@ steps:
 
       force = to_bool(force)
       dry_run = to_bool(dry_run)
-      sync_jinxs = to_bool(sync_jinxs)
+      sync_jinxes = to_bool(sync_jinxes)
       sync_npcs = to_bool(sync_npcs)
       sync_ctx = to_bool(sync_ctx)
       sync_images = to_bool(sync_images)
 
       # If none specified, sync all
-      sync_all = not (sync_jinxs or sync_npcs or sync_ctx or sync_images)
+      sync_all = not (sync_jinxes or sync_npcs or sync_ctx or sync_images)
 
       def get_file_hash(filepath):
           """Get MD5 hash of file contents."""
@@ -101,7 +101,7 @@ steps:
               sync_extensions.append('.npc')
           if sync_all or sync_ctx:
               sync_extensions.append('.ctx')
-          if sync_all or sync_jinxs:
+          if sync_all or sync_jinxes:
               sync_extensions.append('.jinx')
           if sync_all or sync_images:
               sync_extensions.extend(['.png', '.jpg', '.jpeg'])
@@ -120,7 +120,7 @@ steps:
           else:
               if sync_npcs: sync_types.append("npcs")
               if sync_ctx: sync_types.append("ctx")
-              if sync_jinxs: sync_types.append("jinxs")
+              if sync_jinxes: sync_types.append("jinxes")
               if sync_images: sync_types.append("images")
           output_lines.append(f"Syncing: {', '.join(sync_types)}")
 

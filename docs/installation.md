@@ -100,7 +100,7 @@ npcsh
 ```
 When initialized, `npcsh` will generate a .npcshrc file in your home directory that stores your npcsh settings, like your default chat model/provider, image generation model/provider, embedding model/provider, database path, etc.
 
-On startup, `npcsh` comes with a set of jinxs and NPCs that are used in processing. It will generate a folder at ~/.npcsh/ that contains the jinxs and NPCs that are used by the shell by default if there is no `npc_team` within the current directory. Additionally, `npcsh` records interactions and compiled information about npcs within a local SQLite database at the path specified in the .npcshrc file. This will default to ~/npcsh_history.db if not specified. 
+On startup, `npcsh` comes with a set of jinxes and NPCs that are used in processing. It will generate a folder at ~/.npcsh/ that contains the jinxes and NPCs that are used by the shell by default if there is no `npc_team` within the current directory. Additionally, `npcsh` records interactions and compiled information about npcs within a local SQLite database at the path specified in the .npcshrc file. This will default to ~/npcsh_history.db if not specified. 
 
 The installer will automatically add this file to your shell config so that it initialize these variables whenever a shell is activated, but if it does not do so successfully for whatever reason (i.e. if you use an alternative rc type) you can add the following to your .bashrc or .zshrc:
 
@@ -136,16 +136,16 @@ Once initialized and set up, you will find the following in your ~/.npcsh direct
 └── jobs/ # scheduled jobs 
 └── logs/ # logs for triggers and jobs
 ├── npc_team/           # Global NPCs
-│   ├── jinxs/          # Global jinxs
+│   ├── jinxes/          # Global jinxes
 │   └── assembly_lines/ # Workflow pipelines
 └── screenshots/ # taken with the screenshot jinx or /ots macro
 └── triggers/ # jobs that trigger on certain conditions
 ```
 
-For cases where you wish to set up a project specific set of NPCs, jinxs, and assembly lines, add a `npc_team` directory to your project and `npcsh` should be able to pick up on its presence, like so:
+For cases where you wish to set up a project specific set of NPCs, jinxes, and assembly lines, add a `npc_team` directory to your project and `npcsh` should be able to pick up on its presence, like so:
 ```bash
 ./npc_team/            # Project-specific NPCs
-├── jinxs/             # Project jinxs #example jinx next
+├── jinxes/             # Project jinxes #example jinx next
 │   └── example.jinx
 └── assembly_lines/    # Project workflows
     └── example.pipe
