@@ -45,7 +45,7 @@ jinx_dynamic = [f"{name}=npcsh.npc:jinx_main" for name in jinx_entries]
 dynamic_entries = npc_dynamic + jinx_dynamic
 
 base_requirements = [
-    'npcpy>=1.3.31', 
+    'npcpy>=1.3.34',
     "jinja2",
     "litellm",   
     "docx", 
@@ -135,7 +135,7 @@ def get_package_data_patterns():
 
 setup(
     name="npcsh",
-    version="1.1.28",
+    version="1.1.29",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
