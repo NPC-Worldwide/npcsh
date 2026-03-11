@@ -174,7 +174,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
     npc_names = [f"@{n}" for n in state.team.npcs.keys()]
     print(f"  {DIM}npcs:{RESET} {BLUE}{('  ').join(npc_names)}{RESET}")
 
-    # Jinxs - organized by group/subgroup with sub-directory lines
+    # Jinxes - organized by group/subgroup with sub-directory lines
     hidden_folders = {'computer_use', 'browser'}
     # jinxes_tree[(group, subgroup)][subdir] = [jinx_names]
     jinxes_tree = {}

@@ -112,7 +112,7 @@ steps:
           print( '  └── npc_team/')
           print( '      ├── forenpc.npc')
           print( '      ├── team.ctx')
-          print( '      ├── jinxs/')
+          print( '      ├── jinxes/')
           print( '      ├── tools/')
           print( '      ├── images/')
           print( '      ├── models/')
@@ -186,10 +186,10 @@ steps:
           print()
 
           # ========== Step 5: Select Jinx Groups ==========
-          # Dynamically walk the global jinxs directory tree
+          # Dynamically walk the global jinxes directory tree
           import npcsh
-          _pkg_jinxs = os.path.join(os.path.dirname(os.path.abspath(npcsh.__file__)), 'npc_team', 'jinxs')
-          _global_jinxs = os.path.expanduser('~/.npcsh/npc_team/jinxs')
+          _pkg_jinxs = os.path.join(os.path.dirname(os.path.abspath(npcsh.__file__)), 'npc_team', 'jinxes')
+          _global_jinxs = os.path.expanduser('~/.npcsh/npc_team/jinxes')
           _jinxs_root = _global_jinxs if os.path.isdir(_global_jinxs) else _pkg_jinxs
 
           def scan_jinx_dir(dirpath):
@@ -226,7 +226,7 @@ steps:
 
           total_jinxs = sum(count_all(c) for c in categories)
 
-          print(f'  Include jinxs? ({total_jinxs} available)')
+          print(f'  Include jinxes? ({total_jinxs} available)')
           print(f'  Select categories (numbers, "all", or "none"):')
           print()
           for i, cat in enumerate(categories):
@@ -297,9 +297,9 @@ steps:
                       print(f'  -> {cat["name"]}: included all ({len(cat["jinxs"])})')
 
           if selected_jinxs:
-              print(f'  -> {len(selected_jinxs)} jinxs selected')
+              print(f'  -> {len(selected_jinxs)} jinxes selected')
           else:
-              print('  -> No jinxs copied (use_global_jinxs in team.ctx still gives runtime access)')
+              print('  -> No jinxes copied (use_global_jinxes in team.ctx still gives runtime access)')
           print()
 
           # ========== Step 6: Summary & Confirm ==========
@@ -314,9 +314,9 @@ steps:
           print(f'    Coordinator: {forenpc}')
           print(f'    Description: {description}')
           if selected_jinxs:
-              print(f'    Jinxs:       {len(selected_jinxs)} selected')
+              print(f'    Jinxes:      {len(selected_jinxs)} selected')
           else:
-              print(f'    Jinxs:       none (global jinxs available at runtime)')
+              print(f'    Jinxes:      none (global jinxes available at runtime)')
           print()
 
           confirm = prompt_input('Create project? (y/n)', 'y')

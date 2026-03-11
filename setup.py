@@ -30,6 +30,7 @@ def conflicts_with_system(name):
     return False
 
 
+
 # Auto-discover NPCs and bin jinxes for console_scripts entry points
 npc_team_dir = Path(__file__).parent / "npcsh" / "npc_team"
 npc_entries = [f.stem for f in npc_team_dir.glob("*.npc")] if npc_team_dir.exists() else []
@@ -135,7 +136,7 @@ def get_package_data_patterns():
 
 setup(
     name="npcsh",
-    version="1.1.29",
+    version="1.1.30",
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={

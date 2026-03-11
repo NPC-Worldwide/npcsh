@@ -118,12 +118,12 @@ steps:
                       from npcsh.routes import router
                       router.jinx_routes.clear()
                       router.jinx_objects.clear()
-                      global_jinxs = os.path.expanduser("~/.npcsh/npc_team/jinxs")
-                      if os.path.isdir(global_jinxs):
-                          router.load_jinx_routes(global_jinxs)
-                      team_jinxs = os.path.join(team_dir, 'jinxs')
-                      if os.path.isdir(team_jinxs):
-                          router.load_jinx_routes(team_jinxs)
+                      global_jinxes = os.path.expanduser("~/.npcsh/npc_team/jinxes")
+                      if os.path.isdir(global_jinxes):
+                          router.load_jinx_routes(global_jinxes)
+                      team_jinxes = os.path.join(team_dir, 'jinxes')
+                      if os.path.isdir(team_jinxes):
+                          router.load_jinx_routes(team_jinxes)
 
                       npc_names = ', '.join(sorted(new_team.npcs.keys()))
                       active = state.npc.name if hasattr(state.npc, 'name') else '?'
@@ -135,11 +135,11 @@ steps:
 
       elif not resource_type or resource_type == 'all':
           # Full reload of current team
-          jinxs_dir = os.path.join(team.team_path, 'jinxs')
+          jinxes_dir = os.path.join(team.team_path, 'jinxes')
 
           # Reload all jinxes
           team._raw_jinxs_list = []
-          if os.path.exists(jinxs_dir):
+          if os.path.exists(jinxes_dir):
               for jinx_obj in load_jinxs_from_directory(jinxs_dir):
                   team._raw_jinxs_list.append(jinx_obj)
 
@@ -217,9 +217,9 @@ steps:
               context['output'] = "Error: name required. Usage: /reload jinx name=compress"
           else:
               # Find and reload a single jinx
-              jinxs_dir = os.path.join(team.team_path, 'jinxs')
+              jinxes_dir = os.path.join(team.team_path, 'jinxes')
               found = None
-              for root, dirs, files in os.walk(jinxs_dir):
+              for root, dirs, files in os.walk(jinxes_dir):
                   for f in files:
                       if f == target_name + '.jinx':
                           found = os.path.join(root, f)

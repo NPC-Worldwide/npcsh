@@ -1,5 +1,5 @@
 jinx_name: help
-description: Show help for commands, NPCs, or Jinxs
+description: Show help for commands, NPCs, or Jinxes
 inputs:
 - topic: null
 steps:
@@ -105,7 +105,7 @@ steps:
           "/set provider=openai  # switch provider",
           "/set mode=chat  # change default mode",
           "/models  # list available models",
-          "/jinxs  # list available jinxs",
+          "/jinxes  # list available jinxes",
           "/team  # manage your NPC team",
           "/reattach  # rejoin a previous conversation",
           "/usage  # check token usage and costs",
@@ -148,7 +148,7 @@ steps:
           "/reattach  # browse and rejoin previous conversations",
           "/set conversation_id=abc123  # switch to a specific conversation",
           "/clear  # clear the screen",
-          "/exit  # quit npcsh",
+          "/exit  # quit the shell",
           "/help arxiv  # get detailed help on a specific command",
           "/reattach  # pick up where you left off in a prior session",
           "/spool -m gpt-4o  # isolated chat with a specific model",
@@ -182,7 +182,7 @@ steps:
       topic = context.get('topic')
 
       if not topic:
-          output_lines = ["# npcsh - Available Commands\n\n"]
+          output_lines = ["# npc - Available Commands\n\n"]
 
           output_lines.append("## Quick Start\n\n")
           output_lines.append("- Type naturally to talk to your NPC\n")
@@ -192,14 +192,14 @@ steps:
           output_lines.append("- Use `/reattach` to rejoin a previous conversation\n")
           output_lines.append("- Press **Tab** to autocomplete commands and NPC names\n\n")
 
-          all_jinxs = {}
-          if hasattr(npc, 'team') and npc.team and hasattr(npc.team, 'jinxs_dict'):
-              all_jinxs.update(npc.team.jinxs_dict)
-          if hasattr(npc, 'jinxs_dict') and npc.jinxs_dict:
-              all_jinxs.update(npc.jinxs_dict)
+          all_jinxes = {}
+          if hasattr(npc, 'team') and npc.team and hasattr(npc.team, 'jinxes_dict'):
+              all_jinxes.update(npc.team.jinxes_dict)
+          if hasattr(npc, 'jinxes_dict') and npc.jinxes_dict:
+              all_jinxes.update(npc.jinxes_dict)
 
-          for cmd in sorted(all_jinxs.keys()):
-              jinx_obj = all_jinxs[cmd]
+          for cmd in sorted(all_jinxes.keys()):
+              jinx_obj = all_jinxes[cmd]
               desc = getattr(jinx_obj, 'description', 'No description')
               output_lines.append(f"/{cmd} - {desc}\n\n")
 
@@ -222,10 +222,10 @@ steps:
           output = "".join(output_lines)
       else:
           jinx_obj = None
-          if hasattr(npc, 'team') and npc.team and hasattr(npc.team, 'jinxs_dict'):
-              jinx_obj = npc.team.jinxs_dict.get(topic)
-          if not jinx_obj and hasattr(npc, 'jinxs_dict'):
-              jinx_obj = npc.jinxs_dict.get(topic)
+          if hasattr(npc, 'team') and npc.team and hasattr(npc.team, 'jinxes_dict'):
+              jinx_obj = npc.team.jinxes_dict.get(topic)
+          if not jinx_obj and hasattr(npc, 'jinxes_dict'):
+              jinx_obj = npc.jinxes_dict.get(topic)
 
           if jinx_obj:
               output = f"## Help for Jinx: `/{topic}`\n\n"
