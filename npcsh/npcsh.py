@@ -514,7 +514,24 @@ def main(npc_name: str = None) -> None:
         if invoked_as not in ('npcsh', 'npc'):
             npc_name = invoked_as
 
-    parser = argparse.ArgumentParser(description="npcsh - An NPC-powered shell.")
+    # Intercept --help / -h to run the /help jinx instead of argparse stub
+    if any(a in ('-h', '--help') for a in sys.argv[1:]):
+        command_history, team, default_npc = setup_shell()
+        initial_state.npc = default_npc
+        initial_state.team = team
+        initial_state.command_history = command_history
+        initial_state.current_path = os.getcwd()
+        if team and hasattr(team, 'jinxes_dict'):
+            for jname, jobj in team.jinxes_dict.items():
+                router.register_jinx(jobj)
+        _, output = execute_command("/help", initial_state, router=router, command_history=command_history)
+        if isinstance(output, dict):
+            print(output.get('output') or output.get('response') or str(output))
+        elif output is not None:
+            print(output)
+        sys.exit(0)
+
+    parser = argparse.ArgumentParser(description="npcsh - An NPC-powered shell.", add_help=False)
     parser.add_argument(
         "-v", "--version", action="version", version=f"npcsh version {VERSION}"
     )
