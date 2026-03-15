@@ -172,7 +172,7 @@ jinx = Jinx(jinx_data)
 npc = NPC(
     name='starlana',
     primary_directive='Analyze text from Astrophysics papers with a keen attention to theoretical machinations and mechanisms.',
-    model = 'llama3.2',
+    model = 'qwen3.5:2b',
     provider='ollama',
     db_conn=sqlite3.connect(os.path.expanduser('~/npcsh_database.db'))
 )

@@ -26,6 +26,13 @@ pip install 'npcsh[lite]'
 
 Once installed, run `npcsh` to enter the NPC shell. Also provides the CLI tools `npc`, `wander`, `spool`, `yap`, and `nql`.
 
+`.npc` and `.jinx` files are directly executable with shebangs (`#!/usr/bin/env npc`):
+```bash
+npc ./myagent.npc "summarize this repo"     # run an NPC with a prompt
+npc ./script.jinx bash_command="ls -la"     # run a jinx directly
+./myagent.npc "hello"                       # or just execute it (with shebang)
+```
+
 ---
 
 ## Benchmark Results
@@ -219,17 +226,17 @@ pip install 'npcsh[all]'         # Everything
 ```bash
 sudo apt-get install espeak portaudio19-dev python3-pyaudio ffmpeg libcairo2-dev libgirepository1.0-dev
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull llama3.2
+ollama pull qwen3.5:2b
 ```
 
 **macOS:**
 ```bash
 brew install portaudio ffmpeg pygobject3 ollama
 brew services start ollama
-ollama pull llama3.2
+ollama pull qwen3.5:2b
 ```
 
-**Windows:** Install [Ollama](https://ollama.com) and [ffmpeg](https://ffmpeg.org), then `ollama pull llama3.2`.
+**Windows:** Install [Ollama](https://ollama.com) and [ffmpeg](https://ffmpeg.org), then `ollama pull qwen3.5:2b`.
 
 </details>
 
@@ -239,6 +246,17 @@ export OPENAI_API_KEY="your_key"
 export ANTHROPIC_API_KEY="your_key"
 export GEMINI_API_KEY="your_key"
 ```
+
+### Rust Edition (experimental)
+
+A native Rust build of `npcsh` is available — same shell, same DB, same team files, faster startup. Still experimental.
+
+```bash
+cd npcsh/rust && cargo build --release
+cp target/release/npcsh ~/.local/bin/npc   # or wherever you want
+```
+
+Both editions share `~/npcsh_history.db` and `~/.npcsh/npc_team/` and can be used interchangeably.
 
 ## Read the Docs
 

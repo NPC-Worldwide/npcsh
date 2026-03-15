@@ -681,10 +681,10 @@ steps:
                           elif c == 'i':
                               p = papers[selected]
                               try:
-                                  subprocess.Popen(['incognide', p['url']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                  subprocess.Popen(['incognidev', p['url']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                               except:
                                   try:
-                                      subprocess.Popen(['incognide', '--url', p['url']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                      subprocess.Popen(['incognidev', '--url', p['url']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                                   except:
                                       pass
                           elif c == 'p':
