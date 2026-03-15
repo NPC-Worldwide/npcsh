@@ -516,6 +516,13 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                 source_path, destination_path
             ):
                 shutil.copy2(source_path, destination_path)
+                # Add shebang if missing and make executable
+                with open(destination_path, 'r') as f:
+                    content = f.read()
+                if not content.startswith('#!'):
+                    with open(destination_path, 'w') as f:
+                        f.write('#!/usr/bin/env npc\n' + content)
+                os.chmod(destination_path, os.stat(destination_path).st_mode | 0o111)
                 print(f"Copied NPC {filename} to {destination_path}")
         if filename.endswith(".ctx"):
             source_path = os.path.join(package_npc_team_dir, filename)
@@ -568,6 +575,13 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                         source_jinx_path, destination_jinx_path
                     ):
                         shutil.copy2(source_jinx_path, destination_jinx_path)
+                        # Add shebang if missing and make executable
+                        with open(destination_jinx_path, 'r') as f:
+                            content = f.read()
+                        if not content.startswith('#!'):
+                            with open(destination_jinx_path, 'w') as f:
+                                f.write('#!/usr/bin/env npc\n' + content)
+                        os.chmod(destination_jinx_path, os.stat(destination_jinx_path).st_mode | 0o111)
                         print(f"Copied jinx {jinx_rel_path} to {destination_jinx_path}")
 
     # Clean up old package jinxes that are no longer in the package
@@ -1269,21 +1283,28 @@ def get_package_dir() -> str:
         return os.path.dirname(__file__)
 
 
+def _strip_shebang(content: str) -> str:
+    """Strip shebang line for comparison purposes."""
+    if content.startswith('#!'):
+        nl = content.find('\n')
+        return content[nl + 1:] if nl >= 0 else ''
+    return content
+
+
 def file_has_changed(source_path: str, destination_path: str) -> bool:
     """
-    Function Description:
-        This function compares two files to determine if they are different.
-    Args:
-        source_path: The path to the source file.
-        destination_path: The path to the destination file.
-    Keyword Args:
-        None
-    Returns:
-        A boolean indicating whether the files are different
+    Compare two files to determine if they are different.
+    Ignores shebang lines so local shebang additions don't trigger overwrites.
+    Also skips overwrite if the destination has local modifications beyond the shebang.
     """
-
-
-    return not filecmp.cmp(source_path, destination_path, shallow=False)
+    try:
+        with open(source_path, 'r') as f:
+            src = _strip_shebang(f.read())
+        with open(destination_path, 'r') as f:
+            dst = _strip_shebang(f.read())
+        return src != dst
+    except Exception:
+        return not filecmp.cmp(source_path, destination_path, shallow=False)
 
 
 def list_directory(args: List[str]) -> None:

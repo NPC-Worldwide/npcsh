@@ -26,6 +26,13 @@ pip install 'npcsh[lite]'
 
 Once installed, run `npcsh` to enter the NPC shell. Also provides the CLI tools `npc`, `wander`, `spool`, `yap`, and `nql`.
 
+`.npc` and `.jinx` files are directly executable with shebangs (`#!/usr/bin/env npc`):
+```bash
+npc ./myagent.npc "summarize this repo"     # run an NPC with a prompt
+npc ./script.jinx bash_command="ls -la"     # run a jinx directly
+./myagent.npc "hello"                       # or just execute it (with shebang)
+```
+
 ---
 
 ## Benchmark Results
@@ -186,6 +193,96 @@ python -m npcsh.benchmark.local_runner --model qwen3:4b --provider ollama
 
 ---
 
+## Agent Formats
+
+npcsh supports multiple ways to define agents inside your `npc_team/` directory. You can mix all three formats — `.npc` files take precedence if names collide.
+
+**`.npc` files** — Full-featured YAML agent definitions with model, provider, jinxes, and more:
+```yaml
+#!/usr/bin/env npc
+name: analyst
+primary_directive: You analyze data and provide insights.
+model: qwen3:8b
+provider: ollama
+jinxes:
+  - skills/data-analysis
+```
+
+**`agents.md`** — Define multiple agents in a single markdown file. Each `## heading` = agent name, body = directive:
+```markdown
+## summarizer
+You summarize long documents into concise bullet points.
+
+## fact_checker
+You verify claims against reliable sources and flag inaccuracies.
+```
+
+**`agents/` directory** — One `.md` file per agent. Filename (minus `.md`) = agent name. Supports YAML frontmatter:
+```markdown
+---
+model: gemini-2.5-flash
+provider: gemini
+---
+You translate content between languages while preserving tone and idiom.
+```
+
+All three formats are supported by both the **Python** and **Rust** editions of npcsh. Agents from `agents.md` and `agents/` inherit the team's default model/provider from `team.ctx`.
+
+The full team structure:
+```
+npc_team/
+├── team.ctx           # Team config (model, provider, forenpc, context)
+├── coordinator.npc    # YAML agent definitions
+├── analyst.npc
+├── agents.md          # Markdown-defined agents
+├── agents/            # One .md file per agent
+│   └── translator.md
+├── jinxes/            # Workflows and tools
+│   ├── research.jinx
+│   └── skills/        # Knowledge-content skills
+└── tools/             # Custom tool functions
+```
+
+This means you can bring agents from other ecosystems — if you already have an `agents.md` or an `agents/` directory from Claude Code, Codex, Amp, or any other tool, just drop them into your `npc_team/` and npcsh will pick them up alongside your `.npc` files.
+
+---
+
+## Launching AI Coding Tools with NPC Teams
+
+Your `npc_team/` works beyond `npcsh` — you can launch any major AI coding tool as an NPC from your team using the CLI launchers from [npcpy](https://github.com/cagostino/npcpy). Each tool gets the NPC's persona injected and gains awareness of the other team members.
+
+```bash
+pip install npcpy   # if not already installed
+
+# Launch Claude Code as an NPC (interactive picker)
+npc-claude
+
+# Launch as a specific NPC
+npc-claude --npc corca
+
+# Same for other coding tools
+npc-codex --npc researcher
+npc-gemini --npc analyst
+npc-opencode --npc coder
+npc-aider --npc reviewer
+npc-amp --npc writer
+
+# Point to a specific team directory
+npc-claude --team ./my_project/npc_team
+```
+
+The launcher discovers your team from `./npc_team` or `~/.npcsh/npc_team`, lets you pick an NPC, and starts the tool with that NPC's directive. For Claude Code, it also passes the other NPCs as sub-agents via `--agents`.
+
+For deeper integration (jinxes exposed as MCP tools, team switching mid-conversation), register the NPC plugin:
+
+```bash
+npc-plugin claude    # install MCP server + hooks
+npc-plugin codex     # same for Codex
+npc-plugin gemini    # same for Gemini CLI
+```
+
+---
+
 ## Features
 
 - **[Agents (NPCs)](https://npc-shell.readthedocs.io/en/latest/guide/#working-with-npcs-agents)** — AI agents with personas, directives, and tool sets
@@ -219,17 +316,17 @@ pip install 'npcsh[all]'         # Everything
 ```bash
 sudo apt-get install espeak portaudio19-dev python3-pyaudio ffmpeg libcairo2-dev libgirepository1.0-dev
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull llama3.2
+ollama pull qwen3.5:2b
 ```
 
 **macOS:**
 ```bash
 brew install portaudio ffmpeg pygobject3 ollama
 brew services start ollama
-ollama pull llama3.2
+ollama pull qwen3.5:2b
 ```
 
-**Windows:** Install [Ollama](https://ollama.com) and [ffmpeg](https://ffmpeg.org), then `ollama pull llama3.2`.
+**Windows:** Install [Ollama](https://ollama.com) and [ffmpeg](https://ffmpeg.org), then `ollama pull qwen3.5:2b`.
 
 </details>
 
@@ -239,6 +336,17 @@ export OPENAI_API_KEY="your_key"
 export ANTHROPIC_API_KEY="your_key"
 export GEMINI_API_KEY="your_key"
 ```
+
+### Rust Edition (experimental)
+
+A native Rust build of `npcsh` is available — same shell, same DB, same team files, faster startup. Still experimental.
+
+```bash
+cd npcsh/rust && cargo build --release
+cp target/release/npcsh ~/.local/bin/npc   # or wherever you want
+```
+
+Both editions share `~/npcsh_history.db` and `~/.npcsh/npc_team/` and can be used interchangeably.
 
 ## Read the Docs
 

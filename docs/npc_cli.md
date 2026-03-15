@@ -80,7 +80,7 @@ npc serve --port 5337
 ```
 If you want to initialize a project based on templates, and then make it available for serving, you can do so like this:
 ```bash
-npc serve -t 'sales, marketing' -ctx 'im developing a team that will focus on sales and marketing within the logging industry. I need a team that can help me with the following: - generate leads - create marketing campaigns - build a sales funnel - close deals - manage customer relationships - manage sales pipeline - manage marketing campaigns - manage marketing budget' -m llama3.2 -pr ollama
+npc serve -t 'sales, marketing' -ctx 'im developing a team that will focus on sales and marketing within the logging industry. I need a team that can help me with the following: - generate leads - create marketing campaigns - build a sales funnel - close deals - manage customer relationships - manage sales pipeline - manage marketing campaigns - manage marketing budget' -m qwen3.5:2b -pr ollama
 ```
 This will use the specified model and provider to generate a team of NPCs to fit the templates and context provided..
 

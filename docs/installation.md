@@ -19,7 +19,7 @@ sudo apt install inotify-tools
 #And if you don't have ollama installed, use this:
 curl -fsSL https://ollama.com/install.sh | sh
 
-ollama pull llama3.2
+ollama pull qwen3.5:2b
 ollama pull llava:7b
 ollama pull nomic-embed-text
 pip install npcpy
@@ -48,7 +48,7 @@ brew install inotify-tools
 
 brew install ollama
 brew services start ollama
-ollama pull llama3.2
+ollama pull qwen3.5:2b
 ollama pull llava:7b
 ollama pull nomic-embed-text
 pip install npcpy
@@ -70,7 +70,7 @@ Download and install ollama exe.
 Then, in a powershell. Download and install ffmpeg.
 
 ```
-ollama pull llama3.2
+ollama pull qwen3.5:2b
 ollama pull llava:7b
 ollama pull nomic-embed-text
 pip install npcpy

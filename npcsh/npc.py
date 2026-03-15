@@ -54,9 +54,78 @@ def load_npc_by_name(npc_name: str = "sibiji", db_path: str = NPCSH_DB_PATH) -> 
         if npc_name != "sibiji":
             return load_npc_by_name("sibiji", db_path)
         return None
+def _strip_shebang(content: str) -> str:
+    """Strip shebang line from file content."""
+    if content.startswith('#!'):
+        nl = content.find('\n')
+        return content[nl + 1:] if nl >= 0 else ''
+    return content
+
+
+def _exec_jinx_file(jinx_path: str, args: list):
+    """Execute a .jinx file directly (shebang: #!/usr/bin/env npc)."""
+    from npcpy.npc_compiler import Jinx
+
+    # Parse args as key=value or positional
+    jinx = Jinx(jinx_path=jinx_path)
+    input_values = {}
+    positional_idx = 0
+    for arg in args:
+        if '=' in arg:
+            k, v = arg.split('=', 1)
+            input_values[k] = v
+        else:
+            inputs = jinx.inputs if hasattr(jinx, 'inputs') and jinx.inputs else []
+            if positional_idx < len(inputs):
+                inp = inputs[positional_idx]
+                name = inp if isinstance(inp, str) else (list(inp.keys())[0] if isinstance(inp, dict) else str(inp))
+                input_values[name] = arg
+                positional_idx += 1
+
+    try:
+        result = jinx.execute(input_values=input_values)
+        output = result.get('output', '') if isinstance(result, dict) else str(result)
+        if output:
+            print(output)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _exec_npc_file(npc_path: str, args: list):
+    """Execute a .npc file directly (shebang: #!/usr/bin/env npc)."""
+    from npcpy.npc_compiler import NPC
+    from npcpy.llm_funcs import get_llm_response
+
+    npc = NPC(file=npc_path)
+    prompt = ' '.join(args) if args else None
+
+    if prompt:
+        # One-shot mode
+        result = get_llm_response(prompt, npc=npc, model=npc.model, provider=npc.provider)
+        if isinstance(result, dict):
+            output = result.get('response', result.get('output', ''))
+        else:
+            output = str(result)
+        if output:
+            print(output)
+    else:
+        # Interactive mode — launch npcsh with this NPC
+        from npcsh.npcsh import main as npcsh_main
+        npcsh_main(npc_name=npc.name)
+
+
 def main():
     from npcsh.routes import router
-    
+
+    # Shebang support: if first arg is a .npc or .jinx file, execute it directly
+    if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
+        first_arg = sys.argv[1]
+        if first_arg.endswith('.jinx') and os.path.isfile(first_arg):
+            return _exec_jinx_file(first_arg, sys.argv[2:])
+        elif first_arg.endswith('.npc') and os.path.isfile(first_arg):
+            return _exec_npc_file(first_arg, sys.argv[2:])
+
     parser = argparse.ArgumentParser(
         description="NPC Command Line Utilities. Call a command or provide a prompt for the default NPC.",
         usage="npc <command> [command_args...] | <prompt> [--npc NAME] [--model MODEL] [--provider PROV]",
