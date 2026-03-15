@@ -10,8 +10,8 @@ The core of npcsh's capabilities is powered by the NPC Data Layer. Upon initiali
 
 Users can extend NPC capabilities through simple YAML files:
 
-- **NPCs** (.npc): are defined with a name, primary directive, and optional model specifications
-- **Jinxes** (.jinx): Jinja execution templates that provide function-like capabilities and scaleable extensibility through Jinja references to call other jinxes to build upon. Jinxes are executed through prompt-based flows, allowing them to be used by models regardless of their tool-calling capabilities, making it possible then to enable agents at the edge of computing through this simple methodology.
+- **NPCs** (.npc): are defined with a name, primary directive, and optional model specifications. NPC files are executable — add `#!/usr/bin/env npc` as the first line and run them directly: `./myagent.npc "what's the weather?"`
+- **Jinxes** (.jinx): Jinja execution templates that provide function-like capabilities and scaleable extensibility through Jinja references to call other jinxes to build upon. Jinxes are also executable — add `#!/usr/bin/env npc` and run them directly: `./sh.jinx bash_command="echo hello"`. Jinxes are executed through prompt-based flows, allowing them to be used by models regardless of their tool-calling capabilities, making it possible then to enable agents at the edge of computing through this simple methodology.
 - **Context** (.ctx): Specify contextual information, team preferences, MCP server paths, database connections, and other environment variables that are loaded for the team or for specific agents (e.g. `GUAC_FORENPC`). Teams are specified by their path and the team name in the `<team>.ctx` file. Teams organize collections of NPCs with shared context and specify a coordinator within the team context who is used whenever the team is called upon for orchestration.
 - **SQL Models** (.sql): NQL (NPC Query Language) models combine SQL with AI-powered transformations. Place `.sql` files in `npc_team/models/` to create data pipelines with embedded LLM calls.
 
@@ -148,7 +148,7 @@ In the agent loop, the agent calls skills automatically when relevant — reques
 Add `SKILLS_DIRECTORY` to your `.ctx` file to load skills from an external directory:
 
 ```yaml
-model: llama3.2
+model: qwen3.5:2b
 provider: ollama
 forenpc: lead-dev
 SKILLS_DIRECTORY: ~/shared-skills
@@ -385,7 +385,7 @@ The NPC responds using their persona and available jinxes, then control returns 
 | `/sample` | Context-free LLM prompt |
 | `/serve` | Serve NPC team as API with OpenAI-compatible endpoints |
 | `/compile` | Compile NPC profiles |
-| `/set` | Set config values — `/set model gemma3:4b`, `/set provider ollama` |
+| `/set` | Set config values — `/set model qwen3.5:2b`, `/set provider ollama` |
 | `/teamviz` | Visualize team structure |
 | `/ots` | Screenshot analysis |
 | `/models` | Browse available models |
@@ -560,7 +560,7 @@ sudo apt-get install alsa-base alsa-utils libcairo2-dev libgirepository1.0-dev f
 
 # Ollama
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull llama3.2
+ollama pull qwen3.5:2b
 
 pip install 'npcsh[lite]'
 ```
@@ -569,7 +569,7 @@ pip install 'npcsh[lite]'
 ```bash
 brew install portaudio ffmpeg pygobject3 ollama
 brew services start ollama
-ollama pull llama3.2
+ollama pull qwen3.5:2b
 
 pip install 'npcsh[lite]'
 ```
@@ -577,7 +577,7 @@ pip install 'npcsh[lite]'
 ### Windows
 Download and install [Ollama](https://ollama.com) and [ffmpeg](https://ffmpeg.org), then:
 ```powershell
-ollama pull llama3.2
+ollama pull qwen3.5:2b
 pip install 'npcsh[lite]'
 ```
 
@@ -586,7 +586,7 @@ pip install 'npcsh[lite]'
 When initialized, `npcsh` generates a `.npcshrc` file in your home directory:
 
 ```bash
-export NPCSH_CHAT_MODEL=gemma3:4b
+export NPCSH_CHAT_MODEL=qwen3.5:2b
 export NPCSH_CHAT_PROVIDER=ollama
 export NPCSH_DEFAULT_MODE=agent
 export NPCSH_EMBEDDING_MODEL=nomic-embed-text

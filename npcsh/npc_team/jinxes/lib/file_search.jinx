@@ -53,7 +53,7 @@ steps:
               "  1/2/3         - Sort by name/size/date",
               "  p             - Preview file contents",
               "  o             - Open in $EDITOR",
-              "  i             - Open in incognide",
+              "  i             - Open in incognidev",
               "  c             - Copy path to clipboard",
               "  q/ESC         - Quit",
               "",
