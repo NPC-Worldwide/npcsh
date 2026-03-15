@@ -1,38 +1,72 @@
+# IDE / editor
 .claude/
 .codex/
-jobs/
-*.pyc
+.vscode/mcp.json
+.vscode/settings.json
 *.code-workspace
-*.png
-*.python-version
-.env
-build/
-*.egg-info
-*a.csv
-*.pdf
-.venv
-*.log
-*.tex
-*.bbl
-*.aux
-*.out
-*.safetensors
-node_modules/
-__pycache__/
-*.ipynb_checkpoints/
 *.swp
 .DS_Store
+
+# Python
+*.pyc
+__pycache__/
+*.egg-info
+build/
+dist/
+.venv
+*.python-version
+
+# Rust build artifacts
+rust/target/
+rust/Cargo.lock
+
+# Data / media (don't commit large files)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.pdf
 *.pkl
 *.h5
 *.npy
 *.npz
+*.safetensors
 *.zip
 *.tar.gz
 *.tar
 *.gz
 *.tgz
-.vscode/mcp.json
-.vscode/settings.json
-.build.py
-.guac_global
+*.csv
+
+# Notebooks
+*.ipynb_checkpoints/
+*.ipynb
+
+# Logs / temp
+*.log
+*.tex
+*.bbl
+*.aux
+*.out
+jobs/
+
+# Env / secrets
+.env
+.env.*
+
+# npcsh runtime
 .npcsh_global
+.guac_global
+.build.py
+node_modules/
+
+# Experiment / scratch files
+*.exp
+*.undefined
+*.spy
+*.mapx
+*.xcf
+
+# Screenshots (generated)
+Screenshot*
