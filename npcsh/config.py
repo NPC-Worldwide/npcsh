@@ -16,7 +16,7 @@ PROJECT_NPC_TEAM_PATH = "./npc_team"
 READLINE_HISTORY_FILE = os.path.expanduser("~/.npcsh_history")
 
 # Environment defaults
-NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "gemma3:4b")
+NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "qwen3.5:2b")
 NPCSH_CHAT_PROVIDER = os.environ.get("NPCSH_CHAT_PROVIDER", "ollama")
 NPCSH_DB_PATH = os.path.expanduser(
     os.environ.get("NPCSH_DB_PATH", "~/npcsh_history.db")
@@ -25,7 +25,7 @@ NPCSH_VECTOR_DB_PATH = os.path.expanduser(
     os.environ.get("NPCSH_VECTOR_DB_PATH", "~/npcsh_chroma.db")
 )
 NPCSH_DEFAULT_MODE = os.environ.get("NPCSH_DEFAULT_MODE", "agent")
-NPCSH_VISION_MODEL = os.environ.get("NPCSH_VISION_MODEL", "gemma3:4b")
+NPCSH_VISION_MODEL = os.environ.get("NPCSH_VISION_MODEL", "qwen3.5:2b")
 NPCSH_VISION_PROVIDER = os.environ.get("NPCSH_VISION_PROVIDER", "ollama")
 NPCSH_IMAGE_GEN_MODEL = os.environ.get(
     "NPCSH_IMAGE_GEN_MODEL", "x/z-image-turbo"
