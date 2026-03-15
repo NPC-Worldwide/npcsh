@@ -177,10 +177,13 @@ async fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
 
-    // npc <file.npc|file.jinx> [args...] — detect by extension
+    // npc <file.npc|file.jinx|init> [args...] — detect by extension or subcommand
     if invoked_as == "npc" {
         if let Some(file) = args.get(1) {
-            if file.ends_with(".jinx") {
+            if file == "init" {
+                let dir = args.get(2).map(|s| s.as_str()).unwrap_or(".");
+                return init_team(dir);
+            } else if file.ends_with(".jinx") {
                 let jinx_args: Vec<&str> = args[2..].iter().map(|s| s.as_str()).collect();
                 return exec_jinx_file(file, &jinx_args).await;
             } else if file.ends_with(".npc") {
@@ -1038,6 +1041,95 @@ async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
         }
         std::process::exit(1);
     }
+
+    Ok(())
+}
+
+/// npc init [dir] — create a working npc_team/ in the current directory
+fn init_team(dir: &str) -> Result<()> {
+    let dir = std::path::Path::new(dir).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(dir));
+    let team_dir = dir.join("npc_team");
+
+    if team_dir.exists() && std::fs::read_dir(&team_dir).map(|mut d| d.next().is_some()).unwrap_or(false) {
+        eprintln!("npc_team/ already exists at {}", team_dir.display());
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(team_dir.join("jinxes")).unwrap();
+
+    // Copy core jinxes from global install
+    let global_jinxes = shellexpand::tilde("~/.npcsh/npc_team/jinxes/lib").to_string();
+    let dest_lib = team_dir.join("jinxes").join("lib");
+    if std::path::Path::new(&global_jinxes).is_dir() && !dest_lib.exists() {
+        fn copy_dir(src: &std::path::Path, dst: &std::path::Path) {
+            std::fs::create_dir_all(dst).ok();
+            if let Ok(entries) = std::fs::read_dir(src) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let dest = dst.join(entry.file_name());
+                    if path.is_dir() {
+                        copy_dir(&path, &dest);
+                    } else {
+                        std::fs::copy(&path, &dest).ok();
+                    }
+                }
+            }
+        }
+        copy_dir(std::path::Path::new(&global_jinxes), &dest_lib);
+    }
+
+    // forenpc.npc
+    let forenpc = "#!/usr/bin/env npc\n\
+name: forenpc\n\
+primary_directive: You are the team coordinator. Delegate tasks to specialists and synthesize results.\n\
+model: qwen3.5:2b\n\
+provider: ollama\n\
+jinxes:\n\
+  - sh\n\
+  - python\n\
+  - edit_file\n\
+  - load_file\n\
+  - web_search\n\
+  - file_search\n\
+  - delegate\n";
+    let fp = team_dir.join("forenpc.npc");
+    std::fs::write(&fp, forenpc).unwrap();
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fp, std::fs::Permissions::from_mode(0o755)).ok();
+    }
+
+    // coder.npc
+    let coder = "#!/usr/bin/env npc\n\
+name: coder\n\
+primary_directive: You are a coding specialist. Write, debug, and refactor code. Run tests. Edit files.\n\
+model: qwen3.5:2b\n\
+provider: ollama\n\
+jinxes:\n\
+  - sh\n\
+  - python\n\
+  - edit_file\n\
+  - load_file\n\
+  - file_search\n";
+    let cp = team_dir.join("coder.npc");
+    std::fs::write(&cp, coder).unwrap();
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&cp, std::fs::Permissions::from_mode(0o755)).ok();
+    }
+
+    // team.ctx
+    let ctx = "context: A development team.\nforenpc: forenpc\n";
+    std::fs::write(team_dir.join("team.ctx"), ctx).unwrap();
+
+    println!("Created npc_team/ at {}", team_dir.display());
+    println!("  forenpc.npc — coordinator");
+    println!("  coder.npc   — coding specialist");
+    println!("  team.ctx    — team context");
+    println!();
+    println!("Run npcsh to start, or:");
+    println!("  npc {} 'what can you do?'", fp.display());
+    println!("  npc {} 'list all TODO comments in this project'", cp.display());
 
     Ok(())
 }
