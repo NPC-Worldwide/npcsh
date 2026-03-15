@@ -154,7 +154,7 @@ Skills are jinxes, so assign them through the `jinxes:` list in `.npc` files:
 name: reviewer
 primary_directive: |
   You review code and provide actionable feedback.
-model: llama3.2
+model: qwen3.5:2b
 provider: ollama
 jinxes:
   - lib/core/sh
@@ -172,7 +172,7 @@ Team-level skills work the same way: any skill in the team's `jinxes/skills/` di
 Add `SKILLS_DIRECTORY` to your `.ctx` file to load skills from an external directory:
 
 ```yaml
-model: llama3.2
+model: qwen3.5:2b
 provider: ollama
 forenpc: lead-dev
 SKILLS_DIRECTORY: ~/shared-skills
