@@ -336,7 +336,7 @@ steps:
                       context=description,
                       model=selected_model,
                       provider=selected_provider,
-                      include_jinx_names=selected_jinxs if selected_jinxs else None,
+                      include_jinx_groups=selected_jinxs if selected_jinxs else None,
                   )
                   result = f"Project initialized at {os.path.abspath(directory)}"
                   print(f'  {result}')
