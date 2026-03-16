@@ -939,14 +939,13 @@ fn find_team_dir() -> String {
 
 /// Execute a .npc file directly (shebang: #!/usr/bin/env npc)
 async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
-    use npcrs::npc::Npc;
-    use npcrs::llm::LlmClient;
+    use npcrs::npc_compiler::Npc;
+    
     use npcrs::memory::CommandHistory;
 
     // Use the proper loader which handles shebang stripping + Jinja2 preprocessing
     let npc = Npc::from_file(npc_file)?;
 
-    let client = LlmClient::from_env();
     let model = npc.resolved_model();
     let provider = npc.resolved_provider();
 
@@ -954,11 +953,11 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
         // One-shot: run command and exit
         let system = npc.system_prompt(None);
         let messages = vec![
-            npcrs::llm::Message::system(system),
-            npcrs::llm::Message::user(cmd),
+            npcrs::Message::system(system),
+            npcrs::Message::user(cmd),
         ];
-        let response = client
-            .chat_completion(&provider, &model, &messages, None, npc.api_url.as_deref())
+        let response = npcrs::r#gen::get_genai_response
+            (&provider, &model, &messages, None, npc.api_url.as_deref())
             .await?;
         if let Some(text) = response.message.content {
             println!("{}", text);
@@ -1007,7 +1006,7 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
 
 /// Execute a .jinx file directly (shebang: #!/usr/bin/env npc-jinx)
 async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
-    use npcrs::jinx::{self, load_jinx_from_file};
+    use npcrs::npc_compiler::{load_jinx_from_file, execute_jinx};
 
     // Use the proper loader which handles shebang stripping
     let jinx = load_jinx_from_file(jinx_file)?;
@@ -1029,7 +1028,7 @@ async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
     }
 
     let empty_jinxes = std::collections::HashMap::new();
-    let result = jinx::execute_jinx(&jinx, &input_values, &empty_jinxes).await?;
+    let result = execute_jinx(&jinx, &input_values, &empty_jinxes).await?;
 
     if !result.output.is_empty() {
         println!("{}", result.output);
