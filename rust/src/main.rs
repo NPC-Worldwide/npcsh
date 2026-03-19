@@ -193,6 +193,27 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Check for -c flag (single command execution, like npcsh -c "command")
+    if let Some(pos) = args.iter().position(|a| a == "-c" || a == "--command") {
+        if let Some(command) = args.get(pos + 1) {
+            let team_dir = find_team_dir();
+            let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+            let mut kernel = Kernel::boot(&team_dir, &db_path)?;
+            match kernel.exec(0, command).await {
+                Ok(output) => {
+                    if !output.is_empty() {
+                        println!("{}", output);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
+    }
+
     // Find team directory
     let team_dir = find_team_dir();
     let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
