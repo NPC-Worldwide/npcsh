@@ -23,6 +23,57 @@ const RED: &str = "\x1b[31m";
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
+fn handle_paste_input(raw: &str) -> (String, Option<String>) {
+    let bytes = raw.as_bytes();
+    let is_binary = if bytes.len() > 4 {
+        (bytes[0] == 0x89 && bytes[1] == b'P' && bytes[2] == b'N' && bytes[3] == b'G')
+            || (bytes[0] == 0xFF && bytes[1] == 0xD8)
+            || (bytes[0] == b'G' && bytes[1] == b'I' && bytes[2] == b'F' && bytes[3] == b'8')
+            || (bytes[0] == b'B' && bytes[1] == b'M')
+            || raw.starts_with("data:image/")
+            || {
+                let non_printable = bytes.iter().take(100).filter(|&&b| b < 32 && b != b'\n' && b != b'\r' && b != b'\t').count();
+                non_printable > 10
+            }
+    } else {
+        false
+    };
+
+    if is_binary {
+        let ext = if bytes.len() > 4 && bytes[0] == 0x89 { ".png" }
+            else if bytes.len() > 2 && bytes[0] == 0xFF && bytes[1] == 0xD8 { ".jpg" }
+            else if raw.starts_with("data:image/png") { ".png" }
+            else if raw.starts_with("data:image/jpeg") || raw.starts_with("data:image/jpg") { ".jpg" }
+            else { ".bin" };
+
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join(format!("npcsh_paste_{}{}", std::process::id(), ext));
+        let write_data = if raw.starts_with("data:image/") {
+            if let Some((_, data)) = raw.split_once(',') {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.decode(data).unwrap_or_default()
+            } else {
+                raw.as_bytes().to_vec()
+            }
+        } else {
+            raw.as_bytes().to_vec()
+        };
+        let _ = std::fs::write(&temp_path, &write_data);
+        let path_str = temp_path.to_string_lossy().to_string();
+        eprintln!("\x1b[90m[pasted image: {}]\x1b[0m", path_str);
+        return (format!("[pasted image: {}]", path_str), Some(path_str));
+    }
+
+    let line_count = raw.lines().count();
+    let char_count = raw.len();
+    if line_count > 3 || char_count > 500 {
+        eprintln!("\x1b[90m[pasted: {} lines, {} chars]\x1b[0m", line_count, char_count);
+        return (raw.to_string(), Some(raw.to_string()));
+    }
+
+    (raw.to_string(), None)
+}
+
 // ── Tab Completion ──
 struct NpcHelper {
     npc_names: Vec<String>,
@@ -193,12 +244,44 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Check for -c flag (single command execution, like npcsh -c "command")
+    if let Some(pos) = args.iter().position(|a| a == "-c" || a == "--command") {
+        if let Some(command) = args.get(pos + 1) {
+            let team_dir = find_team_dir();
+            let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+            let mut kernel = Kernel::boot(&team_dir, &db_path)?;
+            match kernel.exec(0, command).await {
+                Ok(output) => {
+                    if !output.is_empty() {
+                        println!("{}", output);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
+    }
+
     // Find team directory
     let team_dir = find_team_dir();
     let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
 
     // Boot the kernel
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
+
+    // Spawn Python daemon
+    match npcrs::kernel::PythonDaemon::spawn(&team_dir, &db_path).await {
+        Ok(daemon) => {
+            eprintln!("{DIM}  python daemon ready{RESET}");
+            kernel.python_daemon = Some(daemon);
+        }
+        Err(e) => {
+            eprintln!("{DIM}  python daemon failed: {e}{RESET}");
+        }
+    }
 
     // Print welcome
     print_welcome(&kernel);
@@ -292,6 +375,7 @@ async fn main() -> Result<()> {
             }
         };
 
+        let (input, pasted_content) = handle_paste_input(&input);
         let input = input.trim().to_string();
         if input.is_empty() {
             continue;
@@ -332,7 +416,7 @@ async fn main() -> Result<()> {
             }
 
             "/help" => {
-                println!("{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n", env!("CARGO_PKG_VERSION"));
+                println!("{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n", env!("NPCSH_VERSION"));
                 println!("{BOLD}Modes:{RESET}");
                 println!("  {CYAN}/agent{RESET}          Full agent mode (tools + bash + LLM)");
                 println!("  {CYAN}/chat{RESET}           Chat-only mode (LLM, no tools)");
@@ -713,7 +797,7 @@ fn print_welcome(kernel: &Kernel) {
     eprintln!("  {BLUE}       ██║              {RESET}");
     eprintln!("  {BLUE}       ╚═╝              {RESET}");
     eprintln!();
-    eprintln!("  {BOLD}npcsh{RESET} v{} {DIM}(rust){RESET}", env!("CARGO_PKG_VERSION"));
+    eprintln!("  {BOLD}npcsh{RESET} v{} {DIM}(rust){RESET}", env!("NPCSH_VERSION"));
     eprintln!("  {DIM}{} processes | {} jinxes | /help for commands{RESET}", s.total_processes, s.jinx_count);
     eprintln!();
 
@@ -939,14 +1023,13 @@ fn find_team_dir() -> String {
 
 /// Execute a .npc file directly (shebang: #!/usr/bin/env npc)
 async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
-    use npcrs::npc::Npc;
-    use npcrs::llm::LlmClient;
+    use npcrs::npc_compiler::NPC;
+    
     use npcrs::memory::CommandHistory;
 
     // Use the proper loader which handles shebang stripping + Jinja2 preprocessing
-    let npc = Npc::from_file(npc_file)?;
+    let npc = NPC::from_file(npc_file)?;
 
-    let client = LlmClient::from_env();
     let model = npc.resolved_model();
     let provider = npc.resolved_provider();
 
@@ -954,11 +1037,11 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
         // One-shot: run command and exit
         let system = npc.system_prompt(None);
         let messages = vec![
-            npcrs::llm::Message::system(system),
-            npcrs::llm::Message::user(cmd),
+            npcrs::Message::system(system),
+            npcrs::Message::user(cmd),
         ];
-        let response = client
-            .chat_completion(&provider, &model, &messages, None, npc.api_url.as_deref())
+        let response = npcrs::r#gen::get_genai_response
+            (&provider, &model, &messages, None, npc.api_url.as_deref())
             .await?;
         if let Some(text) = response.message.content {
             println!("{}", text);
@@ -1007,7 +1090,7 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
 
 /// Execute a .jinx file directly (shebang: #!/usr/bin/env npc-jinx)
 async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
-    use npcrs::jinx::{self, load_jinx_from_file};
+    use npcrs::npc_compiler::{load_jinx_from_file, execute_jinx};
 
     // Use the proper loader which handles shebang stripping
     let jinx = load_jinx_from_file(jinx_file)?;
@@ -1029,7 +1112,7 @@ async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
     }
 
     let empty_jinxes = std::collections::HashMap::new();
-    let result = jinx::execute_jinx(&jinx, &input_values, &empty_jinxes).await?;
+    let result = execute_jinx(&jinx, &input_values, &empty_jinxes).await?;
 
     if !result.output.is_empty() {
         println!("{}", result.output);
