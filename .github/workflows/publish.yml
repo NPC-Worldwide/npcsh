@@ -30,13 +30,13 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build npcsh
-        working-directory: npcsh/rust
+        working-directory: rust
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package binary
         run: |
           mkdir -p dist
-          cp npcsh/rust/target/${{ matrix.target }}/release/npcsh dist/${{ matrix.artifact }}
+          cp rust/target/${{ matrix.target }}/release/npcsh dist/${{ matrix.artifact }}
           chmod +x dist/${{ matrix.artifact }}
 
       - name: Upload artifact
