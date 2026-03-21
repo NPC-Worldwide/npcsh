@@ -134,9 +134,11 @@ def get_package_data_patterns():
                 patterns.append(os.path.join(rel_root, f))
     return patterns
 
+_version = (Path(__file__).parent / "VERSION").read_text().strip()
+
 setup(
     name="npcsh",
-    version="1.1.31",
+    version=_version,
     packages=find_packages(exclude=["tests*"]),
     install_requires=base_requirements,  # Only install base requirements by default
     extras_require={
