@@ -1,6 +1,6 @@
 [package]
 name = "npcsh-bin"
-version = "0.1.0"
+version = "1.1.31"
 edition = "2024"
 description = "NPC Operating System Shell"
 license = "MIT"
@@ -10,7 +10,7 @@ name = "npcsh"
 path = "src/main.rs"
 
 [dependencies]
-npcrs = { path = "../../npcrs" }
+npcrs = { path = "../../npcrs", default-features = false, features = ["ffi"] }
 
 # Shell-specific deps
 rustyline = { version = "15", features = ["with-file-history"] }
@@ -19,3 +19,4 @@ dotenvy = "0.15"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 shellexpand = "3"
 tokio = { version = "1", features = ["full"] }
+base64 = "0.22"
