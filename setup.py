@@ -134,7 +134,7 @@ def get_package_data_patterns():
                 patterns.append(os.path.join(rel_root, f))
     return patterns
 
-_version = (Path(__file__).parent.parent / "VERSION").read_text().strip()
+_version = (Path(__file__).parent / "VERSION").read_text().strip()
 
 setup(
     name="npcsh",
