@@ -30,7 +30,12 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Switch to published npcrs
-        run: sed -i 's|npcrs = { path = "../../npcrs".*}|npcrs = { version = "0.1", default-features = false, features = ["ffi"] }|' rust/Cargo.toml
+        run: |
+          if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' 's|npcrs = { path = "../../npcrs".*}|npcrs = { version = "0.1", default-features = false, features = ["ffi"] }|' rust/Cargo.toml
+          else
+            sed -i 's|npcrs = { path = "../../npcrs".*}|npcrs = { version = "0.1", default-features = false, features = ["ffi"] }|' rust/Cargo.toml
+          fi
 
       - name: Build npcsh
         working-directory: rust
