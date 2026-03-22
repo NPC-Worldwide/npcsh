@@ -24,6 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout npcrs
+        uses: actions/checkout@v4
+        with:
+          repository: NPC-Worldwide/npcrs
+          path: ../npcrs
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
