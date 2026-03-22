@@ -1,2 +1,3 @@
+include VERSION
 recursive-include npcsh/npc_team *
 include npcsh/npc_team/**/*
