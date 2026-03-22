@@ -29,6 +29,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Switch to published npcrs
+        run: sed -i 's|npcrs = { path = "../../npcrs".*}|npcrs = { version = "0.1", default-features = false, features = ["ffi"] }|' rust/Cargo.toml
+
       - name: Build npcsh
         working-directory: rust
         run: cargo build --release --target ${{ matrix.target }}
