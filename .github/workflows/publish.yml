@@ -9,6 +9,22 @@ permissions:
   contents: write
 
 jobs:
+  publish-crate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Patch version and deps
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          sed -i "s/^version = \"0.0.0\"/version = \"$VERSION\"/" rust/Cargo.toml
+          sed -i 's|npcrs = { path = "../../npcrs".*}|npcrs = { version = "0.1", default-features = false, features = ["ffi"] }|' rust/Cargo.toml
+      - name: Publish to crates.io
+        working-directory: rust
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --allow-dirty
+
   build:
     strategy:
       matrix:
@@ -56,8 +72,28 @@ jobs:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}
 
+      - name: Package .deb
+        if: contains(matrix.target, 'linux')
+        run: |
+          mkdir -p deb/usr/local/bin deb/DEBIAN
+          cp dist/${{ matrix.artifact }} deb/usr/local/bin/npcsh
+          chmod +x deb/usr/local/bin/npcsh
+          cat > deb/DEBIAN/control << 'CTRL'
+          Package: npcsh
+          Version: ${{ github.ref_name }}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: NPC Worldwide <info@npcworldwi.de>
+          Description: The composable multi-agent shell
+          CTRL
+          sed -i 's/^          //' deb/DEBIAN/control
+          dpkg-deb --build deb dist/npcsh_${{ github.ref_name }}_amd64.deb
+
       - name: Upload to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/${{ matrix.artifact }}
+          files: |
+            dist/${{ matrix.artifact }}
+            dist/*.deb
