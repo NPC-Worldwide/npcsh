@@ -1,9 +1,14 @@
 [package]
-name = "npcsh-bin"
-version = "1.1.31"
+name = "npcsh"
+version = "0.0.0"
 edition = "2024"
-description = "NPC Operating System Shell"
+description = "The composable multi-agent shell"
 license = "MIT"
+repository = "https://github.com/NPC-Worldwide/npcsh"
+homepage = "https://github.com/NPC-Worldwide/npcsh"
+keywords = ["npc", "ai", "agent", "shell", "llm"]
+categories = ["command-line-utilities"]
+readme = "../README.md"
 
 [[bin]]
 name = "npcsh"
