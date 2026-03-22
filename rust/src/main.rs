@@ -272,19 +272,15 @@ async fn main() -> Result<()> {
     // Boot the kernel
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
 
-    // Spawn Python daemon
-    match npcrs::kernel::PythonDaemon::spawn(&team_dir, &db_path).await {
-        Ok(daemon) => {
-            eprintln!("{DIM}  python daemon ready{RESET}");
-            kernel.python_daemon = Some(daemon);
-        }
-        Err(e) => {
-            eprintln!("{DIM}  python daemon failed: {e}{RESET}");
-        }
-    }
-
     // Print welcome
     print_welcome(&kernel);
+
+    // Spawn Python daemon in background
+    let daemon_team = team_dir.clone();
+    let daemon_db = db_path.clone();
+    let daemon_handle = tokio::spawn(async move {
+        npcrs::kernel::PythonDaemon::spawn(&daemon_team, &daemon_db).await
+    });
 
     // Set up readline
     let config = Config::builder()
@@ -309,7 +305,28 @@ async fn main() -> Result<()> {
     let mut session_cost: f64 = 0.0;
     let session_start = std::time::Instant::now();
 
+    let daemon_handle = std::sync::Arc::new(tokio::sync::Mutex::new(Some(daemon_handle)));
+
     loop {
+        if kernel.python_daemon.is_none() {
+            let mut guard = daemon_handle.try_lock();
+            if let Ok(ref mut opt) = guard {
+                if let Some(handle) = opt.as_mut() {
+                    if handle.is_finished() {
+                        if let Some(h) = opt.take() {
+                            match h.await {
+                                Ok(Ok(daemon)) => {
+                                    kernel.python_daemon = Some(daemon);
+                                    eprintln!("{DIM}  python daemon ready{RESET}");
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Build prompt
         let npc_name = kernel
             .get_process(current_pid)
