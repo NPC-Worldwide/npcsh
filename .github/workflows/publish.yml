@@ -24,16 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Checkout npcrs
-        uses: actions/checkout@v4
-        with:
-          repository: NPC-Worldwide/npcrs
-          path: ../npcrs
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Switch to published npcrs
+        run: sed -i 's|npcrs = { path = "../../npcrs".*}|npcrs = { version = "0.1", default-features = false, features = ["ffi"] }|' rust/Cargo.toml
 
       - name: Build npcsh
         working-directory: rust
