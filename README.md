@@ -37,7 +37,7 @@ npc ./script.jinx bash_command="ls -la"     # run a jinx directly
 
 ## Benchmark Results
 
-How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 categories — from basic shell commands to multi-step workflows, code debugging, and tool chaining — scored pass/fail. Comparisons with other agent coders coming soon.
+How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 categories — from basic shell commands to multi-step workflows, code debugging, and tool chaining — scored pass/fail. Comparisons with other agent coders coming soon. For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, check out [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380)
 
 <table>
 <tr><th>Family</th><th>Model</th><th>Score</th></tr>
