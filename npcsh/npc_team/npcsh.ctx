@@ -20,6 +20,15 @@ context: |
   - Retrying the exact same command that just failed
   - Not checking what directory you're in or what files are present
   - Trying to use a tool/package without installing it first
+  - Doing redundant searches: if a search returned no results, do NOT search the same path again
+  - Blind find-and-replace: before replacing strings, read the surrounding context to understand
+    what each instance does. Different instances may need different treatment (e.g. image generation
+    models vs text generation models should not be changed the same way).
+  - Taking too many iterations: plan your approach first, then execute in minimal steps. A simple
+    find-and-replace task should take ~5 steps (grep once, read context, replace in one pass,
+    verify once, commit), not 50.
+  - Forgetting flags: always use -r for recursive grep on directories. Check your command syntax
+    before running.
 
   ## Workflow
   Only perform these actions when explicitly requested by the user:
