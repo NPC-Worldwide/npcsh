@@ -1444,10 +1444,11 @@ def save_readline_history():
 # ChromaDB client (lazy init)
 EMBEDDINGS_DB_PATH = NPCSH_VECTOR_DB_PATH
 
+chroma_client = None
 try:
-    chroma_client = chromadb.PersistentClient(path=EMBEDDINGS_DB_PATH) if chromadb else None
-except Exception as e:
-    print(f"Warning: Failed to initialize ChromaDB client at {EMBEDDINGS_DB_PATH}: {e}")
+    if chromadb:
+        chroma_client = chromadb.PersistentClient(path=EMBEDDINGS_DB_PATH)
+except BaseException:
     chroma_client = None
 
 
