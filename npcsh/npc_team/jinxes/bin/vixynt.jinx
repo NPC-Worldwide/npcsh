@@ -118,10 +118,11 @@ steps:
           elif p == 'output': ui.output_name = val
           elif p == 'attachments': ui.attachments = val
 
-      def generate_images():
+      def generate_images(silent=False):
           ui.mode = 'generating'
           ui.status = "Generating..."
-          render_screen()
+          if not silent:
+              render_screen()
 
           if not ui.prompt:
               ui.status = "Error: No prompt provided"
@@ -357,15 +358,12 @@ steps:
 
       # ========== One-shot mode ==========
       if ui.prompt and context.get('prompt'):
-          # If prompt provided via CLI args, generate immediately
-          generate_images()
+          generate_images(silent=True)
           context['output'] = ui.status
           context['messages'] = context.get('messages', [])
 
       # ========== Main TUI Loop ==========
-      elif not sys.stdin.isatty():
-          context['output'] = "Vixynt requires an interactive terminal."
-      else:
+      elif sys.stdin.isatty() and (tty is not None and termios is not None):
           fd = sys.stdin.fileno()
           old_settings = termios.tcgetattr(fd)
 
@@ -388,4 +386,8 @@ steps:
               sys.stdout.flush()
 
           context['output'] = ui.status
+          context['messages'] = context.get('messages', [])
+
+      else:
+          context['output'] = "No prompt provided. Use: npc vixynt \"your prompt here\""
           context['messages'] = context.get('messages', [])
