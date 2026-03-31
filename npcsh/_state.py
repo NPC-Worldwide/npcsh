@@ -2659,6 +2659,9 @@ def model_supports_tool_calls(model: Optional[str], provider: Optional[str]) -> 
 
     # Ollama: use the capabilities field from the model metadata
     if provider == "ollama":
+        # Cloud-routed models via ollama have tool support
+        if "cloud" in model.lower():
+            return True
         # Models that advertise tool support but don't actually work
         broken_tool_models = {"lfm2"}
         base = model.split(":")[0].lower()
