@@ -1,4 +1,5 @@
 import argparse
+import shlex
 import sys
 import os
 import traceback
@@ -248,7 +249,7 @@ def main():
         if is_valid_command:
             full_command_str = command_name
             if command_args:
-                full_command_str += " " + " ".join(command_args)
+                full_command_str += " " + " ".join(shlex.quote(a) for a in command_args)
             
             print(f"Executing command: {full_command_str}")
             
