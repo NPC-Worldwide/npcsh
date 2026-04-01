@@ -265,16 +265,28 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
         # EOFError means Ctrl+D on an empty line.
         try:
             if state.messages is not None:
-                compress_threshold = getattr(state, '_compress_threshold', 20)
-                if len(state.messages) > compress_threshold:
+                # ── Context-percentage-based compression ──
+                # Trigger at 50%, 75%, 90% of context window instead of fixed message counts.
+                active_model = state.npc.model if hasattr(state, 'npc') and hasattr(state.npc, 'model') and state.npc.model else state.chat_model
+                active_provider = state.npc.provider if hasattr(state, 'npc') and hasattr(state.npc, 'provider') and state.npc.provider else state.chat_provider
+                tok_in = state.session_input_tokens
+                ctx_window = get_model_context_window(active_model, active_provider)
+                ctx_pct = (tok_in * 100 // ctx_window) if ctx_window > 0 else 0
+
+                # Thresholds: 50%, 75%, 90%. Track which ones we've already prompted for.
+                compress_thresholds = [50, 75, 90]
+                last_prompted_pct = getattr(state, '_last_compress_prompted_pct', 0)
+                next_threshold = None
+                for t in compress_thresholds:
+                    if ctx_pct >= t and last_prompted_pct < t:
+                        next_threshold = t
+                        break
+
+                if next_threshold is not None:
                     # Display usage before compacting
                     display_usage(state)
 
                     msg_count = len(state.messages)
-                    # Show model and context usage
-                    active_model = state.npc.model if hasattr(state, 'npc') and hasattr(state.npc, 'model') and state.npc.model else state.chat_model
-                    active_provider = state.npc.provider if hasattr(state, 'npc') and hasattr(state.npc, 'provider') and state.npc.provider else state.chat_provider
-                    tok_in = state.session_input_tokens
                     tok_out = state.session_output_tokens
                     def tok_fmt(n):
                         if n >= 1_000_000:
@@ -282,10 +294,10 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                         if n >= 1000:
                             return f"{n/1000:.1f}k"
                         return str(n)
-                    ctx_window = get_model_context_window(active_model, active_provider)
-                    ctx_pct = f"  {tok_in * 100 // ctx_window}% of {tok_fmt(ctx_window)} context" if ctx_window > 0 else ""
-                    print(colored(f"  model: {active_model} ({active_provider})  tokens: {tok_fmt(tok_in)} in / {tok_fmt(tok_out)} out{ctx_pct}", "cyan"))
-                    print(colored(f"  Context has {msg_count} messages (threshold: {compress_threshold}). Compressing to keep last 6.", "cyan"))
+                    ctx_pct_str = f"  {ctx_pct}% of {tok_fmt(ctx_window)} context" if ctx_window > 0 else ""
+                    print(colored(f"  model: {active_model} ({active_provider})  tokens: {tok_fmt(tok_in)} in / {tok_fmt(tok_out)} out{ctx_pct_str}", "cyan"))
+                    action = "STOP — context nearly full!" if next_threshold == 90 else "Compress to keep last 6"
+                    print(colored(f"  Context at {ctx_pct}% ({msg_count} messages). {action}", "cyan"))
                     print(colored("  [Enter] compress  [s] skip  [f] flush N instead", "cyan"))
 
                     try:
@@ -294,9 +306,11 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                         choice = ""
 
                     if choice == 's':
-                        # Skip - bump threshold for this session
-                        state._compress_threshold = compress_threshold + 10
-                        print(colored(f"  Skipped. Next threshold: {state._compress_threshold}", "yellow"))
+                        # Skip — mark this threshold as prompted so we don't ask again until next tier
+                        state._last_compress_prompted_pct = next_threshold
+                        next_tier = [t for t in compress_thresholds if t > next_threshold]
+                        tier_msg = f"Will prompt again at {next_tier[0]}%." if next_tier else "No more prompts (at 90%+)."
+                        print(colored(f"  Skipped. {tier_msg}", "yellow"))
                     elif choice.startswith('f'):
                         # Flush N messages
                         flush_part = choice[1:].strip() if len(choice) > 1 else ""
@@ -355,6 +369,10 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                                 parent_message_id=last_msg_id,
                             )
 
+                        # Reset compression tracking since we started a fresh context
+                        state._last_compress_prompted_pct = 0
+                        state.session_input_tokens = 0
+                        state.session_output_tokens = 0
                         print(colored(f"  Compressed. New conversation: {state.conversation_id}", "green"))
                         if last_msg_id:
                             print(colored(f"  Linked to previous via message {last_msg_id}", "green"))

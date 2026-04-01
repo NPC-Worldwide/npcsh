@@ -86,6 +86,7 @@ except ImportError:
 # Third-party imports
 from colorama import Style
 from litellm import RateLimitError
+from litellm.exceptions import ContextWindowExceededError
 import numpy as np
 from termcolor import colored
 
@@ -3171,21 +3172,48 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     if state.think is not None:
                         think_kwargs["think"] = state.think
 
-                    with SpinnerContext(f"{npc_name} thinking...", style="dots_pulse"):
-                        llm_result = get_llm_response(
-                            iter_prompt,
-                            model=exec_model,
-                            provider=exec_provider,
-                            npc=state.npc,
-                            team=state.team,
-                            messages=state.messages,
-                            stream=False,
-                            attachments=state.attachments if iteration == 1 else None,
-                            context=info if iteration == 1 else None,
-                            tools=tools_for_llm,
-                            tool_choice="auto",
-                            **think_kwargs,
-                        )
+                    try:
+                        with SpinnerContext(f"{npc_name} thinking...", style="dots_pulse"):
+                            llm_result = get_llm_response(
+                                iter_prompt,
+                                model=exec_model,
+                                provider=exec_provider,
+                                npc=state.npc,
+                                team=state.team,
+                                messages=state.messages,
+                                stream=False,
+                                attachments=state.attachments if iteration == 1 else None,
+                                context=info if iteration == 1 else None,
+                                tools=tools_for_llm,
+                                tool_choice="auto",
+                                **think_kwargs,
+                            )
+                    except ContextWindowExceededError:
+                        print(colored("  Context window exceeded — compressing and retrying...", "yellow"))
+                        try:
+                            compressed = state.npc.compress_planning_state(state.messages)
+                        except Exception:
+                            compressed = None
+                        recent = sanitize_messages(state.messages[-6:])
+                        if compressed:
+                            state.messages = [{"role": "system", "content": compressed}] + recent
+                        else:
+                            state.messages = recent
+                        with SpinnerContext(f"{npc_name} thinking...", style="dots_pulse"):
+                            llm_result = get_llm_response(
+                                iter_prompt,
+                                model=exec_model,
+                                provider=exec_provider,
+                                npc=state.npc,
+                                team=state.team,
+                                messages=state.messages,
+                                stream=False,
+                                attachments=state.attachments if iteration == 1 else None,
+                                context=info if iteration == 1 else None,
+                                tools=tools_for_llm,
+                                tool_choice="auto",
+                                **think_kwargs,
+                            )
 
                     # Accumulate usage
                     if isinstance(llm_result, dict) and llm_result.get('usage'):
@@ -3276,22 +3304,51 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
 
             else:
                 flat_msgs = flatten_tool_messages(state.messages)
-                with SpinnerContext(f"{npc_name} processing with {exec_model}", style="dots_pulse"):
-                    llm_result = check_llm_command(
-                        full_llm_cmd,
-                        model=exec_model,
-                        provider=exec_provider,
-                        api_url=state.api_url,
-                        api_key=state.api_key,
-                        npc=state.npc,
-                        team=state.team,
-                        messages=flat_msgs,
-                        images=state.attachments,
-                        stream=stream_final,
-                        context=info,
-                        extra_globals=application_globals_for_jinx,
-                        tool_capable=tool_capable,
-                    )
+                try:
+                    with SpinnerContext(f"{npc_name} processing with {exec_model}", style="dots_pulse"):
+                        llm_result = check_llm_command(
+                            full_llm_cmd,
+                            model=exec_model,
+                            provider=exec_provider,
+                            api_url=state.api_url,
+                            api_key=state.api_key,
+                            npc=state.npc,
+                            team=state.team,
+                            messages=flat_msgs,
+                            images=state.attachments,
+                            stream=stream_final,
+                            context=info,
+                            extra_globals=application_globals_for_jinx,
+                            tool_capable=tool_capable,
+                        )
+                except ContextWindowExceededError:
+                    print(colored("  Context window exceeded — compressing and retrying...", "yellow"))
+                    try:
+                        compressed = state.npc.compress_planning_state(state.messages)
+                    except Exception:
+                        compressed = None
+                    recent = sanitize_messages(state.messages[-6:])
+                    if compressed:
+                        state.messages = [{"role": "system", "content": compressed}] + recent
+                    else:
+                        state.messages = recent
+                    flat_msgs = flatten_tool_messages(state.messages)
+                    with SpinnerContext(f"{npc_name} processing with {exec_model}", style="dots_pulse"):
+                        llm_result = check_llm_command(
+                            full_llm_cmd,
+                            model=exec_model,
+                            provider=exec_provider,
+                            api_url=state.api_url,
+                            api_key=state.api_key,
+                            npc=state.npc,
+                            team=state.team,
+                            messages=flat_msgs,
+                            images=state.attachments,
+                            stream=stream_final,
+                            context=info,
+                            extra_globals=application_globals_for_jinx,
+                            tool_capable=tool_capable,
+                        )
                 # Convert jinx_calls to tool_calls format on state.messages
                 if isinstance(llm_result, dict):
                     jinx_calls = llm_result.get("jinx_calls", [])
