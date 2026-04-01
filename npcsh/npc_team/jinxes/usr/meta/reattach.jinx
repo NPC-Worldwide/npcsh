@@ -301,6 +301,8 @@ steps:
                               pass
                           state.messages = loaded_msgs
                           msg_count = len(loaded_msgs)
+                          # Reset compression tracking since we loaded an existing conversation
+                          state._last_compress_prompted_pct = 0
                           # Build replay of last 10 messages into output
                           replay = []
                           for m in loaded_msgs[-10:]:
@@ -311,6 +313,8 @@ steps:
                                   replay.append(c)
                           replay.append(f"Reattached to: {cid} ({msg_count} messages loaded)")
                           context['output'] = '\n\n'.join(replay)
+                          # Return messages in context so the router preserves them
+                          context['messages'] = loaded_msgs
                       else:
                           context['output'] = f"Selected: {cid}\n\nRun: /set conversation_id={cid}"
                       break
