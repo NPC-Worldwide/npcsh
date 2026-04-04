@@ -1,4 +1,4 @@
-FROM rust:1.87-slim AS builder
+FROM rust:latest AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libsqlite3-dev libssl-dev libclang-dev \
