@@ -6,7 +6,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:$PATH"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config libsqlite3-dev libssl-dev libclang-dev cmake \
+    build-essential pkg-config libsqlite3-dev libssl-dev libclang-dev cmake \
     && rm -rf /var/lib/apt/lists/*
 
 RUN rustup component add rustfmt && cargo install npcrs
@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 libssl3 libgomp1 ca-certificates curl git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/local/cargo/bin/npcrs /usr/local/bin/npcsh
+COPY --from=builder /root/.cargo/bin/npcrs /usr/local/bin/npcsh
 
 RUN mkdir -p /root/.npcsh/npc_team/jinxes /data
 
