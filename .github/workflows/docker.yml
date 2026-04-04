@@ -1,0 +1,44 @@
+name: Docker
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(python3 -c "exec(open('setup.py').read().split('_version')[0]+'\\n'); import re; print(re.search(r\"version=['\\\"]?([^'\\\"\\s,]+)\", open('setup.py').read()).group(1))" 2>/dev/null || echo "latest")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/npc-worldwide/npcsh:latest
+            ghcr.io/npc-worldwide/npcsh:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
