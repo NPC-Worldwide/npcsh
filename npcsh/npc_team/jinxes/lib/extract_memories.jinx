@@ -89,10 +89,32 @@ steps:
           )
           memory_context = format_memory_context(memory_examples_dict)
 
-          # Combine user guidance with memory examples
-          full_context = memory_context
+          # Extraction guide — tells the model what good memories look like
+          full_context = """Extract memories as precise factual statements written in clear academic prose. Each memory should read like a sentence from a research paper or technical report.
+
+          Focus on: technical decisions and rationale, user preferences and workflow patterns, project architecture and constraints, problems encountered and their resolutions, tools/models/configurations chosen, domain knowledge demonstrated, relationships between systems and components.
+
+          Do NOT extract: trivial UI interactions, generic assistant capabilities, pleasantries, anything obvious from reading the code.
+
+          Example memories from a conversation about building a GIS mapping pane:
+          - "The application follows a pattern where tool panes are opened via toolbar buttons and registered as content types in the pane renderer map, as demonstrated by Scherzo (audio), Vixynt (images), and Cartoglyph (mapping)."
+          - "OSINT geographic data is fetched from Overpass API for structured OSM tag queries and Nominatim for geocoding, with results cached per viewport and auto-refreshed on map pan."
+          - "The decision to use Leaflet with react-leaflet over alternatives was driven by compatibility with React 18 and the need for CSP-compliant tile loading in an Electron renderer."
+
+          Example memories from a conversation about fixing Windows compatibility:
+          - "The GGUF model source detection logic used forward-slash path matching that failed on Windows due to backslash path separators, requiring normalization before string comparison."
+          - "LM Studio stores downloaded models at ~/.cache/lm-studio/models on all platforms including Windows, contrary to the initial assumption that Windows would use APPDATA."
+          - "Settings persistence failures on Windows were caused by the Flask backend not receiving the NPCSH_BASE environment variable, resulting in silent write failures to incorrect paths."
+
+          Example memories from a conversation about authentication architecture:
+          - "All authentication, billing, and subscription management is handled exclusively through Clerk with no Stripe integration, established as a core architectural constraint."
+          - "Content Security Policy headers must whitelist Clerk-owned domains for the OAuth flow to complete within the Electron BrowserWindow."
+
+          Each memory must stand alone as a meaningful, falsifiable claim. No two memories should make substantially similar claims."""
+          if memory_context:
+              full_context = full_context + "\n\nPreviously extracted memories for reference:\n" + memory_context
           if user_context:
-              full_context = user_context + "\n\n" + memory_context if memory_context else user_context
+              full_context = full_context + "\n\n" + user_context
 
           total_extracted = 0
           conversations_processed = 0
