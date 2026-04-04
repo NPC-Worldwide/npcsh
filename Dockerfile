@@ -1,37 +1,25 @@
-FROM python:3.12-slim
-
-LABEL maintainer="Chris Agostino <info@npcworldwi.de>"
-LABEL description="npcsh — AI-powered command-line shell with Rust kernel"
-
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
+FROM rust:latest AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libsqlite3-dev \
-    libssl-dev \
-    libclang-dev \
-    pkg-config \
-    curl \
-    git \
-    espeak \
-    ffmpeg \
+    pkg-config libsqlite3-dev libssl-dev libclang-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust and npcrs from crates.io
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:$PATH"
 RUN cargo install npcrs
 
-WORKDIR /app
+FROM debian:bookworm-slim
 
-COPY setup.py README.md ./
-COPY npcsh/ npcsh/
+LABEL maintainer="Chris Agostino <info@npcworldwi.de>"
+LABEL description="npcsh — AI-powered command-line shell (Rust)"
 
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -e ".[lite]"
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsqlite3-0 libssl3 ca-certificates curl git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/cargo/bin/npcrs /usr/local/bin/npcsh
 
 RUN mkdir -p /root/.npcsh/npc_team/jinxes /data
+
+COPY npcsh/npc_team/ /root/.npcsh/npc_team/
 
 ENV NPCSH_DB_PATH=/data/npcsh_history.db
 ENV NPCSH_BASE=/root/.npcsh
