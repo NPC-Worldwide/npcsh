@@ -151,7 +151,7 @@ setup(
     entry_points={
         "console_scripts": [
             # Main entry points
-            "npcsh=npcsh.npcsh:main",
+            "npcsh=npcsh.launcher:main",
             "npc=npcsh.npc:main",
             # Benchmark runner
             "npcsh-bench=npcsh.benchmark.runner:main",
