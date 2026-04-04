@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libsqlite3-dev \
     libssl-dev \
+    libclang-dev \
     pkg-config \
     curl \
     git \
