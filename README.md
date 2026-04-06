@@ -54,7 +54,7 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 <tr><td>8b</td><td>85/125 (68%)</td></tr>
 <tr><td>30b</td><td><b>103/125 (82%)</b></td></tr>
 <tr><td rowspan="2"><b>Gemma4</b></td><td>e4b</td><td>34/125 (27%)</td></tr>
-<tr><td>31b (cloud)</td><td>—</td></tr>
+<tr><td>31b (cloud)</td><td><b>105/125 (84%)</b></td></tr>
 <tr><td rowspan="4"><b>Gemma3</b></td><td>1b</td><td>—</td></tr>
 <tr><td>4b</td><td>37/125 (30%)</td></tr>
 <tr><td>12b</td><td>77/125 (62%)</td></tr>
@@ -92,7 +92,7 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 <th rowspan="2">Category</th>
 <th colspan="4">Qwen3.5</th>
 <th colspan="5">Qwen3</th>
-<th>Gemma4</th>
+<th colspan="2">Gemma4</th>
 <th colspan="3">Gemma3</th>
 <th>Llama</th>
 <th colspan="3">Mistral</th>
@@ -109,7 +109,7 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 <tr>
 <th>0.8b</th><th>2b</th><th>9b</th><th>35b</th>
 <th>1.7b</th><th>4b</th><th>8b</th><th>30b</th><th>0.6b</th>
-<th>e4b</th>
+<th>e4b</th><th>31b☁</th>
 <th>4b</th><th>12b</th><th>27b</th>
 <th>3.2:3b</th>
 <th>small3.2</th><th>ministral-3</th><th>large-3☁</th>
@@ -123,22 +123,22 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 <th>2☁</th>
 <th>3-super☁</th>
 </tr>
-<tr><td>shell (10)</td><td>5</td><td>6</td><td>10</td><td>10</td><td>8</td><td>8</td><td>9</td><td>9</td><td>—</td><td>6</td><td>6</td><td>6</td><td>9</td><td>6</td><td>10</td><td>7</td><td>8</td><td>9</td><td>10</td><td>0</td><td>10</td><td>10</td><td>10</td><td>10</td><td>10</td><td>9</td><td>7</td></tr>
-<tr><td>file-ops (10)</td><td>8</td><td>9</td><td>10</td><td>10</td><td>8</td><td>10</td><td>9</td><td>10</td><td>—</td><td>5</td><td>6</td><td>9</td><td>10</td><td>2</td><td>6</td><td>10</td><td>8</td><td>10</td><td>10</td><td>0</td><td>10</td><td>9</td><td>10</td><td>10</td><td>9</td><td>10</td><td>5</td></tr>
-<tr><td>python (10)</td><td>0</td><td>3</td><td>9</td><td>10</td><td>0</td><td>5</td><td>6</td><td>6</td><td>—</td><td>1</td><td>0</td><td>3</td><td>1</td><td>0</td><td>3</td><td>6</td><td>6</td><td>4</td><td>10</td><td>0</td><td>10</td><td>10</td><td>10</td><td>10</td><td>10</td><td>6</td><td>5</td></tr>
-<tr><td>data (10)</td><td>0</td><td>2</td><td>4</td><td>6</td><td>2</td><td>4</td><td>5</td><td>6</td><td>—</td><td>0</td><td>1</td><td>5</td><td>7</td><td>0</td><td>5</td><td>9</td><td>5</td><td>4</td><td>6</td><td>0</td><td>5</td><td>9</td><td>9</td><td>9</td><td>9</td><td>4</td><td>4</td></tr>
-<tr><td>system (10)</td><td>2</td><td>8</td><td>9</td><td>10</td><td>7</td><td>9</td><td>7</td><td>10</td><td>—</td><td>6</td><td>5</td><td>9</td><td>7</td><td>2</td><td>9</td><td>6</td><td>10</td><td>6</td><td>9</td><td>0</td><td>10</td><td>10</td><td>10</td><td>10</td><td>10</td><td>8</td><td>6</td></tr>
-<tr><td>text (10)</td><td>1</td><td>7</td><td>6</td><td>8</td><td>2</td><td>10</td><td>6</td><td>7</td><td>—</td><td>0</td><td>3</td><td>9</td><td>8</td><td>1</td><td>7</td><td>0</td><td>0</td><td>4</td><td>8</td><td>0</td><td>7</td><td>10</td><td>10</td><td>10</td><td>10</td><td>0</td><td>0</td></tr>
-<tr><td>debug (10)</td><td>2</td><td>6</td><td>10</td><td>10</td><td>0</td><td>4</td><td>2</td><td>10</td><td>—</td><td>4</td><td>0</td><td>3</td><td>0</td><td>0</td><td>4</td><td>0</td><td>2</td><td>0</td><td>9</td><td>0</td><td>9</td><td>10</td><td>10</td><td>10</td><td>10</td><td>0</td><td>3</td></tr>
-<tr><td>git (10)</td><td>0</td><td>8</td><td>6</td><td>9</td><td>2</td><td>9</td><td>9</td><td>8</td><td>—</td><td>2</td><td>4</td><td>6</td><td>9</td><td>4</td><td>8</td><td>4</td><td>0</td><td>6</td><td>8</td><td>0</td><td>5</td><td>10</td><td>10</td><td>9</td><td>9</td><td>0</td><td>1</td></tr>
-<tr><td>multi-step (10)</td><td>0</td><td>6</td><td>7</td><td>6</td><td>0</td><td>6</td><td>3</td><td>7</td><td>—</td><td>0</td><td>3</td><td>5</td><td>5</td><td>2</td><td>3</td><td>0</td><td>0</td><td>5</td><td>4</td><td>0</td><td>5</td><td>8</td><td>9</td><td>9</td><td>9</td><td>2</td><td>0</td></tr>
-<tr><td>scripting (10)</td><td>1</td><td>5</td><td>8</td><td>10</td><td>0</td><td>7</td><td>2</td><td>6</td><td>—</td><td>0</td><td>0</td><td>2</td><td>1</td><td>0</td><td>3</td><td>1</td><td>6</td><td>3</td><td>7</td><td>0</td><td>8</td><td>10</td><td>9</td><td>9</td><td>10</td><td>8</td><td>2</td></tr>
-<tr><td>image-gen (5)</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>—</td><td>5</td><td>3</td><td>5</td><td>3</td><td>5</td><td>5</td><td>1</td><td>5</td><td>2</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td></tr>
-<tr><td>audio-gen (5)</td><td>5</td><td>4</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>—</td><td>5</td><td>4</td><td>5</td><td>5</td><td>4</td><td>5</td><td>1</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td></tr>
-<tr><td>web-search (5)</td><td>1</td><td>5</td><td>4</td><td>5</td><td>1</td><td>5</td><td>4</td><td>5</td><td>—</td><td>0</td><td>1</td><td>5</td><td>5</td><td>0</td><td>4</td><td>5</td><td>0</td><td>0</td><td>3</td><td>0</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>0</td><td>2</td></tr>
-<tr><td>delegation (5)</td><td>0</td><td>2</td><td>3</td><td>3</td><td>0</td><td>2</td><td>2</td><td>4</td><td>—</td><td>0</td><td>0</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>3</td><td>0</td><td>0</td><td>0</td><td>3</td><td>4</td><td>4</td><td>4</td><td>4</td><td>2</td><td>3</td></tr>
-<tr><td>tool-chain (5)</td><td>1</td><td>5</td><td>4</td><td>4</td><td>2</td><td>5</td><td>2</td><td>5</td><td>—</td><td>0</td><td>1</td><td>3</td><td>3</td><td>0</td><td>0</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>1</td><td>1</td></tr>
-<tr><td><b>Total (125)</b></td><td><b>31</b></td><td><b>81</b></td><td><b>100</b></td><td><b>111</b></td><td><b>42</b></td><td><b>94</b></td><td><b>76</b></td><td><b>103</b></td><td>—</td><td><b>34</b></td><td><b>37</b></td><td><b>77</b></td><td><b>73</b></td><td><b>26</b></td><td><b>72</b></td><td><b>51</b></td><td><b>59</b></td><td><b>58</b></td><td><b>94</b></td><td><b>10</b></td><td><b>102</b></td><td><b>120</b></td><td><b>121</b></td><td><b>120</b></td><td><b>120</b></td><td><b>60</b></td><td><b>49</b></td></tr>
+<tr><td>shell (10)</td><td>5</td><td>6</td><td>10</td><td>10</td><td>8</td><td>8</td><td>9</td><td>9</td><td>—</td><td>6</td><td>10</td><td>6</td><td>6</td><td>9</td><td>6</td><td>10</td><td>7</td><td>8</td><td>9</td><td>10</td><td>0</td><td>10</td><td>10</td><td>10</td><td>10</td><td>10</td><td>9</td><td>7</td></tr>
+<tr><td>file-ops (10)</td><td>8</td><td>9</td><td>10</td><td>10</td><td>8</td><td>10</td><td>9</td><td>10</td><td>—</td><td>5</td><td>8</td><td>6</td><td>9</td><td>10</td><td>2</td><td>6</td><td>10</td><td>8</td><td>10</td><td>10</td><td>0</td><td>10</td><td>9</td><td>10</td><td>10</td><td>9</td><td>10</td><td>5</td></tr>
+<tr><td>python (10)</td><td>0</td><td>3</td><td>9</td><td>10</td><td>0</td><td>5</td><td>6</td><td>6</td><td>—</td><td>1</td><td>10</td><td>0</td><td>3</td><td>1</td><td>0</td><td>3</td><td>6</td><td>6</td><td>4</td><td>10</td><td>0</td><td>10</td><td>10</td><td>10</td><td>10</td><td>10</td><td>6</td><td>5</td></tr>
+<tr><td>data (10)</td><td>0</td><td>2</td><td>4</td><td>6</td><td>2</td><td>4</td><td>5</td><td>6</td><td>—</td><td>0</td><td>9</td><td>1</td><td>5</td><td>7</td><td>0</td><td>5</td><td>9</td><td>5</td><td>4</td><td>6</td><td>0</td><td>5</td><td>9</td><td>9</td><td>9</td><td>9</td><td>4</td><td>4</td></tr>
+<tr><td>system (10)</td><td>2</td><td>8</td><td>9</td><td>10</td><td>7</td><td>9</td><td>7</td><td>10</td><td>—</td><td>6</td><td>10</td><td>5</td><td>9</td><td>7</td><td>2</td><td>9</td><td>6</td><td>10</td><td>6</td><td>9</td><td>0</td><td>10</td><td>10</td><td>10</td><td>10</td><td>10</td><td>8</td><td>6</td></tr>
+<tr><td>text (10)</td><td>1</td><td>7</td><td>6</td><td>8</td><td>2</td><td>10</td><td>6</td><td>7</td><td>—</td><td>0</td><td>8</td><td>3</td><td>9</td><td>8</td><td>1</td><td>7</td><td>0</td><td>0</td><td>4</td><td>8</td><td>0</td><td>7</td><td>10</td><td>10</td><td>10</td><td>10</td><td>0</td><td>0</td></tr>
+<tr><td>debug (10)</td><td>2</td><td>6</td><td>10</td><td>10</td><td>0</td><td>4</td><td>2</td><td>10</td><td>—</td><td>4</td><td>0</td><td>0</td><td>3</td><td>0</td><td>0</td><td>4</td><td>0</td><td>2</td><td>0</td><td>9</td><td>0</td><td>9</td><td>10</td><td>10</td><td>10</td><td>10</td><td>0</td><td>3</td></tr>
+<tr><td>git (10)</td><td>0</td><td>8</td><td>6</td><td>9</td><td>2</td><td>9</td><td>9</td><td>8</td><td>—</td><td>2</td><td>9</td><td>4</td><td>6</td><td>9</td><td>4</td><td>8</td><td>4</td><td>0</td><td>6</td><td>8</td><td>0</td><td>5</td><td>10</td><td>10</td><td>9</td><td>9</td><td>0</td><td>1</td></tr>
+<tr><td>multi-step (10)</td><td>0</td><td>6</td><td>7</td><td>6</td><td>0</td><td>6</td><td>3</td><td>7</td><td>—</td><td>0</td><td>9</td><td>3</td><td>5</td><td>5</td><td>2</td><td>3</td><td>0</td><td>0</td><td>5</td><td>4</td><td>0</td><td>5</td><td>8</td><td>9</td><td>9</td><td>9</td><td>2</td><td>0</td></tr>
+<tr><td>scripting (10)</td><td>1</td><td>5</td><td>8</td><td>10</td><td>0</td><td>7</td><td>2</td><td>6</td><td>—</td><td>0</td><td>9</td><td>0</td><td>2</td><td>1</td><td>0</td><td>3</td><td>1</td><td>6</td><td>3</td><td>7</td><td>0</td><td>8</td><td>10</td><td>9</td><td>9</td><td>10</td><td>8</td><td>2</td></tr>
+<tr><td>image-gen (5)</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>—</td><td>5</td><td>5</td><td>3</td><td>5</td><td>3</td><td>5</td><td>5</td><td>1</td><td>5</td><td>2</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td></tr>
+<tr><td>audio-gen (5)</td><td>5</td><td>4</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>—</td><td>5</td><td>5</td><td>4</td><td>5</td><td>5</td><td>4</td><td>5</td><td>1</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td></tr>
+<tr><td>web-search (5)</td><td>1</td><td>5</td><td>4</td><td>5</td><td>1</td><td>5</td><td>4</td><td>5</td><td>—</td><td>0</td><td>5</td><td>1</td><td>5</td><td>5</td><td>0</td><td>4</td><td>5</td><td>0</td><td>0</td><td>3</td><td>0</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>0</td><td>2</td></tr>
+<tr><td>delegation (5)</td><td>0</td><td>2</td><td>3</td><td>3</td><td>0</td><td>2</td><td>2</td><td>4</td><td>—</td><td>0</td><td>4</td><td>0</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>3</td><td>0</td><td>0</td><td>0</td><td>3</td><td>4</td><td>4</td><td>4</td><td>4</td><td>2</td><td>3</td></tr>
+<tr><td>tool-chain (5)</td><td>1</td><td>5</td><td>4</td><td>4</td><td>2</td><td>5</td><td>2</td><td>5</td><td>—</td><td>0</td><td>4</td><td>1</td><td>3</td><td>3</td><td>0</td><td>0</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>1</td><td>1</td></tr>
+<tr><td><b>Total (125)</b></td><td><b>31</b></td><td><b>81</b></td><td><b>100</b></td><td><b>111</b></td><td><b>42</b></td><td><b>94</b></td><td><b>76</b></td><td><b>103</b></td><td>—</td><td><b>34</b></td><td><b>105</b></td><td><b>37</b></td><td><b>77</b></td><td><b>73</b></td><td><b>26</b></td><td><b>72</b></td><td><b>51</b></td><td><b>59</b></td><td><b>58</b></td><td><b>94</b></td><td><b>10</b></td><td><b>102</b></td><td><b>120</b></td><td><b>121</b></td><td><b>120</b></td><td><b>120</b></td><td><b>60</b></td><td><b>49</b></td></tr>
 </table>
 
 </details>
