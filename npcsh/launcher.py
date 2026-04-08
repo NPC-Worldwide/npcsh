@@ -10,7 +10,7 @@ def _find_rust_binary():
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     bin_dir = os.path.join(pkg_dir, "bin")
 
-    name = "npcrs.exe" if platform.system() == "Windows" else "npcrs"
+    name = "npcsh.exe" if platform.system() == "Windows" else "npcsh"
 
     # Check inside the package
     pkg_bin = os.path.join(bin_dir, name)
