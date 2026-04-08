@@ -58,25 +58,24 @@ steps:
                   context['output'] = _result + 'Knowledge graph is empty. Use /kg backfill=true or have conversations first.'
                   context['messages'] = _msgs
                   _ch.close()
-                  exit()
+              else:
+                  _f0 = len(_kg.get('facts', []))
+                  _c0 = len(_kg.get('concepts', []))
+                  _label = 'Sleep'
 
-              _f0 = len(_kg.get('facts', []))
-              _c0 = len(_kg.get('concepts', []))
-              _label = 'Sleep'
+                  _kg, _ = kg_sleep_process(existing_kg=_kg, model=_model, provider=_provider, npc=_npc, operations_config=_ops_config)
 
-              _kg, _ = kg_sleep_process(existing_kg=_kg, model=_model, provider=_provider, npc=_npc, operations_config=_ops_config)
+                  if _do_dream:
+                      _label += ' & Dream'
+                      _kg, _ = kg_dream_process(existing_kg=_kg, model=_model, provider=_provider, npc=_npc)
 
-              if _do_dream:
-                  _label += ' & Dream'
-                  _kg, _ = kg_dream_process(existing_kg=_kg, model=_model, provider=_provider, npc=_npc)
-
-              save_kg_to_db(_eng, _kg, _team_name, _npc_name, _cur_path)
-              _f1 = len(_kg.get('facts', []))
-              _c1 = len(_kg.get('concepts', []))
-              _result += f"{_label} complete. Facts: {_f0} -> {_f1} ({_f1-_f0:+}), Concepts: {_c0} -> {_c1} ({_c1-_c0:+})"
-              context['output'] = _result
-              context['messages'] = _msgs
-              _ch.close()
+                  save_kg_to_db(_eng, _kg, _team_name, _npc_name, _cur_path)
+                  _f1 = len(_kg.get('facts', []))
+                  _c1 = len(_kg.get('concepts', []))
+                  _result += f"{_label} complete. Facts: {_f0} -> {_f1} ({_f1-_f0:+}), Concepts: {_c0} -> {_c1} ({_c1-_c0:+})"
+                  context['output'] = _result
+                  context['messages'] = _msgs
+                  _ch.close()
           except Exception as e:
               traceback.print_exc()
               context['output'] = f'KG evolution error: {e}'
