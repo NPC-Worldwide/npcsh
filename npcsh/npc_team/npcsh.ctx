@@ -40,8 +40,7 @@ context: |
 databases:
 - ~/npcsh_history.db
 forenpc: sibiji
-mcp_servers:
-- ~/.npcsh/mcp_server.py
+mcp_servers: []
 preferences:
 - If you come up with an idea, it is critical that you also provide a way to validate
   the idea.
