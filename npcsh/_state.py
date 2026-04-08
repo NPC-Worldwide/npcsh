@@ -821,6 +821,23 @@ def ensure_npcshrc_exists() -> str:
 
 
 
+def load_npcshrc_env() -> None:
+    """Load ~/.npcshrc exports into the current process environment."""
+    npcshrc_path = os.path.expanduser("~/.npcshrc")
+    if not os.path.exists(npcshrc_path):
+        return
+    with open(npcshrc_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("export ") and "=" in line:
+                # export KEY='value' or export KEY=value
+                kv = line[len("export "):]
+                key, _, val = kv.partition("=")
+                val = val.strip("'\"")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+
+
 def setup_npcsh_config() -> None:
     """
     Function Description:
@@ -834,6 +851,7 @@ def setup_npcsh_config() -> None:
     """
 
     ensure_npcshrc_exists()
+    load_npcshrc_env()
     add_npcshrc_to_shell_config()
 
 
