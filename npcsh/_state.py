@@ -793,7 +793,7 @@ def ensure_npcshrc_exists() -> str:
             npcshrc.write("# NPCSH Configuration File\n")
             npcshrc.write("export NPCSH_INITIALIZED=0\n")
             npcshrc.write("export NPCSH_DEFAULT_MODE='agent'\n")
-            npcshrc.write("export NPCSH_BUILD_KG=1")
+            npcshrc.write("export NPCSH_BUILD_KG=1\n")
             npcshrc.write("export NPCSH_CHAT_PROVIDER='ollama'\n")
             npcshrc.write("export NPCSH_CHAT_MODEL='gemma3:4b'\n")
             npcshrc.write("export NPCSH_REASONING_PROVIDER='ollama'\n")
@@ -816,7 +816,7 @@ def ensure_npcshrc_exists() -> str:
             npcshrc.write("export NPCSH_API_URL=''\n")
             npcshrc.write("export NPCSH_DB_PATH='~/npcsh_history.db'\n")
             npcshrc.write("export NPCSH_VECTOR_DB_PATH='~/npcsh_chroma.db'\n")
-            npcshrc.write("export NPCSH_STREAM_OUTPUT=0")
+            npcshrc.write("export NPCSH_STREAM_OUTPUT=0\n")
     return npcshrc_path
 
 
