@@ -83,8 +83,15 @@ def _exec_jinx_file(jinx_path: str, args: list):
                 input_values[name] = arg
                 positional_idx += 1
 
+    # Set up NPC team so jinx steps have access to npc object
+    forenpc_obj = None
     try:
-        result = jinx.execute(input_values=input_values)
+        _, team, forenpc_obj = setup_shell()
+    except Exception as e:
+        print(f"Warning: Could not set up NPC team: {e}", file=sys.stderr)
+
+    try:
+        result = jinx.execute(input_values=input_values, npc=forenpc_obj)
         output = result.get('output', '') if isinstance(result, dict) else str(result)
         if output:
             print(output)
