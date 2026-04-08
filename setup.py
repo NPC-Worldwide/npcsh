@@ -1,7 +1,37 @@
 from setuptools import setup, find_packages
+from setuptools.command.build_py import build_py
 import os
+import platform
+import subprocess
 import sys
 from pathlib import Path
+
+
+class BuildWithRust(build_py):
+    """Build the Rust binary and place it in npcsh/bin/ before packaging."""
+
+    def run(self):
+        rust_dir = Path(__file__).parent / "rust"
+        bin_dir = Path(__file__).parent / "npcsh" / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+
+        if rust_dir.exists() and (rust_dir / "Cargo.toml").exists():
+            try:
+                subprocess.check_call(
+                    ["cargo", "build", "--release"],
+                    cwd=str(rust_dir),
+                )
+                ext = ".exe" if platform.system() == "Windows" else ""
+                src = rust_dir / "target" / "release" / f"npcsh{ext}"
+                if src.exists():
+                    dst = bin_dir / f"npcsh{ext}"
+                    import shutil
+                    shutil.copy2(str(src), str(dst))
+                    os.chmod(str(dst), 0o755)
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                print(f"Warning: Rust build failed ({e}), falling back to Python-only")
+
+        super().run()
 
 
 def package_files(directory):
@@ -46,7 +76,7 @@ jinx_dynamic = [f"{name}=npcsh.npc:jinx_main" for name in jinx_entries]
 dynamic_entries = npc_dynamic + jinx_dynamic
 
 base_requirements = [
-    'npcpy>=1.4.11',
+    'npcpy>=1.4.17',
     "jinja2",
     "litellm",   
     "docx", 
@@ -168,9 +198,11 @@ setup(
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
     ],
+    cmdclass={"build_py": BuildWithRust},
     include_package_data=True,
     package_data={
         "npcsh": [
+            "bin/*",
             "npc_team/*.npc",
             "npc_team/*.ctx",
             "npc_team/jinxes/**/*.jinx",
