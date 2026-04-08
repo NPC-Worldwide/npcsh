@@ -97,7 +97,7 @@ jobs:
           mkdir -p deb/usr/local/bin deb/DEBIAN
           cp release/${{ matrix.artifact }} deb/usr/local/bin/npcsh
           chmod +x deb/usr/local/bin/npcsh
-          cat > deb/DEBIAN/control << 'CTRL'
+          cat > deb/DEBIAN/control << CTRL
           Package: npcsh
           Version: ${GITHUB_REF_NAME#v}
           Section: utils
