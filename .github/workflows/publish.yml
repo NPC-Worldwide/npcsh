@@ -25,19 +25,22 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --allow-dirty
 
-  build:
+  build-wheels:
     strategy:
       matrix:
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             artifact: npcsh-linux-x86_64
+            plat_name: manylinux_2_35_x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact: npcsh-macos-x86_64
+            plat_name: macosx_13_0_x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: npcsh-macos-aarch64
+            plat_name: macosx_14_0_arm64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -48,6 +51,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Switch to published npcrs
         run: |
           if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -56,31 +64,42 @@ jobs:
             sed -i 's|npcrs = { path = "../../npcrs".*}|npcrs = { version = "0.1", default-features = false, features = ["ffi"] }|' rust/Cargo.toml
           fi
 
-      - name: Build npcsh
+      - name: Build Rust binary
         working-directory: rust
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package binary
+      - name: Place binary in package
         run: |
-          mkdir -p dist
-          cp rust/target/${{ matrix.target }}/release/npcsh dist/${{ matrix.artifact }}
-          chmod +x dist/${{ matrix.artifact }}
+          mkdir -p npcsh/bin
+          cp rust/target/${{ matrix.target }}/release/npcsh npcsh/bin/npcsh
+          chmod +x npcsh/bin/npcsh
 
-      - name: Upload artifact
+      - name: Build platform wheel
+        run: |
+          pip install build wheel setuptools
+          python setup.py bdist_wheel --plat-name ${{ matrix.plat_name }}
+
+      - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}
+          name: wheel-${{ matrix.artifact }}
+          path: dist/*.whl
+
+      - name: Package standalone binary
+        run: |
+          mkdir -p release
+          cp rust/target/${{ matrix.target }}/release/npcsh release/${{ matrix.artifact }}
+          chmod +x release/${{ matrix.artifact }}
 
       - name: Package .deb
         if: contains(matrix.target, 'linux')
         run: |
           mkdir -p deb/usr/local/bin deb/DEBIAN
-          cp dist/${{ matrix.artifact }} deb/usr/local/bin/npcsh
+          cp release/${{ matrix.artifact }} deb/usr/local/bin/npcsh
           chmod +x deb/usr/local/bin/npcsh
           cat > deb/DEBIAN/control << 'CTRL'
           Package: npcsh
-          Version: ${{ github.ref_name }}
+          Version: ${GITHUB_REF_NAME#v}
           Section: utils
           Priority: optional
           Architecture: amd64
@@ -88,12 +107,57 @@ jobs:
           Description: The composable multi-agent shell
           CTRL
           sed -i 's/^          //' deb/DEBIAN/control
-          dpkg-deb --build deb dist/npcsh_${{ github.ref_name }}_amd64.deb
+          dpkg-deb --build deb release/npcsh_${GITHUB_REF_NAME#v}_amd64.deb
 
       - name: Upload to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/${{ matrix.artifact }}
-            dist/*.deb
+            release/${{ matrix.artifact }}
+            release/*.deb
+
+  build-sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build sdist
+        run: |
+          pip install build
+          python -m build --sdist
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  publish-pypi:
+    needs: [build-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          verify_metadata: true
+          skip_existing: true
+          verbose: true
+          repository_url: https://upload.pypi.org/legacy/
+          packages_dir: dist
