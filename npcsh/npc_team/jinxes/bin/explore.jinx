@@ -69,7 +69,7 @@ steps:
               thinking={'type': 'enabled', 'budget_tokens': 128},
           )
           elapsed = _time.time() - t0
-          print(colored("    LLM: {:.1f}s".format(elapsed), "white", attrs=["dark"]))
+          print(colored(f"    LLM: {elapsed:.1f}s", "white", attrs=["dark"]))
           return result
 
       # ── Helpers ─────────────────────────────────────────────
@@ -109,13 +109,13 @@ steps:
                   for i, line in enumerate(f):
                       if i >= max_lines_to_read:
                           lines.append(
-                              "\n... [truncated at {} lines, file continues] ...".format(max_lines_to_read)
+                              f"\n... [truncated at {max_lines_to_read} lines, file continues] ..."
                           )
                           break
                       lines.append(line.rstrip())
               return '\n'.join(lines)
           except Exception as e:
-              return "[error reading file: {}]".format(e)
+              return f"[error reading file: {e}]"
 
       def get_relative(path):
           if path.startswith(base_path):
@@ -177,32 +177,32 @@ steps:
           indent = '  ' * depth
           dirname = os.path.basename(root) or base_path
           n_files = len(files)
-          tree_lines.append("{}{}/ ({} files)".format(indent, dirname, n_files))
+          tree_lines.append(f"{indent}{dirname}/ ({n_files} files)")
 
       # Sort extensions by count
       top_exts = sorted(ext_counts.items(), key=lambda x: x[1], reverse=True)[:20]
-      ext_summary = ', '.join("{}: {}".format(e, c) for e, c in top_exts)
+      ext_summary = ', '.join(f"{e}: {c}" for e, c in top_exts)
 
       # Build file listing — only readable (non-binary) files
       readable_files = [f for f in all_files if not is_binary(f['path'])]
       file_listing_lines = []
       for f in sorted(readable_files, key=lambda x: x['rel']):
-          sz_str = "{:.1f}K".format(f['size'] / 1024) if f['size'] >= 1024 else "{}B".format(f['size'])
-          file_listing_lines.append("  {} ({})".format(f['rel'], sz_str))
+          sz_str = f"{f['size'] / 1024:.1f}K" if f['size'] >= 1024 else f"{f['size']}B"
+          file_listing_lines.append(f"  {f['rel']} ({sz_str})")
       if len(file_listing_lines) > 120:
           file_listing = '\n'.join(file_listing_lines[:80])
-          file_listing += "\n  ... ({} more files) ...".format(len(file_listing_lines) - 80)
+          file_listing += f"\n  ... ({len(file_listing_lines) - 80} more files) ..."
       else:
           file_listing = '\n'.join(file_listing_lines)
 
       structure_parts = [
           "PROJECT STRUCTURE REPORT",
           "=======================",
-          "Root: " + base_path,
-          "Total files: " + str(len(all_files)),
-          "Total directories: " + str(dir_count),
+          f"Root: {base_path}",
+          f"Total files: {len(all_files)}",
+          f"Total directories: {dir_count}",
           "",
-          "File types: " + ext_summary,
+          f"File types: {ext_summary}",
           "",
           "Directory tree (top 3 levels):",
           '\n'.join(tree_lines[:60]),
@@ -215,8 +215,8 @@ steps:
       ]
       structure_report = '\n'.join(structure_parts)
 
-      print(colored("\n  {} readable files across {} directories".format(len(readable_files), dir_count), "green"))
-      print(colored("  Top types: {}".format(ext_summary[:80]), "white", attrs=["dark"]))
+      print(colored(f"\n  {len(readable_files)} readable files across {dir_count} directories", "green"))
+      print(colored(f"  Top types: {ext_summary[:80]}", "white", attrs=["dark"]))
 
       # Parse file list from LLM response
       def parse_file_list(text):
@@ -275,9 +275,7 @@ steps:
                   initial_picks.append(f['rel'])
 
       files_to_read = initial_picks
-      print(colored("\n  Starting with {} files: {}".format(
-          len(files_to_read), ', '.join(os.path.basename(f) for f in files_to_read)
-      ), "yellow"))
+      print(colored(f"\n  Starting with {len(files_to_read)} files: {', '.join(os.path.basename(f) for f in files_to_read)}", "yellow"))
 
       # ══════════════════════════════════════════════════════════
       #  PHASE 2: Iterative Deep Exploration
@@ -305,14 +303,14 @@ steps:
 
       while iteration < max_iters and files_to_read:
           iteration += 1
-          status("  Iteration {}/{} - reading {} files...".format(iteration, max_iters, len(files_to_read)))
+          status(f"  Iteration {iteration}/{max_iters} - reading {len(files_to_read)} files...")
 
           # Read requested files
           file_contents = []
           for rel_path in files_to_read[:4]:  # Cap at 4 per round to keep prompts manageable
               abs_path = resolve_path(rel_path)
               if abs_path is None:
-                  file_contents.append("### {}\n[file not found]".format(rel_path))
+                  file_contents.append(f"### {rel_path}\n[file not found]")
                   continue
               if abs_path in files_read:
                   continue
@@ -320,8 +318,8 @@ steps:
 
               content = read_file_safe(abs_path, max_lines)
               rel = get_relative(abs_path)
-              file_contents.append("### {}\n```\n{}\n```".format(rel, content))
-              print(colored("    Read: {}".format(rel), "white", attrs=["dark"]))
+              file_contents.append(f"### {rel}\n```\n{content}\n```")
+              print(colored(f"    Read: {rel}", "white", attrs=["dark"]))
 
           if not file_contents:
               print(colored("    No new files to read, finishing exploration", "yellow"))
@@ -331,7 +329,7 @@ steps:
           findings_summary = ""
           if findings:
               findings_summary = "\n\nFINDINGS SO FAR:\n" + "\n".join(
-                  "- {}: {}".format(f, s) for f, s in findings[-10:]
+                  f"- {f}: {s}" for f, s in findings[-10:]
               )
 
           files_read_list = '\n'.join('  - ' + get_relative(f) for f in sorted(files_read))
@@ -343,8 +341,8 @@ steps:
           )
 
           analysis_parts = [
-              "You are exploring a codebase at: " + base_path,
-              ("Goal: " + task_desc) if task_desc else "",
+              f"You are exploring a codebase at: {base_path}",
+              f"Goal: {task_desc}" if task_desc else "",
               "",
               "FILES ALREADY READ:",
               files_read_list,
@@ -406,9 +404,7 @@ steps:
           is_complete = 'STATUS: COMPLETE' in analysis.upper() or 'STATUS:COMPLETE' in analysis.upper().replace(' ', '')
 
           n_new = len([f for f in (files_to_read[:6]) if resolve_path(f) and resolve_path(f) not in files_read])
-          print(colored("    Iteration {} done. {} files read total. Next: {} files".format(
-              iteration, len(files_read), len(next_files)
-          ), "green"))
+          print(colored(f"    Iteration {iteration} done. {len(files_read)} files read total. Next: {len(next_files)} files", "green"))
 
           if is_complete:
               print(colored("\n  LLM reports exploration complete.", "green", attrs=["bold"]))
@@ -421,21 +417,21 @@ steps:
       # ══════════════════════════════════════════════════════════
       status("Phase 3: Synthesizing findings...")
 
-      findings_text = '\n'.join("- {}: {}".format(f, s) for f, s in findings)
+      findings_text = '\n'.join(f"- {f}: {s}" for f, s in findings)
       files_read_text = '\n'.join('  - ' + get_relative(f) for f in sorted(files_read))
 
       task_section = ""
       if task_desc:
-          task_section = '8. **Task Answer**: Directly answer: "' + task_desc + '"'
+          task_section = f'8. **Task Answer**: Directly answer: "{task_desc}"'
 
       synth_parts = [
-          "You have explored a codebase at: " + base_path,
-          ("The user specifically asked: " + task_desc) if task_desc else "",
+          f"You have explored a codebase at: {base_path}",
+          f"The user specifically asked: {task_desc}" if task_desc else "",
           "",
           "STRUCTURE:",
           structure_report,
           "",
-          "FILES READ ({} total):".format(len(files_read)),
+          f"FILES READ ({len(files_read)} total):",
           files_read_text,
           "",
           "FINDINGS:",
@@ -460,18 +456,16 @@ steps:
 
       # Print final report
       sep = '=' * 60
-      print(colored("\n" + sep, "cyan"))
+      print(colored(f"\n{sep}", "cyan"))
       print(colored("  EXPLORATION REPORT", "cyan", attrs=["bold"]))
-      print(colored("  {} | {} files read across {} iterations".format(
-          base_path, len(files_read), iteration
-      ), "white", attrs=["dark"]))
-      print(colored(sep + "\n", "cyan"))
+      print(colored(f"  {base_path} | {len(files_read)} files read across {iteration} iterations", "white", attrs=["dark"]))
+      print(colored(f"{sep}\n", "cyan"))
       try:
           from npcpy.npc_sysenv import render_markdown
           render_markdown(report)
       except Exception:
           print(report)
-      print(colored("\n" + sep, "cyan"))
+      print(colored(f"\n{sep}", "cyan"))
 
       output = report
       context['output'] = output
