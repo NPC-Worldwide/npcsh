@@ -55,38 +55,35 @@ steps:
               _model = npc.model if npc else (state.chat_model if state else 'gemma3:4b')
               _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
 
-              prompt_parts = [
-                  'Generate a changelog from these git commits.',
-                  '',
-                  'Range: ' + from_ref + ' -> ' + to_ref + ' (' + str(commit_count) + ' commits)',
-                  '',
-                  'Commits:',
-                  log[:6000],
-                  '',
-                  'Detailed (with bodies):',
-                  detailed[:4000] if detailed else '(none)',
-                  '',
-                  'Format as a clean markdown changelog:',
-                  '',
-                  '### Features',
-                  '- Description of feature (hash)',
-                  '',
-                  '### Bug Fixes',
-                  '- Description of fix (hash)',
-                  '',
-                  '### Improvements',
-                  '- Description of improvement (hash)',
-                  '',
-                  '### Other',
-                  '- Chores, docs, refactoring (hash)',
-                  '',
-                  'Rules:',
-                  '- Group related commits into single entries',
-                  '- Include commit hashes',
-                  '- Omit empty sections',
-                  '- Be concise — one line per entry',
-              ]
-              prompt = '\n'.join(prompt_parts)
+              prompt = f"""Generate a changelog from these git commits.
+
+              Range: {from_ref} -> {to_ref} ({commit_count} commits)
+
+              Commits:
+              {log[:6000]}
+
+              Detailed (with bodies):
+              {detailed[:4000] if detailed else '(none)'}
+
+              Format as a clean markdown changelog:
+
+              ### Features
+              - Description of feature (hash)
+
+              ### Bug Fixes
+              - Description of fix (hash)
+
+              ### Improvements
+              - Description of improvement (hash)
+
+              ### Other
+              - Chores, docs, refactoring (hash)
+
+              Rules:
+              - Group related commits into single entries
+              - Include commit hashes
+              - Omit empty sections
+              - Be concise — one line per entry"""
 
               resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
               result = str(resp.get('response', ''))
