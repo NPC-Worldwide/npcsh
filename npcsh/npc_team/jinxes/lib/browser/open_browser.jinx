@@ -37,7 +37,7 @@ steps:
           session_id = str(uuid.uuid4())[:8]
           set_driver(session_id, driver)
 
-          output = "Browser opened. Session: {}. Navigated to: {}. Title: {}".format(session_id, url, driver.title)
+          output = f"Browser opened. Session: {session_id}. Navigated to: {url}. Title: {driver.title}"
       except Exception as e:
           import traceback
-          output = "Failed to open browser: {}\n{}".format(str(e), traceback.format_exc())
+          output = f"Failed to open browser: {str(e)}\n{traceback.format_exc()}"

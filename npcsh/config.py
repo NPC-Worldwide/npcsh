@@ -47,6 +47,8 @@ NPCSH_EDIT_APPROVAL = os.environ.get("NPCSH_EDIT_APPROVAL", "off")  # off, inter
 NPCSH_TTS_ENGINE = os.environ.get("NPCSH_TTS_ENGINE", "")
 NPCSH_TTS_VOICE = os.environ.get("NPCSH_TTS_VOICE", "")
 NPCSH_YAP_SETUP_DONE = os.environ.get("NPCSH_YAP_SETUP_DONE", "0") == "1"
+# Engine selection: "python" (stable) or "rust" (experimental)
+NPCSH_ENGINE = os.environ.get("NPCSH_ENGINE", "python")
 
 
 def get_shell_config_file() -> str:

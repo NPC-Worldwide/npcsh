@@ -277,19 +277,19 @@ steps:
                   wrap_w = max(20, W - 6)
                   stmt = fact['statement']
                   while len(stmt) > wrap_w:
-                      lines.append(("  " + stmt[:wrap_w], ""))
+                      lines.append((f"  {stmt[:wrap_w]}", ""))
                       stmt = stmt[wrap_w:]
                   if stmt:
-                      lines.append(("  " + stmt, ""))
+                      lines.append((f"  {stmt}", ""))
                   lines.append(("", ""))
                   if fact['source_text']:
                       lines.append(("\033[1mSource text:\033[0m", ""))
                       st = fact['source_text']
                       while len(st) > wrap_w:
-                          lines.append(("  " + st[:wrap_w], ""))
+                          lines.append((f"  {st[:wrap_w]}", ""))
                           st = st[wrap_w:]
                       if st:
-                          lines.append(("  " + st, ""))
+                          lines.append((f"  {st}", ""))
                       lines.append(("", ""))
                   lines.append((f"\033[1mType:\033[0m {fact['type']}", ""))
                   lines.append((f"\033[1mGeneration:\033[0m {fact['generation']}", ""))
@@ -304,7 +304,7 @@ steps:
                       ), {"src": fact['statement']})
                       found = False
                       for row in r:
-                          lines.append(("  \033[36m" + (row.target or '') + "\033[0m", ""))
+                          lines.append((f"  \033[36m{row.target or ''}\033[0m", ""))
                           found = True
                       if not found:
                           lines.append(("  \033[90m(none)\033[0m", ""))
@@ -317,7 +317,7 @@ steps:
                       return
                   concept = ui.concepts[idx]
                   lines = []
-                  lines.append(("\033[1mConcept:\033[0m \033[36m" + concept['name'] + "\033[0m", ""))
+                  lines.append((f"\033[1mConcept:\033[0m \033[36m{concept['name']}\033[0m", ""))
                   lines.append((f"\033[1mGeneration:\033[0m {concept['generation']}", ""))
                   lines.append((f"\033[1mOrigin:\033[0m {concept['origin']}", ""))
                   lines.append(("", ""))
@@ -335,7 +335,7 @@ steps:
                           s = row.source or ''
                           if len(s) > wrap_w:
                               s = s[:wrap_w - 3] + '...'
-                          lines.append(("  " + s, ""))
+                          lines.append((f"  {s}", ""))
                           found = True
                       if not found:
                           lines.append(("  \033[90m(none)\033[0m", ""))
@@ -352,7 +352,7 @@ steps:
                       ), {"name": concept['name']})
                       found2 = False
                       for row in r:
-                          lines.append(("  \033[36m" + (row[0] or '') + "\033[0m", ""))
+                          lines.append((f"  \033[36m{row[0] or ''}\033[0m", ""))
                           found2 = True
                       if not found2:
                           lines.append(("  \033[90m(none)\033[0m", ""))
@@ -372,7 +372,7 @@ steps:
                               return
                       # fallback: build inline
                       ui.detail_lines = [
-                          ("\033[1mFact:\033[0m " + item['text'], ""),
+                          (f"\033[1mFact:\033[0m {item['text']}", ""),
                           (f"\033[1mOrigin:\033[0m {item['origin']}", ""),
                           (f"\033[1mGeneration:\033[0m {item['generation']}", ""),
                       ]
@@ -382,7 +382,7 @@ steps:
                               load_concept_detail(ci)
                               return
                       ui.detail_lines = [
-                          ("\033[1mConcept:\033[0m \033[36m" + item['text'] + "\033[0m", ""),
+                          (f"\033[1mConcept:\033[0m \033[36m{item['text']}\033[0m", ""),
                           (f"\033[1mOrigin:\033[0m {item['origin']}", ""),
                           (f"\033[1mGeneration:\033[0m {item['generation']}", ""),
                       ]
@@ -679,8 +679,8 @@ steps:
                   if len(clabel) > W // 3:
                       clabel = clabel[:W // 3 - 2] + '..'
                   ctext = f"\u2503 {clabel} \u2503"
-                  ctop = "\u250f" + "\u2501" * (len(ctext) - 2) + "\u2513"
-                  cbot = "\u2517" + "\u2501" * (len(ctext) - 2) + "\u251b"
+                  ctop = f"\u250f{'\u2501' * (len(ctext) - 2)}\u2513"
+                  cbot = f"\u2517{'\u2501' * (len(ctext) - 2)}\u251b"
                   cx0 = cx - len(ctext) // 2
 
                   # Place center box (3 rows)

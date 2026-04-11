@@ -122,7 +122,7 @@ steps:
                           params['team'] = st.team_filter
 
                       if conds:
-                          q += " WHERE " + " AND ".join(conds)
+                          q += f" WHERE {' AND '.join(conds)}"
                       q += " ORDER BY created_at DESC LIMIT 200"
 
                       result = conn.execute(text(q), params)
@@ -138,7 +138,7 @@ steps:
                               'status': row[7]
                           })
               except Exception as e:
-                  st.msg = "DB Error: " + str(e)
+                  st.msg = f"DB Error: {e}"
                   st.msg_color = "31"
 
           def do_update(memory_id, new_status, final_mem=None):
@@ -166,7 +166,7 @@ steps:
 
                   return True
               except Exception as e:
-                  st.msg = "UPDATE FAILED: " + str(e)
+                  st.msg = f"UPDATE FAILED: {e}"
                   st.msg_color = "31"
                   return False
 
@@ -190,21 +190,21 @@ steps:
               # Header with session stats
               stats = ""
               if st.approved_count or st.rejected_count:
-                  stats = "  [+" + str(st.approved_count) + " -" + str(st.rejected_count) + "]"
-              header = " MEMORIES (" + str(len(st.memories)) + ")" + stats + " "
-              out.append("\033[1;1H\033[K\033[7;1m" + header.ljust(width) + "\033[0m")
+                  stats = f"  [+{st.approved_count} -{st.rejected_count}]"
+              header = f" MEMORIES ({len(st.memories)}){stats} "
+              out.append(f"\033[1;1H\033[K\033[7;1m{header.ljust(width)}\033[0m")
 
               # Tabs
               tab_str = ""
               for i, tab in enumerate(st.tabs):
                   if i == st.tab:
-                      tab_str += "\033[1;7m [" + tab + "] \033[0m"
+                      tab_str += f"\033[1;7m [{tab}] \033[0m"
                   else:
-                      tab_str += " \033[90m" + tab + "\033[0m "
-              out.append("\033[2;1H\033[K " + tab_str)
+                      tab_str += f" \033[90m{tab}\033[0m "
+              out.append(f"\033[2;1H\033[K {tab_str}")
 
               # Separator
-              out.append("\033[3;1H\033[K\033[90m" + ("-" * width) + "\033[0m")
+              out.append(f"\033[3;1H\033[K\033[90m{'-' * width}\033[0m")
 
               if st.preview and st.memories:
                   render_preview(out, width, height)
@@ -212,17 +212,17 @@ steps:
                   render_list(out, width, height)
 
               # Status bar
-              out.append("\033[" + str(height-2) + ";1H\033[K\033[90m" + ("-" * width) + "\033[0m")
-              out.append("\033[" + str(height-1) + ";1H\033[K")
+              out.append(f"\033[{height-2};1H\033[K\033[90m{'-' * width}\033[0m")
+              out.append(f"\033[{height-1};1H\033[K")
               if st.msg:
-                  out.append(" \033[" + st.msg_color + ";1m" + st.msg[:width-2] + "\033[0m")
+                  out.append(f" \033[{st.msg_color};1m{st.msg[:width-2]}\033[0m")
 
               # Footer
               if st.preview:
                   foot = " [Esc] Back  [a] Approve  [x] Reject  [j/k] Prev/Next  [q] Quit "
               else:
                   foot = " [Tab] Filter  [j/k] Nav  [Enter] Preview  [a] Approve  [x] Reject  [q] Quit "
-              out.append("\033[" + str(height) + ";1H\033[K\033[7m" + foot.ljust(width) + "\033[0m")
+              out.append(f"\033[{height};1H\033[K\033[7m{foot.ljust(width)}\033[0m")
 
               sys.stdout.write(''.join(out))
               sys.stdout.flush()

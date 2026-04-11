@@ -434,16 +434,16 @@ steps:
                   context['output'] = f"OK. Affected {cursor.rowcount} rows."
                   conn.close()
           except Exception as e:
-              context['output'] = "SQL Error: " + str(e)
+              context['output'] = f"SQL Error: {e}"
 
       elif list_models:
           if not os.path.exists(models_dir):
-              context['output'] = "No models directory found at " + models_dir
+              context['output'] = f"No models directory found at {models_dir}"
           else:
               models_path = Path(models_dir)
               sql_files = list(models_path.glob("**/*.sql"))
               if not sql_files:
-                  context['output'] = "No .sql models found in " + models_dir
+                  context['output'] = f"No .sql models found in {models_dir}"
               else:
                   import re as _re
                   import types as _types
@@ -473,7 +473,7 @@ steps:
                           if _jn:
                               _jinx_names.add(_jn)
 
-                  lines = ["**NQL Models** in `" + models_dir + "`", ""]
+                  lines = [f"**NQL Models** in `{models_dir}`", ""]
 
                   if list_models == "detail" or list_models == "all":
                       # Detailed view — show source with syntax highlighting
@@ -494,13 +494,13 @@ steps:
 
                           tags = []
                           if used_funcs:
-                              tags.append("funcs: " + ", ".join(sorted(used_funcs)))
+                              tags.append(f"funcs: {', '.join(sorted(used_funcs))}")
                           if used_jinxes:
-                              tags.append("jinxes: " + ", ".join(sorted(used_jinxes)))
+                              tags.append(f"jinxes: {', '.join(sorted(used_jinxes))}")
 
-                          lines.append("### " + str(rel))
+                          lines.append(f"### {rel}")
                           if tags:
-                              lines.append("  " + " | ".join(tags))
+                              lines.append(f"  {' | '.join(tags)}")
                           lines.append("```sql")
                           lines.append(src.strip())
                           lines.append("```")
@@ -518,12 +518,12 @@ steps:
                                   used.append(fn)
                           for jn in _jinx_names:
                               if _re.search(r'(?:nql\.)?' + jn + r'\s*\(', src, _re.IGNORECASE):
-                                  used.append("/" + jn)
+                                  used.append(f"/{jn}")
 
                           tag = ""
                           if used:
-                              tag = "  [" + ", ".join(sorted(used)) + "]"
-                          lines.append("  " + str(rel) + tag)
+                              tag = f"  [{', '.join(sorted(used))}]"
+                          lines.append(f"  {rel}{tag}")
 
                       lines.append("")
                       lines.append("Use `show=detail` for full source with syntax highlighting.")
@@ -532,13 +532,13 @@ steps:
                   lines.append("")
                   lines.append("**Available NQL functions:**")
                   _sorted_funcs = sorted(_nql_funcs)
-                  _func_line = "  " + ", ".join(_sorted_funcs[:20])
+                  _func_line = f"  {', '.join(_sorted_funcs[:20])}"
                   if len(_sorted_funcs) > 20:
                       _func_line += f" ... (+{len(_sorted_funcs) - 20} more)"
                   lines.append(_func_line)
                   if _jinx_names:
                       lines.append("**Team jinxes (usable as NQL functions):**")
-                      lines.append("  " + ", ".join(sorted(_jinx_names)))
+                      lines.append(f"  {', '.join(sorted(_jinx_names))}")
 
                   context['output'] = "\n".join(lines)
 
@@ -552,11 +552,11 @@ steps:
               cron_model = parts[5] if len(parts) > 5 else ""
               nql_cmd = "npc nql"
               if cron_model:
-                  nql_cmd += " model=" + cron_model
-              nql_cmd += " models_dir=" + models_dir + " db=" + db_path
+                  nql_cmd += f" model={cron_model}"
+              nql_cmd += f" models_dir={models_dir} db={db_path}"
               if schema:
-                  nql_cmd += " schema=" + schema
-              cron_line = cron_time + " " + nql_cmd
+                  nql_cmd += f" schema={schema}"
+              cron_line = f"{cron_time} {nql_cmd}"
               try:
                   result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
                   current = result.stdout if result.returncode == 0 else ""
@@ -565,12 +565,12 @@ steps:
               if nql_cmd in current:
                   context['output'] = "Cron job already exists"
               else:
-                  new_crontab = current.rstrip() + "\n" + cron_line + "\n"
+                  new_crontab = f"{current.rstrip()}\n{cron_line}\n"
                   proc = subprocess.run(['crontab', '-'], input=new_crontab, text=True, capture_output=True)
                   if proc.returncode == 0:
-                      context['output'] = "Installed: " + cron_line
+                      context['output'] = f"Installed: {cron_line}"
                   else:
-                      context['output'] = "Failed: " + proc.stderr
+                      context['output'] = f"Failed: {proc.stderr}"
 
       else:
           # Run models (non-interactive)
@@ -591,7 +591,7 @@ steps:
                   _nql_provider = state.chat_provider
 
           if not os.path.exists(models_dir):
-              context['output'] = "Models directory not found: " + models_dir
+              context['output'] = f"Models directory not found: {models_dir}"
           else:
               try:
                   compiler = ModelCompiler(
@@ -605,7 +605,7 @@ steps:
                   if model_name:
                       compiler.discover_models()
                       if model_name not in compiler.models:
-                          context['output'] = "Model not found: " + model_name
+                          context['output'] = f"Model not found: {model_name}"
                       else:
                           df = compiler.execute_model(model_name)
                           context['output'] = f"Model '{model_name}' done. Rows: {len(df)}"
@@ -616,4 +616,4 @@ steps:
                           lines.append(f"  {name}: {len(df)} rows")
                       context['output'] = "\n".join(lines)
               except Exception as e:
-                  context['output'] = "NQL Error: " + str(e)
+                  context['output'] = f"NQL Error: {e}"

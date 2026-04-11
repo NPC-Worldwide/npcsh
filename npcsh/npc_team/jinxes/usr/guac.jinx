@@ -238,10 +238,10 @@ steps:
               if isinstance(val, pd.DataFrame):
                   cols = list(val.columns)[state.df_col_offset:state.df_col_offset + 5]
                   col_w = (output_w - 6) // max(len(cols), 1)
-                  header = "     " + "".join(f"{str(c)[:col_w]:<{col_w}}" for c in cols)
+                  header = f"     {''.join(f'{str(c)[:col_w]:<{col_w}}' for c in cols)}"
                   out.append(f"\033[5;2H\033[1m{header[:output_w]}\033[0m")
                   for i, (idx, row) in enumerate(val.iloc[state.df_row_offset:state.df_row_offset + output_h - 3].iterrows()):
-                      row_str = f"{idx:<4} " + "".join(f"{str(row[c])[:col_w]:<{col_w}}" for c in cols)
+                      row_str = f"{idx:<4} {''.join(f'{str(row[c])[:col_w]:<{col_w}}' for c in cols)}"
                       out.append(f"\033[{6+i};2H{row_str[:output_w]}")
                   out.append(f"\033[{3+panel_h-1};2H\033[90mArrows:scroll  ESC:exit inspect\033[0m")
               elif isinstance(val, np.ndarray):
@@ -448,7 +448,7 @@ steps:
                       state.status = "Generating code..."
                       render_screen()
 
-                      var_context = "Variables: " + ", ".join(f"{k}({var_info(k,v)})" for k,v in get_user_vars().items())
+                      var_context = f"Variables: {', '.join(f'{k}({var_info(k,v)})' for k,v in get_user_vars().items())}"
                       prompt = f"{var_context}\n\nRequest: {code}\n\nGenerate Python code. Return ONLY code, no explanation."
 
                       resp = get_llm_response(prompt, model=model, provider=provider, npc=npc)
