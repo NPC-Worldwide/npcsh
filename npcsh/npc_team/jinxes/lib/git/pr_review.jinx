@@ -65,38 +65,35 @@ steps:
                   additions = pr_data.get('additions', 0)
                   deletions = pr_data.get('deletions', 0)
 
-                  prompt_parts = [
-                      'Review this pull request and provide structured feedback.',
-                      '',
-                      'PR #' + str(pr_num) + ': ' + title,
-                      'Author: ' + author_name,
-                      'Branch: ' + head + ' -> ' + base,
-                      'Size: +' + str(additions) + ' / -' + str(deletions),
-                      '',
-                      'Description:',
-                      body[:2000] if body else '(no description)',
-                      '',
-                      'Diff:',
-                      diff,
-                      '',
-                      'Provide your review in this format:',
-                      '',
-                      '## Summary',
-                      'Brief overview of what this PR does.',
-                      '',
-                      '## Issues',
-                      'List any bugs, logic errors, or security concerns. Use severity:',
-                      '- CRITICAL: Must fix before merge',
-                      '- WARNING: Should fix, but not blocking',
-                      '- NOTE: Minor suggestion or style issue',
-                      '',
-                      '## Suggestions',
-                      'Improvements, refactoring ideas, or missing tests.',
-                      '',
-                      '## Verdict',
-                      'APPROVE, REQUEST_CHANGES, or COMMENT with brief justification.',
-                  ]
-                  prompt = '\n'.join(prompt_parts)
+                  prompt = f"""Review this pull request and provide structured feedback.
+
+                  PR #{pr_num}: {title}
+                  Author: {author_name}
+                  Branch: {head} -> {base}
+                  Size: +{additions} / -{deletions}
+
+                  Description:
+                  {body[:2000] if body else '(no description)'}
+
+                  Diff:
+                  {diff}
+
+                  Provide your review in this format:
+
+                  ## Summary
+                  Brief overview of what this PR does.
+
+                  ## Issues
+                  List any bugs, logic errors, or security concerns. Use severity:
+                  - CRITICAL: Must fix before merge
+                  - WARNING: Should fix, but not blocking
+                  - NOTE: Minor suggestion or style issue
+
+                  ## Suggestions
+                  Improvements, refactoring ideas, or missing tests.
+
+                  ## Verdict
+                  APPROVE, REQUEST_CHANGES, or COMMENT with brief justification."""
 
                   resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
                   review = str(resp.get('response', ''))
