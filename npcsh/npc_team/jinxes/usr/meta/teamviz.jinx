@@ -42,7 +42,7 @@ steps:
                   'model': data.get('model', ''),
               }
           except Exception as e:
-              print("Error loading {}: {}".format(npc_file, e))
+              print(f"Error loading {npc_file}: {e}")
 
       # Load team context
       team_name = "NPC Team"
@@ -173,7 +173,7 @@ steps:
       ]
       ax.legend(handles=legend_elements, loc='upper left')
 
-      ax.set_title(team_name + " - Team Structure", fontsize=14, fontweight='bold')
+      ax.set_title(f"{team_name} - Team Structure", fontsize=14, fontweight='bold')
       ax.axis('off')
 
       plt.tight_layout()
@@ -181,25 +181,25 @@ steps:
       if save_path:
           plt.savefig(save_path, dpi=150, bbox_inches='tight')
           plt.close()
-          output = "Saved to " + save_path
+          output = f"Saved to {save_path}"
       else:
           plt.show()
           output = "Displayed team visualization"
 
       # Text summary
       summary = "\n\n--- Team Summary ---\n"
-      summary += "Team: {}\n".format(team_name)
-      summary += "ForeNPC: {}\n".format(forenpc or 'None')
-      summary += "NPCs ({}): {}\n".format(len(npcs), ', '.join(sorted(npcs.keys())))
-      summary += "Total Jinxes: {}\n".format(len(all_jinxes))
+      summary += f"Team: {team_name}\n"
+      summary += f"ForeNPC: {forenpc or 'None'}\n"
+      summary += f"NPCs ({len(npcs)}): {', '.join(sorted(npcs.keys()))}\n"
+      summary += f"Total Jinxes: {len(all_jinxes)}\n"
       summary += "\nJinxes by category:\n"
       for cat, jlist in sorted(jinx_categories.items()):
-          summary += "  {}: {} jinxes\n".format(cat, len(jlist))
+          summary += f"  {cat}: {len(jlist)} jinxes\n"
 
       summary += "\nMost shared jinxes:\n"
       shared = sorted(jinx_users.items(), key=lambda x: len(x[1]), reverse=True)[:10]
       for jname, users in shared:
           if len(users) > 1:
-              summary += "  {} (used by {}): {}\n".format(jname, len(users), ', '.join(users))
+              summary += f"  {jname} (used by {len(users)}): {', '.join(users)}\n"
 
       output = output + summary

@@ -158,17 +158,17 @@ steps:
                       base, ext = os.path.splitext(os.path.expanduser(ui.output_name))
                       if not ext:
                           ext = ".png"
-                      out_file = base + ("_" + str(i) if len(images_list) > 1 else "") + ext
+                      out_file = f"{base}{'_' + str(i) if len(images_list) > 1 else ''}{ext}"
                   else:
                       os.makedirs(img_dir, exist_ok=True)
-                      out_file = os.path.join(img_dir, "vixynt_" + datetime.now().strftime('%Y%m%d_%H%M%S') + "_" + str(i) + ".png")
+                      out_file = os.path.join(img_dir, f"vixynt_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{i}.png")
                   image.save(out_file)
                   saved.append(out_file)
                   ui.gallery.insert(0, {"path": out_file, "prompt": ui.prompt, "timestamp": os.path.basename(out_file)})
 
-              ui.status = "Generated " + str(len(saved)) + " image(s): " + ", ".join(os.path.basename(f) for f in saved)
+              ui.status = f"Generated {len(saved)} image(s): {', '.join(os.path.basename(f) for f in saved)}"
           except Exception as e:
-              ui.status = "Error: " + str(e)[:60]
+              ui.status = f"Error: {str(e)[:60]}"
 
           ui.mode = 'params'
 
@@ -179,63 +179,63 @@ steps:
           out.append("\033[H")
 
           header = " VIXYNT - Image Creation Studio "
-          out.append("\033[1;1H\033[7;1m" + header.ljust(width) + "\033[0m")
+          out.append(f"\033[1;1H\033[7;1m{header.ljust(width)}\033[0m")
 
           if ui.mode in ('params', 'editing', 'generating'):
               # Parameter panel
-              out.append("\033[3;1H\033[36;1m Parameters \033[90m" + ("-" * (width - 13)) + "\033[0m")
+              out.append(f"\033[3;1H\033[36;1m Parameters \033[90m{'-' * (width - 13)}\033[0m")
 
               for i, p in enumerate(ui.params):
                   row = 4 + i
-                  out.append("\033[" + str(row) + ";1H\033[K")
-                  label = p.capitalize() + ":"
+                  out.append(f"\033[{row};1H\033[K")
+                  label = f"{p.capitalize()}:"
                   val = get_param_value(i)
 
                   if ui.mode == 'editing' and i == ui.sel:
-                      line = "  " + label.ljust(14) + "\033[7m " + ui.edit_buf + " \033[0m"
+                      line = f"  {label.ljust(14)}\033[7m {ui.edit_buf} \033[0m"
                   else:
-                      line = "  " + label.ljust(14) + val[:width - 18]
+                      line = f"  {label.ljust(14)}{val[:width - 18]}"
 
                   if i == ui.sel and ui.mode != 'editing':
-                      out.append("\033[7m>" + line + "\033[0m")
+                      out.append(f"\033[7m>{line}\033[0m")
                   else:
-                      out.append(" " + line)
+                      out.append(f" {line}")
 
               # Gallery preview
               gallery_row = 4 + len(ui.params) + 1
-              out.append("\033[" + str(gallery_row) + ";1H\033[33;1m Gallery (" + str(len(ui.gallery)) + ") \033[90m" + ("-" * (width - 20)) + "\033[0m")
+              out.append(f"\033[{gallery_row};1H\033[33;1m Gallery ({len(ui.gallery)}) \033[90m{'-' * (width - 20)}\033[0m")
 
               gallery_h = height - gallery_row - 4
               for i in range(gallery_h):
                   idx = ui.gallery_scroll + i
                   row = gallery_row + 1 + i
-                  out.append("\033[" + str(row) + ";1H\033[K")
+                  out.append(f"\033[{row};1H\033[K")
                   if idx >= len(ui.gallery):
                       continue
                   g = ui.gallery[idx]
                   fname = os.path.basename(g['path'])[:width - 6]
-                  out.append("  " + fname)
+                  out.append(f"  {fname}")
 
           elif ui.mode == 'gallery':
-              out.append("\033[3;1H\033[33;1m Gallery (" + str(len(ui.gallery)) + ") \033[90m" + ("-" * (width - 20)) + "\033[0m")
+              out.append(f"\033[3;1H\033[33;1m Gallery ({len(ui.gallery)}) \033[90m{'-' * (width - 20)}\033[0m")
 
               gallery_h = height - 6
               for i in range(gallery_h):
                   idx = ui.gallery_scroll + i
                   row = 4 + i
-                  out.append("\033[" + str(row) + ";1H\033[K")
+                  out.append(f"\033[{row};1H\033[K")
                   if idx >= len(ui.gallery):
                       continue
                   g = ui.gallery[idx]
                   fname = os.path.basename(g['path'])
                   if idx == ui.gallery_sel:
-                      out.append("\033[7m> " + fname[:width-4] + "\033[0m")
+                      out.append(f"\033[7m> {fname[:width-4]}\033[0m")
                   else:
-                      out.append("  " + fname[:width-4])
+                      out.append(f"  {fname[:width-4]}")
 
           # Status + footer
-          out.append("\033[" + str(height-2) + ";1H\033[K\033[90m" + ("-" * width) + "\033[0m")
-          out.append("\033[" + str(height-1) + ";1H\033[K " + ui.status[:width-2])
+          out.append(f"\033[{height-2};1H\033[K\033[90m{'-' * width}\033[0m")
+          out.append(f"\033[{height-1};1H\033[K {ui.status[:width-2]}")
 
           if ui.mode == 'editing':
               footer = " Type value, Enter:Confirm  Esc:Cancel "
@@ -245,7 +245,7 @@ steps:
               footer = " Generating... "
           else:
               footer = " j/k:Nav  e:Edit  Enter:Generate  g:Gallery  q:Quit "
-          out.append("\033[" + str(height) + ";1H\033[K\033[7m" + footer.ljust(width) + "\033[0m")
+          out.append(f"\033[{height};1H\033[K\033[7m{footer.ljust(width)}\033[0m")
 
           sys.stdout.write(''.join(out))
           sys.stdout.flush()
@@ -342,7 +342,7 @@ steps:
               path = ui.gallery[ui.gallery_sel]['path']
               try:
                   subprocess.Popen(['xdg-open', path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                  ui.status = "Opened: " + os.path.basename(path)
+                  ui.status = f"Opened: {os.path.basename(path)}"
               except:
                   ui.status = "Could not open image"
 

@@ -62,38 +62,38 @@ steps:
           if action == 'click':
               elem = wait_for_element(selector)
               elem.click()
-              output = "Clicked: {}".format(selector)
+              output = f"Clicked: {selector}"
 
           elif action == 'type':
               elem = wait_for_element(selector)
               elem.click()  # Focus first
               elem.clear()
               elem.send_keys(value)
-              output = "Typed '{}' into {}".format(value, selector)
+              output = f"Typed '{value}' into {selector}"
 
           elif action == 'set_value':
               # Force set value via JS, bypasses validation/calendars
               elem = wait_for_element(selector)
               driver.execute_script("arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('input', {bubbles: true})); arguments[0].dispatchEvent(new Event('change', {bubbles: true}));", elem, value)
-              output = "Set value '{}' on {}".format(value, selector)
+              output = f"Set value '{value}' on {selector}"
 
           elif action == 'type_and_enter':
               elem = wait_for_element(selector)
               elem.clear()
               elem.send_keys(value)
               elem.send_keys(Keys.RETURN)
-              output = "Typed '{}' and pressed Enter".format(value)
+              output = f"Typed '{value}' and pressed Enter"
 
           elif action == 'select':
               elem = wait_for_element(selector)
               select = Select(elem)
               select.select_by_visible_text(value)
-              output = "Selected '{}' in {}".format(value, selector)
+              output = f"Selected '{value}' in {selector}"
 
           elif action == 'wait':
               timeout = int(value) if value else 10
               wait_for_element(selector, timeout)
-              output = "Element found: {}".format(selector)
+              output = f"Element found: {selector}"
 
           elif action == 'scroll':
               if value == 'down':
@@ -103,18 +103,18 @@ steps:
               elif selector:
                   elem = find_element(selector)
                   driver.execute_script("arguments[0].scrollIntoView();", elem)
-              output = "Scrolled {}".format(value or 'to element')
+              output = f"Scrolled {value or 'to element'}"
 
           elif action == 'get_text':
               elem = wait_for_element(selector)
-              output = "Text: {}".format(elem.text)
+              output = f"Text: {elem.text}"
 
           elif action == 'get_page':
               title = driver.title
               url = driver.current_url
               body = driver.find_element(By.TAG_NAME, 'body')
               text = body.text[:3000]
-              output = "Page: {} ({})\n\nContent:\n{}".format(title, url, text)
+              output = f"Page: {title} ({url})\n\nContent:\n{text}"
 
           elif action == 'get_elements':
               elements = []
@@ -131,9 +131,9 @@ steps:
                   if eid and '.' not in eid and ' ' not in eid:
                       return '#' + eid
                   elif eid:
-                      return '{}[id="{}"]'.format(tag, eid)
+                      return f'{tag}[id="{eid}"]'
                   elif name:
-                      return '{}[name="{}"]'.format(tag, name)
+                      return f'{tag}[name="{name}"]'
                   return None
 
               # Get inputs
@@ -144,7 +144,7 @@ steps:
                   if not sel:
                       ph = inp.get_attribute('placeholder')
                       if ph:
-                          sel = 'input[placeholder="{}"]'.format(ph)
+                          sel = f'input[placeholder="{ph}"]'
                       else:
                           continue
                   info = {'tag': 'input', 'type': inp.get_attribute('type') or 'text', 'selector': sel}
@@ -157,7 +157,7 @@ steps:
                       continue
                   sel = safe_selector('button', btn)
                   if not sel and btn.text:
-                      sel = 'xpath://button[contains(text(),"{}")]'.format(btn.text[:30])
+                      sel = f'xpath://button[contains(text(),"{btn.text[:30]}")]'
                   if not sel:
                       continue
                   info = {'tag': 'button', 'selector': sel, 'text': (btn.text or '')[:50]}
@@ -180,19 +180,19 @@ steps:
                       continue
                   sel = safe_selector('a', link)
                   if not sel:
-                      sel = 'xpath://a[contains(text(),"{}")]'.format(link.text[:30])
+                      sel = f'xpath://a[contains(text(),"{link.text[:30]}")]'
                   info = {'tag': 'a', 'selector': sel, 'text': link.text[:50]}
                   elements.append(info)
 
-              output = "Found {} visible elements:\n".format(len(elements))
+              output = f"Found {len(elements)} visible elements:\n"
               for el in elements[:40]:
-                  output += "{}: {} ".format(el['tag'], el.get('selector', ''))
+                  output += f"{el['tag']}: {el.get('selector', '')} "
                   if el.get('text'):
-                      output += '"{}" '.format(el['text'][:30])
+                      output += f'"{el["text"][:30]}" '
                   if el.get('placeholder'):
-                      output += 'placeholder="{}" '.format(el['placeholder'])
+                      output += f'placeholder="{el["placeholder"]}" '
                   if el.get('options'):
-                      output += "opts={} ".format(el['options'][:3])
+                      output += f"opts={el['options'][:3]} "
                   output += "\n"
 
           elif action == 'press_key':
@@ -211,10 +211,10 @@ steps:
                   elem.send_keys(key)
               else:
                   driver.find_element(By.TAG_NAME, 'body').send_keys(key)
-              output = "Pressed key: {}".format(value)
+              output = f"Pressed key: {value}"
 
           else:
-              output = "Unknown action: {}".format(action)
+              output = f"Unknown action: {action}"
 
       except Exception as e:
-          output = "Browser action failed: {}".format(str(e))
+          output = f"Browser action failed: {str(e)}"

@@ -42,15 +42,15 @@ steps:
               )
 
               lines = []
-              lines.append("## Benchmark Results: " + provider + "/" + model)
+              lines.append(f"## Benchmark Results: {provider}/{model}")
               lines.append("")
-              lines.append("**Total:** " + str(report.total))
-              lines.append("**Passed:** " + str(report.passed))
-              lines.append("**Failed:** " + str(report.failed))
-              lines.append("**Errors:** " + str(report.errors))
+              lines.append(f"**Total:** {report.total}")
+              lines.append(f"**Passed:** {report.passed}")
+              lines.append(f"**Failed:** {report.failed}")
+              lines.append(f"**Errors:** {report.errors}")
               pct = (100 * report.passed / report.total) if report.total > 0 else 0
-              lines.append("**Pass Rate:** " + "{:.1f}%".format(pct))
-              lines.append("**Duration:** " + "{:.1f}s".format(report.duration))
+              lines.append(f"**Pass Rate:** {pct:.1f}%")
+              lines.append(f"**Duration:** {report.duration:.1f}s")
               lines.append("")
 
               if report.by_category:
@@ -59,7 +59,7 @@ steps:
                       p = stats.get("passed", 0)
                       t = stats.get("total", 0)
                       cat_pct = (100 * p / t) if t > 0 else 0
-                      lines.append("- **{}:** {}/{} ({:.0f}%)".format(cat, p, t, cat_pct))
+                      lines.append(f"- **{cat}:** {p}/{t} ({cat_pct:.0f}%)")
                   lines.append("")
 
               if report.by_difficulty:
@@ -68,7 +68,7 @@ steps:
                       p = stats.get("passed", 0)
                       t = stats.get("total", 0)
                       diff_pct = (100 * p / t) if t > 0 else 0
-                      lines.append("- **{}:** {}/{} ({:.0f}%)".format(diff, p, t, diff_pct))
+                      lines.append(f"- **{diff}:** {p}/{t} ({diff_pct:.0f}%)")
                   lines.append("")
 
               failed_tasks = [r for r in report.results if not r.passed]
@@ -76,10 +76,10 @@ steps:
                   lines.append("### Failed Tasks")
                   for r in failed_tasks[:20]:
                       err = r.error or "verification failed"
-                      lines.append("- **{}** ({}): {}".format(r.task_id, r.category, err))
+                      lines.append(f"- **{r.task_id}** ({r.category}): {err}")
 
               context['output'] = "\n".join(lines)
 
           except Exception as e:
               import traceback
-              context['output'] = "Error running benchmark: " + str(e) + "\n\n" + traceback.format_exc()
+              context['output'] = f"Error running benchmark: {e}\n\n{traceback.format_exc()}"
