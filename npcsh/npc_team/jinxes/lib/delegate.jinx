@@ -101,25 +101,25 @@ steps:
 
               review_prompt = f"""You are reviewing work done by @{target_name} on this task:
 
-ORIGINAL TASK: {task_request}
+                ORIGINAL TASK: {task_request}
 
-ITERATION: {iteration}/{max_iters}
+                ITERATION: {iteration}/{max_iters}
 
-SUB-AGENT OUTPUT:
-{output_preview}
+                SUB-AGENT OUTPUT:
+                {output_preview}
 
-RECENT MESSAGES:
-{msg_preview}
+                RECENT MESSAGES:
+                {msg_preview}
 
-Evaluate if the task is complete. Consider:
-1. Did the sub-agent accomplish what was asked?
-2. Are there obvious errors or incomplete steps?
-3. For GUI tasks: Did they fill in all required fields?
+                Evaluate if the task is complete. Consider:
+                1. Did the sub-agent accomplish what was asked?
+                2. Are there obvious errors or incomplete steps?
+                3. For GUI tasks: Did they fill in all required fields?
 
-Respond EXACTLY like this:
-COMPLETE: YES or NO
-FEEDBACK: If NO, what should be done next
-SUMMARY: Brief summary of progress"""
+                Respond EXACTLY like this:
+                COMPLETE: YES or NO
+                FEEDBACK: If NO, what should be done next
+                SUMMARY: Brief summary of progress"""
 
               review_result = get_llm_response(
                   review_prompt,
@@ -155,11 +155,11 @@ SUMMARY: Brief summary of progress"""
 
                   current_task = f"""Continue the previous task. Feedback from orchestrator:
 
-ORIGINAL TASK: {task_request}
+                  ORIGINAL TASK: {task_request}
 
-FEEDBACK: {feedback}
+                  FEEDBACK: {feedback}
 
-Continue and complete the task based on this feedback."""
+                  Continue and complete the task based on this feedback."""
 
                   if delegate_messages:
                       context['messages'] = delegate_messages
