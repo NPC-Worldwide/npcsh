@@ -54,30 +54,21 @@ steps:
               _model = npc.model if npc else (state.chat_model if state else 'gemma3:4b')
               _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
 
-              prompt_parts = [
-                  'Generate a concise git commit message for these changes.',
-                  'Branch: ' + branch,
-                  '',
-                  'Staged files:',
-                  staged_diff,
-                  '',
-                  'Diff:',
-                  full_diff,
-              ]
-              if hint:
-                  prompt_parts.insert(1, 'Context: ' + hint)
+              prompt = f"""Generate a concise git commit message for these changes.
+              Branch: {branch}
+              {f'Context: {hint}' if hint else ''}
+              Staged files:
+              {staged_diff}
+              Diff:
+              {full_diff}
 
-              prompt_parts.extend([
-                  '',
-                  'Rules:',
-                  '- First line: type(scope): description (max 72 chars)',
-                  '- Types: feat, fix, refactor, docs, test, chore, style, perf',
-                  '- Optional body after blank line for complex changes',
-                  '- Be specific about what changed, not vague',
-                  '',
-                  'Respond with ONLY the commit message, no explanation.',
-              ])
-              prompt = '\n'.join(prompt_parts)
+              Rules:
+              - First line: type(scope): description (max 72 chars)
+              - Types: feat, fix, refactor, docs, test, chore, style, perf
+              - Optional body after blank line for complex changes
+              - Be specific about what changed, not vague
+
+              Respond with ONLY the commit message, no explanation."""
 
               resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
               message = str(resp.get('response', '')).strip()
