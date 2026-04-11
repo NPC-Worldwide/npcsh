@@ -99,30 +99,27 @@ steps:
               output_preview = delegate_output[:2000] if delegate_output else 'No output received'
               msg_preview = str(delegate_messages[-5:]) if delegate_messages else 'No messages'
 
-              review_lines = [
-                  f"You are reviewing work done by @{target_name} on this task:",
-                  "",
-                  "ORIGINAL TASK: " + task_request,
-                  "",
-                  f"ITERATION: {iteration}/{max_iters}",
-                  "",
-                  "SUB-AGENT OUTPUT:",
-                  output_preview,
-                  "",
-                  "RECENT MESSAGES:",
-                  msg_preview,
-                  "",
-                  "Evaluate if the task is complete. Consider:",
-                  "1. Did the sub-agent accomplish what was asked?",
-                  "2. Are there obvious errors or incomplete steps?",
-                  "3. For GUI tasks: Did they fill in all required fields?",
-                  "",
-                  "Respond EXACTLY like this:",
-                  "COMPLETE: YES or NO",
-                  "FEEDBACK: If NO, what should be done next",
-                  "SUMMARY: Brief summary of progress"
-              ]
-              review_prompt = "\n".join(review_lines)
+              review_prompt = f"""You are reviewing work done by @{target_name} on this task:
+
+ORIGINAL TASK: {task_request}
+
+ITERATION: {iteration}/{max_iters}
+
+SUB-AGENT OUTPUT:
+{output_preview}
+
+RECENT MESSAGES:
+{msg_preview}
+
+Evaluate if the task is complete. Consider:
+1. Did the sub-agent accomplish what was asked?
+2. Are there obvious errors or incomplete steps?
+3. For GUI tasks: Did they fill in all required fields?
+
+Respond EXACTLY like this:
+COMPLETE: YES or NO
+FEEDBACK: If NO, what should be done next
+SUMMARY: Brief summary of progress"""
 
               review_result = get_llm_response(
                   review_prompt,
@@ -156,16 +153,13 @@ steps:
                   if feedback:
                       print(colored(f"  Feedback: {feedback}", "white", attrs=["dark"]))
 
-                  followup_lines = [
-                      "Continue the previous task. Feedback from orchestrator:",
-                      "",
-                      f"ORIGINAL TASK: {task_request}",
-                      "",
-                      f"FEEDBACK: {feedback}",
-                      "",
-                      "Continue and complete the task based on this feedback."
-                  ]
-                  current_task = "\n".join(followup_lines)
+                  current_task = f"""Continue the previous task. Feedback from orchestrator:
+
+ORIGINAL TASK: {task_request}
+
+FEEDBACK: {feedback}
+
+Continue and complete the task based on this feedback."""
 
                   if delegate_messages:
                       context['messages'] = delegate_messages
