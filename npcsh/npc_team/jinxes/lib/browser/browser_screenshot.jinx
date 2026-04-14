@@ -26,7 +26,7 @@ steps:
 
           if not filename:
               timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-              filename = "browser_{}.png".format(timestamp)
+              filename = f"browser_{timestamp}.png"
 
           if not filename.endswith('.png'):
               filename += '.png'
@@ -34,7 +34,7 @@ steps:
           filepath = os.path.join(screenshots_dir, filename)
           driver.save_screenshot(filepath)
 
-          output = "Screenshot saved: {}".format(filepath)
+          output = f"Screenshot saved: {filepath}"
 
       except Exception as e:
-          output = "Screenshot failed: {}".format(str(e))
+          output = f"Screenshot failed: {str(e)}"

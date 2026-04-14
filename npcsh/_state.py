@@ -180,6 +180,100 @@ from .execution import (
 from .completion import setup_readline, save_readline_history, make_completer, get_slash_commands
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Permission system helpers — hierarchical prefix matching like incognide
+# domain matching (e.g., "sh:git" matches "sh:git commit -m ...")
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SAFE_TOOLS = frozenset([
+    "chat", "help", "stop", "screenshot", "ask_form", "config", "switches",
+    "verbose", "shh", "usage", "lookback", "reload", "init",
+])
+
+def _build_command_key(tool_name: str, arguments: dict) -> str:
+    """Build hierarchical command key from tool name and arguments.
+
+    For tools like 'sh' that take a bash_command, extract the subcommand:
+      sh + {bash_command: "git commit -m foo"} -> "sh:git commit"
+
+    For other tools, use the tool name plus key arguments.
+    """
+    cmd_key = tool_name
+
+    # For shell commands, extract the actual command being run
+    if tool_name == "sh" and arguments.get("bash_command"):
+        parts = arguments["bash_command"].strip().split()
+        if parts:
+            # First word is the command (e.g., "git")
+            cmd_key = f"sh:{parts[0]}"
+            # If there's a subcommand, add it (e.g., "sh:git commit")
+            if len(parts) > 1 and not parts[1].startswith("-"):
+                cmd_key = f"sh:{parts[0]} {parts[1]}"
+
+    elif tool_name == "python" and arguments.get("code"):
+        # Python code is harder to parse - just use the tool name
+        cmd_key = "python"
+
+    elif tool_name == "edit_file" and arguments.get("filepath"):
+        # Include the file extension or basename for specificity
+        fp = arguments["filepath"]
+        basename = os.path.basename(fp)
+        cmd_key = f"edit_file:{basename}"
+
+    elif tool_name == "delegate" and arguments.get("target"):
+        cmd_key = f"delegate:{arguments['target']}"
+
+    return cmd_key
+
+
+def _match_permission(cmd_key: str, rules: Dict[str, str]) -> Optional[str]:
+    """Find the most specific matching rule for a command key.
+
+    Uses hierarchical prefix matching like incognide's domain matching:
+      - Exact match wins
+      - Longest prefix match wins (most specific parent)
+      - Returns None if no match
+
+    Examples:
+      cmd_key "sh:git commit -m foo" matches:
+        - "sh:git commit" (longest prefix)
+        - "sh:git"
+        - "sh"
+    """
+    if cmd_key in rules:
+        return rules[cmd_key]
+
+    # Find the longest matching prefix
+    best_match = None
+    best_len = 0
+
+    for rule_key in rules:
+        # Check if cmd_key starts with rule_key (rule_key is a prefix)
+        # Must be exact prefix: "sh:git" matches "sh:git commit" but not "sh:gitstatus"
+        if cmd_key.startswith(rule_key):
+            # Ensure we're at a boundary (colon, space, or end)
+            next_char = cmd_key[len(rule_key):len(rule_key)+1]
+            if next_char in ("", ":", " "):
+                if len(rule_key) > best_len:
+                    best_len = len(rule_key)
+                    best_match = rules[rule_key]
+
+    return best_match
+
+
+def _load_permission_file(path: str) -> Dict[str, str]:
+    """Load permission rules from a YAML file."""
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r") as f:
+            data = yaml.safe_load(f) or {}
+        # Support both flat and nested "rules" structure
+        rules = data.get("rules", data) if isinstance(data, dict) else {}
+        return {k: str(v) for k, v in rules.items()}
+    except Exception:
+        return {}
+
 
 @dataclass
 class ShellState:
@@ -229,6 +323,81 @@ class ShellState:
     # Thinking mode: None = model default, False = disabled, True = enabled
     # For ollama qwen3/deepseek: True/False; for gpt-oss: "low"/"medium"/"high"
     think: Optional[Any] = None
+    # Permission system — hierarchical prefix matching like incognide domain matching.
+    # Keys: "tool_name" or "tool_name:subcommand" (e.g. "sh:git commit")
+    # Values: "auto"|"ask"|"deny"|"session"
+    # Scoped: session > workspace (./npc_team/) > global (~/.npcsh/npc_team/) > default
+    _permission_rules: Dict[str, str] = field(default_factory=dict)
+    _session_grants: Dict[str, str] = field(default_factory=dict)
+    _permissions_loaded: bool = False
+    # Active plan the agent is executing
+    _active_plan: Optional[Dict[str, Any]] = None
+
+    # ── permission helpers ──────────────────────────────────────────────
+
+    def _load_permissions(self):
+        """Load permission rules: global first, then workspace overrides on top."""
+        if self._permissions_loaded:
+            return
+        self._permissions_loaded = True
+        # Global defaults
+        global_path = os.path.expanduser("~/.npcsh/npc_team/permissions.yaml")
+        self._permission_rules = _load_permission_file(global_path)
+        # Workspace overrides
+        workspace_path = os.path.join(self.current_path, "npc_team", "permissions.yaml")
+        if os.path.exists(workspace_path):
+            workspace_rules = _load_permission_file(workspace_path)
+            self._permission_rules.update(workspace_rules)
+
+    def _save_permission(self, key: str, level: str, scope: str = "workspace"):
+        """Persist a permission rule to the appropriate permissions.yaml."""
+        if scope == "global":
+            dir_path = os.path.expanduser("~/.npcsh/npc_team")
+        else:
+            dir_path = os.path.join(self.current_path, "npc_team")
+        os.makedirs(dir_path, exist_ok=True)
+        perm_path = os.path.join(dir_path, "permissions.yaml")
+        existing = _load_permission_file(perm_path)
+        existing[key] = level
+        with open(perm_path, "w") as f:
+            yaml.dump({"rules": existing}, f, default_flow_style=False)
+        # Update in-memory
+        self._permission_rules[key] = level
+
+    def check_tool_permission(self, tool_name: str, arguments: dict) -> str:
+        """Check permission for a tool call. Returns "allow", "deny", or "ask".
+
+        Matching works like incognide domain matching:
+          rule "sh" matches command key "sh:git commit -m foo"
+          rule "sh:git" matches "sh:git commit" and "sh:git push"
+        Most-specific matching rule wins.
+        """
+        self._load_permissions()
+        cmd_key = _build_command_key(tool_name, arguments)
+        # 1) Session grants — most specific match
+        decision = _match_permission(cmd_key, self._session_grants)
+        if decision:
+            return "allow" if decision in ("auto", "session") else decision
+        # 2) Persistent rules (workspace over global, already merged)
+        decision = _match_permission(cmd_key, self._permission_rules)
+        if decision:
+            return "allow" if decision == "auto" else decision
+        # 3) Default: safe tools auto, everything else ask
+        if tool_name in _SAFE_TOOLS:
+            return "allow"
+        return "ask"
+
+    def grant_session(self, key: str):
+        """Grant permission for the rest of this conversation."""
+        self._session_grants[key] = "session"
+
+    def grant_forever(self, key: str, scope: str = "workspace"):
+        """Persist an auto-allow rule."""
+        self._save_permission(key, "auto", scope=scope)
+
+    def deny_forever(self, key: str, scope: str = "workspace"):
+        """Persist a deny rule."""
+        self._save_permission(key, "deny", scope=scope)
 
     def get_model_for_command(self, model_type: str = "chat"):
         if model_type == "chat":
@@ -3123,6 +3292,27 @@ def process_pipeline_command(
             ls_files = 'No files found in the current directory.'
         platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
         info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n'
+
+        # ── Inject active plan into context ───────────────────────────────────
+        if state._active_plan:
+            plan = state._active_plan
+            current_step = plan.get('current_step', 0)
+            steps = plan.get('steps', [])
+            plan_header = f"\n╔══ ACTIVE PLAN: {plan.get('goal', 'Executing task')} ══╗\n"
+            for i, step in enumerate(steps):
+                status_icon = "[✓]" if step.get('status') == 'done' else "[→]" if i == current_step else "[ ]"
+                risk_tag = f"[{step.get('risk', 'safe').upper()}]" if step.get('risk') != 'safe' else ""
+                if i == current_step:
+                    plan_header += f"  {status_icon} STEP {step['id']}: {step['description']} {risk_tag} ← YOU ARE HERE\n"
+                elif step.get('status') == 'done':
+                    plan_header += f"  {status_icon} Step {step['id']}: {step['description']} (completed)\n"
+                else:
+                    plan_header += f"  {status_icon} Step {step['id']}: {step['description']}\n"
+            plan_header += "╚════════════════════════════════════════════════════════════════╝\n"
+            plan_header += "IMPORTANT: Follow this plan. State which step you're working on.\n"
+            plan_header += "Use /plan action=revise to change the plan if needed.\n"
+            info += plan_header
+
         # Note: Don't append user message here - get_llm_response/check_llm_command handle it
 
         tools_for_llm: List[Dict[str, Any]] = []
@@ -3275,11 +3465,70 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 arguments = {}
 
                             if tool_name and tool_name in tool_exec_map:
-                                try:
-                                    tool_result = tool_exec_map[tool_name](**arguments)
-                                except Exception as exc:
-                                    tool_result = f"Error executing '{tool_name}': {exc}"
-                                tool_result_str = json.dumps(tool_result, default=str) if not isinstance(tool_result, str) else tool_result
+                                # ── Permission check ─────────────────────────────
+                                perm_result = state.check_tool_permission(tool_name, arguments)
+                                if perm_result == "deny":
+                                    tool_result_str = f"EPERM: Tool '{tool_name}' is denied by permission settings."
+                                elif perm_result == "ask":
+                                    # Ask user via ask_form jinx
+                                    cmd_key = _build_command_key(tool_name, arguments)
+                                    try:
+                                        ask_result = tool_exec_map.get("ask_form")(
+                                            title=f"Permission Required: {tool_name}",
+                                            fields=json.dumps([
+                                                {"name": "info", "type": "text", "label": "Command", "default": cmd_key, "required": False},
+                                                {"name": "decision", "type": "select", "label": "Allow?", "options": ["Yes", "Yes (conversation)", "Yes (always)", "No", "No (never)"], "required": True}
+                                            ])
+                                        )
+                                        if isinstance(ask_result, dict):
+                                            decision = ask_result.get("decision", "No")
+                                        else:
+                                            decision = "No"
+
+                                        if decision.startswith("Yes"):
+                                            if "always" in decision.lower():
+                                                state.grant_forever(cmd_key, scope="workspace")
+                                            elif "conversation" in decision.lower():
+                                                state.grant_session(cmd_key)
+                                            # Execute the tool
+                                            tool_result = tool_exec_map[tool_name](**arguments)
+                                        elif decision.startswith("No"):
+                                            if "never" in decision.lower():
+                                                state.deny_forever(cmd_key, scope="workspace")
+                                            tool_result_str = f"EPERM: User denied execution of '{tool_name}'"
+                                        else:
+                                            tool_result_str = f"EPERM: User cancelled permission prompt for '{tool_name}'"
+                                    except Exception as e:
+                                        # Fallback to simple input if ask_form fails
+                                        print(colored(f"\n⚠ Permission required for: {cmd_key}", "yellow"))
+                                        print(colored(f"Arguments: {arguments}", "white", attrs=["dark"]))
+                                        resp = input("Allow? [y/c/a/n/N] (yes/conversation/always/no/never): ").strip().lower()
+                                        if resp in ("y", "yes"):
+                                            tool_result = tool_exec_map[tool_name](**arguments)
+                                        elif resp in ("c", "conversation"):
+                                            state.grant_session(cmd_key)
+                                            tool_result = tool_exec_map[tool_name](**arguments)
+                                        elif resp in ("a", "always"):
+                                            state.grant_forever(cmd_key, scope="workspace")
+                                            tool_result = tool_exec_map[tool_name](**arguments)
+                                        elif resp in ("n", "no"):
+                                            tool_result_str = f"EPERM: User denied execution of '{tool_name}'"
+                                        elif resp in ("N", "never"):
+                                            state.deny_forever(cmd_key, scope="workspace")
+                                            tool_result_str = f"EPERM: Tool '{tool_name}' denied permanently"
+                                        else:
+                                            tool_result_str = f"EPERM: User cancelled permission prompt for '{tool_name}'"
+                                else:
+                                    # Allow execution
+                                    try:
+                                        tool_result = tool_exec_map[tool_name](**arguments)
+                                    except Exception as exc:
+                                        tool_result = f"Error executing '{tool_name}': {exc}"
+                                if 'tool_result' in locals() and tool_result is not None:
+                                    tool_result_str = json.dumps(tool_result, default=str) if not isinstance(tool_result, str) else tool_result
+                                else:
+                                    tool_result_str = tool_result_str if 'tool_result_str' in locals() else f"No result from '{tool_name}'"
+                                # ─────────────────────────────────────────────────
                             else:
                                 tool_result_str = f"Tool '{tool_name}' not found in available tools."
 

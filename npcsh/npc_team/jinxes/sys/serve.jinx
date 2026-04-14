@@ -199,14 +199,14 @@ steps:
                   s.close()
 
           def get_conflict_info(port):
-              out, _, rc = run_cmd("lsof -i :" + str(port) + " -P -n 2>/dev/null")
+              out, _, rc = run_cmd(f"lsof -i :{port} -P -n 2>/dev/null")
               if rc == 0 and out:
                   lines = out.strip().splitlines()
                   if len(lines) > 1:
                       parts = lines[1].split()
                       if len(parts) >= 2:
-                          return "PID " + parts[1] + " (" + parts[0] + ")"
-              out2, _, rc2 = run_cmd("ss -tlnp 'sport = :" + str(port) + "' 2>/dev/null")
+                          return f"PID {parts[1]} ({parts[0]})"
+              out2, _, rc2 = run_cmd(f"ss -tlnp 'sport = :{port}' 2>/dev/null")
               if rc2 == 0 and out2:
                   for line in out2.splitlines()[1:]:
                       if 'pid=' in line:
@@ -214,14 +214,14 @@ steps:
                           m = re.search(r'pid=(\d+)', line)
                           n = re.search(r'users:\(\("([^"]+)"', line)
                           if m:
-                              info = "PID " + m.group(1)
+                              info = f"PID {m.group(1)}"
                               if n:
-                                  info += " (" + n.group(1) + ")"
+                                  info += f" ({n.group(1)})"
                               return info
               return ""
 
           def kill_conflict(port):
-              out, _, rc = run_cmd("lsof -t -i :" + str(port) + " 2>/dev/null")
+              out, _, rc = run_cmd(f"lsof -t -i :{port} 2>/dev/null")
               if rc == 0 and out:
                   pids = out.strip().splitlines()
                   for pid in pids:
@@ -229,10 +229,10 @@ steps:
                           os.kill(int(pid.strip()), signal.SIGTERM)
                       except:
                           pass
-                  ui.status = "Sent SIGTERM to port " + str(port) + " processes"
+                  ui.status = f"Sent SIGTERM to port {port} processes"
                   ui.conflict_info = ""
               else:
-                  ui.status = "Could not find process on port " + str(port)
+                  ui.status = f"Could not find process on port {port}"
 
           def server_running():
               return ui.server_thread is not None and ui.server_thread.thread.is_alive()
@@ -245,11 +245,11 @@ steps:
               m = (elapsed % 3600) // 60
               s = elapsed % 60
               if h > 0:
-                  return str(h) + "h " + str(m) + "m " + str(s) + "s"
+                  return f"{h}h {m}m {s}s"
               elif m > 0:
-                  return str(m) + "m " + str(s) + "s"
+                  return f"{m}m {s}s"
               else:
-                  return str(s) + "s"
+                  return f"{s}s"
 
           def install_log_hook(app):
               if ui.log_hook_installed:
@@ -278,7 +278,7 @@ steps:
               if is_port_in_use(ui.port):
                   info = get_conflict_info(ui.port)
                   ui.conflict_info = info
-                  ui.status = "Port " + str(ui.port) + " in use" + (" by " + info if info else "")
+                  ui.status = f"Port {ui.port} in use{f' by {info}' if info else ''}"
                   return
 
               try:
@@ -322,9 +322,9 @@ steps:
                   ui.server_thread.start()
                   ui.start_time = time.time()
                   ui.conflict_info = ""
-                  ui.status = "Server started on port " + str(ui.port)
+                  ui.status = f"Server started on port {ui.port}"
               except Exception as e:
-                  ui.status = "Start failed: " + str(e)[:60]
+                  ui.status = f"Start failed: {str(e)[:60]}"
 
           def stop_server():
               if not server_running():
@@ -336,7 +336,7 @@ steps:
                   ui.start_time = None
                   ui.status = "Server stopped"
               except Exception as e:
-                  ui.status = "Stop failed: " + str(e)[:40]
+                  ui.status = f"Stop failed: {str(e)[:40]}"
 
           def restart_server():
               if server_running():
@@ -362,18 +362,18 @@ steps:
               if p == 'port':
                   try:
                       ui.port = int(val)
-                      ui.status = "Port set to " + val
+                      ui.status = f"Port set to {val}"
                   except:
                       ui.status = "Invalid port number"
               elif p == 'host':
                   ui.host = val
-                  ui.status = "Host set to " + val
+                  ui.status = f"Host set to {val}"
               elif p == 'cors':
                   ui.cors = val
-                  ui.status = "CORS set to " + val
+                  ui.status = f"CORS set to {val}"
               elif p == 'debug':
                   ui.debug = val.lower() in ('on', 'true', '1', 'yes')
-                  ui.status = "Debug " + ("on" if ui.debug else "off")
+                  ui.status = f"Debug {'on' if ui.debug else 'off'}"
 
           # ── filter endpoints ───────────────────────────────
           def filter_endpoints():
@@ -387,7 +387,7 @@ steps:
 
           # ── rendering ──────────────────────────────────────
           def wline(row, text):
-              return "\033[" + str(row) + ";1H\033[K" + text
+              return f"\033[{row};1H\033[K{text}"
 
           def method_color(m):
               m = m.upper()
@@ -417,47 +417,47 @@ steps:
 
               # ── header ──
               hdr = " SERVE - NPC Server Dashboard "
-              out.append(wline(1, "\033[7;1m" + hdr.ljust(W) + "\033[0m"))
+              out.append(wline(1, f"\033[7;1m{hdr.ljust(W)}\033[0m"))
 
               # ── tabs ──
               tb = ""
               for i, t in enumerate(ui.tabs):
                   if i == ui.tab:
-                      tb += "\033[7;1m [" + t + "] \033[0m"
+                      tb += f"\033[7;1m [{t}] \033[0m"
                   else:
-                      tb += "  " + t + "  "
-              out.append(wline(2, " " + tb))
+                      tb += f"  {t}  "
+              out.append(wline(2, f" {tb}"))
 
               # ── separator + count ──
-              out.append(wline(3, "\033[90m" + ("-" * W) + "\033[0m"))
+              out.append(wline(3, f"\033[90m{'-' * W}\033[0m"))
 
               if ui.tab == 0:
                   running = server_running()
                   if running:
-                      info = "  \033[32mRunning\033[0m on \033[1m" + ui.host + ":" + str(ui.port) + "\033[0m"
+                      info = f"  \033[32mRunning\033[0m on \033[1m{ui.host}:{ui.port}\033[0m"
                       ut = uptime_str()
                       if ut:
-                          info += "  |  uptime: " + ut
+                          info += f"  |  uptime: {ut}"
                   else:
                       info = "  \033[31mStopped\033[0m"
                       if ui.conflict_info:
-                          info += "  |  \033[33mPort " + str(ui.port) + " conflict: " + ui.conflict_info + "\033[0m"
+                          info += f"  |  \033[33mPort {ui.port} conflict: {ui.conflict_info}\033[0m"
                   out.append(wline(4, info))
               elif ui.tab == 1:
                   ct = len(ui.filtered_endpoints)
                   total = len(ui.endpoints)
                   if ui.search_query:
-                      info = "  " + str(ct) + " matching (of " + str(total) + ') | search: "' + ui.search_query + '"'
+                      info = f'  {ct} matching (of {total}) | search: "{ui.search_query}"'
                   else:
-                      info = "  " + str(total) + " endpoints"
+                      info = f"  {total} endpoints"
                   out.append(wline(4, info))
               elif ui.tab == 2:
-                  info = "  " + str(len(ui.logs)) + " log entries"
+                  info = f"  {len(ui.logs)} log entries"
                   if server_running():
                       info += "  |  \033[32mlive\033[0m"
                   out.append(wline(4, info))
 
-              out.append(wline(5, "\033[90m" + ("-" * W) + "\033[0m"))
+              out.append(wline(5, f"\033[90m{'-' * W}\033[0m"))
 
               # ── body ──
               body_start = 6
@@ -476,15 +476,15 @@ steps:
                   render_logs(out, W, body_start, body_h)
 
               # ── separator ──
-              out.append(wline(H - 2, "\033[90m" + ("-" * W) + "\033[0m"))
+              out.append(wline(H - 2, f"\033[90m{'-' * W}\033[0m"))
 
               # ── status / search / confirm ──
               if ui.confirm_action:
-                  out.append(wline(H - 1, " \033[33m" + ui.confirm_action[0] + " (y/n)?\033[0m"))
+                  out.append(wline(H - 1, f" \033[33m{ui.confirm_action[0]} (y/n)?\033[0m"))
               elif ui.search_mode:
-                  out.append(wline(H - 1, " \033[33m/\033[0m\033[1m" + ui.search_buf + "\033[0m\033[90m_\033[0m"))
+                  out.append(wline(H - 1, f" \033[33m/\033[0m\033[1m{ui.search_buf}\033[0m\033[90m_\033[0m"))
               elif ui.status:
-                  out.append(wline(H - 1, " \033[33m" + ui.status[:W-2] + "\033[0m"))
+                  out.append(wline(H - 1, f" \033[33m{ui.status[:W-2]}\033[0m"))
               else:
                   out.append(wline(H - 1, ""))
 
@@ -503,7 +503,7 @@ steps:
                   foot = " [\xe2\x86\x90\xe2\x86\x92/Tab] Switch  [\xe2\x86\x91\xe2\x86\x93/jk] Nav  [Enter] Detail  [/] Search  [q] Quit "
               elif ui.tab == 2:
                   foot = " [\xe2\x86\x90\xe2\x86\x92/Tab] Switch  [\xe2\x86\x91\xe2\x86\x93/jk] Nav  [c] Clear  [q] Quit "
-              out.append(wline(H, "\033[7m" + foot[:W].ljust(W) + "\033[0m"))
+              out.append(wline(H, f"\033[7m{foot[:W].ljust(W)}\033[0m"))
 
               sys.stdout.write(''.join(out))
               sys.stdout.flush()
@@ -514,28 +514,28 @@ steps:
                   val = get_param_value(i)
                   label = p.ljust(10)
                   if i == ui.sel:
-                      lines.append(("\033[7m > " + label + " : " + val + " \033[0m", True))
+                      lines.append((f"\033[7m > {label} : {val} \033[0m", True))
                   else:
-                      lines.append(("   " + "\033[1m" + label + "\033[0m : " + val, False))
+                      lines.append((f"   \033[1m{label}\033[0m : {val}", False))
 
               # Extra info lines after params
               lines.append(("", False))
               running = server_running()
               if running:
-                  lines.append(("   \033[1mURL\033[0m        : http://" + ui.host + ":" + str(ui.port), False))
+                  lines.append((f"   \033[1mURL\033[0m        : http://{ui.host}:{ui.port}", False))
                   ut = uptime_str()
                   if ut:
-                      lines.append(("   \033[1mUptime\033[0m     : " + ut, False))
+                      lines.append((f"   \033[1mUptime\033[0m     : {ut}", False))
               else:
                   if ui.conflict_info:
-                      lines.append(("   \033[33mPort conflict\033[0m: " + ui.conflict_info, False))
+                      lines.append((f"   \033[33mPort conflict\033[0m: {ui.conflict_info}", False))
                       lines.append(("   Press \033[1mK\033[0m to kill the conflicting process", False))
                   else:
                       # Check if port is in use
                       lines.append(("   Press \033[1ms\033[0m to start the server", False))
 
               if ui.cors and ui.cors.strip():
-                  lines.append(("   \033[1mCORS\033[0m       : " + ui.cors, False))
+                  lines.append((f"   \033[1mCORS\033[0m       : {ui.cors}", False))
 
               for r in range(body_h):
                   row = start + r
@@ -569,21 +569,21 @@ steps:
                   desc_str = ep['desc']
 
                   if idx == ui.sel:
-                      line = " > " + ep['method'].ljust(7) + " " + path_str
+                      line = f" > {ep['method'].ljust(7)} {path_str}"
                       remaining = W - len(line) - 3
                       if remaining > 5:
-                          line += "  " + desc_str[:remaining]
-                      out.append(wline(row, "\033[7m" + line[:W].ljust(W) + "\033[0m"))
+                          line += f"  {desc_str[:remaining]}"
+                      out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
                   else:
                       cat_tag = ""
                       if r == 0 or (r > 0 and vis[r-1]['category'] != ep['category']):
-                          cat_tag = "\033[90m[" + ep['category'] + "]\033[0m "
-                      base = "   " + method_str + " " + path_str
+                          cat_tag = f"\033[90m[{ep['category']}]\033[0m "
+                      base = f"   {method_str} {path_str}"
                       remaining = W - 14 - len(ep['path'])
                       if remaining > 5 and not cat_tag:
-                          base += "  \033[90m" + desc_str[:remaining] + "\033[0m"
+                          base += f"  \033[90m{desc_str[:remaining]}\033[0m"
                       elif cat_tag:
-                          base = "   " + cat_tag + method_str + " " + path_str
+                          base = f"   {cat_tag}{method_str} {path_str}"
                       out.append(wline(row, base[:W + 40]))  # extra for ANSI codes
 
               if not items:
@@ -594,7 +594,7 @@ steps:
           def render_logs(out, W, start, body_h):
               # Header row
               hdr = "   Time      Method   Path                              Status"
-              out.append(wline(start, "\033[1m" + hdr[:W] + "\033[0m"))
+              out.append(wline(start, f"\033[1m{hdr[:W]}\033[0m"))
 
               log_list = list(ui.logs)
               log_list.reverse()  # newest first
@@ -613,10 +613,10 @@ steps:
                   s = sc + str(entry['status']) + "\033[0m"
 
                   if idx == ui.sel:
-                      line = " > " + entry['time'].ljust(10) + " " + entry['method'].ljust(8) + " " + entry['path'][:34].ljust(34) + " " + str(entry['status'])
-                      out.append(wline(row, "\033[7m" + line[:W].ljust(W) + "\033[0m"))
+                      line = f" > {entry['time'].ljust(10)} {entry['method'].ljust(8)} {entry['path'][:34].ljust(34)} {entry['status']}"
+                      out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
                   else:
-                      out.append(wline(row, "   " + t + " " + m + " " + p + " " + s))
+                      out.append(wline(row, f"   {t} {m} {p} {s}"))
 
               if not log_list:
                   out.append(wline(start + 1, "  \033[90mNo log entries yet. Start the server and make requests.\033[0m"))
@@ -628,15 +628,15 @@ steps:
               for r in range(body_h):
                   row = start + r
                   if r < len(vis):
-                      out.append(wline(row, "  " + vis[r][:W-4]))
+                      out.append(wline(row, f"  {vis[r][:W-4]}"))
                   else:
                       out.append(wline(row, ""))
 
           def render_input(out, W, start, body_h):
               out.append(wline(start, ""))
-              out.append(wline(start + 1, "  \033[1m" + ui.input_label + "\033[0m"))
+              out.append(wline(start + 1, f"  \033[1m{ui.input_label}\033[0m"))
               out.append(wline(start + 2, ""))
-              out.append(wline(start + 3, "  > \033[7m " + ui.input_buf + " \033[0m"))
+              out.append(wline(start + 3, f"  > \033[7m {ui.input_buf} \033[0m"))
               for r in range(4, body_h):
                   out.append(wline(start + r, ""))
 
@@ -649,15 +649,15 @@ steps:
               ui.detail_lines = [
                   "\033[1mEndpoint Detail\033[0m",
                   "",
-                  "\033[1mCategory:\033[0m  " + ep['category'],
-                  "\033[1mMethod:\033[0m    " + ep['method'],
-                  "\033[1mPath:\033[0m      " + ep['path'],
-                  "\033[1mDesc:\033[0m      " + ep['desc'],
+                  f"\033[1mCategory:\033[0m  {ep['category']}",
+                  f"\033[1mMethod:\033[0m    {ep['method']}",
+                  f"\033[1mPath:\033[0m      {ep['path']}",
+                  f"\033[1mDesc:\033[0m      {ep['desc']}",
                   "",
               ]
               if server_running():
-                  url = "http://" + ui.host + ":" + str(ui.port) + ep['path']
-                  ui.detail_lines.append("\033[1mFull URL:\033[0m  " + url)
+                  url = f"http://{ui.host}:{ui.port}{ep['path']}"
+                  ui.detail_lines.append(f"\033[1mFull URL:\033[0m  {url}")
               ui.detail = True
               ui.detail_scroll = 0
 
@@ -710,7 +710,7 @@ steps:
                   ui.input_buf = get_param_value(ui.sel)
                   if ui.input_buf == "(none)":
                       ui.input_buf = ""
-                  ui.input_label = "Edit " + p + ":"
+                  ui.input_label = f"Edit {p}:"
                   idx = ui.sel
                   def on_submit(val):
                       set_param_value(idx, val)
@@ -723,12 +723,12 @@ steps:
                   def on_port(val):
                       try:
                           ui.port = int(val)
-                          ui.status = "Port set to " + val
+                          ui.status = f"Port set to {val}"
                           # Check if new port is in use
                           if is_port_in_use(ui.port):
                               info = get_conflict_info(ui.port)
                               ui.conflict_info = info
-                              ui.status += " (in use" + (" by " + info if info else "") + ")"
+                              ui.status += f" (in use{f' by {info}' if info else ''})"
                           else:
                               ui.conflict_info = ""
                       except:
@@ -738,7 +738,7 @@ steps:
                   if ui.conflict_info or is_port_in_use(ui.port):
                       if not ui.conflict_info:
                           ui.conflict_info = get_conflict_info(ui.port) or "unknown"
-                      ui.confirm_action = ("Kill process on port " + str(ui.port) + " (" + ui.conflict_info + ")",
+                      ui.confirm_action = (f"Kill process on port {ui.port} ({ui.conflict_info})",
                                           lambda: kill_conflict(ui.port))
 
           def handle_log_key(c):
@@ -834,7 +834,7 @@ steps:
                   ui.scroll = 0
                   filter_endpoints()
                   if ui.search_query:
-                      ui.status = 'Filter: "' + ui.search_query + '" (' + str(len(ui.filtered_endpoints)) + " results)"
+                      ui.status = f'Filter: "{ui.search_query}" ({len(ui.filtered_endpoints)} results)'
                   else:
                       ui.status = "Search cleared"
               elif c in ('\x7f', '\x08'):
@@ -905,7 +905,7 @@ steps:
                   ui.input_buf = get_param_value(ui.sel)
                   if ui.input_buf == "(none)":
                       ui.input_buf = ""
-                  ui.input_label = "Edit " + p + ":"
+                  ui.input_label = f"Edit {p}:"
                   idx = ui.sel
                   def on_submit(val):
                       set_param_value(idx, val)

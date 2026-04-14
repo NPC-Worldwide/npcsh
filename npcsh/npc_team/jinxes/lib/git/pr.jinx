@@ -74,39 +74,30 @@ steps:
                       _model = npc.model if npc else (state.chat_model if state else 'gemma3:4b')
                       _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
 
-                      prompt_parts = [
-                          'Generate a GitHub pull request title and description.',
-                          '',
-                          'Branch: ' + branch + ' -> ' + base,
-                      ]
-                      if task:
-                          prompt_parts.append('Task context: ' + task)
+                      task_context = f'Task context: {task}\n\n' if task else ''
+                      prompt = f"""Generate a GitHub pull request title and description.
+                      Branch: {branch} -> {base}
+                      {task_context}Commits:
+                      {log}
 
-                      prompt_parts.extend([
-                          '',
-                          'Commits:',
-                          log,
-                          '',
-                          'Diff stats:',
-                          diff_stat,
-                          '',
-                          'Diff:',
-                          diff_full,
-                          '',
-                          'Respond in this EXACT format:',
-                          'TITLE: <short PR title, max 72 chars>',
-                          '',
-                          'BODY:',
-                          '## Summary',
-                          '<2-4 bullet points describing the changes>',
-                          '',
-                          '## Changes',
-                          '<list of specific changes>',
-                          '',
-                          '## Test Plan',
-                          '<how to verify these changes>',
-                      ])
-                      prompt = '\n'.join(prompt_parts)
+                      Diff stats:
+                      {diff_stat}
+
+                      Diff:
+                      {diff_full}
+
+                      Respond in this EXACT format:
+                      TITLE: <short PR title, max 72 chars>
+
+                      BODY:
+                      ## Summary
+                      <2-4 bullet points describing the changes>
+
+                      ## Changes
+                      <list of specific changes>
+
+                      ## Test Plan
+                      <how to verify these changes>"""
 
                       resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
                       result = str(resp.get('response', ''))
