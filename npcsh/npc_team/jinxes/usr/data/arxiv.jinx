@@ -30,7 +30,7 @@ steps:
       import time
 
       def log(msg):
-          sys.stderr.write("DEBUG [arxiv] " + str(msg) + "\n")
+          sys.stderr.write(f"DEBUG [arxiv] {msg}\n")
           sys.stderr.flush()
 
       def fetch_url_with_retry(url, timeout=60, max_retries=5, initial_delay=10):
@@ -105,7 +105,7 @@ steps:
                   ascii_img.append('    ' + ascii_row)  # Indent
               return ascii_img
           except Exception as e:
-              return ['    [Image error: ' + str(e)[:30] + ']']
+              return [f'    [Image error: {str(e)[:30]}]']
 
       def render_pdf_terminal(pdf_path, width=80):
           """Render PDF as text + ASCII figures"""
@@ -126,7 +126,7 @@ steps:
                       elif lines and lines[-1] != '':
                           lines.append('')  # Keep single blank lines
           except Exception as e:
-              lines.append('[Text extraction failed: ' + str(e) + ']')
+              lines.append(f'[Text extraction failed: {e}]')
 
           # Try to extract and render images
           try:
@@ -153,7 +153,7 @@ steps:
                       lines.append('─' * 50)
                       for i, img_path in enumerate(sig_images[:6]):  # Max 6 figures
                           lines.append('')
-                          lines.append('Fig ' + str(i+1) + ':')
+                          lines.append(f'Fig {i+1}:')
                           ascii_lines = image_to_ascii(img_path, min(50, width-8))
                           if ascii_lines:
                               lines.extend(ascii_lines)
@@ -277,19 +277,19 @@ steps:
 
       if author:
           for a in author.split(','):
-              search_parts.append("au:" + quote_term(a))
+              search_parts.append(f"au:{quote_term(a)}")
       if category:
           if category in cat_expansions:
-              cat_or = "+OR+".join(["cat:" + c for c in cat_expansions[category]])
-              search_parts.append("(" + cat_or + ")")
+              cat_or = "+OR+".join([f"cat:{c}" for c in cat_expansions[category]])
+              search_parts.append(f"({cat_or})")
           else:
-              search_parts.append("cat:" + category)
+              search_parts.append(f"cat:{category}")
       if title_filter:
-          search_parts.append("ti:" + quote_term(title_filter))
+          search_parts.append(f"ti:{quote_term(title_filter)}")
       if abstract_filter:
-          search_parts.append("abs:" + quote_term(abstract_filter))
+          search_parts.append(f"abs:{quote_term(abstract_filter)}")
       if query:
-          search_parts.append("all:" + quote_term(query))
+          search_parts.append(f"all:{quote_term(query)}")
 
       if not search_parts:
           help_text = [
@@ -322,7 +322,7 @@ steps:
 
           # Build URL - spaces already handled by quote_term, just replace any remaining
           encoded_query = search_query.replace(' ', '+')
-          url = "https://export.arxiv.org/api/query?search_query=" + encoded_query + "&start=0&max_results=" + str(limit) + "&sortBy=relevance&sortOrder=descending"
+          url = f"https://export.arxiv.org/api/query?search_query={encoded_query}&start=0&max_results={limit}&sortBy=relevance&sortOrder=descending"
           log(f"full URL: {url}")
 
           try:
@@ -342,7 +342,7 @@ steps:
                   log(f"totalResults: {total_results_el.text}")
 
               if not entries:
-                  context['output'] = "No papers found for: " + query
+                  context['output'] = f"No papers found for: {query}"
                   log(f"no entries for query={query}")
               elif text_only:
                   results = []
@@ -353,17 +353,17 @@ steps:
                       authors = [a.find('atom:name', ns).text for a in entry.findall('atom:author', ns)]
                       author_str = ', '.join(authors[:6])
                       if len(authors) > 6:
-                          author_str += ' et al. (' + str(len(authors)) + ')'
+                          author_str += f' et al. ({len(authors)})'
                       link = entry.find('atom:id', ns).text
 
-                      results.append(str(i) + ". " + title)
-                      results.append("   Authors: " + author_str)
-                      results.append("   Published: " + published)
-                      results.append("   Abstract: " + summary)
-                      results.append("   URL: " + link)
+                      results.append(f"{i}. {title}")
+                      results.append(f"   Authors: {author_str}")
+                      results.append(f"   Published: {published}")
+                      results.append(f"   Abstract: {summary}")
+                      results.append(f"   URL: {link}")
                       results.append("")
 
-                  context['output'] = "Found " + str(len(entries)) + " papers on arXiv:\n\n" + "\n".join(results)
+                  context['output'] = f"Found {len(entries)} papers on arXiv:\n\n" + "\n".join(results)
               else:
                   papers = []
                   for entry in entries:
@@ -470,21 +470,21 @@ steps:
 
                           # Header
                           if input_mode:
-                              header = " FILTER BY " + input_mode.upper() + ": " + input_buffer + "_ "
+                              header = f" FILTER BY {input_mode.upper()}: {input_buffer}_ "
                           elif mode == 'list':
                               filter_info = []
                               if filter_year:
-                                  filter_info.append("year:" + filter_year)
+                                  filter_info.append(f"year:{filter_year}")
                               if filter_author:
-                                  filter_info.append("author:" + filter_author)
+                                  filter_info.append(f"author:{filter_author}")
                               filter_str = ' '.join(filter_info)
                               if filter_str:
-                                  header = " ARXIV: '" + query + "' (" + str(len(papers)) + "/" + str(len(all_papers)) + ") [" + sort_key + "] " + filter_str + " "
+                                  header = f" ARXIV: '{query}' ({len(papers)}/{len(all_papers)}) [{sort_key}] {filter_str} "
                               else:
-                                  header = " ARXIV: '" + query + "' (" + str(len(papers)) + " papers) [sort:" + sort_key + "] "
+                                  header = f" ARXIV: '{query}' ({len(papers)} papers) [sort:{sort_key}] "
                           else:
-                              header = " " + papers[selected]['title'][:width-4] + " "
-                          sys.stdout.write('\033[7;1m' + header.ljust(width) + '\033[0m\n')
+                              header = f" {papers[selected]['title'][:width-4]} "
+                          sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
 
                           if mode == 'list':
                               # Column headers
@@ -492,13 +492,13 @@ steps:
                               cat_w = 12
                               auth_w = 30
                               title_w = width - date_w - cat_w - auth_w - 6
-                              col_header = " " + "DATE".ljust(date_w) + " " + "CAT".ljust(cat_w) + " " + "AUTHORS".ljust(auth_w) + " " + "TITLE".ljust(title_w)
+                              col_header = f" {'DATE'.ljust(date_w)} {'CAT'.ljust(cat_w)} {'AUTHORS'.ljust(auth_w)} {'TITLE'.ljust(title_w)}"
                               sys.stdout.write('\033[90m' + col_header[:width] + '\033[0m\n')
-                              sys.stdout.write('\033[90m' + ("─" * width) + '\033[0m\n')
+                              sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
 
                               for i in range(list_height):
                                   idx = scroll + i
-                                  sys.stdout.write('\033[' + str(4+i) + ';1H\033[K')
+                                  sys.stdout.write(f'\033[{4+i};1H\033[K')
                                   if idx >= len(papers):
                                       continue
 
@@ -508,13 +508,13 @@ steps:
                                   # Show multiple authors
                                   author_names = [a.split()[-1] for a in p['authors'][:5]]
                                   if p['num_authors'] > 5:
-                                      auth = ', '.join(author_names) + ' +' + str(p['num_authors']-5)
+                                      auth = f"{', '.join(author_names)} +{p['num_authors']-5}"
                                   else:
                                       auth = ', '.join(author_names)
                                   auth = auth[:auth_w-1]
                                   title = p['title'][:title_w-1]
 
-                                  line = " " + date.ljust(date_w) + " " + cat.ljust(cat_w) + " " + auth.ljust(auth_w) + " " + title
+                                  line = f" {date.ljust(date_w)} {cat.ljust(cat_w)} {auth.ljust(auth_w)} {title}"
                                   line = line[:width-1]
 
                                   if idx == selected:
@@ -522,27 +522,27 @@ steps:
                                   else:
                                       sys.stdout.write(' ' + line)
 
-                              sys.stdout.write('\033[' + str(height-1) + ';1H\033[K\033[90m' + ("─" * width) + '\033[0m')
-                              sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[7m j/k:Nav Enter:View o/i/p:Open d:Download  1-3:Sort y/a:Filter c:Clear  q:Quit [' + str(selected+1) + '/' + str(len(papers)) + '] \033[0m')
+                              sys.stdout.write(f'\033[{height-1};1H\033[K\033[90m{"─" * width}\033[0m')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav Enter:View o/i/p:Open d:Download  1-3:Sort y/a:Filter c:Clear  q:Quit [{selected+1}/{len(papers)}] \033[0m')
 
                           elif mode == 'detail':
-                              sys.stdout.write('\033[90m' + ("─" * width) + '\033[0m\n')
+                              sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
                               p = papers[selected]
                               lines = []
-                              lines.append('\033[1mTitle:\033[0m ' + latex_to_unicode(p['title']))
+                              lines.append(f'\033[1mTitle:\033[0m {latex_to_unicode(p["title"])}')
                               lines.append('')
-                              lines.append('\033[1mAuthors (' + str(p['num_authors']) + '):\033[0m ' + ', '.join(p['authors']))
-                              lines.append('\033[1mPublished:\033[0m ' + p['published'] + '  \033[1mUpdated:\033[0m ' + p['updated'])
-                              lines.append('\033[1mCategory:\033[0m ' + p['category'] + '  \033[1mAll:\033[0m ' + ', '.join(p['categories'][:5]))
-                              lines.append('\033[1mArXiv ID:\033[0m ' + p['aid'])
-                              lines.append('\033[1mURL:\033[0m ' + p['url'])
-                              lines.append('\033[1mPDF:\033[0m ' + p['pdf'])
+                              lines.append(f"\033[1mAuthors ({p['num_authors']}):\033[0m {', '.join(p['authors'])}")
+                              lines.append(f"\033[1mPublished:\033[0m {p['published']}  \033[1mUpdated:\033[0m {p['updated']}")
+                              lines.append(f"\033[1mCategory:\033[0m {p['category']}  \033[1mAll:\033[0m {', '.join(p['categories'][:5])}")
+                              lines.append(f"\033[1mArXiv ID:\033[0m {p['aid']}")
+                              lines.append(f"\033[1mURL:\033[0m {p['url']}")
+                              lines.append(f"\033[1mPDF:\033[0m {p['pdf']}")
                               if p['doi']:
-                                  lines.append('\033[1mDOI:\033[0m ' + p['doi'])
+                                  lines.append(f"\033[1mDOI:\033[0m {p['doi']}")
                               if p['journal']:
-                                  lines.append('\033[1mJournal:\033[0m ' + p['journal'])
+                                  lines.append(f"\033[1mJournal:\033[0m {p['journal']}")
                               if p['comment']:
-                                  lines.append('\033[1mComment:\033[0m ' + p['comment'][:80])
+                                  lines.append(f"\033[1mComment:\033[0m {p['comment'][:80]}")
                               lines.append('')
                               lines.append('\033[1mAbstract:\033[0m')
                               abstract_rendered = latex_to_unicode(p['abstract'])
@@ -551,33 +551,33 @@ steps:
 
                               for i in range(list_height + 1):
                                   idx = detail_scroll + i
-                                  sys.stdout.write('\033[' + str(3+i) + ';1H\033[K')
+                                  sys.stdout.write(f'\033[{3+i};1H\033[K')
                                   if idx < len(lines):
-                                      sys.stdout.write('  ' + lines[idx][:width-4])
+                                      sys.stdout.write(f'  {lines[idx][:width-4]}')
 
-                              sys.stdout.write('\033[' + str(height-1) + ';1H\033[K\033[90m' + ("─" * width) + '\033[0m')
-                              sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[7m j/k:Scroll  b:Back  o:Browser  i:Incognide  p:PDF  d:Download  v:TermView  q:Quit \033[0m')
+                              sys.stdout.write(f'\033[{height-1};1H\033[K\033[90m{"─" * width}\033[0m')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll  b:Back  o:Browser  i:Incognide  p:PDF  d:Download  v:TermView  q:Quit \033[0m')
 
                           elif mode == 'pdfview':
                               # PDF terminal view mode
                               p = papers[selected]
-                              header = " PDF VIEW: " + p['aid'] + " "
-                              sys.stdout.write('\033[7;1m' + header.ljust(width) + '\033[0m\n')
-                              sys.stdout.write('\033[90m' + ("─" * width) + '\033[0m\n')
+                              header = f" PDF VIEW: {p['aid']} "
+                              sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
+                              sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
 
                               view_height = height - 4
                               for i in range(view_height):
                                   idx = pdf_scroll + i
-                                  sys.stdout.write('\033[' + str(3+i) + ';1H\033[K')
+                                  sys.stdout.write(f'\033[{3+i};1H\033[K')
                                   if idx < len(pdf_lines):
                                       line = pdf_lines[idx]
                                       # Apply LaTeX rendering to text
                                       line = latex_to_unicode(line)
-                                      sys.stdout.write('  ' + line[:width-4])
+                                      sys.stdout.write(f'  {line[:width-4]}')
 
-                              sys.stdout.write('\033[' + str(height-1) + ';1H\033[K\033[90m' + ("─" * width) + '\033[0m')
+                              sys.stdout.write(f'\033[{height-1};1H\033[K\033[90m{"─" * width}\033[0m')
                               pct = int((pdf_scroll / max(1, len(pdf_lines) - view_height)) * 100) if len(pdf_lines) > view_height else 100
-                              sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[7m j/k/PgDn/PgUp:Scroll  b:Back  d:Download  q:Quit  [' + str(pct) + '%] \033[0m')
+                              sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k/PgDn/PgUp:Scroll  b:Back  d:Download  q:Quit  [{pct}%] \033[0m')
 
                           sys.stdout.flush()
 
@@ -645,7 +645,7 @@ steps:
                               continue
 
                           if c == 'q' or c == '\x03':
-                              context['output'] = "Searched: " + query + " (" + str(len(papers)) + " results)"
+                              context['output'] = f"Searched: {query} ({len(papers)} results)"
                               break
                           elif c == 'k':
                               if mode == 'list' and selected > 0:
@@ -702,15 +702,15 @@ steps:
                               filename = arxiv_id + '.pdf'
                               filepath = os.path.join(os.getcwd(), filename)
                               try:
-                                  sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[43;30m Downloading ' + filename + '... \033[0m')
+                                  sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m Downloading {filename}... \033[0m')
                                   sys.stdout.flush()
                                   urllib.request.urlretrieve(pdf_url, filepath)
-                                  sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[42;30m Downloaded: ' + filepath + ' \033[0m')
+                                  sys.stdout.write(f'\033[{height};1H\033[K\033[42;30m Downloaded: {filepath} \033[0m')
                                   sys.stdout.flush()
                                   import time
                                   time.sleep(1)
                               except Exception as e:
-                                  sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[41;37m Download failed: ' + str(e)[:50] + ' \033[0m')
+                                  sys.stdout.write(f'\033[{height};1H\033[K\033[41;37m Download failed: {str(e)[:50]} \033[0m')
                                   sys.stdout.flush()
                                   import time
                                   time.sleep(2)
@@ -720,7 +720,7 @@ steps:
                               pdf_url = p['pdf']
                               import tempfile
                               try:
-                                  sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[43;30m Fetching PDF for terminal view... \033[0m')
+                                  sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m Fetching PDF for terminal view... \033[0m')
                                   sys.stdout.flush()
                                   with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
                                       tmp_path = tmp.name
@@ -732,7 +732,7 @@ steps:
                                   pdf_scroll = 0
                                   sys.stdout.write('\033[2J\033[H')
                               except Exception as e:
-                                  sys.stdout.write('\033[' + str(height) + ';1H\033[K\033[41;37m PDF view failed: ' + str(e)[:50] + ' \033[0m')
+                                  sys.stdout.write(f'\033[{height};1H\033[K\033[41;37m PDF view failed: {str(e)[:50]} \033[0m')
                                   sys.stdout.flush()
                                   import time
                                   time.sleep(2)
@@ -787,4 +787,4 @@ steps:
               tb = traceback.format_exc()
               log(f"EXCEPTION: {type(e).__name__}: {e}")
               log(tb)
-              context['output'] = "arXiv error: " + str(e) + "\n" + tb
+              context['output'] = f"arXiv error: {e}\n{tb}"

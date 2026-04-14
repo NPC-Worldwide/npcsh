@@ -34,24 +34,24 @@ steps:
 
       if not hasattr(team_obj, 'npcs') or target_name not in team_obj.npcs:
           available = list(team_obj.npcs.keys()) if hasattr(team_obj, 'npcs') else []
-          output = "Error: NPC '{}' not found. Available: {}".format(target_name, ', '.join(available))
+          output = f"Error: NPC '{target_name}' not found. Available: {', '.join(available)}"
           exit()
 
       target_npc = team_obj.npcs[target_name]
       target_jinxes = dict((k, v) for k, v in target_npc.jinxes_dict.items() if k != 'delegate')
 
       sep = '-' * 60
-      print(colored("\n" + sep, "cyan"))
-      print(colored("  Delegating to @" + target_name, "yellow", attrs=["bold"]))
-      print(colored("  Task: " + task_request, "white", attrs=["dark"]))
+      print(colored(f"\n{sep}", "cyan"))
+      print(colored(f"  Delegating to @{target_name}", "yellow", attrs=["bold"]))
+      print(colored(f"  Task: {task_request}", "white", attrs=["dark"]))
       print(colored(sep + "\n", "cyan"))
-      print(colored("  [{}] Model: {}".format(target_name, target_npc.model), "white", attrs=["dark"]))
+      print(colored(f"  [{target_name}] Model: {target_npc.model}", "white", attrs=["dark"]))
       jinx_list = ', '.join(list(target_jinxes.keys())[:8])
-      print(colored("  [{}] Jinxes: {}...".format(target_name, jinx_list), "white", attrs=["dark"]))
+      print(colored(f"  [{target_name}] Jinxes: {jinx_list}...", "white", attrs=["dark"]))
 
       # Update spinner to show sub-agent
       if spinner:
-          spinner.set_message("{} delegated to {}".format(orchestrator_name, target_name))
+          spinner.set_message(f"{orchestrator_name} delegated to {target_name}")
 
       current_task = task_request
       iteration = 0
@@ -63,11 +63,11 @@ steps:
 
           # Update spinner with current iteration
           if spinner:
-              spinner.set_message("{} working (iter {}/{})".format(target_name, iteration, max_iters))
+              spinner.set_message(f"{target_name} working (iter {iteration}/{max_iters})")
 
           if iteration > 1:
-              print(colored("\n" + sep, "yellow"))
-              iter_msg = "  Iteration {}/{} - Re-tasking @{}".format(iteration, max_iters, target_name)
+              print(colored(f"\n{sep}", "yellow"))
+              iter_msg = f"  Iteration {iteration}/{max_iters} - Re-tasking @{target_name}"
               print(colored(iter_msg, "yellow", attrs=["bold"]))
               print(colored(sep + "\n", "yellow"))
 
@@ -87,42 +87,39 @@ steps:
                   delegate_output = str(result)
                   delegate_messages = []
 
-              print(colored("\n" + sep, "cyan"))
-              print(colored("  @{} iteration {} complete".format(target_name, iteration), "green"))
+              print(colored(f"\n{sep}", "cyan"))
+              print(colored(f"  @{target_name} iteration {iteration} complete", "green"))
               print(colored(sep + "\n", "cyan"))
 
               # Update spinner for review phase
               if spinner:
-                  spinner.set_message("{} reviewing {}'s work".format(orchestrator_name, target_name))
+                  spinner.set_message(f"{orchestrator_name} reviewing {target_name}'s work")
 
               # Build review prompt without f-strings to avoid YAML issues
               output_preview = delegate_output[:2000] if delegate_output else 'No output received'
               msg_preview = str(delegate_messages[-5:]) if delegate_messages else 'No messages'
 
-              review_lines = [
-                  "You are reviewing work done by @{} on this task:".format(target_name),
-                  "",
-                  "ORIGINAL TASK: " + task_request,
-                  "",
-                  "ITERATION: {}/{}".format(iteration, max_iters),
-                  "",
-                  "SUB-AGENT OUTPUT:",
-                  output_preview,
-                  "",
-                  "RECENT MESSAGES:",
-                  msg_preview,
-                  "",
-                  "Evaluate if the task is complete. Consider:",
-                  "1. Did the sub-agent accomplish what was asked?",
-                  "2. Are there obvious errors or incomplete steps?",
-                  "3. For GUI tasks: Did they fill in all required fields?",
-                  "",
-                  "Respond EXACTLY like this:",
-                  "COMPLETE: YES or NO",
-                  "FEEDBACK: If NO, what should be done next",
-                  "SUMMARY: Brief summary of progress"
-              ]
-              review_prompt = "\n".join(review_lines)
+              review_prompt = f"""You are reviewing work done by @{target_name} on this task:
+
+                ORIGINAL TASK: {task_request}
+
+                ITERATION: {iteration}/{max_iters}
+
+                SUB-AGENT OUTPUT:
+                {output_preview}
+
+                RECENT MESSAGES:
+                {msg_preview}
+
+                Evaluate if the task is complete. Consider:
+                1. Did the sub-agent accomplish what was asked?
+                2. Are there obvious errors or incomplete steps?
+                3. For GUI tasks: Did they fill in all required fields?
+
+                Respond EXACTLY like this:
+                COMPLETE: YES or NO
+                FEEDBACK: If NO, what should be done next
+                SUMMARY: Brief summary of progress"""
 
               review_result = get_llm_response(
                   review_prompt,
@@ -149,35 +146,32 @@ steps:
                   task_complete = True
                   print(colored("\n  Task completed successfully", "green", attrs=["bold"]))
                   if summary:
-                      print(colored("  Summary: " + summary, "white", attrs=["dark"]))
-                  final_output = "[{}] Task completed.\n{}".format(target_name, summary)
+                      print(colored(f"  Summary: {summary}", "white", attrs=["dark"]))
+                  final_output = f"[{target_name}] Task completed.\n{summary}"
               else:
                   print(colored("\n  Task incomplete - providing feedback", "yellow"))
                   if feedback:
-                      print(colored("  Feedback: " + feedback, "white", attrs=["dark"]))
+                      print(colored(f"  Feedback: {feedback}", "white", attrs=["dark"]))
 
-                  followup_lines = [
-                      "Continue the previous task. Feedback from orchestrator:",
-                      "",
-                      "ORIGINAL TASK: " + task_request,
-                      "",
-                      "FEEDBACK: " + feedback,
-                      "",
-                      "Continue and complete the task based on this feedback."
-                  ]
-                  current_task = "\n".join(followup_lines)
+                  current_task = f"""Continue the previous task. Feedback from orchestrator:
+
+                  ORIGINAL TASK: {task_request}
+
+                  FEEDBACK: {feedback}
+
+                  Continue and complete the task based on this feedback."""
 
                   if delegate_messages:
                       context['messages'] = delegate_messages
 
           except Exception as e:
-              print(colored("  Error in iteration {}: {}".format(iteration, e), "red"))
-              final_output = "Error delegating to {}: {}".format(target_name, str(e))
+              print(colored(f"  Error in iteration {iteration}: {e}", "red"))
+              final_output = f"Error delegating to {target_name}: {str(e)}"
               break
 
       if not task_complete and iteration >= max_iters:
-          print(colored("\n  Max iterations ({}) reached".format(max_iters), "yellow"))
+          print(colored(f"\n  Max iterations ({max_iters}) reached", "yellow"))
           status = summary if summary else 'Unknown'
-          final_output = "[{}] Task incomplete after {} iterations. Status: {}".format(target_name, max_iters, status)
+          final_output = f"[{target_name}] Task incomplete after {max_iters} iterations. Status: {status}"
 
-      output = final_output or "[{}]: No output received".format(target_name)
+      output = final_output or f"[{target_name}]: No output received"

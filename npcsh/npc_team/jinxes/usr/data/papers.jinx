@@ -34,7 +34,7 @@ steps:
               return 80, 24
 
       def log(msg):
-          sys.stderr.write("DEBUG [papers] " + str(msg) + "\n")
+          sys.stderr.write(f"DEBUG [papers] {msg}\n")
           sys.stderr.flush()
 
       def fetch_url_with_retry(url, timeout=60, max_retries=5, initial_delay=10, req=None):
@@ -89,8 +89,8 @@ steps:
                   quoted = '%22' + q.replace(' ', '+') + '%22'
               else:
                   quoted = q
-              search_query = "all:" + quoted
-              url = "https://export.arxiv.org/api/query?search_query=" + search_query + "&start=0&max_results=" + str(limit) + "&sortBy=relevance&sortOrder=descending"
+              search_query = f"all:{quoted}"
+              url = f"https://export.arxiv.org/api/query?search_query={search_query}&start=0&max_results={limit}&sortBy=relevance&sortOrder=descending"
               log(f"fetch_arxiv: query='{query}', url={url}")
               data = fetch_url_with_retry(url, timeout=60)
               log(f"fetch_arxiv: got {len(data)} bytes")
@@ -221,7 +221,7 @@ steps:
           try:
               url = "https://en.wikipedia.org/w/api.php"
               params = {"action": "query", "list": "search", "srsearch": query, "srlimit": limit, "format": "json", "srprop": "snippet|timestamp|wordcount"}
-              req = urllib.request.Request(url + "?" + urllib.parse.urlencode(params), headers={"User-Agent": "npcsh/1.0"})
+              req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers={"User-Agent": "npcsh/1.0"})
               data = json.loads(fetch_url_with_retry(url, timeout=15, req=req))
               for r in data.get('query', {}).get('search', []):
                   import re
@@ -256,7 +256,7 @@ steps:
                       elif lines and lines[-1] != '':
                           lines.append('')
           except Exception as e:
-              lines.append('[Text extraction failed: ' + str(e) + ']')
+              lines.append(f'[Text extraction failed: {e}]')
           return lines
 
       # ── Main ────────────────────────────────────────────────────
