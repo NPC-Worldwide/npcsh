@@ -50,7 +50,7 @@ steps:
 
               elif isinstance(img, list):
                   # It's a list of file paths (copied files)
-                  output = f"Clipboard contains {len(img)} file(s):\n" + "\n".join(img)
+                  output = f"Clipboard contains {len(img)} file(s):\n{chr(10).join(img)}"
                   context['pasted_files'] = img
                   image_saved = True
 
