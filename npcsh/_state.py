@@ -3498,7 +3498,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                             tool_result_str = f"EPERM: User denied execution of '{tool_name}'"
                                         else:
                                             tool_result_str = f"EPERM: User cancelled permission prompt for '{tool_name}'"
-                                    except Exception as e:
+                                    except Exception:
                                         # Fallback to simple input if ask_form fails
                                         print(colored(f"\n⚠ Permission required for: {cmd_key}", "yellow"))
                                         print(colored(f"Arguments: {arguments}", "white", attrs=["dark"]))

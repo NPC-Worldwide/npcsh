@@ -7,29 +7,68 @@ import sys
 from pathlib import Path
 
 
+NPCRS_REPO = "NPC-Worldwide/npcrs"
+
+# Map (system, machine) → release artifact name
+_NPCRS_ARTIFACT = {
+    ("Linux", "x86_64"): "npcrs-linux-x64",
+    ("Darwin", "arm64"): "npcrs-macos-arm64",
+    ("Darwin", "x86_64"): "npcrs-macos-x64",
+    ("Windows", "AMD64"): "npcrs-windows-x64.exe",
+}
+
+
+def _download_npcrs(bin_dir: Path) -> bool:
+    """Download the latest npcrs release binary into bin_dir. Returns True on success."""
+    import urllib.request
+    import json
+    import shutil
+
+    system = platform.system()
+    machine = platform.machine()
+    artifact = _NPCRS_ARTIFACT.get((system, machine))
+    if not artifact:
+        print(f"Warning: no npcrs binary for {system}/{machine}")
+        return False
+
+    ext = ".exe" if system == "Windows" else ""
+    dst = bin_dir / f"npcrs{ext}"
+
+    try:
+        api_url = f"https://api.github.com/repos/{NPCRS_REPO}/releases/latest"
+        with urllib.request.urlopen(api_url, timeout=15) as resp:
+            release = json.loads(resp.read())
+
+        asset_url = next(
+            (a["browser_download_url"] for a in release.get("assets", []) if a["name"] == artifact),
+            None,
+        )
+        if not asset_url:
+            print(f"Warning: npcrs artifact '{artifact}' not found in latest release")
+            return False
+
+        print(f"Downloading npcrs binary from {asset_url} ...")
+        with urllib.request.urlopen(asset_url, timeout=120) as resp, open(dst, "wb") as f:
+            shutil.copyfileobj(resp, f)
+
+        os.chmod(str(dst), 0o755)
+        print(f"npcrs binary installed to {dst}")
+        return True
+    except Exception as e:
+        print(f"Warning: failed to download npcrs binary ({e})")
+        return False
+
+
 class BuildWithRust(build_py):
-    """Build the Rust binary and place it in npcsh/bin/ before packaging."""
+    """Download pre-built npcrs binary into npcsh/bin/ before packaging."""
 
     def run(self):
-        rust_dir = Path(__file__).parent / "rust"
         bin_dir = Path(__file__).parent / "npcsh" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
 
-        if rust_dir.exists() and (rust_dir / "Cargo.toml").exists():
-            try:
-                subprocess.check_call(
-                    ["cargo", "build", "--release"],
-                    cwd=str(rust_dir),
-                )
-                ext = ".exe" if platform.system() == "Windows" else ""
-                src = rust_dir / "target" / "release" / f"npcsh{ext}"
-                if src.exists():
-                    dst = bin_dir / f"npcsh{ext}"
-                    import shutil
-                    shutil.copy2(str(src), str(dst))
-                    os.chmod(str(dst), 0o755)
-            except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                print(f"Warning: Rust build failed ({e}), falling back to Python-only")
+        # Try to download the pre-built npcrs binary from GitHub releases
+        if not _download_npcrs(bin_dir):
+            print("Warning: npcrs binary unavailable — falling back to Python-only mode")
 
         super().run()
 
