@@ -28,7 +28,6 @@ steps:
       else:
           import tty
           import termios
-          import select as _sel
 
           class FormState:
               def __init__(self, fields):
@@ -37,8 +36,6 @@ steps:
                   self.values = {}
                   self.editing = False
                   self.edit_buf = ""
-                  self.edit_cursor = 0
-                  # For select/multiselect sub-menus
                   self.option_sel = 0
                   self.option_open = False
                   self.cancelled = False
@@ -57,6 +54,17 @@ steps:
                           self.values[name] = str(default) if default else ''
 
           st = FormState(field_defs)
+
+          # Auto-focus first select field and open its dropdown immediately
+          for _i, _f in enumerate(st.fields):
+              if _f.get('type') in ('select', 'multiselect'):
+                  st.sel = _i
+                  st.option_open = True
+                  cur = st.values.get(_f['name'], '')
+                  opts = _f.get('options', [])
+                  if cur in opts:
+                      st.option_sel = opts.index(cur)
+                  break
 
           def get_size():
               try:
@@ -154,23 +162,41 @@ steps:
           fd = sys.stdin.fileno()
           old_settings = termios.tcgetattr(fd)
 
+          def read_ch():
+              return os.read(fd, 1).decode('latin-1')
+
           try:
               tty.setcbreak(fd)
+              termios.tcflush(fd, termios.TCIFLUSH)
               sys.stdout.write("\033[?25l")
               render()
 
               while not st.submitted and not st.cancelled:
-                  if not _sel.select([sys.stdin], [], [], 0.1)[0]:
-                      continue
-                  ch = sys.stdin.read(1)
+                  ch = read_ch()
+
+                  if ch == '\x1b':
+                      ch2 = read_ch()
+                      if ch2 == '[' or ch2 == 'O':
+                          ch3 = read_ch()
+                          if ch3 == 'A':
+                              ch = 'k'
+                          elif ch3 == 'B':
+                              ch = 'j'
+                          else:
+                              render()
+                              continue
+                      else:
+                          if st.editing:
+                              st.editing = False
+                          elif st.option_open:
+                              st.option_open = False
+                          render()
+                          continue
 
                   if st.editing:
                       if ch == '\r' or ch == '\n':
-                          # Confirm edit
                           name = st.fields[st.sel]['name']
                           st.values[name] = st.edit_buf
-                          st.editing = False
-                      elif ch == '\x1b':
                           st.editing = False
                       elif ch == '\x7f' or ch == '\b':
                           if st.edit_buf:
@@ -184,25 +210,6 @@ steps:
                       f = st.fields[st.sel]
                       opts = f.get('options', [])
                       ftype = f.get('type', 'text')
-
-                      if ch == '\x1b':
-                          # Check for arrow keys
-                          if _sel.select([sys.stdin], [], [], 0.05)[0]:
-                              ch2 = sys.stdin.read(1)
-                              if ch2 == '[':
-                                  ch3 = sys.stdin.read(1)
-                                  if ch3 == 'A':
-                                      ch = 'k'
-                                  elif ch3 == 'B':
-                                      ch = 'j'
-                              else:
-                                  st.option_open = False
-                                  render()
-                                  continue
-                          else:
-                              st.option_open = False
-                              render()
-                              continue
 
                       if ch == 'j' and st.option_sel < len(opts) - 1:
                           st.option_sel += 1
@@ -220,26 +227,18 @@ steps:
                           if ftype == 'select':
                               st.values[f['name']] = opts[st.option_sel] if opts else ''
                           st.option_open = False
+                          all_filled = all(
+                              st.values.get(ff['name'])
+                              for ff in st.fields if ff.get('required', False)
+                          )
+                          if all_filled:
+                              st.submitted = True
                       render()
                       continue
-
-                  # Main navigation
-                  if ch == '\x1b':
-                      if _sel.select([sys.stdin], [], [], 0.05)[0]:
-                          ch2 = sys.stdin.read(1)
-                          if ch2 == '[':
-                              ch3 = sys.stdin.read(1)
-                              if ch3 == 'A':
-                                  ch = 'k'
-                              elif ch3 == 'B':
-                                  ch = 'j'
-                      else:
-                          continue
 
                   if ch == 'q':
                       st.cancelled = True
                   elif ch == '\x04':
-                      # Ctrl+D = submit
                       st.submitted = True
                   elif ch == 'j' and st.sel < len(st.fields) - 1:
                       st.sel += 1
@@ -254,7 +253,6 @@ steps:
                       elif ftype in ('select', 'multiselect'):
                           st.option_open = True
                           st.option_sel = 0
-                          # Pre-select current value
                           opts = f.get('options', [])
                           cur = st.values.get(f['name'], '')
                           if ftype == 'select' and cur in opts:
@@ -264,7 +262,7 @@ steps:
 
           finally:
               termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-              sys.stdout.write("\033[?25h\033[H\033[2J")
+              sys.stdout.write("\033[?25h\033[2J\033[H")
               sys.stdout.flush()
 
           if st.cancelled:
