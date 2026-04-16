@@ -219,9 +219,9 @@ class SpinnerContext:
         self._stop = True
         if self._thread:
             self._thread.join(timeout=0.5)
-        # Wait for key listener to restore terminal settings
+        # Wait for key listener to fully stop and release stdin before continuing
         if self._key_thread:
-            self._key_thread.join(timeout=0.5)
+            self._key_thread.join(timeout=2.0)
         # Clear spinner line
         sys.stdout.write('\r' + ' ' * (len(self.message) + 60) + '\r')
         sys.stdout.flush()
