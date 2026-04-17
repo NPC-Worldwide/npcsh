@@ -10,14 +10,15 @@ def _find_rust_binary():
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     bin_dir = os.path.join(pkg_dir, "bin")
 
-    name = "npcsh.exe" if platform.system() == "Windows" else "npcsh"
+    ext = ".exe" if platform.system() == "Windows" else ""
 
-    # Check inside the package
-    pkg_bin = os.path.join(bin_dir, name)
-    if os.path.isfile(pkg_bin) and os.access(pkg_bin, os.X_OK):
-        return pkg_bin
+    # Check inside the package (npcrs binary downloaded at build time)
+    for name in (f"npcrs{ext}", f"npcsh{ext}"):
+        pkg_bin = os.path.join(bin_dir, name)
+        if os.path.isfile(pkg_bin) and os.access(pkg_bin, os.X_OK):
+            return pkg_bin
 
-    # Check PATH
+    # Check PATH for standalone npcrs binary (installed via cargo)
     found = shutil.which("npcrs")
     if found:
         return found
