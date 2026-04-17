@@ -48,3 +48,4 @@ jinxes:
   - {{ Jinx('web_search') }}
   - {{ Jinx('chat') }}
   - {{ Jinx('stop') }}
+  - {{ Jinx('ask_form') }}

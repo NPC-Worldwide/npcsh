@@ -3449,6 +3449,24 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 called_names.append(getattr(tc.function, "name", "?"))
                         print(colored(f"  [iter {iteration}] tools called: {', '.join(called_names)}", "white", attrs=["dark"]))
 
+                        # Pre-scan to count how many tool calls need a permission prompt
+                        _ask_total = 0
+                        for _tc in raw_tool_calls:
+                            if isinstance(_tc, dict):
+                                _tc_name = _tc.get("function", {}).get("name")
+                                _tc_args_str = _tc.get("function", {}).get("arguments", "{}")
+                            else:
+                                _tc_name = getattr(getattr(_tc, "function", None), "name", None)
+                                _tc_args_str = getattr(getattr(_tc, "function", None), "arguments", "{}") if hasattr(_tc, "function") else "{}"
+                            if _tc_name and _tc_name in tool_exec_map:
+                                try:
+                                    _tc_args = json.loads(_tc_args_str) if isinstance(_tc_args_str, str) else (_tc_args_str or {})
+                                except json.JSONDecodeError:
+                                    _tc_args = {}
+                                if state.check_tool_permission(_tc_name, _tc_args) == "ask":
+                                    _ask_total += 1
+                        _ask_index = 0
+
                         for tool_call in raw_tool_calls:
                             if isinstance(tool_call, dict):
                                 tool_id = tool_call.get("id", f"call_{tool_calls_count}")
@@ -3471,53 +3489,35 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                     tool_result_str = f"EPERM: Tool '{tool_name}' is denied by permission settings."
                                 elif perm_result == "ask":
                                     # Ask user via ask_form jinx
+                                    _ask_index += 1
                                     cmd_key = _build_command_key(tool_name, arguments)
-                                    try:
-                                        ask_result = tool_exec_map.get("ask_form")(
-                                            title=f"Permission Required: {tool_name}",
-                                            fields=json.dumps([
-                                                {"name": "info", "type": "text", "label": "Command", "default": cmd_key, "required": False},
-                                                {"name": "decision", "type": "select", "label": "Allow?", "options": ["Yes", "Yes (conversation)", "Yes (always)", "No", "No (never)"], "required": True}
-                                            ])
-                                        )
-                                        if isinstance(ask_result, dict):
-                                            decision = ask_result.get("decision", "No")
-                                        else:
-                                            decision = "No"
+                                    perm_title = f"Permission Required ({_ask_index} of {_ask_total}): {tool_name}" if _ask_total > 1 else f"Permission Required: {tool_name}"
+                                    ask_result = tool_exec_map["ask_form"](
+                                        title=perm_title,
+                                        fields=json.dumps([
+                                            {"name": "info", "type": "text", "label": "Command", "default": cmd_key, "required": False},
+                                            {"name": "decision", "type": "select", "label": "Allow?", "options": ["Yes", "Yes (conversation)", "Yes (always)", "No", "No (never)"], "required": True}
+                                        ])
+                                    )
+                                    if isinstance(ask_result, str):
+                                        ask_result = json.loads(ask_result)
+                                    if isinstance(ask_result, dict):
+                                        decision = ask_result.get("decision", "No")
+                                    else:
+                                        decision = "No"
 
-                                        if decision.startswith("Yes"):
-                                            if "always" in decision.lower():
-                                                state.grant_forever(cmd_key, scope="workspace")
-                                            elif "conversation" in decision.lower():
-                                                state.grant_session(cmd_key)
-                                            # Execute the tool
-                                            tool_result = tool_exec_map[tool_name](**arguments)
-                                        elif decision.startswith("No"):
-                                            if "never" in decision.lower():
-                                                state.deny_forever(cmd_key, scope="workspace")
-                                            tool_result_str = f"EPERM: User denied execution of '{tool_name}'"
-                                        else:
-                                            tool_result_str = f"EPERM: User cancelled permission prompt for '{tool_name}'"
-                                    except Exception as e:
-                                        # Fallback to simple input if ask_form fails
-                                        print(colored(f"\n⚠ Permission required for: {cmd_key}", "yellow"))
-                                        print(colored(f"Arguments: {arguments}", "white", attrs=["dark"]))
-                                        resp = input("Allow? [y/c/a/n/N] (yes/conversation/always/no/never): ").strip().lower()
-                                        if resp in ("y", "yes"):
-                                            tool_result = tool_exec_map[tool_name](**arguments)
-                                        elif resp in ("c", "conversation"):
-                                            state.grant_session(cmd_key)
-                                            tool_result = tool_exec_map[tool_name](**arguments)
-                                        elif resp in ("a", "always"):
+                                    if decision.startswith("Yes"):
+                                        if "always" in decision.lower():
                                             state.grant_forever(cmd_key, scope="workspace")
-                                            tool_result = tool_exec_map[tool_name](**arguments)
-                                        elif resp in ("n", "no"):
-                                            tool_result_str = f"EPERM: User denied execution of '{tool_name}'"
-                                        elif resp in ("N", "never"):
+                                        elif "conversation" in decision.lower():
+                                            state.grant_session(cmd_key)
+                                        tool_result = tool_exec_map[tool_name](**arguments)
+                                    elif decision.startswith("No"):
+                                        if "never" in decision.lower():
                                             state.deny_forever(cmd_key, scope="workspace")
-                                            tool_result_str = f"EPERM: Tool '{tool_name}' denied permanently"
-                                        else:
-                                            tool_result_str = f"EPERM: User cancelled permission prompt for '{tool_name}'"
+                                        tool_result_str = f"EPERM: User denied execution of '{tool_name}'"
+                                    else:
+                                        tool_result_str = f"EPERM: User cancelled permission prompt for '{tool_name}'"
                                 else:
                                     # Allow execution
                                     try:
