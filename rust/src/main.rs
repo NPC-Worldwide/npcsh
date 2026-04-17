@@ -392,7 +392,7 @@ async fn main() -> Result<()> {
             }
         };
 
-        let (input, pasted_content) = handle_paste_input(&input);
+        let (input, _pasted_content) = handle_paste_input(&input);
         let input = input.trim().to_string();
         if input.is_empty() {
             continue;
@@ -1042,7 +1042,6 @@ fn find_team_dir() -> String {
 async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
     use npcrs::npc_compiler::NPC;
     
-    use npcrs::memory::CommandHistory;
 
     // Use the proper loader which handles shebang stripping + Jinja2 preprocessing
     let npc = NPC::from_file(npc_file)?;
