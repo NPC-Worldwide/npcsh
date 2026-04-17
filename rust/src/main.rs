@@ -1058,7 +1058,7 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
             npcrs::Message::user(cmd),
         ];
         let response = npcrs::r#gen::get_genai_response
-            (&provider, &model, &messages, None, npc.api_url.as_deref())
+            (&provider, &model, &messages, None, npc.api_url.as_deref(), None, None, false, None)
             .await?;
         if let Some(text) = response.message.content {
             println!("{}", text);
