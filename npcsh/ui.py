@@ -308,6 +308,51 @@ def show_thinking_animation(message="Thinking", duration=None):
                 pass
 
 
+def read_key(fd, poll_timeout=None, esc_timeout=0.05):
+    """Read one keystroke from a file descriptor in cbreak/raw mode.
+
+    Handles multi-byte CSI escape sequences so callers can distinguish a bare
+    ESC from arrow keys without reinventing the disambiguation. The caller is
+    responsible for putting the terminal in cbreak mode (tty.setcbreak(fd))
+    and restoring the original termios on exit.
+
+    Args:
+        fd: File descriptor to read from (typically sys.stdin.fileno()).
+        poll_timeout: If None, blocks until a keystroke is available. If a
+                      number, waits up to that many seconds; returns None if
+                      no input arrives. Use polling for loops that need to
+                      tick (re-render, check flags) between keystrokes.
+        esc_timeout: Seconds to wait for follow-up bytes after ESC, so bare
+                     ESC vs arrow sequences can be disambiguated.
+
+    Returns:
+        'up', 'down', 'left', 'right' for arrow keys.
+        'esc' for a bare ESC or an unrecognized ESC sequence.
+        None if poll_timeout elapsed with no input.
+        Otherwise, the raw 1-character string.
+    """
+    import os
+    import select as _select
+
+    if poll_timeout is not None:
+        if not _select.select([fd], [], [], poll_timeout)[0]:
+            return None
+
+    c = os.read(fd, 1).decode('latin-1')
+    if c != '\x1b':
+        return c
+
+    if not _select.select([fd], [], [], esc_timeout)[0]:
+        return 'esc'
+    c2 = os.read(fd, 1).decode('latin-1')
+    if c2 != '[':
+        return 'esc'
+    if not _select.select([fd], [], [], esc_timeout)[0]:
+        return 'esc'
+    c3 = os.read(fd, 1).decode('latin-1')
+    return {'A': 'up', 'B': 'down', 'C': 'right', 'D': 'left'}.get(c3, 'esc')
+
+
 def orange(text: str) -> str:
     """Return text colored orange using colorama"""
     from colorama import Fore, Style
@@ -372,7 +417,6 @@ def ctx_editor(ctx_path, on_save=None):
     import yaml
     import tty
     import termios
-    import select
     import subprocess
     import tempfile
     from pathlib import Path
@@ -525,55 +569,36 @@ def ctx_editor(ctx_path, on_save=None):
         sys.stdout.flush()
         render()
         while True:
-            c = os.read(fd, 1).decode('latin-1')
+            key = read_key(fd)
             fields = list(ctx_data.keys())
             _, H = term_size()
             body_h = H - 5
 
-            if c == '\x1b':
-                if select.select([fd], [], [], 0.05)[0]:
-                    c2 = os.read(fd, 1).decode('latin-1')
-                    if c2 == '[':
-                        c3 = os.read(fd, 1).decode('latin-1')
-                        if c3 == 'A':
-                            ui['sel'] = max(0, ui['sel'] - 1)
-                            if ui['sel'] < ui['scroll']:
-                                ui['scroll'] = ui['sel']
-                            ui['status'] = ""
-                        elif c3 == 'B':
-                            ui['sel'] = min(max(0, len(fields) - 1), ui['sel'] + 1)
-                            if ui['sel'] >= ui['scroll'] + body_h:
-                                ui['scroll'] = ui['sel'] - body_h + 1
-                            ui['status'] = ""
-                    render()
-                    continue
-                else:
-                    break
-            elif c == 'q':
+            if key == 'esc' or key == 'q':
                 break
-            elif c == 'k':
+            if key in ('up', 'k'):
                 ui['sel'] = max(0, ui['sel'] - 1)
                 if ui['sel'] < ui['scroll']:
                     ui['scroll'] = ui['sel']
                 ui['status'] = ""
-            elif c == 'j':
+            elif key in ('down', 'j'):
                 ui['sel'] = min(max(0, len(fields) - 1), ui['sel'] + 1)
                 if ui['sel'] >= ui['scroll'] + body_h:
                     ui['scroll'] = ui['sel'] - body_h + 1
                 ui['status'] = ""
-            elif c in ('\r', '\n', 'e'):
+            elif key in ('\r', '\n', 'e'):
                 if fields and ui['sel'] < len(fields):
                     edit_field(fields[ui['sel']])
-            elif c == 'a':
+            elif key == 'a':
                 add_field()
-            elif c == 'd':
+            elif key == 'd':
                 if fields and ui['sel'] < len(fields):
                     removed = fields[ui['sel']]
                     del ctx_data[removed]
                     ui['sel'] = min(ui['sel'], max(0, len(ctx_data) - 1))
                     ui['dirty'] = True
                     ui['status'] = f"Deleted {removed}"
-            elif c == 's':
+            elif key == 's':
                 save()
             render()
     finally:

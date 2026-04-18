@@ -28,6 +28,7 @@ steps:
       else:
           import tty
           import termios
+          from npcsh.ui import read_key
 
           class FormState:
               def __init__(self, fields):
@@ -54,17 +55,6 @@ steps:
                           self.values[name] = str(default) if default else ''
 
           st = FormState(field_defs)
-
-          # Auto-focus first select field and open its dropdown immediately
-          for _i, _f in enumerate(st.fields):
-              if _f.get('type') in ('select', 'multiselect'):
-                  st.sel = _i
-                  st.option_open = True
-                  cur = st.values.get(_f['name'], '')
-                  opts = _f.get('options', [])
-                  if cur in opts:
-                      st.option_sel = opts.index(cur)
-                  break
 
           def get_size():
               try:
@@ -162,47 +152,28 @@ steps:
           fd = sys.stdin.fileno()
           old_settings = termios.tcgetattr(fd)
 
-          def read_ch():
-              return os.read(fd, 1).decode('latin-1')
-
           try:
               tty.setcbreak(fd)
-              termios.tcflush(fd, termios.TCIFLUSH)
               sys.stdout.write("\033[?25l")
               render()
 
               while not st.submitted and not st.cancelled:
-                  ch = read_ch()
-
-                  if ch == '\x1b':
-                      ch2 = read_ch()
-                      if ch2 == '[' or ch2 == 'O':
-                          ch3 = read_ch()
-                          if ch3 == 'A':
-                              ch = 'k'
-                          elif ch3 == 'B':
-                              ch = 'j'
-                          else:
-                              render()
-                              continue
-                      else:
-                          if st.editing:
-                              st.editing = False
-                          elif st.option_open:
-                              st.option_open = False
-                          render()
-                          continue
+                  key = read_key(fd, poll_timeout=0.1)
+                  if key is None:
+                      continue
 
                   if st.editing:
-                      if ch == '\r' or ch == '\n':
+                      if key == '\r' or key == '\n':
                           name = st.fields[st.sel]['name']
                           st.values[name] = st.edit_buf
                           st.editing = False
-                      elif ch == '\x7f' or ch == '\b':
+                      elif key == 'esc':
+                          st.editing = False
+                      elif key == '\x7f' or key == '\x08':
                           if st.edit_buf:
                               st.edit_buf = st.edit_buf[:-1]
-                      elif ch >= ' ':
-                          st.edit_buf += ch
+                      elif len(key) == 1 and key >= ' ':
+                          st.edit_buf += key
                       render()
                       continue
 
@@ -211,11 +182,13 @@ steps:
                       opts = f.get('options', [])
                       ftype = f.get('type', 'text')
 
-                      if ch == 'j' and st.option_sel < len(opts) - 1:
+                      if key == 'esc':
+                          st.option_open = False
+                      elif key in ('down', 'j') and st.option_sel < len(opts) - 1:
                           st.option_sel += 1
-                      elif ch == 'k' and st.option_sel > 0:
+                      elif key in ('up', 'k') and st.option_sel > 0:
                           st.option_sel -= 1
-                      elif ch == ' ' and ftype == 'multiselect':
+                      elif key == ' ' and ftype == 'multiselect':
                           opt = opts[st.option_sel]
                           selected = st.values.get(f['name'], [])
                           if opt in selected:
@@ -223,28 +196,22 @@ steps:
                           else:
                               selected.append(opt)
                           st.values[f['name']] = selected
-                      elif ch == '\r' or ch == '\n':
+                      elif key == '\r' or key == '\n':
                           if ftype == 'select':
                               st.values[f['name']] = opts[st.option_sel] if opts else ''
                           st.option_open = False
-                          all_filled = all(
-                              st.values.get(ff['name'])
-                              for ff in st.fields if ff.get('required', False)
-                          )
-                          if all_filled:
-                              st.submitted = True
                       render()
                       continue
 
-                  if ch == 'q':
+                  if key == 'q':
                       st.cancelled = True
-                  elif ch == '\x04':
+                  elif key == '\x04':
                       st.submitted = True
-                  elif ch == 'j' and st.sel < len(st.fields) - 1:
+                  elif key in ('down', 'j') and st.sel < len(st.fields) - 1:
                       st.sel += 1
-                  elif ch == 'k' and st.sel > 0:
+                  elif key in ('up', 'k') and st.sel > 0:
                       st.sel -= 1
-                  elif ch == '\r' or ch == '\n':
+                  elif key == '\r' or key == '\n':
                       f = st.fields[st.sel]
                       ftype = f.get('type', 'text')
                       if ftype == 'text':
