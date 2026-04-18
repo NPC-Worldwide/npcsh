@@ -22,6 +22,3 @@ jinxes:
   - {{ Jinx('edit_file') }}
   - {{ Jinx('load_file') }}
   - {{ Jinx('explore') }}
-  - {{ Jinx('chat') }}
-  - {{ Jinx('stop') }}
-    

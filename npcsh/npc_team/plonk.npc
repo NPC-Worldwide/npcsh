@@ -29,5 +29,3 @@ jinxes:
   - {{ Jinx('wait') }}
   - {{ Jinx('sh') }}
   - {{ Jinx('python') }}
-  - {{ Jinx('chat') }}
-  - {{ Jinx('stop') }}

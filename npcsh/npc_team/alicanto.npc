@@ -24,5 +24,3 @@ jinxes:
   - {{ Jinx('sql') }}
   - {{ Jinx('load_file') }}
   - {{ Jinx('edit_file') }}
-  - {{ Jinx('chat') }}
-  - {{ Jinx('stop') }}

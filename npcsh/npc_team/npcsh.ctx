@@ -40,6 +40,10 @@ context: |
 databases:
 - ~/npcsh_history.db
 forenpc: sibiji
+jinxes:
+  - {{ Jinx('chat') }}
+  - {{ Jinx('stop') }}
+  - {{ Jinx('ask_form') }}
 mcp_servers: []
 preferences:
 - If you come up with an idea, it is critical that you also provide a way to validate

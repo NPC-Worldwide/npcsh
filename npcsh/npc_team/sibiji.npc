@@ -46,6 +46,3 @@ jinxes:
   - {{ Jinx('sh') }}
   - {{ Jinx('python') }}
   - {{ Jinx('web_search') }}
-  - {{ Jinx('chat') }}
-  - {{ Jinx('stop') }}
-  - {{ Jinx('ask_form') }}
