@@ -1,0 +1,2243 @@
+import subprocess
+
+repo = context.get('repo', '').strip()
+user_from_tag = context.get('from_tag', '').strip()
+user_to_ref = context.get('to_ref', '').strip() or 'HEAD'
+
+def run_cmd(*args):
+    r = subprocess.run(list(args), capture_output=True, text=True, timeout=60)
+    return r.returncode, r.stdout, r.stderr
+
+if repo:
+    if user_from_tag:
+        from_tag = user_from_tag
+    else:
+        rc, tag, _ = run_cmd('gh', 'release', 'view', '-R', repo, '--json', 'tagName', '-q', '.tagName')
+        from_tag = tag.strip() if rc == 0 and tag.strip() else ''
+
+    if from_tag:
+        _, release_date, _ = run_cmd('gh', 'release', 'view', from_tag, '-R', repo, '--json', 'publishedAt', '-q', '.publishedAt')
+        release_date = release_date.strip()
+
+        _, log, _ = run_cmd('gh', 'api', f'repos/{repo}/compare/{from_tag}...{user_to_ref}',
+            '--jq', '.commits[] | (.sha[:7] + "\t" + (.commit.message | split("\n") | .[0]) + "\t" + .commit.author.name)')
+        _, diff_stat, _ = run_cmd('gh', 'api', f'repos/{repo}/compare/{from_tag}...{user_to_ref}',
+            '--jq', '.files[] | (.filename + "\t" + .status + "\n" + (.patch // ""))')
+
+        pr_search = f'repo:{repo} is:pr is:merged'
+        if release_date:
+            pr_search += f' merged:>{release_date[:10]}'
+        _, prs, _ = run_cmd('gh', 'pr', 'list', '-R', repo, '--state', 'merged', '--limit', '20',
+            '--search', pr_search,
+            '--json', 'title,body,number', '--jq', '.[] | ("#" + (.number|tostring) + " " + .title + "\n" + (.body // ""))')
+    else:
+        _, log, _ = run_cmd('gh', 'api', f'repos/{repo}/commits',
+            '--jq', '.[] | (.sha[:7] + "\t" + (.commit.message | split("\n") | .[0]) + "\t" + .commit.author.name)')
+        diff_stat = ''
+        prs = ''
+        from_tag = '(no prior release)'
+
+    repo_name = repo.split('/')[-1]
+    print(f"[release_notes] got {len(log.strip().splitlines())} commits, {len(diff_stat)} diff chars")
+else:
+    rc, _, _ = run_cmd('git', 'rev-parse', '--is-inside-work-tree')
+    if rc != 0:
+        context['output'] = 'Not a git repository. Pass a repo: /release_notes npc-worldwide/npcpy'
+    else:
+        if user_from_tag:
+            from_tag = user_from_tag
+        else:
+            rc, tag, _ = run_cmd('git', 'describe', '--tags', '--abbrev=0')
+            if rc == 0 and tag.strip():
+                from_tag = tag.strip()
+            else:
+                rc, first, _ = run_cmd('git', 'rev-list', '--max-parents=0', 'HEAD')
+                from_tag = first.strip().split('\n')[0] if rc == 0 else 'HEAD~20'
+
+        commit_range = f'{from_tag}..{user_to_ref}'
+        _, log, _ = run_cmd('git', 'log', commit_range, '--format=%h\t%s\t%an', '--no-merges')
+        _, diff_stat, _ = run_cmd('git', 'diff', '--stat', commit_range)
+        _, diff_summary, _ = run_cmd('git', 'diff', commit_range, '--no-color', '-U1')
+        diff_stat = diff_stat + '\n\nKey changes:\n' + diff_summary
+
+        _, remote_url, _ = run_cmd('git', 'remote', 'get-url', 'origin')
+        repo_name = remote_url.strip().split('/')[-1].replace('.git', '') if remote_url.strip() else 'project'
+        prs = ''
+
+if not context.get('output'):
+    if not log.strip():
+        context['output'] = f'No commits found since {from_tag}'
+    else:
+        from npcpy.llm_funcs import get_llm_response
+
+        _model = npc.model if npc else (state.chat_model if state else 'gemma3:4b')
+        _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
+
+        commits_text = log
+        files_text = diff_stat if diff_stat else '(unavailable)'
+        prs_text = prs if prs else '(none)'
+
+        # Build example 4 as a plain string to avoid f-string/Jinja2 brace conflicts
+        example4_commits = """0f238f5\tjinxs renaming\tChris Agostino
+        401d727\tjinx to jinxes\tTest User
+        f7af1c3\tsys\tChris Agostino"""
+
+        example4_files = """npcpy/data/data_models.py\t2\tmodified
+        npcpy/gen/ocr.py\t8\tmodified
+        npcpy/gen/video_gen.py\t13\tmodified
+        npcpy/llm_funcs.py\t48\tmodified
+        npcpy/npc_compiler.py\t513\tmodified
+        npcpy/npc_sysenv.py\t104\tmodified
+        npcpy/serve.py\t623\tmodified
+        npcpy/sql/npcsql.py\t14\tmodified
+        npcpy/work/plan.py\t6\tmodified
+        npcpy/work/trigger.py\t5\tmodified"""
+
+        example4_diff = '''
+        diff --git a/npcpy/data/data_models.py b/npcpy/data/data_models.py
+        index bf20260..5093b4c 100644
+        --- a/npcpy/data/data_models.py
+        +++ b/npcpy/data/data_models.py
+        @@ -9,3 +9,3 @@ class NPC_Model(BaseModel):
+             api_url: str
+        -    jinxs: List[str]
+        +    jinxes: List[str]
+         
+        diff --git a/npcpy/gen/ocr.py b/npcpy/gen/ocr.py
+        index a60c5ae..7b32cfb 100644
+        --- a/npcpy/gen/ocr.py
+        +++ b/npcpy/gen/ocr.py
+        @@ -15,2 +15,4 @@ from typing import Optional, Union
+         
+        +from npcpy.npc_sysenv import get_models_dir
+        +
+         try:
+        @@ -27,3 +29,3 @@ class DeepSeekOCR:
+             model_id: str = "unsloth/DeepSeek-OCR"
+        -    local_dir: str = os.path.expanduser("~/.npcsh/models/deepseek_ocr")
+        +    local_dir: str = ""
+             load_in_4bit: bool = False
+        @@ -34,2 +36,4 @@ class DeepSeekOCR:
+             def __post_init__(self) -> None:
+        +        if not self.local_dir:
+        +            self.local_dir = os.path.join(get_models_dir(), "deepseek_ocr")
+                 self._model = None
+        @@ -163,3 +167,3 @@ def deepseek_ocr(
+                 model_id=model_id,
+        -        local_dir=local_dir or os.path.expanduser("~/.npcsh/models/deepseek_ocr"),
+        +        local_dir=local_dir or os.path.join(get_models_dir(), "deepseek_ocr"),
+                 load_in_4bit=kwargs.pop("load_in_4bit", False),
+        diff --git a/npcpy/gen/video_gen.py b/npcpy/gen/video_gen.py
+        index 2e22c60..4192c68 100644
+        --- a/npcpy/gen/video_gen.py
+        +++ b/npcpy/gen/video_gen.py
+        @@ -64,6 +64,7 @@ def generate_video_diffusers(
+         
+        -    os.makedirs("~/.npcsh/videos/", exist_ok=True)  
+        +    from npcpy.npc_sysenv import get_videos_dir
+        +    _vid_dir = get_videos_dir()
+        +    os.makedirs(_vid_dir, exist_ok=True)
+             if output_path == "":
+        -
+        -        output_path = "~/.npcsh/videos/" + prompt[0:8] + ".mp4"
+        +        output_path = os.path.join(_vid_dir, prompt[0:8] + ".mp4")
+             save_frames_to_video(output.frames, output_path)
+        @@ -104,6 +105,8 @@ def generate_video_veo3(
+             
+        -    os.makedirs(os.path.expanduser("~/.npcsh/videos/"), exist_ok=True)
+        +    from npcpy.npc_sysenv import get_videos_dir
+        +    videos_dir = get_videos_dir()
+        +    os.makedirs(videos_dir, exist_ok=True)
+             if output_path == "":
+                 safe_prompt = "".join(c for c in prompt[:20] if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        -        output_path = os.path.expanduser("~/.npcsh/videos/") + safe_prompt.replace(" ", "_") + "_veo3.mp4"
+        +        output_path = os.path.join(videos_dir, safe_prompt.replace(" ", "_") + "_veo3.mp4")
+             
+        diff --git a/npcpy/llm_funcs.py b/npcpy/llm_funcs.py
+        index dd0e391..518296b 100644
+        --- a/npcpy/llm_funcs.py
+        +++ b/npcpy/llm_funcs.py
+        @@ -525,12 +525,12 @@ def handle_request_input(
+         
+        -def _get_jinxs(npc, team):
+        -    """Get available jinxs from npc (already filtered by jinxs_spec)."""
+        -    jinxs = {}
+        -    if npc and hasattr(npc, 'jinxs_dict'):
+        -        jinxs.update(npc.jinxs_dict)
+        -    return jinxs
+        +def _get_jinxes(npc, team):
+        +    """Get available jinxes from npc (already filtered by jinxes_spec)."""
+        +    jinxes = {}
+        +    if npc and hasattr(npc, 'jinxes_dict'):
+        +        jinxes.update(npc.jinxes_dict)
+        +    return jinxes
+         
+        -def _jinxs_to_tools(jinxs):
+        -    """Convert jinxs to OpenAI-style tool definitions."""
+        -    return [jinx.to_tool_def() for jinx in jinxs.values()]
+        +def _jinxes_to_tools(jinxes):
+        +    """Convert jinxes to OpenAI-style tool definitions."""
+        +    return [jinx.to_tool_def() for jinx in jinxes.values()]
+         
+        @@ -606,3 +606,3 @@ def handle_jinx_call(
+             jinx_name,
+        -    jinxs,
+        +    jinxes,
+             model=None,
+        @@ -625,6 +625,6 @@ def handle_jinx_call(
+         
+        -    jinx = jinxs.get(jinx_name)
+        +    jinx = jinxes.get(jinx_name)
+             if not jinx:
+                 if attempt < n_attempts:
+        -            available = ", ".join(jinxs.keys())
+        +            available = ", ".join(jinxes.keys())
+                     return check_llm_command(
+        @@ -708,3 +708,3 @@ The format of the JSON object is:
+                             jinx_name, 
+        -                    jinxs,
+        +                    jinxes,
+                             model=model, 
+        @@ -738,3 +738,3 @@ The format of the JSON object is:
+                     jinx_name, 
+        -            jinxs,
+        +            jinxes,
+                     model=model, 
+        @@ -771,3 +771,3 @@ The format of the JSON object is:
+                     jinx_name, 
+        -            jinxs,
+        +            jinxes,
+                     model=model, 
+        @@ -798,3 +798,3 @@ def handle_action_choice(command: str,
+                                  action_data: dict, 
+        -                         jinxs: list, 
+        +                         jinxes: list, 
+                                  model : str = None,
+        @@ -824,3 +824,3 @@ def handle_action_choice(command: str,
+                     jname, 
+        -            jinxs,
+        +            jinxes,
+                     model=model, 
+        @@ -894,3 +894,3 @@ def check_llm_command(
+             max_iterations: int = 5,
+        -    jinxs: Dict = None,
+        +    jinxes: Dict = None,
+             tool_capable: bool = None,
+        @@ -901,8 +901,8 @@ def check_llm_command(
+         
+        -    if jinxs is None:
+        -        jinxs = _get_jinxs(npc, team)
+        +    if jinxes is None:
+        +        jinxes = _get_jinxes(npc, team)
+         
+             # No jinxes — just answer directly
+        -    if not jinxs:
+        -        print('no jinxs detected')
+        +    if not jinxes:
+        +        print('no jinxes detected')
+                 
+        @@ -942,3 +942,3 @@ def check_llm_command(
+                                 
+        -              Use jinxs when it is obvious that the answer needs to be as up-to-date as possible. For example,
+        +              Use jinxes when it is obvious that the answer needs to be as up-to-date as possible. For example,
+                           a question about where mount everest is does not necessarily need to be answered by a jinx call or an agent pass.
+        @@ -1001,3 +1001,3 @@ def check_llm_command(
+                              action_data,
+        -                     jinxs,
+        +                     jinxes,
+                              model = model,
+        diff --git a/npcpy/npc_compiler.py b/npcpy/npc_compiler.py
+        index e7c0ee6..20d351a 100644
+        --- a/npcpy/npc_compiler.py
+        +++ b/npcpy/npc_compiler.py
+        @@ -215,4 +215,11 @@ def _json_dumps_with_undefined(obj, **kwargs):
+         
+        -def load_yaml_file(file_path):
+        -    """Load a YAML file with error handling, rendering Jinja2 first"""
+        +def load_yaml_file(file_path, jinja_context=None):
+        +    """Load a YAML file with error handling, rendering Jinja2 first.
+        +
+        +    Args:
+        +        file_path: Path to the YAML file
+        +        jinja_context: Optional dict of variables to pass to Jinja2 rendering.
+        +            Used by Team to inject jinx name->path mappings so NPC files can
+        +            use { { jinx_name } } to resolve to the correct relative path.
+        +    """
+             try:
+        @@ -221,3 +228,6 @@ def load_yaml_file(file_path):
+         
+        -        if '{' + '%' not in content:
+        +        # Only trigger Jinja on { { } } if jinja_context is provided (NPC files).
+        +        # Jinx files use { { } } for runtime templating and should NOT be rendered at load time.
+        +        has_jinja = '{' + '%' in content or (jinja_context and '{ {' in content and '} }' in content)
+        +        if not has_jinja:
+                     return yaml.safe_load(content)
+        @@ -227,3 +237,3 @@ def load_yaml_file(file_path):
+                 template = jinja_env.from_string(content)
+        -        rendered_content = template.render({})
+        +        rendered_content = template.render(jinja_context or {})
+         
+        @@ -250,4 +260,10 @@ def initialize_npc_project(
+             provider=None,
+        +    include_jinx_groups=None,
+         ) -> str:
+        -    """Initialize an NPC project"""
+        +    """Initialize an NPC project.
+        +
+        +    Args:
+        +        include_jinx_groups: List of jinx subdir paths to copy from the global
+        +            team (e.g. ['lib/core', 'lib/utils', 'modes']).  None = skip.
+        +    """
+             if directory is None:
+        @@ -256,5 +272,2 @@ def initialize_npc_project(
+         
+        -    for subdir in ["images", "models", "attachments", "mcp_servers"]:
+        -        os.makedirs(os.path.join(directory, subdir), exist_ok=True)
+        -
+             npc_team_dir = os.path.join(directory, "npc_team")
+        @@ -262,4 +275,4 @@ def initialize_npc_project(
+         
+        -    for subdir in ["jinxs",
+        -                   "jinxs/skills",
+        +    for subdir in ["jinxes",
+        +                   "jinxes/skills",
+                            "assembly_lines",
+        @@ -268,4 +281,33 @@ def initialize_npc_project(
+                            "triggers",
+        -                   "tools"]:
+        +                   "tools",
+        +                   "images",
+        +                   "models",
+        +                   "attachments",
+        +                   "mcp_servers"]:
+                 os.makedirs(os.path.join(npc_team_dir, subdir), exist_ok=True)
+        +
+        +    # Copy selected jinx groups from the global npcsh team
+        +    if include_jinx_groups:
+        +        global_jinxes = os.path.expanduser("~/.npcsh/npc_team/jinxes")
+        +        if not os.path.isdir(global_jinxes):
+        +            pkg_jinxes = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+        +                                     '..', 'npcsh', 'npcsh', 'npc_team', 'jinxes')
+        +            if os.path.isdir(pkg_jinxes):
+        +                global_jinxes = pkg_jinxes
+        +        if os.path.isdir(global_jinxes):
+        +            dest_jinxes = os.path.join(npc_team_dir, "jinxes")
+        +            for group in include_jinx_groups:
+        +                src_group = os.path.join(global_jinxes, group)
+        +                if not os.path.isdir(src_group):
+        +                    continue
+        +                for dirpath, dirnames, filenames in os.walk(src_group):
+        +                    rel = os.path.relpath(dirpath, global_jinxes)
+        +                    dest_dir = os.path.join(dest_jinxes, rel)
+        +                    os.makedirs(dest_dir, exist_ok=True)
+        +                    for fname in filenames:
+        +                        if fname.endswith('.jinx'):
+        +                            src = os.path.join(dirpath, fname)
+        +                            dst = os.path.join(dest_dir, fname)
+        +                            if not os.path.exists(dst):
+        +                                shutil.copy2(src, dst)
+             
+        @@ -279,4 +321,8 @@ def initialize_npc_project(
+                     "name": "forenpc",
+        -            "primary_directive": "You are the forenpc of an NPC team", 
+        +            "primary_directive": "You are the forenpc of an NPC team",
+                 }
+        +        if model:
+        +            default_npc["model"] = model
+        +        if provider:
+        +            default_npc["provider"] = provider
+                 with open(forenpc_path, "w", encoding="utf-8") as f:
+        @@ -428,5 +474,9 @@ primary_directive: You oversee the sales pipeline, track progress, and optimize
+                     'databases':'', 
+        -            'use_global_jinxs': True,
+        +            'use_global_jinxes': True,
+                     'forenpc': 'forenpc'
+                 }
+        +        if model:
+        +            default_ctx['model'] = model
+        +        if provider:
+        +            default_ctx['provider'] = provider
+                 if parsed_templates:
+        @@ -1100,4 +1150,4 @@ def _load_skill_from_md(path):
+         
+        -def load_jinxs_from_directory(directory):
+        -    """Load all jinxs from a directory recursively.
+        +def load_jinxes_from_directory(directory):
+        +    """Load all jinxes from a directory recursively.
+         
+        @@ -1105,3 +1155,3 @@ def load_jinxs_from_directory(directory):
+         
+        -    1. **.jinx** — regular jinxs loaded as-is.  Skill-type jinxs are just
+        +    1. **.jinx** — regular jinxes loaded as-is.  Skill-type jinxes are just
+                regular ``.jinx`` files whose steps use ``engine: skill`` with the
+        @@ -1110,5 +1160,5 @@ def load_jinxs_from_directory(directory):
+         
+        -           jinxs/skills/code-review/SKILL.md
+        -           jinxs/skills/code-review/scripts/
+        -           jinxs/skills/code-review/references/
+        +           jinxes/skills/code-review/SKILL.md
+        +           jinxes/skills/code-review/scripts/
+        +           jinxes/skills/code-review/references/
+         
+        @@ -1116,5 +1166,5 @@ def load_jinxs_from_directory(directory):
+                frontmatter (``---`` delimiters) and ``##`` section headers.
+        -       These are compiled into jinxs with ``engine: skill`` steps.
+        +       These are compiled into jinxes with ``engine: skill`` steps.
+             """
+        -    jinxs = []
+        +    jinxes = []
+             directory = os.path.expanduser(directory)
+        @@ -1122,3 +1172,3 @@ def load_jinxs_from_directory(directory):
+             if not os.path.exists(directory):
+        -        return jinxs
+        +        return jinxes
+         
+        @@ -1130,3 +1180,3 @@ def load_jinxs_from_directory(directory):
+                             jinx = Jinx(jinx_path=jinx_path)
+        -                    jinxs.append(jinx)
+        +                    jinxes.append(jinx)
+                         except Exception as e:
+        @@ -1138,3 +1188,3 @@ def load_jinxs_from_directory(directory):
+                             if jinx:
+        -                        jinxs.append(jinx)
+        +                        jinxes.append(jinx)
+                         except Exception as e:
+        @@ -1143,3 +1193,3 @@ def load_jinxs_from_directory(directory):
+         
+        -    return jinxs
+        +    return jinxes
+         
+        @@ -1149,14 +1199,20 @@ def jinx_to_tool_def(jinx_obj: 'Jinx') -> Dict[str, Any]:
+         
+        -def build_jinx_tool_catalog(jinxs: Dict[str, 'Jinx']) -> Dict[str, Dict[str, Any]]:
+        +def build_jinx_tool_catalog(jinxes: Dict[str, 'Jinx']) -> Dict[str, Dict[str, Any]]:
+             """Helper to build a name->tool_def catalog from a dict of Jinx objects."""
+        -    return {name: jinx_to_tool_def(jinx_obj) for name, jinx_obj in jinxs.items()}
+        +    return {name: jinx_to_tool_def(jinx_obj) for name, jinx_obj in jinxes.items()}
+         
+        -def match_jinx_spec_to_names(jinx_spec: str, team_jinxs_dict: Dict[str, 'Jinx'], jinxs_base_dir: str) -> List[str]:
+        +def match_jinx_spec_to_names(jinx_spec: str, team_jinxes_dict: Dict[str, 'Jinx'], jinxes_base_dir: str, jinx_path_map: dict = None) -> List[str]:
+             """
+        -    Match a jinx spec pattern to actual jinx names from the team's jinxs_dict.
+        +    Match a jinx spec to actual jinx names from the team's jinxes_dict.
+        +
+        +    Specs can be:
+        +    - A direct jinx name: 'edit_file', 'sh', 'python'
+        +    - A relative path (resolved via { { Jinx() } } in .npc files): 'lib/core/files/edit_file'
+        +    - A glob pattern for bulk loading: 'lib/browser/*'
+         
+             Args:
+        -        jinx_spec: A spec like 'lib/core/python', 'lib/computer_use/*', or just 'python'
+        -        team_jinxs_dict: Dict mapping jinx_name -> Jinx object
+        -        jinxs_base_dir: Base directory where team jinxs are stored (e.g., '/path/to/npc_team/jinxs')
+        +        jinx_spec: The spec string
+        +        team_jinxes_dict: Dict mapping jinx_name -> Jinx object
+        +        jinxes_base_dir: Base directory where team jinxes are stored
+        +        jinx_path_map: Optional dict mapping jinx_name -> relative path (for reverse lookup)
+         
+        @@ -1165,7 +1221,13 @@ def match_jinx_spec_to_names(jinx_spec: str, team_jinxs_dict: Dict[str, 'Jinx'],
+             """
+        -    matched_names = []
+        -
+        -    if jinx_spec in team_jinxs_dict:
+        +    # 1) Direct name match
+        +    if jinx_spec in team_jinxes_dict:
+                 return [jinx_spec]
+         
+        +    # 1.5) Reverse path lookup - resolved paths like 'lib/core/sql' map back to names
+        +    if jinx_path_map:
+        +        for name, path in jinx_path_map.items():
+        +            if jinx_spec == path and name in team_jinxes_dict:
+        +                return [name]
+        +
+        +    # 2) Path/glob match against source_path relative to jinxes_base_dir
+             spec_pattern = jinx_spec
+        @@ -1174,3 +1236,4 @@ def match_jinx_spec_to_names(jinx_spec: str, team_jinxs_dict: Dict[str, 'Jinx'],
+         
+        -    for jinx_name, jinx_obj in team_jinxs_dict.items():
+        +    matched_names = []
+        +    for jinx_name, jinx_obj in team_jinxes_dict.items():
+                 source_path = getattr(jinx_obj, '_source_path', None)
+        @@ -1180,3 +1243,3 @@ def match_jinx_spec_to_names(jinx_spec: str, team_jinxs_dict: Dict[str, 'Jinx'],
+                 try:
+        -            rel_path = os.path.relpath(source_path, jinxs_base_dir)
+        +            rel_path = os.path.relpath(source_path, jinxes_base_dir)
+                 except ValueError:
+        @@ -1186,4 +1249,2 @@ def match_jinx_spec_to_names(jinx_spec: str, team_jinxs_dict: Dict[str, 'Jinx'],
+                     matched_names.append(jinx_name)
+        -        elif fnmatch.fnmatch(rel_path, spec_pattern.replace('.jinx', '') + '.jinx'):
+        -            matched_names.append(jinx_name)
+         
+        @@ -1284,3 +1345,3 @@ class NPC:
+                 team = None,
+        -        jinxs: list = None,
+        +        jinxes: list = None,
+                 tools: list = None,
+        @@ -1291,3 +1352,3 @@ class NPC:
+                 db_conn=None,
+        -        use_global_jinxs=False,
+        +        use_global_jinxes=False,
+                 memory = False,
+        @@ -1301,3 +1362,3 @@ class NPC:
+                     primary_directive: System prompt/directive for the NPC
+        -            jinxs: List of jinxs available to the NPC or "*" to load all jinxs
+        +            jinxes: List of jinxes available to the NPC or "*" to load all jinxes
+                     model: LLM model to use
+        @@ -1317,3 +1378,3 @@ class NPC:
+                     file_parent = os.path.dirname(file)
+        -            self.jinxs_directory = os.path.join(file_parent, "jinxs")
+        +            self.jinxes_directory = os.path.join(file_parent, "jinxes")
+                     self.npc_directory = file_parent
+        @@ -1327,10 +1388,10 @@ class NPC:
+                     
+        -            if use_global_jinxs:
+        -                self.jinxs_directory = os.path.expanduser('~/.npcsh/npc_team/jinxs/')
+        +            if use_global_jinxes:
+        +                self.jinxes_directory = os.path.expanduser('~/.npcsh/npc_team/jinxes/')
+                     else: 
+        -                self.jinxs_directory = None
+        +                self.jinxes_directory = None
+                     self.npc_directory = None
+         
+        -        if not hasattr(self, 'jinxs_spec') or jinxs is not None:
+        -            self.jinxs_spec = jinxs or "*"
+        +        if not hasattr(self, 'jinxes_spec') or jinxes is not None:
+        +            self.jinxes_spec = jinxes or "*"
+         
+        @@ -1346,3 +1407,3 @@ class NPC:
+                 self.plain_system_message = plain_system_message
+        -        self.use_global_jinxs = use_global_jinxs
+        +        self.use_global_jinxes = use_global_jinxes
+                 self.jinx_tool_catalog: Dict[str, Dict[str, Any]] = {}
+        @@ -1355,4 +1416,4 @@ class NPC:
+                     dirs.append(self.npc_directory)
+        -        if self.jinxs_directory:
+        -            dirs.append(self.jinxs_directory)
+        +        if self.jinxes_directory:
+        +            dirs.append(self.jinxes_directory)
+                     
+        @@ -1379,15 +1440,15 @@ class NPC:
+         
+        -        self.jinxs_dict = {}
+        -        if jinxs and jinxs != "*": 
+        -            for jinx_item in jinxs:
+        +        self.jinxes_dict = {}
+        +        if jinxes and jinxes != "*": 
+        +            for jinx_item in jinxes:
+                         if isinstance(jinx_item, Jinx):
+        -                    self.jinxs_dict[jinx_item.jinx_name] = jinx_item
+        +                    self.jinxes_dict[jinx_item.jinx_name] = jinx_item
+                         elif isinstance(jinx_item, dict):
+                             jinx_obj = Jinx(jinx_data=jinx_item)
+        -                    self.jinxs_dict[jinx_obj.jinx_name] = jinx_obj
+        +                    self.jinxes_dict[jinx_obj.jinx_name] = jinx_obj
+                         elif isinstance(jinx_item, str):
+        -                    jinx_path = find_file_path(jinx_item, [self.npc_jinxs_directory], suffix=".jinx")
+        +                    jinx_path = find_file_path(jinx_item, [self.npc_jinxes_directory], suffix=".jinx")
+                             if jinx_path:
+                                 jinx_obj = Jinx(jinx_path=jinx_path)
+        -                        self.jinxs_dict[jinx_obj.jinx_name] = jinx_obj
+        +                        self.jinxes_dict[jinx_obj.jinx_name] = jinx_obj
+                             else:
+        @@ -1422,33 +1483,34 @@ class NPC:
+         
+        -    def initialize_jinxs(self, team_raw_jinxs: Optional[List['Jinx']] = None):
+        +    def initialize_jinxes(self, team_raw_jinxes: Optional[List['Jinx']] = None):
+                 """
+        -        Loads and performs first-pass Jinja rendering for NPC-specific jinxs,
+        +        Loads and performs first-pass Jinja rendering for NPC-specific jinxes,
+                 now that the NPC's team context is fully established.
+                 """
+        -        npc_jinxs_raw_list = []
+        +        npc_jinxes_raw_list = []
+                 
+        -        if self.jinxs_spec == "*":
+        -            if self.team and hasattr(self.team, 'jinxs_dict') and self.team.jinxs_dict:
+        -                self.jinxs_dict.update(self.team.jinxs_dict)
+        +        if self.jinxes_spec == "*":
+        +            if self.team and hasattr(self.team, 'jinxes_dict') and self.team.jinxes_dict:
+        +                self.jinxes_dict.update(self.team.jinxes_dict)
+                 else:
+        -            if self.team and hasattr(self.team, 'jinxs_dict') and self.team.jinxs_dict:
+        -                jinxs_base_dir = None
+        +            if self.team and hasattr(self.team, 'jinxes_dict') and self.team.jinxes_dict:
+        +                jinxes_base_dir = None
+                         if hasattr(self.team, 'team_path') and self.team.team_path:
+        -                    jinxs_base_dir = os.path.join(self.team.team_path, 'jinxs')
+        +                    jinxes_base_dir = os.path.join(self.team.team_path, 'jinxes')
+         
+        -                for jinx_spec in self.jinxs_spec:
+        -                    if jinxs_base_dir:
+        -                        matched_names = match_jinx_spec_to_names(jinx_spec, self.team.jinxs_dict, jinxs_base_dir)
+        +                path_map = getattr(self.team, '_jinx_path_map', None)
+        +                for jinx_spec in self.jinxes_spec:
+        +                    if jinxes_base_dir:
+        +                        matched_names = match_jinx_spec_to_names(jinx_spec, self.team.jinxes_dict, jinxes_base_dir, jinx_path_map=path_map)
+                             else:
+        -                        matched_names = [jinx_spec] if jinx_spec in self.team.jinxs_dict else []
+        +                        matched_names = [jinx_spec] if jinx_spec in self.team.jinxes_dict else []
+         
+                             if not matched_names:
+        -                        raise FileNotFoundError(f"NPC '{self.name}' references jinx '{jinx_spec}' but no matching jinx was found. Available jinxs: {list(self.team.jinxs_dict.keys())[:20]}...")
+        +                        raise FileNotFoundError(f"NPC '{self.name}' references jinx '{jinx_spec}' but no matching jinx was found. Available jinxes: {list(self.team.jinxes_dict.keys())[:20]}...")
+         
+                             for jinx_name in matched_names:
+        -                        if jinx_name in self.team.jinxs_dict:
+        -                            self.jinxs_dict[jinx_name] = self.team.jinxs_dict[jinx_name]
+        +                        if jinx_name in self.team.jinxes_dict:
+        +                            self.jinxes_dict[jinx_name] = self.team.jinxes_dict[jinx_name]
+         
+                 should_load_from_directory = False
+        -        if hasattr(self, 'npc_jinxs_directory') and self.npc_jinxs_directory and os.path.exists(self.npc_jinxs_directory):
+        +        if hasattr(self, 'npc_jinxes_directory') and self.npc_jinxes_directory and os.path.exists(self.npc_jinxes_directory):
+                     if not self.team:
+        @@ -1456,4 +1518,4 @@ class NPC:
+                     elif hasattr(self.team, 'team_path') and self.team.team_path:
+        -                team_jinxs_dir = os.path.join(self.team.team_path, 'jinxs')
+        -                if os.path.normpath(self.npc_jinxs_directory) != os.path.normpath(team_jinxs_dir):
+        +                team_jinxes_dir = os.path.join(self.team.team_path, 'jinxes')
+        +                if os.path.normpath(self.npc_jinxes_directory) != os.path.normpath(team_jinxes_dir):
+                             should_load_from_directory = True
+        @@ -1461,11 +1523,11 @@ class NPC:
+                 if should_load_from_directory:
+        -            for jinx_obj in load_jinxs_from_directory(self.npc_jinxs_directory):
+        -                if jinx_obj.jinx_name not in self.jinxs_dict:
+        -                    npc_jinxs_raw_list.append(jinx_obj)
+        +            for jinx_obj in load_jinxes_from_directory(self.npc_jinxes_directory):
+        +                if jinx_obj.jinx_name not in self.jinxes_dict:
+        +                    npc_jinxes_raw_list.append(jinx_obj)
+                 
+        -        if npc_jinxs_raw_list or team_raw_jinxs:
+        -            all_available_raw_jinxs = list(team_raw_jinxs or [])
+        -            all_available_raw_jinxs.extend(npc_jinxs_raw_list)
+        +        if npc_jinxes_raw_list or team_raw_jinxes:
+        +            all_available_raw_jinxes = list(team_raw_jinxes or [])
+        +            all_available_raw_jinxes.extend(npc_jinxes_raw_list)
+         
+        -            combined_raw_jinxs_dict = {j.jinx_name: j for j in all_available_raw_jinxs}
+        +            combined_raw_jinxes_dict = {j.jinx_name: j for j in all_available_raw_jinxes}
+         
+        @@ -1474,3 +1536,3 @@ class NPC:
+                     jinx_macro_globals = {}
+        -            for raw_jinx in combined_raw_jinxs_dict.values():
+        +            for raw_jinx in combined_raw_jinxes_dict.values():
+                         def create_jinx_callable(jinx_obj_in_closure):
+        @@ -1498,6 +1560,6 @@ class NPC:
+         
+        -            for raw_npc_jinx in npc_jinxs_raw_list:
+        +            for raw_npc_jinx in npc_jinxes_raw_list:
+                         try:
+                             raw_npc_jinx.render_first_pass(npc_first_pass_jinja_env, jinx_macro_globals)
+        -                    self.jinxs_dict[raw_npc_jinx.jinx_name] = raw_npc_jinx
+        +                    self.jinxes_dict[raw_npc_jinx.jinx_name] = raw_npc_jinx
+                         except Exception as e:
+        @@ -1505,4 +1567,4 @@ class NPC:
+                 
+        -        self.jinx_tool_catalog = build_jinx_tool_catalog(self.jinxs_dict)
+        -        print(f"NPC {self.name} loaded {len(self.jinxs_dict)} jinxs and built catalog with {len(self.jinx_tool_catalog)} tools.")
+        +        self.jinx_tool_catalog = build_jinx_tool_catalog(self.jinxes_dict)
+        +        print(f"NPC {self.name} loaded {len(self.jinxes_dict)} jinxes and built catalog with {len(self.jinx_tool_catalog)} tools.")
+         
+        @@ -1751,4 +1813,9 @@ class NPC:
+                     file = os.path.abspath(file)
+        -            
+        -        npc_data = load_yaml_file(file)
+        +
+        +        # If team has jinx path context, pass it so { { jinx_name } } resolves
+        +        jinja_ctx = None
+        +        if self.team and hasattr(self.team, '_npc_jinja_context'):
+        +            jinja_ctx = self.team._npc_jinja_context
+        +
+        +        npc_data = load_yaml_file(file, jinja_context=jinja_ctx)
+                 if not npc_data:
+        @@ -1762,8 +1829,8 @@ class NPC:
+                 
+        -        jinxs_spec = npc_data.get("jinxs", "*")
+        +        jinxes_spec = npc_data.get("jinxes", "*")
+                 
+        -        if jinxs_spec == "*":
+        -            self.jinxs_spec = "*" 
+        +        if jinxes_spec == "*":
+        +            self.jinxes_spec = "*" 
+                 else:
+        -            self.jinxs_spec = jinxs_spec
+        +            self.jinxes_spec = jinxes_spec
+         
+        @@ -1787,3 +1854,3 @@ class NPC:
+                 self.npc_path = file
+        -        self.npc_jinxs_directory = os.path.join(os.path.dirname(file), "jinxs")
+        +        self.npc_jinxes_directory = os.path.join(os.path.dirname(file), "jinxes")
+         
+        @@ -1824,3 +1891,3 @@ class NPC:
+                                 request,
+        -                        jinxs=None,
+        +                        jinxes=None,
+                                 tools: Optional[list] = None,
+        @@ -1886,3 +1953,3 @@ class NPC:
+                     npc=self, 
+        -            jinxs=jinxs,
+        +            jinxes=jinxes,
+                     tools=final_tools_schema,
+        @@ -2241,4 +2308,4 @@ Requirements:
+             ):
+        -        if jinx_name in self.jinxs_dict:
+        -            jinx = self.jinxs_dict[jinx_name]
+        +        if jinx_name in self.jinxes_dict:
+        +            jinx = self.jinxes_dict[jinx_name]
+                 else:
+        @@ -2288,4 +2355,4 @@ Requirements:
+                                     stream=False,
+        -                            jinxs=None, 
+        -                            use_jinxs=True):
+        +                            jinxes=None, 
+        +                            use_jinxes=True):
+                 """Check if a command is for the LLM"""
+        @@ -2296,6 +2363,6 @@ Requirements:
+                     self._current_team = team
+        -        if jinxs is None and use_jinxs:
+        -            jinxs_to_use = self.jinxs_dict
+        -        elif jinxs is not None and use_jinxs:
+        -            jinxs_to_use = jinxs
+        +        if jinxes is None and use_jinxes:
+        +            jinxes_to_use = self.jinxes_dict
+        +        elif jinxes is not None and use_jinxes:
+        +            jinxes_to_use = jinxes
+                     
+        @@ -2310,3 +2377,3 @@ Requirements:
+                     stream=stream,
+        -            jinxs=jinxs_to_use,
+        +            jinxes=jinxes_to_use,
+                 )
+        @@ -2355,4 +2422,4 @@ Requirements:
+                 jinx_rep = [] 
+        -        if self.jinxs_dict:
+        -            jinx_rep = [ jinx.to_dict() for jinx in self.jinxs_dict.values()]
+        +        if self.jinxes_dict:
+        +            jinx_rep = [ jinx.to_dict() for jinx in self.jinxes_dict.values()]
+                 return {
+        @@ -2364,4 +2431,4 @@ Requirements:
+                     "api_key": self.api_key,
+        -            "jinxs": self.jinxs_spec,
+        -            "use_global_jinxs": self.use_global_jinxs
+        +            "jinxes": self.jinxes_spec,
+        +            "use_global_jinxes": self.use_global_jinxes
+                 }
+        @@ -2381,8 +2448,8 @@ Requirements:
+                 str_rep = f"NPC: {self.name}\nDirective: {self.primary_directive}\nModel: {self.model}\nProvider: {self.provider}\nAPI URL: {self.api_url}\n"
+        -        if self.jinxs_dict:
+        +        if self.jinxes_dict:
+                     str_rep += "Jinxs:\n"
+        -            for jinx_name in self.jinxs_dict.keys():
+        +            for jinx_name in self.jinxes_dict.keys():
+                         str_rep += f"  - {jinx_name}\n"
+                 else:
+        -            str_rep += "No jinxs available.\n"
+        +            str_rep += "No jinxes available.\n"
+                 return str_rep
+        @@ -2562,15 +2629,16 @@ Requirements:
+         class Team:
+        -    def __init__(self, 
+        -                    team_path=None, 
+        +    def __init__(self,
+        +                    team_path=None,
+                             npcs: Optional[List['NPC']] = None,
+                             forenpc: Optional[Union[str, 'NPC']] = None,
+        -                    jinxs: Optional[List[Union['Jinx', Dict[str, Any]]]] = None,
+        -                    db_conn=None, 
+        -                    model = None, 
+        -                    provider = None, 
+        -                    api_url = None, 
+        -                    api_key = None):
+        +                    jinxes: Optional[List[Union['Jinx', Dict[str, Any]]]] = None,
+        +                    db_conn=None,
+        +                    model = None,
+        +                    provider = None,
+        +                    api_url = None,
+        +                    api_key = None,
+        +                    team_jinxes: Optional[List['Jinx']] = None):
+                 """
+                 Initialize an NPC team from directory or list of NPCs
+        -        
+        +
+                 Args:
+        @@ -2579,3 +2647,5 @@ class Team:
+                     db_conn: Database connection
+        +            team_jinxes: Pre-loaded jinxes (sub-teams use the same jinxes as the team)
+                 """
+        +        self._team_jinxes = team_jinxes
+                 self.model = model
+        @@ -2587,4 +2657,4 @@ class Team:
+                 self.sub_teams: Dict[str, 'Team'] = {}
+        -        self.jinxs_dict: Dict[str, 'Jinx'] = {}
+        -        self._raw_jinxs_list: List['Jinx'] = []
+        +        self.jinxes_dict: Dict[str, 'Jinx'] = {}
+        +        self._raw_jinxes_list: List['Jinx'] = []
+                 self.jinx_tool_catalog: Dict[str, Dict[str, Any]] = {}
+        @@ -2611,8 +2681,8 @@ class Team:
+                     
+        -            if jinxs:
+        -                for jinx_item in jinxs:
+        +            if jinxes:
+        +                for jinx_item in jinxes:
+                             if isinstance(jinx_item, Jinx):
+        -                        self._raw_jinxs_list.append(jinx_item)
+        +                        self._raw_jinxes_list.append(jinx_item)
+                             elif isinstance(jinx_item, dict):
+        -                        self._raw_jinxs_list.append(Jinx(jinx_data=jinx_item))
+        +                        self._raw_jinxes_list.append(Jinx(jinx_data=jinx_item))
+                 
+        @@ -2641,3 +2711,3 @@ class Team:
+                 self._perform_first_pass_jinx_rendering()
+        -        self.jinx_tool_catalog = build_jinx_tool_catalog(self.jinxs_dict)
+        +        self.jinx_tool_catalog = build_jinx_tool_catalog(self.jinxes_dict)
+                 print(f"[TEAM] Built Jinx tool catalog with {len(self.jinx_tool_catalog)} entries for team {self.name}")
+        @@ -2645,3 +2715,3 @@ class Team:
+                 for npc_obj in self.npcs.values():
+        -            npc_obj.initialize_jinxs(team_raw_jinxs=self._raw_jinxs_list) 
+        +            npc_obj.initialize_jinxes(team_raw_jinxes=self._raw_jinxes_list) 
+                 
+        @@ -2654,2 +2724,5 @@ class Team:
+                 Ensures self.npcs is populated and self.forenpc is an NPC object.
+        +
+        +        Load order: context → jinxes → NPCs (so NPC files can use { { jinx_name } }
+        +        Jinja references that resolve to the jinx's relative path).
+                 """
+        @@ -2657,5 +2730,107 @@ class Team:
+                     raise ValueError(f"Team directory not found: {self.team_path}")
+        -        
+        +
+                 self._load_team_context_file()
+         
+        +        # Load jinxes FIRST so we can build the name→path map for NPC Jinja context.
+        +        # Sub-teams use the same jinxes as the team — they're just organizational groupings.
+        +        if self._team_jinxes:
+        +            self._raw_jinxes_list.extend(self._team_jinxes)
+        +
+        +        jinxes_dir = os.path.join(self.team_path, "jinxes")
+        +        if os.path.exists(jinxes_dir):
+        +            for jinx_obj in load_jinxes_from_directory(jinxes_dir):
+        +                self._raw_jinxes_list.append(jinx_obj)
+        +
+        +        if hasattr(self, 'skills_directory') and self.skills_directory:
+        +            skills_path = os.path.expanduser(self.skills_directory)
+        +            if not os.path.isabs(skills_path):
+        +                skills_path = os.path.join(self.team_path, skills_path)
+        +            if os.path.exists(skills_path):
+        +                for jinx_obj in load_jinxes_from_directory(skills_path):
+        +                    self._raw_jinxes_list.append(jinx_obj)
+        +                print(f"[TEAM] Loaded skills from SKILLS_DIRECTORY: {skills_path}")
+        +            else:
+        +                print(f"[TEAM] Warning: SKILLS_DIRECTORY not found: {skills_path}")
+        +
+        +        # Build jinx name→relative_path map for Jinja context.
+        +        # e.g. { "edit_file": "lib/core/files/edit_file", "sh": "lib/core/sh", ... }
+        +        self._jinx_path_map = {}
+        +        for jinx_obj in self._raw_jinxes_list:
+        +            if jinx_obj.jinx_name in self._jinx_path_map:
+        +                continue
+        +            source = getattr(jinx_obj, '_source_path', None)
+        +            if source:
+        +                # Derive the jinxes/ base dir from the source path
+        +                base_dir = None
+        +                parts = source.split(os.sep)
+        +                for i, p in enumerate(parts):
+        +                    if p == 'jinxes':
+        +                        base_dir = os.sep.join(parts[:i+1])
+        +                if not base_dir:
+        +                    continue
+        +                try:
+        +                    rel = os.path.relpath(source, base_dir)
+        +                    if rel.endswith('.jinx'):
+        +                        rel = rel[:-5]
+        +                    self._jinx_path_map[jinx_obj.jinx_name] = rel
+        +                except ValueError:
+        +                    pass
+        +
+        +        # --- Unified Jinja template functions (dbt-style) ---
+        +
+        +        def _Jinx(name):
+        +            """Resolve a jinx by name to its relative path.
+        +            Usage: { { Jinx('edit_file') } } → 'lib/core/files/edit_file'
+        +            """
+        +            if name in self._jinx_path_map:
+        +                return self._jinx_path_map[name]
+        +            print(f"Warning: Jinx('{name}') not found. Available: {list(self._jinx_path_map.keys())[:15]}...")
+        +            return name
+        +
+        +        def _NPC(name):
+        +            """Reference an NPC by name.
+        +            Usage: { { NPC('corca') } } → 'corca'
+        +            Returns the name for use in directives and jinx configs.
+        +            Validation happens at runtime, not compile time.
+        +            """
+        +            return name
+        +
+        +        def _ref(model_name):
+        +            """Reference a SQL model by name (dbt-style).
+        +            Usage: FROM { { ref('customer_feedback') } }
+        +            At compile time in SQL models, resolves to the actual table name.
+        +            In non-SQL contexts, returns the model name as-is.
+        +            """
+        +            return model_name
+        +
+        +        def _jinxes_list(pattern):
+        +            """Glob-expand a jinx path pattern to a list of paths.
+        +            Usage: { % for j in jinxes_list('lib/browser/*') %  }
+        +              - { { j } }
+        +            { % endfor %  }
+        +            """
+        +            import fnmatch as _fn
+        +            matched = []
+        +            for name, rel_path in self._jinx_path_map.items():
+        +                spec_pattern = pattern
+        +                if not spec_pattern.endswith('.jinx') and not spec_pattern.endswith('*'):
+        +                    spec_pattern += '.jinx'
+        +                rel_with_ext = rel_path + '.jinx'
+        +                if _fn.fnmatch(rel_with_ext, spec_pattern):
+        +                    matched.append(rel_path)
+        +            return matched
+        +
+        +        # Context dict used for NPC file loading and first-pass jinx rendering.
+        +        # Provides both explicit functions and bare name shortcuts.
+        +        self._npc_jinja_context = {
+        +            # Explicit functions (preferred)
+        +            'Jinx': _Jinx,
+        +            'NPC': _NPC,
+        +            'ref': _ref,
+        +            'jinxes_list': _jinxes_list,
+        +            # Bare jinx names as shortcuts (backward compat)
+        +            **self._jinx_path_map,
+        +        }
+        +
+        +        # Now load NPCs with jinx path context available
+                 for filename in os.listdir(self.team_path):
+        @@ -2673,18 +2848,2 @@ class Team:
+                     self._create_default_forenpc()
+        -        
+        -        jinxs_dir = os.path.join(self.team_path, "jinxs")
+        -        if os.path.exists(jinxs_dir):
+        -            for jinx_obj in load_jinxs_from_directory(jinxs_dir):
+        -                self._raw_jinxs_list.append(jinx_obj)
+        -        
+        -        if hasattr(self, 'skills_directory') and self.skills_directory:
+        -            skills_path = os.path.expanduser(self.skills_directory)
+        -            if not os.path.isabs(skills_path):
+        -                skills_path = os.path.join(self.team_path, skills_path)
+        -            if os.path.exists(skills_path):
+        -                for jinx_obj in load_jinxs_from_directory(skills_path):
+        -                    self._raw_jinxs_list.append(jinx_obj)
+        -                print(f"[TEAM] Loaded skills from SKILLS_DIRECTORY: {skills_path}")
+        -            else:
+        -                print(f"[TEAM] Warning: SKILLS_DIRECTORY not found: {skills_path}")
+         
+        @@ -2775,5 +2934,10 @@ class Team:
+                 This expands nested Jinx calls but preserves runtime variables.
+        +
+        +        Also injects team-level Jinja helpers into the rendering context:
+        +        - NPC('name') — validates an NPC exists and returns its name
+        +        - jinx name variables — e.g., { { edit_file } } resolves to 'lib/core/files/edit_file'
+        +        - jinxes_list('pattern') — glob-expands a jinx path pattern to a list
+                 """
+                 jinx_macro_globals = {}
+        -        for raw_jinx in self._raw_jinxs_list:
+        +        for raw_jinx in self._raw_jinxes_list:
+                     def create_jinx_callable(jinx_obj_in_closure):
+        @@ -2781,3 +2945,3 @@ class Team:
+                             temp_jinja_env = SandboxedEnvironment(undefined=SilentUndefined)
+        -                    
+        +
+                             rendered_target_steps = []
+        @@ -2795,15 +2959,30 @@ class Team:
+                                 rendered_target_steps.append(temp_rendered_step)
+        -                    
+        +
+                             return yaml.dump(rendered_target_steps, default_flow_style=False)
+                         return callable_jinx
+        -            
+        +
+                     jinx_macro_globals[raw_jinx.jinx_name] = create_jinx_callable(raw_jinx)
+        -        
+        -        self.jinja_env_for_first_pass.globals['jinxs'] = jinx_macro_globals
+        +
+        +        # Inject unified Jinja context + jinx macros + ctx into first-pass globals
+        +        self.jinja_env_for_first_pass.globals['jinxes'] = jinx_macro_globals
+        +        # ctx — exposes team context variables: { { ctx.forenpc } }, { { ctx.preferences } }, etc.
+        +        self.jinja_env_for_first_pass.globals['ctx'] = self.shared_context
+        +        if hasattr(self, '_npc_jinja_context'):
+        +            # Adds: Jinx(), NPC(), ref(), jinxes_list(), and bare jinx name shortcuts
+        +            self.jinja_env_for_first_pass.globals.update(self._npc_jinja_context)
+                 self.jinja_env_for_first_pass.globals.update(jinx_macro_globals)
+         
+        -        for raw_jinx in self._raw_jinxs_list:
+        +        for raw_jinx in self._raw_jinxes_list:
+                     try:
+        +                # Re-resolve top-level 'npc' field if it contains Jinja
+        +                if hasattr(raw_jinx, 'npc') and isinstance(raw_jinx.npc, str):
+        +                    if '{ {' in raw_jinx.npc and '} }' in raw_jinx.npc:
+        +                        try:
+        +                            template = self.jinja_env_for_first_pass.from_string(raw_jinx.npc)
+        +                            raw_jinx.npc = template.render(**self.jinja_env_for_first_pass.globals)
+        +                        except Exception as e:
+        +                            print(f"Warning: Error rendering npc field for jinx '{raw_jinx.jinx_name}': {e}")
+        +
+                         raw_jinx.render_first_pass(self.jinja_env_for_first_pass, jinx_macro_globals)
+        -                self.jinxs_dict[raw_jinx.jinx_name] = raw_jinx
+        +                self.jinxes_dict[raw_jinx.jinx_name] = raw_jinx
+                     except Exception as e:
+        @@ -2860,3 +3039,3 @@ class Team:
+                         not item.startswith('.') and 
+        -                item != "jinxs"):
+        +                item != "jinxes"):
+                         
+        @@ -2864,3 +3043,3 @@ class Team:
+                                 if os.path.isfile(os.path.join(item_path, f))):
+        -                    sub_team = Team(team_path=item_path, db_conn=self.db_conn)
+        +                    sub_team = Team(team_path=item_path, db_conn=self.db_conn, team_jinxes=self._raw_jinxes_list)
+                             self.sub_teams[item] = sub_team
+        @@ -2906,3 +3085,3 @@ class Team:
+         
+        -        jinxs_for_orchestration = {k: v for k, v in forenpc.jinxs_dict.items() if k != 'orchestrate'}
+        +        jinxes_for_orchestration = {k: v for k, v in forenpc.jinxes_dict.items() if k != 'orchestrate'}
+         
+        @@ -2913,3 +3092,3 @@ class Team:
+                         team=self,
+        -                jinxs=jinxs_for_orchestration,
+        +                jinxes=jinxes_for_orchestration,
+                     )
+        @@ -2951,3 +3130,3 @@ class Team:
+                             try:
+        -                        target_jinxs = {k: v for k, v in target_npc.jinxs_dict.items() if k != 'orchestrate'}
+        +                        target_jinxes = {k: v for k, v in target_npc.jinxes_dict.items() if k != 'orchestrate'}
+                                 delegate_result = target_npc.check_llm_command(
+        @@ -2956,3 +3135,3 @@ class Team:
+                                     team=self,
+        -                            jinxs=target_jinxs,
+        +                            jinxes=target_jinxes,
+                                 )
+        @@ -2988,3 +3167,3 @@ class Team:
+                     "sub_teams": {name: team.to_dict() for name, team in self.sub_teams.items()},
+        -            "jinxs": {name: jinx.to_dict() for name, jinx in self.jinxs_dict.items()},
+        +            "jinxes": {name: jinx.to_dict() for name, jinx in self.jinxes_dict.items()},
+                     "context": getattr(self, 'context', {})
+        @@ -3009,7 +3188,7 @@ class Team:
+                     
+        -        jinxs_dir = os.path.join(directory, "jinxs")
+        -        ensure_dirs_exist(jinxs_dir)
+        +        jinxes_dir = os.path.join(directory, "jinxes")
+        +        ensure_dirs_exist(jinxes_dir)
+                 
+        -        for jinx in self.jinxs_dict.values():
+        -            jinx.save(jinxs_dir)
+        +        for jinx in self.jinxes_dict.values():
+        +            jinx.save(jinxes_dir)
+                     
+        diff --git a/npcpy/npc_sysenv.py b/npcpy/npc_sysenv.py
+        index d41890a..68969c4 100644
+        --- a/npcpy/npc_sysenv.py
+        +++ b/npcpy/npc_sysenv.py
+        @@ -126,7 +126,95 @@ def get_models_dir() -> str:
+             """Get the directory for storing models."""
+        -    return os.path.join(get_data_dir(), 'models')
+        +    return os.path.join(get_data_dir(), 'npc_team', 'models')
+        +
+        +def get_images_dir() -> str:
+        +    """Get the directory for storing generated images."""
+        +    return os.path.join(get_data_dir(), 'npc_team', 'images')
+        +
+        +def get_jobs_dir() -> str:
+        +    """Get the directory for cron/scheduled jobs."""
+        +    return os.path.join(get_data_dir(), 'npc_team', 'jobs')
+        +
+        +def get_triggers_dir() -> str:
+        +    """Get the directory for trigger scripts."""
+        +    return os.path.join(get_data_dir(), 'npc_team', 'triggers')
+        +
+        +def get_videos_dir() -> str:
+        +    """Get the directory for generated videos."""
+        +    return os.path.join(get_data_dir(), 'npc_team', 'videos')
+        +
+        +def get_attachments_dir() -> str:
+        +    """Get the directory for attachments."""
+        +    return os.path.join(get_data_dir(), 'npc_team', 'attachments')
+        +
+        +def get_logs_dir() -> str:
+        +    """Get the directory for logs."""
+        +    return os.path.join(get_data_dir(), 'npc_team', 'logs')
+        +
+        +def _migrate_dirs_to_npc_team() -> None:
+        +    """One-time migration: move top-level resource dirs into npc_team/.
+        +
+        +    Runs only when the marker file is absent and old dirs exist.
+        +    """
+        +    data_dir = get_data_dir()
+        +    marker = os.path.join(data_dir, '.dirs_migrated_to_npc_team')
+        +    if os.path.isfile(marker):
+        +        return
+        +
+        +    old_dirs = ["images", "models", "attachments", "mcp_servers",
+        +                "jobs", "triggers", "videos", "logs"]
+        +    # Only bother if at least one old top-level dir has content
+        +    needs_migration = any(
+        +        os.path.isdir(os.path.join(data_dir, d)) and os.listdir(os.path.join(data_dir, d))
+        +        for d in old_dirs
+        +        if os.path.isdir(os.path.join(data_dir, d))
+        +    )
+        +    if not needs_migration:
+        +        # No old dirs with content — just write marker and return
+        +        try:
+        +            os.makedirs(data_dir, exist_ok=True)
+        +            with open(marker, 'w') as f:
+        +                f.write('No migration needed\n')
+        +        except OSError:
+        +            pass
+        +        return
+        +
+        +    try:
+        +        from migrations.migrate_dirs_to_npc_team import run_migration
+        +        run_migration(data_dir, dry_run=False)
+        +    except ImportError:
+        +        # Inline fallback if the migration module isn't on sys.path
+        +        import shutil
+        +        npc_team_dir = os.path.join(data_dir, 'npc_team')
+        +        os.makedirs(npc_team_dir, exist_ok=True)
+        +        for dirname in old_dirs:
+        +            old = os.path.join(data_dir, dirname)
+        +            new = os.path.join(npc_team_dir, dirname)
+        +            if not os.path.isdir(old) or not os.listdir(old):
+        +                if os.path.isdir(old) and not os.listdir(old):
+        +                    try:
+        +                        os.rmdir(old)
+        +                    except OSError:
+        +                        pass
+        +                continue
+        +            os.makedirs(new, exist_ok=True)
+        +            for item in os.listdir(old):
+        +                src = os.path.join(old, item)
+        +                dst = os.path.join(new, item)
+        +                if not os.path.exists(dst):
+        +                    shutil.move(src, dst)
+        +            if not os.listdir(old):
+        +                try:
+        +                    os.rmdir(old)
+        +                except OSError:
+        +                    pass
+        +        with open(marker, 'w') as f:
+        +            f.write('Migration applied: top-level dirs moved into npc_team/\n')
+         
+         def ensure_npcsh_dirs() -> None:
+        -    """Ensure all npcsh directories exist."""
+        -    for dir_path in [get_data_dir(), get_config_dir(), get_cache_dir(), get_models_dir()]:
+        +    """Ensure all npcsh directories exist, migrating old layouts if needed."""
+        +    _migrate_dirs_to_npc_team()
+        +    for dir_path in [get_data_dir(), get_config_dir(), get_cache_dir(),
+        +                     get_models_dir(), get_images_dir(), get_jobs_dir(),
+        +                     get_triggers_dir(), get_videos_dir(), get_attachments_dir(),
+        +                     get_logs_dir()]:
+                 os.makedirs(dir_path, exist_ok=True)
+        @@ -479,3 +567,3 @@ def get_locally_available_models(project_directory, airplane_mode=False):
+             lora_dirs = [
+        -        os.path.expanduser('~/.npcsh/models'),
+        +        get_models_dir(),
+             ]
+        @@ -1029,5 +1117,5 @@ The current date and time are : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+         
+        -    if hasattr(npc, 'jinxs_dict') and npc.jinxs_dict:
+        +    if hasattr(npc, 'jinxes_dict') and npc.jinxes_dict:
+                 tool_lines = []
+        -        for jname, jinx in npc.jinxs_dict.items():
+        +        for jname, jinx in npc.jinxes_dict.items():
+                     desc = getattr(jinx, 'description', '') or ''
+        @@ -1040,3 +1128,3 @@ The current date and time are : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                     else:
+        -                jinx_names_str = ", ".join(npc.jinxs_dict.keys())
+        +                jinx_names_str = ", ".join(npc.jinxes_dict.keys())
+                         jinx_instructions = f"""
+        @@ -1044,3 +1132,3 @@ The current date and time are : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                       [BEGIN GUIDELINES FOR JINX EXECUTION]
+        -                  Use jinxs when appropriate. For example:
+        +                  Use jinxes when appropriate. For example:
+                             
+        diff --git a/npcpy/serve.py b/npcpy/serve.py
+        index c67825a..2177ab4 100644
+        --- a/npcpy/serve.py
+        +++ b/npcpy/serve.py
+        @@ -69,2 +69,4 @@ from npcpy.npc_sysenv import (
+             get_locally_available_models, get_data_dir, get_models_dir, get_cache_dir,
+        +    get_images_dir, get_jobs_dir, get_triggers_dir, get_videos_dir,
+        +    get_attachments_dir, get_logs_dir,
+             team_sync_status, team_sync_init, team_sync_pull,
+        @@ -77,3 +79,3 @@ from npcpy.memory.command_history import (
+         )
+        -from npcpy.npc_compiler import  Jinx, NPC, Team, load_jinxs_from_directory, build_jinx_tool_catalog, initialize_npc_project, load_yaml_file
+        +from npcpy.npc_compiler import  Jinx, NPC, Team, load_jinxes_from_directory, build_jinx_tool_catalog, initialize_npc_project, load_yaml_file
+         
+        @@ -281,30 +283,56 @@ class MCPServerManager:
+         
+        -    def start(self, server_path: str):
+        +    def start(self, server_path: str, env_vars: dict = None):
+                 server_path = os.path.expanduser(server_path)
+        -        abs_path = os.path.abspath(server_path)
+        -        if not os.path.exists(abs_path):
+        -            raise FileNotFoundError(f"MCP server script not found at {abs_path}")
+        +
+        +        # Build environment with optional extra vars
+        +        proc_env = os.environ.copy()
+        +        if env_vars:
+        +            proc_env.update(env_vars)
+        +
+        +        # Detect command type: npx, uvx, node, etc. vs local file path
+        +        stripped = server_path.strip()
+        +        is_command = stripped.startswith(('npx ', 'uvx ', 'node ', 'python ', 'python3 '))
+        +
+        +        if is_command:
+        +            # For commands like "npx -y @modelcontextprotocol/server-github"
+        +            import shlex
+        +            cmd = shlex.split(stripped)
+        +            key = stripped  # Use the full command string as key
+        +            cwd = os.getcwd()
+        +        else:
+        +            abs_path = os.path.abspath(server_path)
+        +            if not os.path.exists(abs_path):
+        +                raise FileNotFoundError(f"MCP server script not found at {abs_path}")
+        +            cmd = [sys.executable, abs_path]
+        +            key = abs_path
+        +            cwd = os.path.dirname(abs_path) or "."
+         
+                 with self._lock:
+        -            existing = self._procs.get(abs_path)
+        +            existing = self._procs.get(key)
+                     if existing and existing.poll() is None:
+        -                return {"status": "running", "pid": existing.pid, "serverPath": abs_path}
+        +                return {"status": "running", "pid": existing.pid, "serverPath": key}
+         
+        -            cmd = [sys.executable, abs_path]
+                     proc = subprocess.Popen(
+                         cmd,
+        -                cwd=os.path.dirname(abs_path) or ".",
+        +                cwd=cwd,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE,
+        +                env=proc_env,
+                     )
+        -            self._procs[abs_path] = proc
+        -            return {"status": "started", "pid": proc.pid, "serverPath": abs_path}
+        +            self._procs[key] = proc
+        +            return {"status": "started", "pid": proc.pid, "serverPath": key}
+        +
+        +    def _resolve_key(self, server_path: str) -> str:
+        +        """Resolve server_path to the key used in _procs."""
+        +        stripped = server_path.strip()
+        +        if stripped.startswith(('npx ', 'uvx ', 'node ', 'python ', 'python3 ')):
+        +            return stripped
+        +        return os.path.abspath(os.path.expanduser(server_path))
+         
+             def stop(self, server_path: str):
+        -        server_path = os.path.expanduser(server_path)
+        -        abs_path = os.path.abspath(server_path)
+        +        key = self._resolve_key(server_path)
+                 with self._lock:
+        -            proc = self._procs.get(abs_path)
+        +            proc = self._procs.get(key)
+                     if not proc:
+        -                return {"status": "not_found", "serverPath": abs_path}
+        +                return {"status": "not_found", "serverPath": key}
+                     if proc.poll() is None:
+        @@ -315,12 +343,11 @@ class MCPServerManager:
+                             proc.kill()
+        -            del self._procs[abs_path]
+        -            return {"status": "stopped", "serverPath": abs_path}
+        +            del self._procs[key]
+        +            return {"status": "stopped", "serverPath": key}
+         
+             def status(self, server_path: str):
+        -        server_path = os.path.expanduser(server_path)
+        -        abs_path = os.path.abspath(server_path)
+        +        key = self._resolve_key(server_path)
+                 with self._lock:
+        -            proc = self._procs.get(abs_path)
+        +            proc = self._procs.get(key)
+                     if not proc:
+        -                return {"status": "not_started", "serverPath": abs_path}
+        +                return {"status": "not_started", "serverPath": key}
+                     running = proc.poll() is None
+        @@ -328,3 +355,3 @@ class MCPServerManager:
+                         "status": "running" if running else "exited",
+        -                "serverPath": abs_path,
+        +                "serverPath": key,
+                         "pid": proc.pid,
+        @@ -1460,4 +1487,4 @@ def _get_jinx_files_recursively(directory):
+         
+        -@app.route("/api/jinxs/available", methods=["GET"])
+        -def get_available_jinxs():
+        +@app.route("/api/jinxes/available", methods=["GET"])
+        +def get_available_jinxes():
+             try:
+        @@ -1478,4 +1505,4 @@ def get_available_jinxs():
+                 if current_path:
+        -            team_jinxs_dir = os.path.join(current_path, 'npc_team', 'jinxs')
+        -            jinx_paths = _get_jinx_files_recursively(team_jinxs_dir)
+        +            team_jinxes_dir = os.path.join(current_path, 'npc_team', 'jinxes')
+        +            jinx_paths = _get_jinx_files_recursively(team_jinxes_dir)
+                     for path in jinx_paths:
+        @@ -1483,4 +1510,4 @@ def get_available_jinxs():
+         
+        -        global_jinxs_dir = os.path.expanduser('~/.npcsh/npc_team/jinxs')
+        -        jinx_paths = _get_jinx_files_recursively(global_jinxs_dir)
+        +        global_jinxes_dir = os.path.expanduser('~/.npcsh/npc_team/jinxes')
+        +        jinx_paths = _get_jinx_files_recursively(global_jinxes_dir)
+                 for path in jinx_paths:
+        @@ -1491,4 +1518,4 @@ def get_available_jinxs():
+                     package_dir = os.path.dirname(npcsh.__file__)
+        -            package_jinxs_dir = os.path.join(package_dir, 'npc_team', 'jinxs')
+        -            jinx_paths = _get_jinx_files_recursively(package_jinxs_dir)
+        +            package_jinxes_dir = os.path.join(package_dir, 'npc_team', 'jinxes')
+        +            jinx_paths = _get_jinx_files_recursively(package_jinxes_dir)
+                     for path in jinx_paths:
+        @@ -1496,9 +1523,9 @@ def get_available_jinxs():
+                 except Exception as pkg_err:
+        -            print(f"Could not load package jinxs: {pkg_err}")
+        +            print(f"Could not load package jinxes: {pkg_err}")
+         
+        -        return jsonify({'jinxs': sorted(list(jinx_names)), 'error': None})
+        +        return jsonify({'jinxes': sorted(list(jinx_names)), 'error': None})
+             except Exception as e:
+        -        print(f"Error getting available jinxs: {str(e)}")
+        +        print(f"Error getting available jinxes: {str(e)}")
+                 traceback.print_exc()
+        -        return jsonify({'jinxs': [], 'error': str(e)}), 500
+        +        return jsonify({'jinxes': [], 'error': str(e)}), 500
+         
+        @@ -1554,10 +1581,10 @@ def execute_jinx():
+             
+        -    if npc_object and hasattr(npc_object, 'jinxs_dict') and jinx_name in npc_object.jinxs_dict:
+        -        jinx = npc_object.jinxs_dict[jinx_name]
+        -        print(f"Found jinx in NPC's jinxs_dict", file=sys.stderr)
+        +    if npc_object and hasattr(npc_object, 'jinxes_dict') and jinx_name in npc_object.jinxes_dict:
+        +        jinx = npc_object.jinxes_dict[jinx_name]
+        +        print(f"Found jinx in NPC's jinxes_dict", file=sys.stderr)
+             
+             if not jinx and current_path:
+        -        project_jinxs_base = os.path.join(current_path, 'npc_team', 'jinxs')
+        -        if os.path.exists(project_jinxs_base):
+        -            for root, dirs, files in os.walk(project_jinxs_base):
+        +        project_jinxes_base = os.path.join(current_path, 'npc_team', 'jinxes')
+        +        if os.path.exists(project_jinxes_base):
+        +            for root, dirs, files in os.walk(project_jinxes_base):
+                         if f'{jinx_name}.jinx' in files:
+        @@ -1569,5 +1596,5 @@ def execute_jinx():
+             if not jinx:
+        -        global_jinxs_base = os.path.expanduser('~/.npcsh/npc_team/jinxs')
+        -        if os.path.exists(global_jinxs_base):
+        -            for root, dirs, files in os.walk(global_jinxs_base):
+        +        global_jinxes_base = os.path.expanduser('~/.npcsh/npc_team/jinxes')
+        +        if os.path.exists(global_jinxes_base):
+        +            for root, dirs, files in os.walk(global_jinxes_base):
+                         if f'{jinx_name}.jinx' in files:
+        @@ -1587,6 +1614,6 @@ def execute_jinx():
+                 if npc_object:
+        -            searched_paths.append(f"NPC {npc_name} jinxs_dict")
+        +            searched_paths.append(f"NPC {npc_name} jinxes_dict")
+                 if current_path:
+        -            searched_paths.append(f"Project jinxs at {os.path.join(current_path, 'npc_team', 'jinxs')}")
+        -        searched_paths.append(f"Global jinxs at {os.path.expanduser('~/.npcsh/npc_team/jinxs')}")
+        +            searched_paths.append(f"Project jinxes at {os.path.join(current_path, 'npc_team', 'jinxes')}")
+        +        searched_paths.append(f"Global jinxes at {os.path.expanduser('~/.npcsh/npc_team/jinxes')}")
+                 print(f"Searched in: {', '.join(searched_paths)}", file=sys.stderr)
+        @@ -1629,5 +1656,5 @@ def execute_jinx():
+             
+        -    all_jinxs = {}
+        -    if npc_object and hasattr(npc_object, 'jinxs_dict'):
+        -        all_jinxs.update(npc_object.jinxs_dict)
+        +    all_jinxes = {}
+        +    if npc_object and hasattr(npc_object, 'jinxes_dict'):
+        +        all_jinxes.update(npc_object.jinxes_dict)
+             
+        @@ -1902,3 +1929,3 @@ def api_command(command):
+         
+        -@app.route("/api/jinxs/save", methods=["POST"])
+        +@app.route("/api/jinxes/save", methods=["POST"])
+         def save_jinx():
+        @@ -1915,4 +1942,4 @@ def save_jinx():
+                 if is_global:
+        -            jinxs_dir = os.path.join(
+        -                os.path.expanduser("~"), ".npcsh", "npc_team", "jinxs"
+        +            jinxes_dir = os.path.join(
+        +                os.path.expanduser("~"), ".npcsh", "npc_team", "jinxes"
+                     )
+        @@ -1921,7 +1948,6 @@ def save_jinx():
+                         current_path = os.path.join(current_path, "npc_team")
+        -            jinxs_dir = os.path.join(current_path, "jinxs")
+        +            jinxes_dir = os.path.join(current_path, "jinxes")
+         
+        -        os.makedirs(jinxs_dir, exist_ok=True)
+        +        os.makedirs(jinxes_dir, exist_ok=True)
+         
+        -        
+                 jinx_yaml = {
+        @@ -1932,3 +1958,10 @@ def save_jinx():
+         
+        -        file_path = os.path.join(jinxs_dir, f"{jinx_name}.jinx")
+        +        # Use path field for subdirectory placement
+        +        jinx_rel_path = jinx_data.get("path", "")
+        +        if jinx_rel_path and "/" in jinx_rel_path:
+        +            sub_dir = os.path.join(jinxes_dir, os.path.dirname(jinx_rel_path))
+        +            os.makedirs(sub_dir, exist_ok=True)
+        +            file_path = os.path.join(sub_dir, f"{jinx_name}.jinx")
+        +        else:
+        +            file_path = os.path.join(jinxes_dir, f"{jinx_name}.jinx")
+                 with open(file_path, "w") as f:
+        @@ -1939,2 +1972,162 @@ def save_jinx():
+                 return jsonify({"error": str(e)}), 500
+        +
+        +
+        +@app.route("/api/jinxes/delete", methods=["POST"])
+        +def delete_jinx():
+        +    """Delete a jinx file from the filesystem."""
+        +    try:
+        +        data = request.json or {}
+        +        jinx_path = data.get("jinxPath", "")  # relative path without .jinx extension
+        +        scope = data.get("scope", "global")
+        +        current_path = data.get("currentPath", "")
+        +        source_path = data.get("sourcePath", "")  # absolute path if provided
+        +
+        +        if source_path and os.path.exists(source_path):
+        +            file_path = source_path
+        +        elif jinx_path:
+        +            if scope == "global":
+        +                jinxes_dir = os.path.join(os.path.expanduser("~"), ".npcsh", "npc_team", "jinxes")
+        +            else:
+        +                base = current_path
+        +                if not base.endswith("npc_team"):
+        +                    base = os.path.join(base, "npc_team")
+        +                jinxes_dir = os.path.join(base, "jinxes")
+        +            file_path = os.path.join(jinxes_dir, f"{jinx_path}.jinx")
+        +        else:
+        +            return jsonify({"error": "jinxPath or sourcePath required"}), 400
+        +
+        +        if not os.path.exists(file_path):
+        +            return jsonify({"error": f"File not found: {file_path}"}), 404
+        +
+        +        os.unlink(file_path)
+        +
+        +        # Clean up empty parent directories
+        +        parent = os.path.dirname(file_path)
+        +        while parent and parent != jinxes_dir if not source_path else False:
+        +            try:
+        +                if not os.listdir(parent):
+        +                    os.rmdir(parent)
+        +                    parent = os.path.dirname(parent)
+        +                else:
+        +                    break
+        +            except OSError:
+        +                break
+        +
+        +        return jsonify({"status": "success"})
+        +    except Exception as e:
+        +        return jsonify({"error": str(e)}), 500
+        +
+        +
+        +@app.route("/api/jinxes/ingest", methods=["POST"])
+        +def ingest_jinx_from_url():
+        +    """
+        +    Ingest a jinx or skill from a URL. Supports:
+        +    - .jinx files (YAML) → saved directly
+        +    - SKILL.md files → saved as skill directory
+        +    - Raw text/markdown → wrapped as a skill with sections
+        +    - GitHub URLs → auto-resolved to raw content
+        +    """
+        +    try:
+        +        import requests as req_lib
+        +
+        +        data = request.json
+        +        url = data.get("url", "").strip()
+        +        name = data.get("name", "").strip()
+        +        scope = data.get("scope", "project")  # "global" or "project"
+        +        current_path = data.get("currentPath", "")
+        +        skill_type = data.get("type", "auto")  # "jinx", "skill", "auto"
+        +
+        +        if not url:
+        +            return jsonify({"error": "URL is required"}), 400
+        +
+        +        # Resolve GitHub URLs to raw content
+        +        if "github.com" in url and "/blob/" in url:
+        +            url = url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
+        +
+        +        # Fetch the content
+        +        resp = req_lib.get(url, timeout=30)
+        +        resp.raise_for_status()
+        +        content = resp.text
+        +
+        +        # Determine the target directory
+        +        if scope == "global":
+        +            jinxes_dir = os.path.join(os.path.expanduser("~"), ".npcsh", "npc_team", "jinxes")
+        +        else:
+        +            base = current_path if current_path else os.path.expanduser("~/.npcsh")
+        +            if not base.endswith("npc_team"):
+        +                base = os.path.join(base, "npc_team")
+        +            jinxes_dir = os.path.join(base, "jinxes")
+        +
+        +        os.makedirs(jinxes_dir, exist_ok=True)
+        +
+        +        # Auto-detect type from URL and content
+        +        url_lower = url.lower()
+        +        if skill_type == "auto":
+        +            if url_lower.endswith(".jinx") or url_lower.endswith(".yaml") or url_lower.endswith(".yml"):
+        +                skill_type = "jinx"
+        +            elif "SKILL.md" in url or url_lower.endswith("skill.md"):
+        +                skill_type = "skill"
+        +            elif content.strip().startswith("---") and "jinx_name" in content[:500]:
+        +                skill_type = "jinx"
+        +            elif content.strip().startswith("---") and ("name:" in content[:500] or "description:" in content[:500]):
+        +                skill_type = "skill"
+        +            else:
+        +                skill_type = "skill"  # Default: wrap as skill
+        +
+        +        # Auto-generate name from URL if not provided
+        +        if not name:
+        +            # Extract from URL path
+        +            path_parts = url.rstrip("/").split("/")
+        +            raw_name = path_parts[-1] if path_parts else "imported_skill"
+        +            # Remove extensions
+        +            for ext in [".jinx", ".yaml", ".yml", ".md"]:
+        +                if raw_name.lower().endswith(ext):
+        +                    raw_name = raw_name[: -len(ext)]
+        +            name = raw_name.replace(" ", "_").replace("-", "_").lower()
+        +
+        +        if skill_type == "jinx":
+        +            # Save as .jinx file directly
+        +            file_path = os.path.join(jinxes_dir, f"{name}.jinx")
+        +            with open(file_path, "w") as f:
+        +                f.write(content)
+        +
+        +            return jsonify({
+        +                "status": "success",
+        +                "type": "jinx",
+        +                "name": name,
+        +                "path": file_path,
+        +                "message": f"Jinx '{name}' saved to {file_path}"
+        +            })
+        +
+        +        else:
+        +            # Save as skill (SKILL.md in subdirectory)
+        +            skill_dir = os.path.join(jinxes_dir, "skills", name)
+        +            os.makedirs(skill_dir, exist_ok=True)
+        +            skill_path = os.path.join(skill_dir, "SKILL.md")
+        +
+        +            # If content already has frontmatter, save as-is
+        +            if content.strip().startswith("---"):
+        +                with open(skill_path, "w") as f:
+        +                    f.write(content)
+        +            else:
+        +                # Wrap raw content as a skill with frontmatter
+        +                frontmatter = f"---\nname: {name}\ndescription: Skill ingested from {url}\n---\n"
+        +                # Try to split content into sections by ## headers
+        +                with open(skill_path, "w") as f:
+        +                    f.write(frontmatter + "\n" + content)
+        +
+        +            return jsonify({
+        +                "status": "success",
+        +                "type": "skill",
+        +                "name": name,
+        +                "path": skill_path,
+        +                "message": f"Skill '{name}' saved to {skill_path}"
+        +            })
+        +
+        +    except req_lib.exceptions.RequestException as e:
+        +        return jsonify({"error": f"Failed to fetch URL: {str(e)}"}), 400
+        +    except Exception as e:
+        +        return jsonify({"error": str(e)}), 500
+        +
+        +
+         def serialize_jinx_inputs(inputs):
+        @@ -2117,4 +2310,4 @@ def get_finetuned_models():
+             potential_root_paths = [
+        -        os.path.expanduser('~/.npcsh/models'),
+        -        os.path.expanduser('~/.npcsh/images'),
+        +        get_models_dir(),
+        +        get_images_dir(),
+             ]
+        @@ -2124,5 +2317,5 @@ def get_finetuned_models():
+                 potential_root_paths.extend([project_models_path, project_images_path])
+        -            
+        +
+             finetuned_models = []
+        -    
+        +
+             print(f"🌋 Searching for fine-tuned models in potential root paths: {set(potential_root_paths)}")
+        @@ -2168,4 +2361,4 @@ def finetune_diffusers():
+             learning_rate = data.get('learningRate', 1e-4)
+        -    output_path = data.get('outputPath', '~/.npcsh/models')
+        -    
+        +    output_path = data.get('outputPath', get_models_dir())
+        +
+             print(f"🌋 Finetune Diffusers Request Received!")
+        @@ -2310,3 +2503,3 @@ def finetune_instruction():
+                 "loraAlpha": 16,
+        -        "outputPath": "~/.npcsh/models",
+        +        "outputPath": "<data_dir>/npc_team/models",
+                 "systemPrompt": "optional system prompt to prepend",
+        @@ -2336,3 +2529,3 @@ def finetune_instruction():
+             lora_alpha = data.get('loraAlpha', 16)
+        -    output_path = data.get('outputPath', '~/.npcsh/models')
+        +    output_path = data.get('outputPath', get_models_dir())
+             system_prompt = data.get('systemPrompt', '')
+        @@ -2590,3 +2783,3 @@ def get_instruction_models():
+             potential_root_paths = [
+        -        os.path.expanduser('~/.npcsh/models'),
+        +        get_models_dir(),
+             ]
+        @@ -3074,3 +3267,3 @@ def build_training_dataset():
+             dataset = command_history.get_training_dataset(
+        -        include_jinxs=filters.get("jinxs", True),
+        +        include_jinxes=filters.get("jinxes", True),
+                 include_npcs=filters.get("npcs", True),
+        @@ -3110,3 +3303,3 @@ provider: {npc_data['provider']}
+         api_url: {npc_data.get('api_url', '')}
+        -use_global_jinxs: {str(npc_data.get('use_global_jinxs', True)).lower()}
+        +use_global_jinxes: {str(npc_data.get('use_global_jinxes', True)).lower()}
+         """
+        @@ -3124,5 +3317,5 @@ use_global_jinxs: {str(npc_data.get('use_global_jinxs', True)).lower()}
+         
+        -@app.route("/api/jinxs/global")
+        -def get_jinxs_global():
+        -    global_jinx_directory = os.path.expanduser("~/.npcsh/npc_team/jinxs")
+        +@app.route("/api/jinxes/global")
+        +def get_jinxes_global():
+        +    global_jinx_directory = os.path.expanduser("~/.npcsh/npc_team/jinxes")
+             jinx_data = []
+        @@ -3130,3 +3323,3 @@ def get_jinxs_global():
+             if not os.path.exists(global_jinx_directory):
+        -        return jsonify({"jinxs": [], "error": None})
+        +        return jsonify({"jinxes": [], "error": None})
+         
+        @@ -3148,2 +3341,3 @@ def get_jinxs_global():
+                             "path": path_without_ext,
+        +                    "source_path": jinx_path,
+                             "description": raw_data.get("description", ""),
+        @@ -3153,12 +3347,12 @@ def get_jinxs_global():
+         
+        -    return jsonify({"jinxs": jinx_data, "error": None})
+        +    return jsonify({"jinxes": jinx_data, "error": None})
+         
+        -@app.route("/api/jinxs/project", methods=["GET"])
+        -def get_jinxs_project():
+        +@app.route("/api/jinxes/project", methods=["GET"])
+        +def get_jinxes_project():
+             project_dir = request.args.get("currentPath")
+             if not project_dir:
+        -        return jsonify({"jinxs": [], "error": "currentPath required"}), 400
+        +        return jsonify({"jinxes": [], "error": "currentPath required"}), 400
+         
+        -    if not project_dir.endswith("jinxs"):
+        -        project_dir = os.path.join(project_dir, "jinxs")
+        +    if not project_dir.endswith("jinxes"):
+        +        project_dir = os.path.join(project_dir, "jinxes")
+         
+        @@ -3166,3 +3360,3 @@ def get_jinxs_project():
+             if not os.path.exists(project_dir):
+        -        return jsonify({"jinxs": [], "error": None})
+        +        return jsonify({"jinxes": [], "error": None})
+         
+        @@ -3184,2 +3378,3 @@ def get_jinxs_project():
+                             "path": path_without_ext,
+        +                    "source_path": jinx_path,
+                             "description": raw_data.get("description", ""),
+        @@ -3188,4 +3383,4 @@ def get_jinxs_project():
+                         })
+        -    print(jinx_data)
+        -    return jsonify({"jinxs": jinx_data, "error": None})
+        +
+        +    return jsonify({"jinxes": jinx_data, "error": None})
+         
+        @@ -3391,3 +3586,3 @@ def list_system_daemons():
+                 # npcsh-specific triggers
+        -        triggers_dir = os.path.expanduser("~/.npcsh/triggers")
+        +        triggers_dir = get_triggers_dir()
+                 if os.path.isdir(triggers_dir):
+        @@ -3468,4 +3663,4 @@ def get_npc_team_global():
+                             "api_url": raw_data.get("api_url", ""),
+        -                    "use_global_jinxs": raw_data.get("use_global_jinxs", True),
+        -                    "jinxs": raw_data.get("jinxs", "*"),
+        +                    "use_global_jinxes": raw_data.get("use_global_jinxes", True),
+        +                    "jinxes": raw_data.get("jinxes", "*"),
+                         })
+        @@ -3504,4 +3699,4 @@ def get_npc_team_project():
+                         "api_url": raw_npc_data.get("api_url", ""),
+        -                "use_global_jinxs": raw_npc_data.get("use_global_jinxs", True),
+        -                "jinxs": raw_npc_data.get("jinxs", "*"),
+        +                "use_global_jinxes": raw_npc_data.get("use_global_jinxes", True),
+        +                "jinxes": raw_npc_data.get("jinxes", "*"),
+                     }
+        @@ -3510,3 +3705,87 @@ def get_npc_team_project():
+             return jsonify({"npcs": npc_data, "error": None})
+        -        
+        +
+        +
+        +@app.route("/api/npc-team/import", methods=["POST"])
+        +def import_npc_team():
+        +    """
+        +    Import an npc_team from a git repository URL.
+        +    Clones the repo, finds npc_team/ directory, copies contents to target.
+        +    """
+        +    import tempfile
+        +    import shutil as _shutil
+        +
+        +    data = request.json or {}
+        +    repo_url = data.get("repoUrl", "").strip()
+        +    scope = data.get("scope", "global")
+        +    current_path = data.get("currentPath", "")
+        +    branch = data.get("branch", "")
+        +
+        +    if not repo_url:
+        +        return jsonify({"error": "repoUrl is required"}), 400
+        +
+        +    # Determine target directory
+        +    if scope == "global":
+        +        target = os.path.expanduser("~/.npcsh/npc_team")
+        +    else:
+        +        if not current_path:
+        +            return jsonify({"error": "currentPath required for project scope"}), 400
+        +        target = os.path.join(current_path, "npc_team")
+        +
+        +    try:
+        +        with tempfile.TemporaryDirectory() as tmp_dir:
+        +            # Clone repo
+        +            clone_cmd = ["git", "clone", "--depth", "1"]
+        +            if branch:
+        +                clone_cmd += ["-b", branch]
+        +            clone_cmd += [repo_url, tmp_dir]
+        +
+        +            result = subprocess.run(
+        +                clone_cmd, capture_output=True, text=True, timeout=120
+        +            )
+        +            if result.returncode != 0:
+        +                return jsonify({"error": f"Git clone failed: {result.stderr.strip()}"}), 400
+        +
+        +            # Find npc_team/ directory
+        +            npc_team_src = os.path.join(tmp_dir, "npc_team")
+        +            if not os.path.isdir(npc_team_src):
+        +                # Search one level deep
+        +                for item in os.listdir(tmp_dir):
+        +                    candidate = os.path.join(tmp_dir, item, "npc_team")
+        +                    if os.path.isdir(candidate):
+        +                        npc_team_src = candidate
+        +                        break
+        +
+        +            if not os.path.isdir(npc_team_src):
+        +                return jsonify({"error": "No npc_team/ directory found in repository"}), 404
+        +
+        +            # Copy contents (merge into target)
+        +            imported = {"jinxes": 0, "npcs": 0, "contexts": 0, "other": 0}
+        +            for root, dirs, files in os.walk(npc_team_src):
+        +                # Skip .git directories
+        +                dirs[:] = [d for d in dirs if d != '.git']
+        +                rel = os.path.relpath(root, npc_team_src)
+        +                dest_dir = os.path.join(target, rel) if rel != '.' else target
+        +                os.makedirs(dest_dir, exist_ok=True)
+        +
+        +                for f in files:
+        +                    src_file = os.path.join(root, f)
+        +                    dst_file = os.path.join(dest_dir, f)
+        +                    _shutil.copy2(src_file, dst_file)
+        +                    if f.endswith(".jinx"):
+        +                        imported["jinxes"] += 1
+        +                    elif f.endswith(".npc"):
+        +                        imported["npcs"] += 1
+        +                    elif f.endswith(".ctx"):
+        +                        imported["contexts"] += 1
+        +                    else:
+        +                        imported["other"] += 1
+        +
+        +        return jsonify({"status": "success", "imported": imported, "target": target, "error": None})
+        +    except subprocess.TimeoutExpired:
+        +        return jsonify({"error": "Git clone timed out (120s limit)"}), 504
+        +    except Exception as e:
+        +        traceback.print_exc()
+        +        return jsonify({"error": str(e)}), 500
+        +
+        +
+         def get_last_used_model_and_npc_in_directory(directory_path):
+        @@ -3611,3 +3890,7 @@ def read_ctx_file(file_path):
+                         if 'mcp_servers' in data and isinstance(data['mcp_servers'], list):
+        -                    data['mcp_servers'] = [{"value": item} for item in data['mcp_servers']]
+        +                    data['mcp_servers'] = [
+        +                        item if isinstance(item, dict) and 'value' in item
+        +                        else {"value": item}
+        +                        for item in data['mcp_servers']
+        +                    ]
+         
+        @@ -3640,3 +3923,14 @@ def write_ctx_file(file_path, data):
+             if 'mcp_servers' in data_to_save and isinstance(data_to_save['mcp_servers'], list):
+        -        data_to_save['mcp_servers'] = [item.get("value", "") for item in data_to_save['mcp_servers'] if isinstance(item, dict)]
+        +        normalized = []
+        +        for item in data_to_save['mcp_servers']:
+        +            if isinstance(item, dict):
+        +                # If entry has extra fields (env, name, id), preserve as dict
+        +                has_extras = any(k in item for k in ('env', 'name', 'id'))
+        +                if has_extras:
+        +                    normalized.append({k: v for k, v in item.items() if v})
+        +                else:
+        +                    normalized.append(item.get("value", ""))
+        +            elif isinstance(item, str):
+        +                normalized.append(item)
+        +        data_to_save['mcp_servers'] = normalized
+         
+        @@ -3750,3 +4044,3 @@ def check_npcsh_folder():
+         def get_package_contents():
+        -    """Get NPCs and jinxs available in the npcsh package for installation."""
+        +    """Get NPCs and jinxes available in the npcsh package for installation."""
+             try:
+        @@ -3757,3 +4051,3 @@ def get_package_contents():
+                 npcs = []
+        -        jinxs = []
+        +        jinxes = []
+         
+        @@ -3774,5 +4068,5 @@ def get_package_contents():
+         
+        -            jinxs_dir = os.path.join(package_npc_team_dir, "jinxs")
+        -            if os.path.exists(jinxs_dir):
+        -                for root, dirs, files in os.walk(jinxs_dir):
+        +            jinxes_dir = os.path.join(package_npc_team_dir, "jinxes")
+        +            if os.path.exists(jinxes_dir):
+        +                for root, dirs, files in os.walk(jinxes_dir):
+                             for f in files:
+        @@ -3780,6 +4074,6 @@ def get_package_contents():
+                                     jinx_path = os.path.join(root, f)
+        -                            rel_path = os.path.relpath(jinx_path, jinxs_dir)
+        +                            rel_path = os.path.relpath(jinx_path, jinxes_dir)
+                                     try:
+                                         jinx_data = load_yaml_file(jinx_path) or {}
+        -                                jinxs.append({
+        +                                jinxes.append({
+                                             "name": f[:-5],
+        @@ -3793,3 +4087,3 @@ def get_package_contents():
+                     "npcs": npcs,
+        -            "jinxs": jinxs,
+        +            "jinxes": jinxes,
+                     "package_dir": package_dir,
+        @@ -3801,3 +4095,3 @@ def get_package_contents():
+                 traceback.print_exc()
+        -        return jsonify({"error": str(e), "npcs": [], "jinxs": []}), 500
+        +        return jsonify({"error": str(e), "npcs": [], "jinxes": []}), 500
+         
+        @@ -3988,3 +4282,10 @@ def get_attachment_response():
+                 extension_mapped = extension_map.get(extension.upper(), "others")
+        -        file_path = os.path.expanduser("~/.npcsh/" + extension_mapped + "/" + attachment["name"])
+        +        _type_dir_map = {
+        +            "images": get_images_dir(),
+        +            "videos": get_videos_dir(),
+        +            "models": get_models_dir(),
+        +        }
+        +        _type_base = _type_dir_map.get(extension_mapped, os.path.join(get_attachments_dir(), extension_mapped))
+        +        os.makedirs(_type_base, exist_ok=True)
+        +        file_path = os.path.join(_type_base, attachment["name"])
+                 
+        @@ -4144,4 +4445,4 @@ def _get_finetuned_models_internal(current_path=None):
+             potential_root_paths = [
+        -        os.path.expanduser('~/.npcsh/models'),
+        -        os.path.expanduser('~/.npcsh/images'),
+        +        get_models_dir(),
+        +        get_images_dir(),
+             ]
+        @@ -4151,3 +4452,3 @@ def _get_finetuned_models_internal(current_path=None):
+                 potential_root_paths.extend([project_models_path, project_images_path])
+        -            
+        +
+             finetuned_models = []
+        @@ -4431,3 +4732,3 @@ def generate_images():
+             base_filename = data.get('base_filename', 'vixynt_gen')  
+        -    save_dir = data.get('currentPath', '~/.npcsh/images')     
+        +    save_dir = data.get('currentPath', get_images_dir())     
+         
+        @@ -4614,13 +4915,13 @@ def get_mcp_tools():
+                         if current_path_arg:
+        -                    proj_jinx_dir = os.path.join(os.path.abspath(current_path_arg), "npc_team", "jinxs")
+        +                    proj_jinx_dir = os.path.join(os.path.abspath(current_path_arg), "npc_team", "jinxes")
+                             if os.path.isdir(proj_jinx_dir):
+                                 jinx_dirs.append(proj_jinx_dir)
+        -                global_jinx_dir = os.path.expanduser("~/.npcsh/npc_team/jinxs")
+        +                global_jinx_dir = os.path.expanduser("~/.npcsh/npc_team/jinxes")
+                         if os.path.isdir(global_jinx_dir):
+                             jinx_dirs.append(global_jinx_dir)
+        -                all_jinxs = []
+        +                all_jinxes = []
+                         for d in jinx_dirs:
+        -                    all_jinxs.extend(load_jinxs_from_directory(d))
+        -                if all_jinxs:
+        -                    jinx_tools = list(build_jinx_tool_catalog({j.jinx_name: j for j in all_jinxs}).values())
+        +                    all_jinxes.extend(load_jinxes_from_directory(d))
+        +                if all_jinxes:
+        +                    jinx_tools = list(build_jinx_tool_catalog({j.jinx_name: j for j in all_jinxes}).values())
+                             print(f"[MCP] Discovered {len(jinx_tools)} Jinx tools for listing.")
+        @@ -4664,5 +4965,11 @@ def api_mcp_start():
+             explicit = data.get("serverPath")
+        +    env_vars = data.get("envVars")
+             try:
+        -        server_path = resolve_mcp_server_path(current_path=current_path, explicit_path=explicit)
+        -        result = mcp_server_manager.start(server_path)
+        +        # For npx/uvx commands, don't resolve as file path
+        +        stripped = (explicit or "").strip()
+        +        if stripped.startswith(('npx ', 'uvx ', 'node ')):
+        +            server_path = stripped
+        +        else:
+        +            server_path = resolve_mcp_server_path(current_path=current_path, explicit_path=explicit)
+        +        result = mcp_server_manager.start(server_path, env_vars=env_vars)
+                 return jsonify({**result, "error": None})
+        @@ -4680,2 +4987,3 @@ def api_mcp_stop():
+             try:
+        +        # _resolve_key in manager handles both file paths and commands
+                 result = mcp_server_manager.stop(explicit)
+        @@ -4693,3 +5001,8 @@ def api_mcp_status():
+                 if explicit:
+        -            result = mcp_server_manager.status(explicit)
+        +            # For npx/uvx commands, use directly without resolving as file path
+        +            stripped = explicit.strip()
+        +            if stripped.startswith(('npx ', 'uvx ', 'node ')):
+        +                result = mcp_server_manager.status(stripped)
+        +            else:
+        +                result = mcp_server_manager.status(explicit)
+                 else:
+        @@ -4739,3 +5052,3 @@ def generate_video_api():
+                 else:
+        -            save_dir = os.path.expanduser("~/.npcsh/videos")
+        +            save_dir = get_videos_dir()
+                 os.makedirs(save_dir, exist_ok=True)
+        @@ -5558,4 +5871,4 @@ IMPORTANT AGENT BEHAVIOR:
+                                 tool_content = ""
+        -                        if npc_object and hasattr(npc_object, "jinxs_dict") and tool_name in npc_object.jinxs_dict:
+        -                            jinx_obj = npc_object.jinxs_dict[tool_name]
+        +                        if npc_object and hasattr(npc_object, "jinxes_dict") and tool_name in npc_object.jinxes_dict:
+        +                            jinx_obj = npc_object.jinxes_dict[tool_name]
+                                     try:
+        @@ -6162,6 +6475,9 @@ def get_conversations():
+                         query = text("""
+        -                SELECT DISTINCT conversation_id,
+        +                SELECT conversation_id,
+                                MIN(timestamp) as start_time,
+                                MAX(timestamp) as last_message_timestamp,
+        -                       GROUP_CONCAT(content) as preview
+        +                       GROUP_CONCAT(content) as preview,
+        +                       GROUP_CONCAT(DISTINCT CASE WHEN npc IS NOT NULL AND npc != '' THEN npc END) as npcs,
+        +                       GROUP_CONCAT(DISTINCT CASE WHEN model IS NOT NULL AND model != '' THEN model END) as models,
+        +                       GROUP_CONCAT(DISTINCT CASE WHEN provider IS NOT NULL AND provider != '' THEN provider END) as providers
+                         FROM conversation_history
+        @@ -6183,7 +6499,7 @@ def get_conversations():
+                                     {
+        -                                "id": conv[0],  
+        -                                "timestamp": conv[1],  
+        -                                "last_message_timestamp": conv[2],  
+        +                                "id": conv[0],
+        +                                "timestamp": conv[1],
+        +                                "last_message_timestamp": conv[2],
+                                         "preview": (
+        -                                    conv[3][:100] + "..."  
+        +                                    conv[3][:100] + "..."
+                                             if conv[3] and len(conv[3]) > 100
+        @@ -6191,2 +6507,9 @@ def get_conversations():
+                                         ),
+        +                                "npcs": [n for n in (conv[4] or "").split(",") if n],
+        +                                "models": [m for m in (conv[5] or "").split(",") if m],
+        +                                "providers": [p for p in (conv[6] or "").split(",") if p],
+        +                                # Keep singular fields for backwards compat (first entry)
+        +                                "npc": (conv[4] or "").split(",")[0] if conv[4] else "",
+        +                                "model": (conv[5] or "").split(",")[0] if conv[5] else "",
+        +                                "provider": (conv[6] or "").split(",")[0] if conv[6] else "",
+                                     }
+        @@ -6204,2 +6527,62 @@ def get_conversations():
+         
+        +@app.route("/api/search_conversations", methods=["GET"])
+        +def search_conversations():
+        +    try:
+        +        q = request.args.get("q", "").strip()
+        +        limit = int(request.args.get("limit", 20))
+        +        if not q:
+        +            return jsonify({"conversations": [], "error": None})
+        +
+        +        engine = get_db_connection()
+        +        try:
+        +            with engine.connect() as conn:
+        +                query = text("""
+        +                SELECT DISTINCT ch.conversation_id,
+        +                       MIN(ch.timestamp) as start_time,
+        +                       MAX(ch.timestamp) as last_message_timestamp,
+        +                       GROUP_CONCAT(DISTINCT CASE WHEN ch.npc IS NOT NULL AND ch.npc != '' THEN ch.npc END) as npcs
+        +                FROM conversation_history ch
+        +                WHERE ch.content LIKE :pattern
+        +                GROUP BY ch.conversation_id
+        +                ORDER BY MAX(ch.timestamp) DESC
+        +                LIMIT :limit
+        +                """)
+        +                result = conn.execute(query, {"pattern": f"%{q}%", "limit": limit})
+        +                rows = result.fetchall()
+        +
+        +                conversations = []
+        +                for row in rows:
+        +                    # Get the matching message snippet
+        +                    snippet_q = text("""
+        +                    SELECT content FROM conversation_history
+        +                    WHERE conversation_id = :cid AND content LIKE :pattern
+        +                    LIMIT 1
+        +                    """)
+        +                    snippet_result = conn.execute(snippet_q, {"cid": row[0], "pattern": f"%{q}%"})
+        +                    snippet_row = snippet_result.fetchone()
+        +                    preview = ""
+        +                    if snippet_row and snippet_row[0]:
+        +                        content = snippet_row[0]
+        +                        idx = content.lower().find(q.lower())
+        +                        start = max(0, idx - 40)
+        +                        end = min(len(content), idx + len(q) + 40)
+        +                        preview = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+        +
+        +                    conversations.append({
+        +                        "id": row[0],
+        +                        "timestamp": row[1],
+        +                        "last_message_timestamp": row[2],
+        +                        "preview": preview,
+        +                        "title": preview[:50] if preview else row[0][:20],
+        +                        "npc": (row[3] or "").split(",")[0] if row[3] else "",
+        +                    })
+        +
+        +                return jsonify({"conversations": conversations, "error": None})
+        +        finally:
+        +            engine.dispose()
+        +    except Exception as e:
+        +        print(f"Error searching conversations: {str(e)}")
+        +        return jsonify({"conversations": [], "error": str(e)}), 500
+        +
+        +
+         @app.route("/api/conversation/<conversation_id>/messages", methods=["GET"])
+        diff --git a/npcpy/sql/npcsql.py b/npcpy/sql/npcsql.py
+        index 794c18a..b006461 100644
+        --- a/npcpy/sql/npcsql.py
+        +++ b/npcpy/sql/npcsql.py
+        @@ -341,3 +341,3 @@ class NativeDatabaseAITransformer:
+         class NQLJinjaContext:
+        -    """Provides Jinja template context for NQL models with access to NPCs, jinxs, and team."""
+        +    """Provides Jinja template context for NQL models with access to NPCs, jinxes, and team."""
+         
+        @@ -366,3 +366,3 @@ class NQLJinjaContext:
+                     'directive': getattr(npc_obj, 'primary_directive', ''),
+        -            'jinxs': getattr(npc_obj, 'jinxs', []),
+        +            'jinxes': getattr(npc_obj, 'jinxes', []),
+                 }
+        @@ -377,3 +377,3 @@ class NQLJinjaContext:
+                 if not self.npc_operations or not self.npc_operations.jinx_map:
+        -            return {'name': name, 'error': 'No jinxs loaded'}
+        +            return {'name': name, 'error': 'No jinxes loaded'}
+         
+        @@ -507,4 +507,4 @@ class NPCSQLOperations:
+         
+        -    def load_team_jinxs(self, team):
+        -        """Load jinxs from team to make them available as NQL functions."""
+        +    def load_team_jinxes(self, team):
+        +        """Load jinxes from team to make them available as NQL functions."""
+                 if not team:
+        @@ -521,3 +521,3 @@ class NPCSQLOperations:
+                 except Exception as e:
+        -            logger.warning(f"Could not load team jinxs: {e}")
+        +            logger.warning(f"Could not load team jinxes: {e}")
+         
+        @@ -851,3 +851,3 @@ class ModelCompiler:
+                     self.npc_operations.npc_loader = self.npc_team
+        -            self.npc_operations.load_team_jinxs(self.npc_team)
+        +            self.npc_operations.load_team_jinxes(self.npc_team)
+                 except Exception as e:
+        diff --git a/npcpy/work/plan.py b/npcpy/work/plan.py
+        index 6b3dae4..385a45e 100644
+        --- a/npcpy/work/plan.py
+        +++ b/npcpy/work/plan.py
+        @@ -13,4 +13,6 @@ from typing import Any
+         
+        -JOBS_DIR = os.path.expanduser("~/.npcsh/jobs")
+        -LOGS_DIR = os.path.expanduser("~/.npcsh/logs")
+        +from npcpy.npc_sysenv import get_jobs_dir, get_logs_dir
+        +
+        +JOBS_DIR = get_jobs_dir()
+        +LOGS_DIR = get_logs_dir()
+         
+        diff --git a/npcpy/work/trigger.py b/npcpy/work/trigger.py
+        index bc16612..de09692 100644
+        --- a/npcpy/work/trigger.py
+        +++ b/npcpy/work/trigger.py
+        @@ -105,4 +105,5 @@ def execute_trigger_command(
+         
+        -    triggers_dir = os.path.expanduser("~/.npcsh/triggers")
+        -    logs_dir = os.path.expanduser("~/.npcsh/logs")
+        +    from npcpy.npc_sysenv import get_triggers_dir, get_logs_dir
+        +    triggers_dir = get_triggers_dir()
+        +    logs_dir = get_logs_dir()
+             os.makedirs(triggers_dir, exist_ok=True)
+        '''
+
+        example4_output = """- jinxs renamed to jinxes across all code, paths, API routes, and variable names (401d727, 0f238f5)
+        - resource dirs (images, models, videos, etc.) moved under npc_team/ with auto-migration on startup (f7af1c3)
+        - path helpers centralized in npc_sysenv -- OCR, video gen, and other modules now use them instead of hardcoded ~/.npcsh/ paths (f7af1c3)
+        - MCP server startup supports command-style invocations (npx, uvx, node) and custom env vars, not just local python scripts (f7af1c3)
+        - initialize_npc_project() can copy jinx groups from global team into new projects (f7af1c3)
+        - YAML loader only renders template expressions when jinja context is provided -- prevents jinx runtime templates from being evaluated at load time (f7af1c3)
+        - forenpc default NPC inherits model/provider from project init args (f7af1c3)
+        - API routes: /api/jinxs/* renamed to /api/jinxes/* (401d727, 0f238f5)"""
+
+        prompt = f"""You are writing release notes for {repo_name}. Below you will find the commits, file changes, and merged PRs since the last release ({from_tag}).
+
+            Your job is not to summarize commit messages. Commit messages in this project are frequently one word -- "sys", "fixes",
+            "updates" -- and paraphrasing them produces nothing useful. Your job is to figure out what actually changed by
+            cross-referencing everything available: the commit messages, the file paths, the diff content if present, and the PR
+            descriptions. Each of these data sources might be lazy, vague, or misleading on its own. Together they tell you what happened.
+
+            Each bullet MUST include the short commit hash(es) responsible for that change in parentheses at the end, e.g. (f7af1c3) or
+            (401d727, 0f238f5). This lets readers trace each note back to the actual commit.
+
+            Here are worked examples showing input data and the correct output:
+
+            ---
+            Input commits:
+            a1b2c3d  sys  Chris
+            e4f5g6h  sys  Chris
+            Input files: npc_sysenv.py 1200 modified, serve.py 400 modified
+            Input diff:
+            --- a/npc_sysenv.py
+            +++ b/npc_sysenv.py
+            +def sync_team_config(team_dir, config):
+            +    ...
+            +def load_team_from_disk(path):
+            +    ...
+            --- a/serve.py
+            +++ b/serve.py
+            -def sync_team_config(team_dir, config):
+            -    ...
+            -def load_team_from_disk(path):
+            -    ...
+
+            Correct output:
+            - team sync functions (sync_team_config, load_team_from_disk) moved from serve.py to npc_sysenv (a1b2c3d, e4f5g6h)
+
+            Why: two commits with the same vague message touching two files -- the diff shows functions added in one
+            and removed from the other. One change, one bullet. Not "- updates to system environment and server".
+            ---
+
+            ---
+            Input commits:
+            f1a2b3c  fix: replace 31 bare excepts with except Exception  haosenwang
+            Input files: build_funcs.py 256 modified, text.py 372 modified, web.py 361 modified, sft.py 181 modified, tools.py 320 modified
+            Input diff:
+            --- a/build_funcs.py
+            +++ b/build_funcs.py
+            -    except:
+            +    except Exception:
+            --- a/text.py
+            +++ b/text.py
+            -    except:
+            +    except Exception:
+            Input PR: #202 "fix: replace bare excepts with except Exception"
+
+            Correct output:
+            - bare except clauses replaced with except Exception across 5 modules (f1a2b3c)
+
+            Why: one PR, one mechanical change applied to many files. One bullet.
+            ---
+
+            ---
+            Input commits:
+            c3d4e5f  model context windows, breathe summary, kg fixes, cron, gemini deprecation
+            Input files: gen/response.py 2391 modified, llm_funcs.py 800 modified, serve.py 18249 modified, setup.py 236 modified
+            Input diff:
+            --- a/gen/response.py
+            +++ b/gen/response.py
+            +def get_model_context_window(model, provider):
+            +    if provider == 'ollama':
+            +        resp = requests.post(OLLAMA_SHOW_URL, json=dict(name=model))
+            +        return resp.json().get('context_length', 4096)
+            --- a/llm_funcs.py
+            +++ b/llm_funcs.py
+             def breathe(conversation, ...):
+            -    return result
+            +    summary_data = build_summary(groups, facts)
+            +    result['summary'] = summary_data
+            +    return result
+            --- a/serve.py
+            +++ b/serve.py
+            +@app.route('/api/kg/ingest', methods=['POST'])
+            +def kg_ingest():
+            +@app.route('/api/kg/query', methods=['POST'])
+            +def kg_query():
+            +@app.route('/api/cron/schedule', methods=['POST'])
+            +def cron_schedule():
+            -        extract_memories(response_text)
+            --- a/setup.py
+            +++ b/setup.py
+            -    'gemini-3-pro'
+            +    'gemini-3.1-pro'
+
+            Correct output:
+            - get_model_context_window() in gen/response.py -- queries ollama for model context sizes (c3d4e5f)
+            - breathe() now returns summary key with structured data alongside formatted output (c3d4e5f)
+            - KG API: /api/kg/ingest and /api/kg/query endpoints added (c3d4e5f)
+            - cron/scheduling API: /api/cron/schedule endpoint added (c3d4e5f)
+            - disabled auto memory extraction on stream post-processing (c3d4e5f)
+            - gemini model update: gemini-3-pro to gemini-3.1-pro (c3d4e5f)
+
+            Why: one mega-commit, but the diff reveals 6 distinct changes. Each gets its own bullet naming
+            the specific function, endpoint, or behavior. Not "- updates to response generation, LLM functions,
+            server, and configuration".
+            ---
+
+            Here is a fourth example using a real npcpy release. This is a large example with vague commit messages,
+            a massive mechanical rename mixed with real feature work, and the correct output that separates them:
+
+            ---
+            Input commits:
+            {example4_commits}
+
+            Input files:
+            {example4_files}
+
+            Input diff:
+            {example4_diff}
+
+            Correct output:
+            {example4_output}
+
+            Why: three commits, two of which are a mechanical rename (jinxs to jinxes) and one is a vague "sys" commit
+            hiding multiple real changes. The rename touches nearly every file but is one bullet. The "sys" commit
+            requires reading the diff to discover: resource dir restructuring, new path helpers, MCP command support,
+            jinx group copying, yaml loader changes, and forenpc model/provider passthrough. Each distinct change gets
+            its own bullet with the commit hash. The API route rename is grouped with the variable rename since it is
+            part of the same jinxs-to-jinxes effort.
+            ---
+
+            Notice what these do NOT say. They never say:
+            - "updates to X" or "modifications to Y module" -- those name a file, not a change
+            - "improved compatibility" or "enhanced robustness" -- those are marketing language, not release notes
+            - "extensive documentation updates" -- either name what was documented or skip it
+            - "various improvements across the codebase" -- if you cannot be specific, do not write a bullet
+            - "updates to core system environment (npc_sysenv.py), server (serve.py), compiler (npc_compiler.py)" -- listing
+              filenames in parentheses after a vague noun is the same as saying nothing. The reader can see which files changed
+              in git. What they cannot see without reading the code is WHAT changed. That is your job.
+
+            The number of bullets should match the number of distinct changes, not the number of commits. Multiple commits that
+            all do the same thing (like renaming a string across files) are one bullet. A single commit that does two unrelated
+            things might be two bullets. Use your judgment, but err on the side of fewer, more specific bullets rather than many
+            vague ones.
+
+            If a commit touches a file but you genuinely cannot determine what changed from any of the available data, skip it.
+            A missing bullet is better than a vague one. The reader would rather see 3 specific bullets than 8 vague ones.
+
+            Do not include changes from other repositories. If the repo is npcpy, only write about npcpy changes.
+
+            Here is the data:
+
+            Commits:
+            {commits_text}
+
+            Files changed:
+            {files_text}
+
+            PRs merged:
+            {prs_text}
+
+            Respond with ONLY the dash-prefixed bullet list with commit hashes in parentheses. No headers, no introduction, no closing remarks. Lowercase fragments,
+            not full sentences. Go."""
+
+        resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
+        context['output'] = str(resp.get('response', 'Failed to generate release notes.'))

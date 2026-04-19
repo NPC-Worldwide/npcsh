@@ -1,0 +1,603 @@
+import os
+import sys
+try:
+    import tty
+    import termios
+except ImportError:
+    tty = None
+    termios = None
+import select
+from pathlib import Path
+
+models_dir = context.get('models_dir') or '~/.npcsh/npc_team/models'
+db_path = context.get('db') or ''
+model_name = context.get('model') or ''
+schema = context.get('schema') or ''
+list_models = context.get('show') or ''
+query_text = context.get('query') or ''
+install_cron = context.get('install_cron') or ''
+
+models_dir = os.path.expanduser(models_dir)
+
+# Get db path from state if not specified
+if not db_path:
+    from npcsh.config import NPCSH_DB_PATH
+    db_path = os.path.expanduser(NPCSH_DB_PATH)
+else:
+    db_path = os.path.expanduser(db_path)
+
+# Find NPC team directory
+npc_dir = None
+if state and state.team:
+    npc_dir = state.team.team_path
+elif os.path.exists('./npc_team'):
+    npc_dir = './npc_team'
+elif os.path.exists(os.path.expanduser('~/.npcsh/npc_team')):
+    npc_dir = os.path.expanduser('~/.npcsh/npc_team')
+
+# Also check for nql/ directory models
+nql_dir = None
+for base in [npc_dir, os.path.expanduser('~/.npcsh/npc_team')]:
+    if base:
+        candidate = os.path.join(base, 'jinxes', 'nql', 'models')
+        if os.path.isdir(candidate):
+            nql_dir = candidate
+            break
+# If models_dir doesn't exist but nql/models does, use that
+if not os.path.isdir(models_dir) and nql_dir:
+    models_dir = nql_dir
+
+has_action = model_name or list_models or install_cron or query_text
+
+# Interactive TUI mode when no args
+if not has_action and sys.stdin.isatty():
+    # Stop spinner before taking over terminal
+    try:
+        from npcsh.ui import get_current_spinner
+        import time
+        spinner = get_current_spinner()
+        if spinner:
+            spinner._stop = True
+            if spinner._thread:
+                spinner._thread.join(timeout=0.5)
+            if spinner._key_thread:
+                spinner._key_thread.join(timeout=0.5)
+            sys.stdout.write('\r' + ' ' * 80 + '\r')
+            sys.stdout.flush()
+            time.sleep(0.1)
+            # Flush any pending input
+            while select.select([fd], [], [], 0)[0]:
+                os.read(fd, 1).decode('latin-1')
+    except:
+        pass
+
+    import sqlite3
+
+    class DBState:
+        def __init__(self):
+            self.mode = 'tables'
+            self.tables = []
+            self.selected_idx = 0
+            self.scroll_offset = 0
+            self.current_table = None
+            self.rows = []
+            self.columns = []
+            self.row_scroll = 0
+            self.col_scroll = 0
+            self.query_buffer = ""
+            self.query_cursor = 0
+            self.query_result = None
+            self.query_error = None
+            self.status = ""
+
+    db_state = DBState()
+
+    def get_size():
+        try:
+            s = os.get_terminal_size()
+            return s.columns, s.lines
+        except:
+            return 80, 24
+
+    def load_tables():
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            db_state.tables = [row[0] for row in cursor.fetchall()]
+            conn.close()
+        except Exception as e:
+            db_state.status = f"Error: {e}"
+
+    def load_table_data(table_name, limit=100):
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.execute(f"PRAGMA table_info('{table_name}')")
+            db_state.columns = [row[1] for row in cursor.fetchall()]
+            cursor = conn.execute(f'SELECT * FROM "{table_name}" LIMIT {limit}')
+            db_state.rows = cursor.fetchall()
+            conn.close()
+            db_state.current_table = table_name
+            db_state.row_scroll = 0
+            db_state.col_scroll = 0
+        except Exception as e:
+            db_state.status = f"Error: {e}"
+
+    def run_query(sql):
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.execute(sql)
+            if sql.strip().upper().startswith('SELECT'):
+                db_state.columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                db_state.rows = cursor.fetchall()
+                db_state.query_result = f"Returned {len(db_state.rows)} rows"
+            else:
+                conn.commit()
+                db_state.query_result = f"Affected {cursor.rowcount} rows"
+            conn.close()
+            db_state.query_error = None
+            db_state.row_scroll = 0
+            db_state.col_scroll = 0
+        except Exception as e:
+            db_state.query_error = str(e)
+            db_state.query_result = None
+
+    def render_screen():
+        width, height = get_size()
+        out = []
+        out.append("\033[2J\033[H")
+
+        header = f" NQL: {os.path.basename(db_path)} "
+        out.append(f"\033[1;1H\033[7;1m{'=' * width}\033[0m")
+        out.append(f"\033[1;{(width - len(header)) // 2}H\033[7;1m{header}\033[0m")
+
+        modes = ['Tables', 'Query']
+        tab_str = ""
+        for i, m in enumerate(modes):
+            active = (i == 0 and db_state.mode in ['tables', 'rows']) or (i == 1 and db_state.mode == 'query')
+            if active:
+                tab_str += f"\033[7m [{m}] \033[0m"
+            else:
+                tab_str += f" [{m}] "
+        out.append(f"\033[2;2H{tab_str}")
+        out.append(f"\033[3;1H\033[90m{'─' * width}\033[0m")
+
+        if db_state.mode == 'tables':
+            render_tables(out, width, height)
+        elif db_state.mode == 'rows':
+            render_rows(out, width, height)
+        elif db_state.mode == 'query':
+            render_query(out, width, height)
+
+        if db_state.status:
+            out.append(f"\033[{height-2};2H\033[33m{db_state.status[:width-4]}\033[0m")
+
+        if db_state.mode == 'tables':
+            footer = "[j/k] Navigate  [Enter] View  [q] Query  [Esc] Quit"
+        elif db_state.mode == 'rows':
+            footer = "[j/k] Rows  [h/l] Cols  [Esc] Back  [q] Query"
+        else:
+            footer = "[Enter] Run  [j/k] Scroll  [h/l] Cols  [Esc] Tables"
+        out.append(f"\033[{height};1H\033[90m{footer[:width]}\033[0m")
+
+        sys.stdout.write(''.join(out))
+        sys.stdout.flush()
+
+    def render_tables(out, width, height):
+        visible_height = height - 8
+        visible = db_state.tables[db_state.scroll_offset:db_state.scroll_offset + visible_height]
+
+        out.append(f"\033[4;2H\033[1mTables ({len(db_state.tables)}):\033[0m")
+
+        row = 5
+        for i, table in enumerate(visible):
+            idx = i + db_state.scroll_offset
+            if idx == db_state.selected_idx:
+                out.append(f"\033[{row};4H\033[7m> {table}\033[0m")
+            else:
+                out.append(f"\033[{row};4H  {table}")
+            row += 1
+
+        if not db_state.tables:
+            out.append(f"\033[5;4H\033[90mNo tables found.\033[0m")
+
+    def render_rows(out, width, height):
+        visible_height = height - 9
+        col_width = 20
+
+        out.append(f"\033[4;2H\033[1m{db_state.current_table}\033[0m ({len(db_state.rows)} rows)")
+
+        if db_state.columns:
+            visible_cols = db_state.columns[db_state.col_scroll:db_state.col_scroll + (width // col_width)]
+            header_str = ""
+            for col in visible_cols:
+                header_str += f"{col[:col_width-1]:<{col_width}}"
+            out.append(f"\033[5;2H\033[1m{header_str[:width-4]}\033[0m")
+            out.append(f"\033[6;1H\033[90m{'─' * width}\033[0m")
+
+        visible_rows = db_state.rows[db_state.row_scroll:db_state.row_scroll + visible_height]
+        row = 7
+        for data_row in visible_rows:
+            visible_cells = data_row[db_state.col_scroll:db_state.col_scroll + (width // col_width)]
+            row_str = ""
+            for cell in visible_cells:
+                cell_str = str(cell) if cell is not None else "NULL"
+                if len(cell_str) > col_width - 1:
+                    cell_str = cell_str[:col_width-2] + "…"
+                row_str += f"{cell_str:<{col_width}}"
+            out.append(f"\033[{row};2H{row_str[:width-4]}")
+            row += 1
+
+        if len(db_state.rows) > visible_height:
+            pct = int((db_state.row_scroll / max(1, len(db_state.rows) - visible_height)) * 100)
+            out.append(f"\033[4;{width-8}H\033[90m[{pct}%]\033[0m")
+
+    def render_query(out, width, height):
+        out.append(f"\033[4;2H\033[1mSQL:\033[0m")
+        out.append(f"\033[5;2H> {db_state.query_buffer}\033[7m \033[0m")
+
+        if db_state.query_error:
+            out.append(f"\033[7;2H\033[31mError: {db_state.query_error[:width-10]}\033[0m")
+        elif db_state.query_result:
+            out.append(f"\033[7;2H\033[32m{db_state.query_result}\033[0m")
+
+            if db_state.columns and db_state.rows:
+                col_width = 20
+                visible_cols = db_state.columns[db_state.col_scroll:db_state.col_scroll + (width // col_width)]
+                header_str = ""
+                for col in visible_cols:
+                    header_str += f"{col[:col_width-1]:<{col_width}}"
+                out.append(f"\033[9;2H\033[1m{header_str[:width-4]}\033[0m")
+                out.append(f"\033[10;1H\033[90m{'─' * width}\033[0m")
+
+                visible_height = height - 14
+                visible_rows = db_state.rows[db_state.row_scroll:db_state.row_scroll + visible_height]
+                row = 11
+                for data_row in visible_rows:
+                    visible_cells = data_row[db_state.col_scroll:db_state.col_scroll + (width // col_width)]
+                    row_str = ""
+                    for cell in visible_cells:
+                        cell_str = str(cell) if cell is not None else "NULL"
+                        if len(cell_str) > col_width - 1:
+                            cell_str = cell_str[:col_width-2] + "…"
+                        row_str += f"{cell_str:<{col_width}}"
+                    out.append(f"\033[{row};2H{row_str[:width-4]}")
+                    row += 1
+
+    def handle_input(c):
+        if c == '\x1b':
+            if select.select([fd], [], [], 0.1)[0]:
+                c2 = os.read(fd, 1).decode('latin-1')
+                if c2 == '[':
+                    c3 = os.read(fd, 1).decode('latin-1')
+                    if c3 == 'A':
+                        if db_state.mode == 'tables':
+                            move_up()
+                        else:
+                            db_state.row_scroll = max(0, db_state.row_scroll - 1)
+                    elif c3 == 'B':
+                        if db_state.mode == 'tables':
+                            move_down()
+                        else:
+                            db_state.row_scroll = min(max(0, len(db_state.rows) - 1), db_state.row_scroll + 1)
+                    elif c3 == 'C':
+                        db_state.col_scroll = min(max(0, len(db_state.columns) - 1), db_state.col_scroll + 1)
+                    elif c3 == 'D':
+                        db_state.col_scroll = max(0, db_state.col_scroll - 1)
+            else:
+                # Plain ESC - go back or exit
+                if db_state.mode == 'rows':
+                    db_state.mode = 'tables'
+                elif db_state.mode == 'query':
+                    db_state.mode = 'tables'
+                # In tables mode, ESC does nothing (use 'q' to quit)
+            return True
+
+        if c == 'Q':  # Shift+Q to quit
+            return False
+
+        if db_state.mode == 'query':
+            return handle_query_input(c)
+
+        if c == 'q':
+            db_state.mode = 'query'
+            return True
+
+        if c == 'k':
+            if db_state.mode == 'tables':
+                move_up()
+            else:
+                db_state.row_scroll = max(0, db_state.row_scroll - 1)
+        elif c == 'j':
+            if db_state.mode == 'tables':
+                move_down()
+            else:
+                db_state.row_scroll = min(max(0, len(db_state.rows) - 1), db_state.row_scroll + 1)
+        elif c == 'h':
+            db_state.col_scroll = max(0, db_state.col_scroll - 1)
+        elif c == 'l':
+            db_state.col_scroll = min(max(0, len(db_state.columns) - 1), db_state.col_scroll + 1)
+        elif c == '\r' or c == '\n':
+            if db_state.mode == 'tables' and db_state.tables:
+                table = db_state.tables[db_state.selected_idx]
+                load_table_data(table)
+                db_state.mode = 'rows'
+
+        return True
+
+    def handle_query_input(c):
+        # In query mode, all printable chars go to the buffer.
+        # Use arrow keys (handled in escape sequence block) for result navigation.
+        if c == '\r' or c == '\n':
+            if db_state.query_buffer.strip():
+                run_query(db_state.query_buffer)
+            return True
+
+        if c == '\x7f' or c == '\x08':
+            if db_state.query_cursor > 0:
+                db_state.query_buffer = db_state.query_buffer[:db_state.query_cursor-1] + db_state.query_buffer[db_state.query_cursor:]
+                db_state.query_cursor -= 1
+        elif c >= ' ' and c <= '~':
+            db_state.query_buffer = db_state.query_buffer[:db_state.query_cursor] + c + db_state.query_buffer[db_state.query_cursor:]
+            db_state.query_cursor += 1
+
+        return True
+
+    def move_up():
+        db_state.selected_idx = max(0, db_state.selected_idx - 1)
+        if db_state.selected_idx < db_state.scroll_offset:
+            db_state.scroll_offset = db_state.selected_idx
+
+    def move_down():
+        _, height = get_size()
+        visible_height = height - 8
+        db_state.selected_idx = min(max(0, len(db_state.tables) - 1), db_state.selected_idx + 1)
+        if db_state.selected_idx >= db_state.scroll_offset + visible_height:
+            db_state.scroll_offset = db_state.selected_idx - visible_height + 1
+
+    load_tables()
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.write('\033[?25l')
+        render_screen()
+
+        while True:
+            c = os.read(fd, 1).decode('latin-1')
+            if not handle_input(c):
+                break
+            render_screen()
+
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        sys.stdout.write('\033[?25h')
+        sys.stdout.write('\033[2J\033[H')
+        sys.stdout.flush()
+
+    context['output'] = "NQL closed."
+
+elif query_text:
+    # Inline SQL execution: /nql query="SELECT ..."
+    import sqlite3
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute(query_text)
+        if query_text.strip().upper().startswith('SELECT') or query_text.strip().upper().startswith('WITH'):
+            cols = [desc[0] for desc in cursor.description] if cursor.description else []
+            rows = cursor.fetchall()
+            conn.close()
+
+            if not rows:
+                context['output'] = "(0 rows)"
+            else:
+                # Format as table
+                col_widths = [len(c) for c in cols]
+                for row in rows:
+                    for i, cell in enumerate(row):
+                        col_widths[i] = max(col_widths[i], len(str(cell) if cell is not None else "NULL"))
+                col_widths = [min(w, 40) for w in col_widths]
+
+                header = " | ".join(c.ljust(col_widths[i]) for i, c in enumerate(cols))
+                sep = "-+-".join("-" * col_widths[i] for i in range(len(cols)))
+                lines = [header, sep]
+                for row in rows[:200]:
+                    cells = []
+                    for i, cell in enumerate(row):
+                        s = str(cell) if cell is not None else "NULL"
+                        if len(s) > 40:
+                            s = s[:37] + "..."
+                        cells.append(s.ljust(col_widths[i]))
+                    lines.append(" | ".join(cells))
+                if len(rows) > 200:
+                    lines.append(f"... ({len(rows)} total rows, showing first 200)")
+                context['output'] = "\n".join(lines)
+        else:
+            conn.commit()
+            context['output'] = f"OK. Affected {cursor.rowcount} rows."
+            conn.close()
+    except Exception as e:
+        context['output'] = f"SQL Error: {e}"
+
+elif list_models:
+    if not os.path.exists(models_dir):
+        context['output'] = f"No models directory found at {models_dir}"
+    else:
+        models_path = Path(models_dir)
+        sql_files = list(models_path.glob("**/*.sql"))
+        if not sql_files:
+            context['output'] = f"No .sql models found in {models_dir}"
+        else:
+            import re as _re
+            import types as _types
+
+            # Build set of known NQL-callable function names
+            _nql_funcs = set()
+            try:
+                import npcpy.llm_funcs as _lf
+                for _n in dir(_lf):
+                    if not _n.startswith('_') and isinstance(getattr(_lf, _n), _types.FunctionType):
+                        _nql_funcs.add(_n)
+            except ImportError:
+                pass
+            try:
+                import npcpy.ml_funcs as _mf
+                for _n in dir(_mf):
+                    if not _n.startswith('_') and isinstance(getattr(_mf, _n), _types.FunctionType):
+                        _nql_funcs.add(_n)
+            except ImportError:
+                pass
+
+            # Also discover jinx names from team
+            _jinx_names = set()
+            if state and state.team and hasattr(state.team, 'jinx_tool_catalog'):
+                for _tool in state.team.jinx_tool_catalog:
+                    _jn = _tool.get('name', '')
+                    if _jn:
+                        _jinx_names.add(_jn)
+
+            lines = [f"**NQL Models** in `{models_dir}`", ""]
+
+            if list_models == "detail" or list_models == "all":
+                # Detailed view — show source with syntax highlighting
+                for f in sorted(sql_files):
+                    rel = f.relative_to(models_path)
+                    with open(f, 'r') as fh:
+                        src = fh.read()
+
+                    # Find which NQL functions are used
+                    used_funcs = []
+                    for fn in _nql_funcs:
+                        if _re.search(r'(?:nql\.)?' + fn + r'\s*\(', src, _re.IGNORECASE):
+                            used_funcs.append(fn)
+                    used_jinxes = []
+                    for jn in _jinx_names:
+                        if _re.search(r'(?:nql\.)?' + jn + r'\s*\(', src, _re.IGNORECASE):
+                            used_jinxes.append(jn)
+
+                    tags = []
+                    if used_funcs:
+                        tags.append(f"funcs: {', '.join(sorted(used_funcs))}")
+                    if used_jinxes:
+                        tags.append(f"jinxes: {', '.join(sorted(used_jinxes))}")
+
+                    lines.append(f"### {rel}")
+                    if tags:
+                        lines.append(f"  {' | '.join(tags)}")
+                    lines.append("```sql")
+                    lines.append(src.strip())
+                    lines.append("```")
+                    lines.append("")
+            else:
+                # Summary view
+                for f in sorted(sql_files):
+                    rel = f.relative_to(models_path)
+                    with open(f, 'r') as fh:
+                        src = fh.read()
+
+                    used = []
+                    for fn in _nql_funcs:
+                        if _re.search(r'(?:nql\.)?' + fn + r'\s*\(', src, _re.IGNORECASE):
+                            used.append(fn)
+                    for jn in _jinx_names:
+                        if _re.search(r'(?:nql\.)?' + jn + r'\s*\(', src, _re.IGNORECASE):
+                            used.append(f"/{jn}")
+
+                    tag = ""
+                    if used:
+                        tag = f"  [{', '.join(sorted(used))}]"
+                    lines.append(f"  {rel}{tag}")
+
+                lines.append("")
+                lines.append("Use `show=detail` for full source with syntax highlighting.")
+
+            # Show available NQL functions
+            lines.append("")
+            lines.append("**Available NQL functions:**")
+            _sorted_funcs = sorted(_nql_funcs)
+            _func_line = f"  {', '.join(_sorted_funcs[:20])}"
+            if len(_sorted_funcs) > 20:
+                _func_line += f" ... (+{len(_sorted_funcs) - 20} more)"
+            lines.append(_func_line)
+            if _jinx_names:
+                lines.append("**Team jinxes (usable as NQL functions):**")
+                lines.append(f"  {', '.join(sorted(_jinx_names))}")
+
+            context['output'] = "\n".join(lines)
+
+elif install_cron:
+    import subprocess
+    parts = install_cron.split()
+    if len(parts) < 5:
+        context['output'] = "Error: cron expression must have 5 fields"
+    else:
+        cron_time = " ".join(parts[:5])
+        cron_model = parts[5] if len(parts) > 5 else ""
+        nql_cmd = "npc nql"
+        if cron_model:
+            nql_cmd += f" model={cron_model}"
+        nql_cmd += f" models_dir={models_dir} db={db_path}"
+        if schema:
+            nql_cmd += f" schema={schema}"
+        cron_line = f"{cron_time} {nql_cmd}"
+        try:
+            result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
+            current = result.stdout if result.returncode == 0 else ""
+        except:
+            current = ""
+        if nql_cmd in current:
+            context['output'] = "Cron job already exists"
+        else:
+            new_crontab = f"{current.rstrip()}\n{cron_line}\n"
+            proc = subprocess.run(['crontab', '-'], input=new_crontab, text=True, capture_output=True)
+            if proc.returncode == 0:
+                context['output'] = f"Installed: {cron_line}"
+            else:
+                context['output'] = f"Failed: {proc.stderr}"
+
+else:
+    # Run models (non-interactive)
+    try:
+        from npcpy.sql.npcsql import ModelCompiler
+    except ImportError:
+        context['output'] = "Error: npcpy.sql.npcsql not found."
+
+    # Resolve NQL model/provider from state
+    _nql_model = None
+    _nql_provider = None
+    if state:
+        if state.nql_model:
+            _nql_model = state.nql_model
+            _nql_provider = state.nql_provider
+        elif state.chat_model:
+            _nql_model = state.chat_model
+            _nql_provider = state.chat_provider
+
+    if not os.path.exists(models_dir):
+        context['output'] = f"Models directory not found: {models_dir}"
+    else:
+        try:
+            compiler = ModelCompiler(
+                models_dir=models_dir,
+                target_engine=db_path,
+                npc_directory=npc_dir,
+                target_schema=schema if schema else None,
+                nql_model=_nql_model,
+                nql_provider=_nql_provider,
+            )
+            if model_name:
+                compiler.discover_models()
+                if model_name not in compiler.models:
+                    context['output'] = f"Model not found: {model_name}"
+                else:
+                    df = compiler.execute_model(model_name)
+                    context['output'] = f"Model '{model_name}' done. Rows: {len(df)}"
+            else:
+                results = compiler.run_all_models()
+                lines = ["NQL complete:"]
+                for name, df in results.items():
+                    lines.append(f"  {name}: {len(df)} rows")
+                context['output'] = "\n".join(lines)
+        except Exception as e:
+            context['output'] = f"NQL Error: {e}"

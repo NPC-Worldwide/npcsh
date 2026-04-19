@@ -1,0 +1,807 @@
+import os, sys, tty, termios, asyncio, json, traceback, threading, time
+import select as _sel
+from contextlib import AsyncExitStack
+from pathlib import Path
+from termcolor import colored
+
+from npcpy.llm_funcs import get_llm_response
+from npcpy.npc_sysenv import render_markdown, get_system_message
+
+try:
+    from litellm.exceptions import Timeout, ContextWindowExceededError, RateLimitError, BadRequestError
+except ImportError:
+    Timeout = ContextWindowExceededError = RateLimitError = BadRequestError = Exception
+
+try:
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
+
+_npc = context.get('npc')
+_team = context.get('team')
+_messages = context.get('messages', [])
+_mcp_path = context.get('mcp_server_path')
+_init_cmd = context.get('initial_command')
+
+if isinstance(_npc, str) and _team:
+    _npc = _team.get(_npc) if hasattr(_team, 'get') else None
+elif isinstance(_npc, str):
+    _npc = None
+
+# Always prefer the corca NPC
+if _team and hasattr(_team, 'get'):
+    _corca = _team.get('corca')
+    if _corca:
+        _npc = _corca
+
+_model = context.get('model') or (_npc.model if _npc and hasattr(_npc, 'model') else None)
+_provider = context.get('provider') or (_npc.provider if _npc and hasattr(_npc, 'provider') else None)
+_npc_name = _npc.name if _npc else "corca"
+
+# ================================================================
+#  State
+# ================================================================
+class UI:
+    tab = 0             # 0=chat, 1=tools, 2=servers
+    TAB_NAMES = ['Chat', 'Tools', 'Servers']
+
+    # chat
+    chat_log = []       # [(role, text)]  role: user/assistant/tool_call/tool_result/info/error
+    chat_scroll = -1    # -1 = auto-scroll to bottom
+    input_buf = ""
+    thinking = False
+    spinner_frame = 0
+    last_msg_idx = 0
+
+    # tools
+    tools_sel = 0
+    tools_scroll = 0
+    tools_mode = 'list'
+    preview_lines = []
+    preview_scroll = 0
+
+    # servers
+    srv_sel = 0
+    srv_adding = False
+    srv_buf = ""
+
+ui = UI()
+
+class MCP:
+    servers = []
+    tool_info = []
+
+    @staticmethod
+    def active_tools():
+        return [t['tool_def'] for t in MCP.tool_info if t['enabled']]
+
+    @staticmethod
+    def active_map():
+        return {t['name']: t['call'] for t in MCP.tool_info if t['enabled']}
+
+# ================================================================
+#  Helpers
+# ================================================================
+def sz():
+    try:
+        s = os.get_terminal_size()
+        return s.columns, s.lines
+    except:
+        return 80, 24
+
+def get_loop():
+    try:
+        lp = asyncio.get_event_loop()
+        if lp.is_closed():
+            lp = asyncio.new_event_loop()
+            asyncio.set_event_loop(lp)
+        return lp
+    except RuntimeError:
+        lp = asyncio.new_event_loop()
+        asyncio.set_event_loop(lp)
+        return lp
+
+def clean_orphans(msgs):
+    out = []
+    for i, m in enumerate(msgs):
+        if m.get("role") == "tool":
+            ok = False
+            for j in range(i - 1, -1, -1):
+                p = msgs[j]
+                if p.get("role") == "assistant" and p.get("tool_calls"):
+                    if m.get("tool_call_id") in {tc["id"] for tc in p["tool_calls"]}:
+                        ok = True
+                    break
+                elif p.get("role") in ("user", "assistant"):
+                    break
+            if ok:
+                out.append(m)
+        elif m.get("role") == "assistant" and m.get("tool_calls"):
+            ids = {tc["id"] for tc in m["tool_calls"]}
+            found = set()
+            for j in range(i + 1, len(msgs)):
+                n = msgs[j]
+                if n.get("role") == "tool" and n.get("tool_call_id") in ids:
+                    found.add(n["tool_call_id"])
+                elif n.get("role") in ("user", "assistant"):
+                    break
+            miss = ids - found
+            if miss:
+                c = dict(m)
+                c["tool_calls"] = [tc for tc in m["tool_calls"] if tc["id"] not in miss]
+                if not c["tool_calls"]:
+                    del c["tool_calls"]
+                out.append(c)
+            else:
+                out.append(m)
+        else:
+            out.append(m)
+    return out
+
+def llm_call(prompt, msgs):
+    tools = MCP.active_tools() or None
+    tmap = MCP.active_map() or None
+    msgs = clean_orphans(msgs)
+    try:
+        return get_llm_response(
+            prompt, npc=_npc, messages=msgs,
+            tools=tools, tool_map=tmap,
+            auto_process_tool_calls=True,
+            stream=False, team=_team,
+            context=f'Working directory: {os.getcwd()}'
+        )
+    except ContextWindowExceededError:
+        if _npc and hasattr(_npc, 'compress_planning_state'):
+            c = _npc.compress_planning_state(msgs)
+            return get_llm_response(
+                prompt, npc=_npc,
+                messages=[{"role": "system", "content": c}],
+                tools=tools, tool_map=tmap,
+                auto_process_tool_calls=True, stream=False, team=_team,
+            )
+        raise
+    except RateLimitError:
+        time.sleep(60)
+        return get_llm_response(
+            prompt, npc=_npc, messages=msgs,
+            tools=tools, tool_map=tmap,
+            auto_process_tool_calls=True, stream=False, team=_team,
+        )
+    except BadRequestError as e:
+        if "tool_call_id" in str(e).lower():
+            return get_llm_response(
+                prompt, npc=_npc, messages=clean_orphans(msgs),
+                tools=tools, tool_map=tmap,
+                auto_process_tool_calls=True, stream=False, team=_team,
+            )
+        raise
+
+# ================================================================
+#  MCP
+# ================================================================
+async def connect_mcp(server_path):
+    if not MCP_AVAILABLE:
+        ui.chat_log.append(('error', 'MCP not available. pip install mcp-client'))
+        return False
+    abs_path = os.path.abspath(os.path.expanduser(server_path))
+    if not os.path.exists(abs_path):
+        ui.chat_log.append(('error', f'MCP server not found: {abs_path}'))
+        return False
+    for s in MCP.servers:
+        if s['path'] == abs_path and s['connected']:
+            return True
+
+    lp = get_loop()
+    es = AsyncExitStack()
+    cmd = [sys.executable, abs_path] if abs_path.endswith('.py') else [abs_path]
+    sp = StdioServerParameters(command=cmd[0], args=[abs_path], env=os.environ.copy(), cwd=Path(abs_path).parent)
+    try:
+        st = await es.enter_async_context(stdio_client(sp))
+        sess = await es.enter_async_context(ClientSession(*st))
+        await sess.initialize()
+        resp = await sess.list_tools()
+    except Exception as e:
+        ui.chat_log.append(('error', f'MCP connect failed: {e}'))
+        return False
+
+    sidx = len(MCP.servers)
+    MCP.servers.append({'path': abs_path, 'session': sess, 'exit_stack': es, 'loop': lp, 'connected': True})
+
+    if resp.tools:
+        for mt in resp.tools:
+            td = {"type": "function", "function": {
+                "name": mt.name,
+                "description": mt.description or f"MCP tool: {mt.name}",
+                "parameters": getattr(mt, "inputSchema", {"type": "object", "properties": {}})
+            }}
+            def mkf(tn, se, lo):
+                async def _call(**kw):
+                    cl = {k: (None if v == 'None' else v) for k, v in kw.items()}
+                    r = await asyncio.wait_for(se.call_tool(tn, cl), timeout=30.0)
+                    if hasattr(r, 'content') and r.content:
+                        parts = []
+                        for it in r.content:
+                            if hasattr(it, 'text'): parts.append(it.text)
+                            elif hasattr(it, 'data'): parts.append(str(it.data))
+                            else: parts.append(str(it))
+                        return '\n'.join(parts)
+                    return str(r)
+                def _sync(**kw):
+                    return lo.run_until_complete(_call(**kw))
+                return _sync
+            MCP.tool_info.append({
+                'name': mt.name, 'desc': (mt.description or '')[:80],
+                'params': getattr(mt, "inputSchema", {}),
+                'server_idx': sidx, 'enabled': True,
+                'tool_def': td, 'call': mkf(mt.name, sess, lp),
+            })
+    n = sum(1 for t in MCP.tool_info if t['server_idx'] == sidx)
+    ui.chat_log.append(('info', f'Connected to {os.path.basename(abs_path)}. {n} tools.'))
+    return True
+
+async def disconnect_srv(idx):
+    if idx < 0 or idx >= len(MCP.servers): return
+    s = MCP.servers[idx]
+    if not s['connected']: return
+    try: await s['exit_stack'].aclose()
+    except: pass
+    s['connected'] = False
+    for t in MCP.tool_info:
+        if t['server_idx'] == idx: t['enabled'] = False
+    ui.chat_log.append(('info', f'Disconnected from {os.path.basename(s["path"])}'))
+
+# ================================================================
+#  Chat send
+# ================================================================
+def send_message(text):
+    ui.chat_log.append(('user', text))
+    ui.thinking = True
+    ui.chat_scroll = -1
+    ui.last_msg_idx = len(_messages)
+
+    def worker():
+        try:
+            resp = llm_call(text, _messages)
+            _messages[:] = resp.get('messages', _messages)
+            # Extract new messages for display
+            new = _messages[ui.last_msg_idx:]
+            for m in new:
+                role = m.get('role', '')
+                if role == 'user':
+                    pass  # already added
+                elif role == 'assistant':
+                    tcs = m.get('tool_calls', [])
+                    for tc in tcs:
+                        fn = tc.get('function', {})
+                        nm = fn.get('name', '?')
+                        args = fn.get('arguments', '')
+                        if isinstance(args, str):
+                            try: args = json.loads(args)
+                            except: pass
+                        if isinstance(args, dict):
+                            brief = ', '.join(f'{k}={repr(v)[:30]}' for k, v in list(args.items())[:3])
+                        else:
+                            brief = str(args)[:60]
+                        ui.chat_log.append(('tool_call', f'{nm}({brief})'))
+                    content = m.get('content', '')
+                    if content:
+                        ui.chat_log.append(('assistant', str(content)))
+                elif role == 'tool':
+                    content = m.get('content', '')
+                    name = m.get('name', '')
+                    preview = content[:200].replace('\n', ' ')
+                    ui.chat_log.append(('tool_result', f'{name}: {preview}'))
+
+            if _npc and hasattr(_npc, 'shared_context') and 'usage' in resp:
+                u = resp['usage']
+                _npc.shared_context['session_input_tokens'] += u.get('input_tokens', 0)
+                _npc.shared_context['session_output_tokens'] += u.get('output_tokens', 0)
+                _npc.shared_context['turn_count'] += 1
+        except Exception as e:
+            ui.chat_log.append(('error', str(e)))
+        ui.thinking = False
+        ui.last_msg_idx = len(_messages)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+# ================================================================
+#  Rendering
+# ================================================================
+TURQ = '\033[38;2;64;224;208m'
+CHROME = '\033[38;2;211;211;211m'
+ORANGE = '\033[38;2;255;165;0m'
+DIM = '\033[90m'
+BOLD = '\033[1m'
+REV = '\033[7m'
+RST = '\033[0m'
+SPINNERS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
+def render():
+    w, h = sz()
+    buf = ['\033[H']
+
+    # Tab bar
+    tabs = ''
+    for i, name in enumerate(ui.TAB_NAMES):
+        if i == ui.tab:
+            tabs += f' {REV}{BOLD} {name} {RST} '
+        else:
+            tabs += f' {DIM} {name} {RST} '
+    en = sum(1 for t in MCP.tool_info if t['enabled'])
+    tot = len(MCP.tool_info)
+    srv_n = sum(1 for s in MCP.servers if s['connected'])
+    right = f'{_npc_name} | {_model or "?"}@{_provider or "?"} | {srv_n} srv | {en}/{tot} tools'
+    pad = w - len(ui.TAB_NAMES[0]) * 3 - 12 - len(right)
+    header = f'{TURQ}CORCA{RST} {tabs}{" " * max(0, pad)}{DIM}{right}{RST}'
+    buf.append(f'\033[1;1H{REV} {header[:w-2].ljust(w-2)} {RST}')
+
+    if ui.tab == 0:
+        render_chat(buf, w, h)
+    elif ui.tab == 1:
+        render_tools(buf, w, h)
+    elif ui.tab == 2:
+        render_servers(buf, w, h)
+
+    sys.stdout.write(''.join(buf))
+    sys.stdout.flush()
+
+def wrap_text(text, width):
+    lines = []
+    for line in text.split('\n'):
+        while len(line) > width:
+            lines.append(line[:width])
+            line = line[width:]
+        lines.append(line)
+    return lines
+
+def render_chat(buf, w, h):
+    input_h = 3  # divider + input + status
+    chat_h = h - 2 - input_h  # -2 for header
+
+    # Format chat lines
+    all_lines = []
+    _asst_pw = len(_npc_name) + 2  # "name: "
+    for role, text in ui.chat_log:
+        if role == 'user':
+            tw = w - 6
+            wrapped = wrap_text(text, tw)
+            for i, l in enumerate(wrapped):
+                prefix = f'{BOLD}you:{RST} ' if i == 0 else '     '
+                all_lines.append(f'{prefix}{l}')
+        elif role == 'assistant':
+            tw = w - _asst_pw - 1
+            wrapped = wrap_text(text, tw)
+            pad = ' ' * _asst_pw
+            for i, l in enumerate(wrapped):
+                prefix = f'{TURQ}{BOLD}{_npc_name}:{RST} ' if i == 0 else pad
+                all_lines.append(f'{prefix}{l}')
+        elif role == 'tool_call':
+            tw = w - 5
+            wrapped = wrap_text(text, tw)
+            for i, l in enumerate(wrapped):
+                prefix = f'  {ORANGE}⚡ ' if i == 0 else '    '
+                all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
+        elif role == 'tool_result':
+            tw = w - 5
+            wrapped = wrap_text(text, tw)
+            for i, l in enumerate(wrapped):
+                prefix = f'  {DIM}→ ' if i == 0 else '    '
+                all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
+        elif role == 'info':
+            tw = w - 5
+            wrapped = wrap_text(text, tw)
+            for i, l in enumerate(wrapped):
+                prefix = f'  {TURQ}ℹ ' if i == 0 else '    '
+                all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
+        elif role == 'error':
+            tw = w - 5
+            wrapped = wrap_text(text, tw)
+            for i, l in enumerate(wrapped):
+                prefix = f'  \033[31m✗ ' if i == 0 else '    '
+                all_lines.append(f'{prefix}{l}{RST}' if i == 0 else f'    {l}')
+
+    if ui.thinking:
+        sp = SPINNERS[ui.spinner_frame % len(SPINNERS)]
+        all_lines.append(f'  {ORANGE}{sp} thinking...{RST}')
+
+    # Scrolling
+    if ui.chat_scroll == -1:
+        scroll = max(0, len(all_lines) - chat_h)
+    else:
+        scroll = ui.chat_scroll
+
+    for i in range(chat_h):
+        y = 2 + i
+        li = scroll + i
+        buf.append(f'\033[{y};1H\033[K')
+        if li < len(all_lines):
+            buf.append(all_lines[li])
+
+    # Input area
+    div_y = 2 + chat_h
+    buf.append(f'\033[{div_y};1H\033[K{DIM}{"─" * w}{RST}')
+    input_y = div_y + 1
+    visible_input = ui.input_buf[-(w - 4):] if len(ui.input_buf) > w - 4 else ui.input_buf
+    buf.append(f'\033[{input_y};1H\033[K {BOLD}>{RST} {visible_input}\033[?25h')
+
+    # Status
+    status_y = h
+    hints = f'Tab:Switch  Enter:Send  PgUp/PgDn:Scroll  Ctrl+Q:Quit'
+    buf.append(f'\033[{status_y};1H\033[K{REV} {hints[:w-2].ljust(w-2)} {RST}')
+
+def render_tools(buf, w, h):
+    list_h = h - 4
+    en = sum(1 for t in MCP.tool_info if t['enabled'])
+
+    if ui.tools_mode == 'list':
+        buf.append(f'\033[2;1H\033[K{DIM} {"":1} {"NAME":<25} {"SERVER":<20} {"DESCRIPTION"}{RST}')
+
+        if ui.tools_sel < ui.tools_scroll:
+            ui.tools_scroll = ui.tools_sel
+        elif ui.tools_sel >= ui.tools_scroll + list_h:
+            ui.tools_scroll = ui.tools_sel - list_h + 1
+
+        for i in range(list_h):
+            idx = ui.tools_scroll + i
+            y = 3 + i
+            buf.append(f'\033[{y};1H\033[K')
+            if idx >= len(MCP.tool_info):
+                continue
+            t = MCP.tool_info[idx]
+            ck = f'\033[32m✓{RST}' if t['enabled'] else f'{DIM}·{RST}'
+            srv = os.path.basename(MCP.servers[t['server_idx']]['path'])[:18] if t['server_idx'] < len(MCP.servers) else '?'
+            line = f' {ck} {t["name"][:25]:<25} {DIM}{srv[:20]:<20}{RST} {t["desc"][:w-52]}'
+            if idx == ui.tools_sel:
+                buf.append(f'{REV}{line[:w]}{RST}')
+            else:
+                buf.append(line[:w])
+
+        if not MCP.tool_info:
+            buf.append(f'\033[4;3H{DIM}No tools. Connect a server first.{RST}')
+
+        buf.append(f'\033[{h};1H\033[K{REV} j/k:Nav  Space:Toggle  a:All  n:None  p:Details  Tab:Switch  [{en}/{len(MCP.tool_info)}] {RST}')
+
+    else:  # preview
+        for i in range(list_h + 1):
+            y = 2 + i
+            pi = ui.preview_scroll + i
+            buf.append(f'\033[{y};1H\033[K')
+            if pi < len(ui.preview_lines):
+                buf.append(ui.preview_lines[pi][:w - 1])
+        buf.append(f'\033[{h};1H\033[K{REV} j/k:Scroll  Esc/b:Back {RST}')
+
+def render_servers(buf, w, h):
+    if ui.srv_adding:
+        buf.append(f'\033[3;2H{BOLD}Server script path:{RST}')
+        buf.append(f'\033[5;2H{REV} {ui.srv_buf}_ {RST}')
+        for y in range(6, h - 1):
+            buf.append(f'\033[{y};1H\033[K')
+        buf.append(f'\033[{h};1H\033[K{REV} Enter:Connect  Esc:Cancel {RST}')
+    else:
+        buf.append(f'\033[2;1H\033[K{DIM} {"STATUS":<14} {"PATH":<45} {"TOOLS"}{RST}')
+        for i, s in enumerate(MCP.servers):
+            y = 3 + i
+            if y >= h - 2: break
+            st = f'\033[32m● connected{RST}' if s['connected'] else f'\033[31m● disconnected{RST}'
+            tc = sum(1 for t in MCP.tool_info if t['server_idx'] == i and t['enabled'])
+            tt = sum(1 for t in MCP.tool_info if t['server_idx'] == i)
+            line = f' {st:<26} {s["path"][:43]:<45} {tc}/{tt}'
+            buf.append(f'\033[{y};1H\033[K')
+            if i == ui.srv_sel:
+                buf.append(f'{REV}{line[:w]}{RST}')
+            else:
+                buf.append(line[:w])
+        for y in range(3 + len(MCP.servers), h - 1):
+            buf.append(f'\033[{y};1H\033[K')
+        if not MCP.servers:
+            buf.append(f'\033[4;3H{DIM}No servers. Press a to add one.{RST}')
+        buf.append(f'\033[{h};1H\033[K{REV} a:Add  d:Disconnect  r:Reconnect  Tab:Switch {RST}')
+
+# ================================================================
+#  Input handling
+# ================================================================
+def handle_key(c, fd):
+    # Tab key: switch tabs
+    if c == '\t':
+        ui.tab = (ui.tab + 1) % 3
+        return True
+    # Ctrl+Q or Ctrl+C on non-chat
+    if c == '\x11':  # Ctrl+Q
+        return False
+    if c == '\x03':  # Ctrl+C
+        if ui.tab == 0 and ui.thinking:
+            ui.chat_log.append(('info', 'Interrupted.'))
+            return True
+        if ui.tab == 0:
+            return True  # ignore in chat
+        return True
+
+    # Escape sequences
+    if c == '\x1b':
+        if _sel.select([fd], [], [], 0.05)[0]:
+            c2 = os.read(fd, 1).decode('latin-1')
+            if c2 == '[':
+                c3 = os.read(fd, 1).decode('latin-1')
+                # Arrow keys
+                if c3 == 'A':  # Up
+                    if ui.tab == 0:
+                        _chat_scroll_up()
+                    elif ui.tab == 1:
+                        if ui.tools_mode == 'list' and ui.tools_sel > 0: ui.tools_sel -= 1
+                        elif ui.tools_mode == 'preview' and ui.preview_scroll > 0: ui.preview_scroll -= 1
+                    elif ui.tab == 2 and ui.srv_sel > 0:
+                        ui.srv_sel -= 1
+                elif c3 == 'B':  # Down
+                    if ui.tab == 0:
+                        _chat_scroll_down()
+                    elif ui.tab == 1:
+                        if ui.tools_mode == 'list' and ui.tools_sel < len(MCP.tool_info) - 1: ui.tools_sel += 1
+                        elif ui.tools_mode == 'preview': ui.preview_scroll += 1
+                    elif ui.tab == 2 and ui.srv_sel < len(MCP.servers) - 1:
+                        ui.srv_sel += 1
+                elif c3 == '5':  # PgUp
+                    os.read(fd, 1)  # consume ~
+                    if ui.tab == 0: _chat_page_up()
+                elif c3 == '6':  # PgDn
+                    os.read(fd, 1)  # consume ~
+                    if ui.tab == 0: _chat_page_down()
+            elif c2 == 'O':
+                c3 = os.read(fd, 1).decode('latin-1')
+                if c3 == 'P': ui.tab = 0   # F1
+                elif c3 == 'Q': ui.tab = 1  # F2
+                elif c3 == 'R': ui.tab = 2  # F3
+            else:
+                # bare Esc
+                if ui.tab == 1 and ui.tools_mode == 'preview':
+                    ui.tools_mode = 'list'
+                elif ui.tab == 2 and ui.srv_adding:
+                    ui.srv_adding = False
+                    ui.srv_buf = ""
+        else:
+            # bare Esc
+            if ui.tab == 1 and ui.tools_mode == 'preview':
+                ui.tools_mode = 'list'
+            elif ui.tab == 2 and ui.srv_adding:
+                ui.srv_adding = False
+                ui.srv_buf = ""
+        return True
+
+    # Dispatch to tab handler
+    if ui.tab == 0:
+        return handle_chat(c, fd)
+    elif ui.tab == 1:
+        return handle_tools(c, fd)
+    elif ui.tab == 2:
+        return handle_servers(c, fd)
+    return True
+
+def _chat_scroll_up():
+    _, h = sz()
+    chat_h = h - 5
+    if ui.chat_scroll == -1:
+        ui.chat_scroll = max(0, len(ui.chat_log) * 2 - chat_h - 1)
+    ui.chat_scroll = max(0, ui.chat_scroll - 1)
+
+def _chat_scroll_down():
+    ui.chat_scroll = -1 if ui.chat_scroll == -1 else ui.chat_scroll + 1
+
+def _chat_page_up():
+    _, h = sz()
+    chat_h = h - 5
+    if ui.chat_scroll == -1:
+        ui.chat_scroll = max(0, len(ui.chat_log) * 2 - chat_h - chat_h)
+    else:
+        ui.chat_scroll = max(0, ui.chat_scroll - chat_h)
+
+def _chat_page_down():
+    ui.chat_scroll = -1
+
+def handle_chat(c, fd):
+    if ui.thinking:
+        return True  # ignore input while thinking
+
+    if c in ('\r', '\n'):
+        text = ui.input_buf.strip()
+        ui.input_buf = ""
+        if text:
+            send_message(text)
+        return True
+
+    if c == '\x7f' or c == '\x08':  # Backspace
+        ui.input_buf = ui.input_buf[:-1]
+        return True
+
+    if c >= ' ' and c <= '~':
+        ui.input_buf += c
+        ui.chat_scroll = -1
+        return True
+
+    return True
+
+def handle_tools(c, fd):
+    if ui.tools_mode == 'preview':
+        if c == 'j': ui.preview_scroll += 1
+        elif c == 'k' and ui.preview_scroll > 0: ui.preview_scroll -= 1
+        elif c == 'b' or c == 'q': ui.tools_mode = 'list'
+        return True
+
+    if c == 'j' and ui.tools_sel < len(MCP.tool_info) - 1: ui.tools_sel += 1
+    elif c == 'k' and ui.tools_sel > 0: ui.tools_sel -= 1
+    elif c == ' ' and MCP.tool_info:
+        MCP.tool_info[ui.tools_sel]['enabled'] = not MCP.tool_info[ui.tools_sel]['enabled']
+        _update_sys_msg()
+    elif c == 'a':
+        for t in MCP.tool_info: t['enabled'] = True
+        _update_sys_msg()
+    elif c == 'n':
+        for t in MCP.tool_info: t['enabled'] = False
+        _update_sys_msg()
+    elif c == 'p' and MCP.tool_info:
+        t = MCP.tool_info[ui.tools_sel]
+        lines = [f"Tool: {t['name']}", "=" * 40, "",
+                 f"Server: {MCP.servers[t['server_idx']]['path'] if t['server_idx'] < len(MCP.servers) else '?'}",
+                 f"Enabled: {t['enabled']}", "", "Description:", t['desc'], "", "Parameters:"]
+        props = t['params'].get('properties', {})
+        req = t['params'].get('required', [])
+        for pn, pi in props.items():
+            r = "*" if pn in req else ""
+            lines.append(f"  {pn}{r} ({pi.get('type','any')}): {pi.get('description','')[:60]}")
+        if not props: lines.append("  (none)")
+        ui.preview_lines = lines
+        ui.preview_scroll = 0
+        ui.tools_mode = 'preview'
+    return True
+
+def handle_servers(c, fd):
+    if ui.srv_adding:
+        if c in ('\r', '\n'):
+            path = ui.srv_buf.strip()
+            ui.srv_adding = False
+            ui.srv_buf = ""
+            if path:
+                lp = get_loop()
+                try:
+                    lp.run_until_complete(connect_mcp(path))
+                    _update_sys_msg()
+                except Exception as e:
+                    ui.chat_log.append(('error', f'Connect failed: {e}'))
+        elif c == '\x7f' or c == '\x08':
+            ui.srv_buf = ui.srv_buf[:-1]
+        elif c >= ' ' and c <= '~':
+            ui.srv_buf += c
+        return True
+
+    if c == 'j' and ui.srv_sel < len(MCP.servers) - 1: ui.srv_sel += 1
+    elif c == 'k' and ui.srv_sel > 0: ui.srv_sel -= 1
+    elif c == 'a':
+        ui.srv_adding = True
+        ui.srv_buf = ""
+    elif c == 'd' and MCP.servers and ui.srv_sel < len(MCP.servers):
+        lp = get_loop()
+        lp.run_until_complete(disconnect_srv(ui.srv_sel))
+        _update_sys_msg()
+    elif c == 'r' and MCP.servers and ui.srv_sel < len(MCP.servers):
+        s = MCP.servers[ui.srv_sel]
+        if not s['connected']:
+            path = s['path']
+            MCP.tool_info = [t for t in MCP.tool_info if t['server_idx'] != ui.srv_sel]
+            MCP.servers.pop(ui.srv_sel)
+            for t in MCP.tool_info:
+                if t['server_idx'] > ui.srv_sel: t['server_idx'] -= 1
+            lp = get_loop()
+            try:
+                lp.run_until_complete(connect_mcp(path))
+                _update_sys_msg()
+            except Exception as e:
+                ui.chat_log.append(('error', f'Reconnect failed: {e}'))
+            ui.srv_sel = min(ui.srv_sel, max(0, len(MCP.servers) - 1))
+    return True
+
+def _update_sys_msg():
+    active = MCP.active_tools()
+    base = get_system_message(_npc) if _npc else "You are an AI assistant with access to tools."
+    if active:
+        base += f"\n\nYou have access to these tools: {', '.join(t['function']['name'] for t in active)}"
+    for i, m in enumerate(_messages):
+        if m.get("role") == "system":
+            _messages[i] = {"role": "system", "content": base}
+            return
+    _messages.insert(0, {"role": "system", "content": base})
+
+# ================================================================
+#  Non-interactive / one-shot
+# ================================================================
+if not sys.stdin.isatty():
+    if _init_cmd:
+        # System message
+        sys_msg = get_system_message(_npc) if _npc else "You are an AI assistant."
+        _messages.insert(0, {"role": "system", "content": sys_msg})
+        resp = llm_call(_init_cmd, _messages)
+        _messages[:] = resp.get('messages', _messages)
+        context['output'] = str(resp.get('response', ''))
+    else:
+        context['output'] = "Corca requires an interactive terminal."
+    context['messages'] = _messages
+    exit()
+
+# ================================================================
+#  Auto-connect
+# ================================================================
+auto_paths = []
+if _mcp_path:
+    auto_paths.append(_mcp_path)
+# Check npcsh package directory (where mcp_server.py is shipped)
+try:
+    import npcsh as _npcsh_mod
+    _pkg_mcp = os.path.join(os.path.dirname(_npcsh_mod.__file__), 'mcp_server.py')
+    if _pkg_mcp not in auto_paths:
+        auto_paths.append(_pkg_mcp)
+except ImportError:
+    pass
+# Team path
+if _team and hasattr(_team, 'team_path'):
+    tp = os.path.join(_team.team_path, "mcp_server.py")
+    if tp not in auto_paths:
+        auto_paths.append(tp)
+# Home npc_team
+_home_mcp = os.path.expanduser("~/.npcsh/npc_team/mcp_server.py")
+if _home_mcp not in auto_paths:
+    auto_paths.append(_home_mcp)
+
+lp = get_loop()
+_tried = []
+for p in auto_paths:
+    ep = os.path.expanduser(p)
+    if os.path.exists(ep):
+        _tried.append(ep)
+        try:
+            lp.run_until_complete(connect_mcp(p))
+        except Exception as e:
+            ui.chat_log.append(('error', f'Auto-connect {os.path.basename(ep)}: {e}'))
+        if MCP.tool_info:
+            break
+if not MCP.tool_info and not _tried:
+    ui.chat_log.append(('info', f'No mcp_server.py found. Searched: {", ".join(auto_paths)}'))
+
+_update_sys_msg()
+ui.last_msg_idx = len(_messages)
+ui.chat_log.append(('info', f'Welcome to CORCA. NPC: {_npc_name}. {len(MCP.tool_info)} tools available.'))
+
+# One-shot
+if _init_cmd:
+    send_message(_init_cmd)
+
+# ================================================================
+#  Main loop
+# ================================================================
+fd = sys.stdin.fileno()
+old_settings = termios.tcgetattr(fd)
+try:
+    tty.setcbreak(fd)
+    sys.stdout.write('\033[?25l\033[2J')
+    running = True
+    while running:
+        render()
+        if ui.thinking:
+            ui.spinner_frame += 1
+        if _sel.select([fd], [], [], 0.15)[0]:
+            c = os.read(fd, 1).decode('latin-1')
+            running = handle_key(c, fd)
+finally:
+    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    sys.stdout.write('\033[?25h\033[2J\033[H')
+    sys.stdout.flush()
+
+# Cleanup MCP
+lp = get_loop()
+for s in MCP.servers:
+    if s['connected']:
+        try:
+            async def _cl(es): await es.aclose()
+            lp.run_until_complete(_cl(s['exit_stack']))
+        except: pass
+
+context['output'] = "Exited corca."
+context['messages'] = _messages

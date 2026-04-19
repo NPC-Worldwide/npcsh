@@ -1,0 +1,210 @@
+import os
+import hashlib
+import shutil
+from pathlib import Path
+from datetime import datetime
+
+force = context.get('force', False)
+dry_run = context.get('dry_run', False)
+sync_jinxes = context.get('jinxes', False)
+sync_npcs = context.get('npcs', False)
+sync_ctx = context.get('ctx', False)
+sync_images = context.get('images', False)
+
+# Convert string flags to boolean
+def to_bool(val):
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.lower() in ('true', '1', 'yes', 'y')
+    return bool(val)
+
+force = to_bool(force)
+dry_run = to_bool(dry_run)
+sync_jinxes = to_bool(sync_jinxes)
+sync_npcs = to_bool(sync_npcs)
+sync_ctx = to_bool(sync_ctx)
+sync_images = to_bool(sync_images)
+
+# If none specified, sync all
+sync_all = not (sync_jinxes or sync_npcs or sync_ctx or sync_images)
+
+def get_file_hash(filepath):
+    """Get MD5 hash of file contents."""
+    try:
+        with open(filepath, 'rb') as f:
+            return hashlib.md5(f.read()).hexdigest()
+    except:
+        return None
+
+def get_files_recursive(base_path, extensions=None):
+    """Get all files recursively, optionally filtered by extensions."""
+    files = []
+    for root, dirs, filenames in os.walk(base_path):
+        # Skip .git directories
+        dirs[:] = [d for d in dirs if d != '.git']
+        for filename in filenames:
+            if filename.startswith('.'):
+                continue
+            if extensions and not any(filename.endswith(ext) for ext in extensions):
+                continue
+            full_path = Path(root) / filename
+            rel_path = full_path.relative_to(base_path)
+            files.append(rel_path)
+    return files
+
+def do_sync():
+    # Find the npc_team directory from the installed npcsh package
+    import subprocess
+    repo_npc_team = None
+
+    result = subprocess.run(['pip', 'show', 'npcsh'], capture_output=True, text=True)
+    if result.returncode == 0:
+        location = None
+        editable_location = None
+        for line in result.stdout.split('\n'):
+            if line.startswith('Location:'):
+                location = Path(line.split(':', 1)[1].strip())
+            elif line.startswith('Editable project location:'):
+                editable_location = Path(line.split(':', 1)[1].strip())
+
+        # Prefer editable location if available
+        if editable_location:
+            repo_npc_team = editable_location / "npcsh" / "npc_team"
+        elif location:
+            repo_npc_team = location / "npcsh" / "npc_team"
+
+    if not repo_npc_team or not repo_npc_team.exists():
+        return f"Error: Could not find npcsh package npc_team directory. Is npcsh installed?"
+
+    local_npc_team = Path.home() / ".npcsh" / "npc_team"
+
+    if not local_npc_team.exists():
+        return f"Error: Local npc_team directory not found at {local_npc_team}"
+
+    # Build list of extensions to sync based on flags
+    sync_extensions = []
+    if sync_all or sync_npcs:
+        sync_extensions.append('.npc')
+    if sync_all or sync_ctx:
+        sync_extensions.append('.ctx')
+    if sync_all or sync_jinxes:
+        sync_extensions.append('.jinx')
+    if sync_all or sync_images:
+        sync_extensions.extend(['.png', '.jpg', '.jpeg'])
+
+    # Get files from repo
+    repo_files = get_files_recursive(repo_npc_team, sync_extensions)
+
+    output_lines = []
+    output_lines.append(f"Syncing from: {repo_npc_team}")
+    output_lines.append(f"Syncing to:   {local_npc_team}")
+
+    # Show what's being synced
+    sync_types = []
+    if sync_all:
+        sync_types.append("all")
+    else:
+        if sync_npcs: sync_types.append("npcs")
+        if sync_ctx: sync_types.append("ctx")
+        if sync_jinxes: sync_types.append("jinxes")
+        if sync_images: sync_types.append("images")
+    output_lines.append(f"Syncing: {', '.join(sync_types)}")
+
+    if dry_run:
+        output_lines.append("\n[DRY RUN - No changes will be made]\n")
+    output_lines.append("")
+
+    new_files = []
+    updated_files = []
+    modified_locally = []
+    unchanged_files = []
+
+    for rel_path in repo_files:
+        repo_file = repo_npc_team / rel_path
+        local_file = local_npc_team / rel_path
+
+        if not local_file.exists():
+            new_files.append(rel_path)
+        else:
+            repo_hash = get_file_hash(repo_file)
+            local_hash = get_file_hash(local_file)
+
+            if repo_hash == local_hash:
+                unchanged_files.append(rel_path)
+            else:
+                # Check if local file is newer (possibly modified by user)
+                repo_mtime = repo_file.stat().st_mtime
+                local_mtime = local_file.stat().st_mtime
+
+                if local_mtime > repo_mtime:
+                    modified_locally.append((rel_path, local_mtime, repo_mtime))
+                else:
+                    updated_files.append(rel_path)
+
+    # Report findings
+    if new_files:
+        output_lines.append(f"New files to add ({len(new_files)}):")
+        for f in new_files:
+            output_lines.append(f"  + {f}")
+        output_lines.append("")
+
+    if updated_files:
+        output_lines.append(f"Files to update ({len(updated_files)}):")
+        for f in updated_files:
+            output_lines.append(f"  ~ {f}")
+        output_lines.append("")
+
+    if modified_locally:
+        output_lines.append(f"Locally modified files ({len(modified_locally)}):")
+        for f, local_t, repo_t in modified_locally:
+            local_dt = datetime.fromtimestamp(local_t).strftime('%Y-%m-%d %H:%M')
+            repo_dt = datetime.fromtimestamp(repo_t).strftime('%Y-%m-%d %H:%M')
+            output_lines.append(f"  ! {f}")
+            output_lines.append(f"      local: {local_dt}  repo: {repo_dt}")
+        if not force:
+            output_lines.append("  (use --force to overwrite these)")
+        output_lines.append("")
+
+    if unchanged_files:
+        output_lines.append(f"Already up to date: {len(unchanged_files)} files")
+        output_lines.append("")
+
+    # Perform sync if not dry run
+    if not dry_run:
+        synced = 0
+        skipped = 0
+
+        # Sync new files
+        for rel_path in new_files:
+            src = repo_npc_team / rel_path
+            dst = local_npc_team / rel_path
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            synced += 1
+
+        # Sync updated files
+        for rel_path in updated_files:
+            src = repo_npc_team / rel_path
+            dst = local_npc_team / rel_path
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            synced += 1
+
+        # Handle locally modified files
+        for rel_path, _, _ in modified_locally:
+            if force:
+                src = repo_npc_team / rel_path
+                dst = local_npc_team / rel_path
+                shutil.copy2(src, dst)
+                synced += 1
+            else:
+                skipped += 1
+
+        output_lines.append(f"Synced: {synced} files")
+        if skipped:
+            output_lines.append(f"Skipped: {skipped} locally modified files")
+
+    return "\n".join(output_lines)
+
+context['output'] = do_sync()

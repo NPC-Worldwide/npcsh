@@ -1,0 +1,29 @@
+import os
+from datetime import datetime
+from npcpy.work.browser import get_current_driver
+
+filename = context.get('filename', '')
+
+driver = get_current_driver()
+if not driver:
+    output = "No active browser. Use open_browser first."
+    exit()
+
+try:
+    screenshots_dir = os.path.expanduser('~/.npcsh/screenshots')
+    os.makedirs(screenshots_dir, exist_ok=True)
+
+    if not filename:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"browser_{timestamp}.png"
+
+    if not filename.endswith('.png'):
+        filename += '.png'
+
+    filepath = os.path.join(screenshots_dir, filename)
+    driver.save_screenshot(filepath)
+
+    output = f"Screenshot saved: {filepath}"
+
+except Exception as e:
+    output = f"Screenshot failed: {str(e)}"

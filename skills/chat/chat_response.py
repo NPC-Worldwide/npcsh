@@ -1,0 +1,51 @@
+npc = context.get('npc')
+messages = context.get('messages', [])
+query = context.get('query', '')
+stream = context.get('stream', True)
+
+model = context.get('model') or (npc.model if npc else None)
+provider = context.get('provider') or (npc.provider if npc else None)
+
+# Filter to plain text messages only — strip tool calls/results
+# so the inner LLM doesn't mimic tool call JSON format
+clean_msgs = []
+for m in messages:
+    role = m.get('role', '')
+    if role == 'tool':
+        continue
+    if role == 'assistant' and m.get('tool_calls'):
+        continue
+    if isinstance(m.get('content'), str):
+        clean_msgs.append({'role': role, 'content': m['content']})
+
+if not query:
+    context['output'] = ''
+    context['messages'] = messages
+else:
+    response = get_llm_response(
+        query,
+        model=model,
+        provider=provider,
+        npc=npc,
+        stream=stream,
+        messages=clean_msgs
+    )
+
+    result = response.get('response', '')
+    if hasattr(result, '__iter__') and not isinstance(result, str):
+        result = print_and_process_stream_with_markdown(
+            result, model, provider, show=True, rerender=False
+        )
+        state._tool_output_streamed = True
+    context['output'] = f"[Response delivered to user] {result}"
+    context['messages'] = response.get('messages', messages)
+
+    if 'usage' in response:
+        usage = response['usage']
+        # Accumulate into state for session tracking
+        state.session_input_tokens += usage.get('input_tokens', 0)
+        state.session_output_tokens += usage.get('output_tokens', 0)
+        if npc and hasattr(npc, 'shared_context'):
+            npc.shared_context['session_input_tokens'] += usage.get('input_tokens', 0)
+            npc.shared_context['session_output_tokens'] += usage.get('output_tokens', 0)
+            npc.shared_context['turn_count'] += 1

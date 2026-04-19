@@ -1,0 +1,1250 @@
+import os
+import sys
+try:
+    import tty
+    import termios
+except ImportError:
+    tty = None
+    termios = None
+import select
+import subprocess
+import signal
+
+if not sys.stdin.isatty():
+    context['output'] = "Crond requires an interactive terminal."
+
+else:
+    # Stop spinner before taking over terminal — its key_thread steals stdin
+    try:
+        from npcsh.ui import get_current_spinner, SpinnerContext
+        import time
+        import threading as _threading
+        spinner = get_current_spinner()
+        if spinner:
+            spinner._stop = True
+            if spinner._thread:
+                spinner._thread.join(timeout=0.5)
+            if spinner._key_thread:
+                spinner._key_thread.join(timeout=1.0)
+        # Also stop any stray spinner instances (e.g. if __exit__ already cleared _current_spinner)
+        for t in _threading.enumerate():
+            if t is _threading.current_thread():
+                continue
+            if t.daemon and hasattr(t, '_target') and t._target:
+                tname = getattr(t._target, '__name__', '')
+                if 'listen_for_esc' in tname:
+                    t.join(timeout=1.0)
+        sys.stdout.write(f"\r{' ' * 80}\r")
+        sys.stdout.flush()
+        time.sleep(0.1)
+        fd_tmp = sys.stdin.fileno()
+        while select.select([fd_tmp], [], [], 0)[0]:
+            os.read(fd_tmp, 1)
+    except:
+        pass
+    # ── TUI state ────────────────────────────────────────
+    class TUIState:
+        def __init__(self):
+            self.tab = 0
+            self.tabs = ['Cron', 'Daemons', 'Processes']
+            self.sel = 0
+            self.scroll = 0
+            self.items = []
+            self.search_mode = False
+            self.search_buf = ""
+            self.search_query = ""
+            self.detail = False
+            self.detail_lines = []
+            self.detail_scroll = 0
+            self.status = ""
+            self.confirm_action = None  # (action_name, callback)
+            self.input_mode = False
+            self.input_buf = ""
+            self.input_label = ""
+            self.input_callback = None
+            self.sort_key = 'cpu'  # for processes tab
+
+    ui = TUIState()
+
+    def term_size():
+        try:
+            s = os.get_terminal_size()
+            return s.columns, s.lines
+        except:
+            return 80, 24
+
+    def run_cmd(cmd):
+        try:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+            return r.stdout.strip(), r.stderr.strip(), r.returncode
+        except Exception as e:
+            return "", str(e), 1
+
+    # ── data loading ─────────────────────────────────────
+    def load_cron():
+        items = []
+
+        # Job templates (cron type) at the top
+        for job in _load_job_templates():
+            if job['type'] == 'cron':
+                items.append({
+                    'idx': -1,
+                    'raw': '',
+                    'schedule': job['schedule'],
+                    'command': f"/{job['name']}",
+                    'npcsh': True,
+                    'is_job': True,
+                    'job': job,
+                })
+
+        # Raw crontab entries
+        out, err, rc = run_cmd("crontab -l 2>/dev/null")
+        if rc == 0 and out:
+            for i, line in enumerate(out.splitlines()):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.split(None, 5)
+                if len(parts) >= 6:
+                    sched = ' '.join(parts[:5])
+                    cmd = parts[5]
+                else:
+                    sched = ''
+                    cmd = line
+                is_npcsh = '/.npcsh/npc_team/jobs/' in line or 'npcsh' in line.lower()
+                items.append({
+                    'idx': i,
+                    'raw': line,
+                    'schedule': sched,
+                    'command': cmd,
+                    'npcsh': is_npcsh,
+                    'is_job': False,
+                })
+        return items
+
+    def load_daemons():
+        import platform
+        items = []
+
+        # Job templates (daemon type) at the top
+        for job in _load_job_templates():
+            if job['type'] == 'daemon':
+                items.append({
+                    'name': job['name'],
+                    'load': 'template',
+                    'active': 'running' if job['active'] else 'inactive',
+                    'sub': job.get('schedule', ''),
+                    'description': job['description'],
+                    'npcsh': True,
+                    'is_job': True,
+                    'job': job,
+                })
+
+        if platform.system() == 'Darwin':
+            # macOS: use launchctl
+            out, err, rc = run_cmd("launchctl list 2>/dev/null")
+            if rc == 0 and out:
+                for line in out.splitlines():
+                    if line.startswith('PID'):
+                        continue
+                    parts = line.split('\t')
+                    if len(parts) < 3:
+                        continue
+                    pid = parts[0].strip()
+                    status = parts[1].strip()
+                    label = parts[2].strip()
+                    is_npcsh = 'npcsh' in label.lower()
+                    active = 'running' if pid and pid != '-' else 'inactive'
+                    items.append({
+                        'name': label,
+                        'load': 'loaded',
+                        'active': active,
+                        'sub': f'pid={pid}' if pid and pid != '-' else status,
+                        'description': '',
+                        'npcsh': is_npcsh,
+                        'is_job': False,
+                    })
+        else:
+            # Linux: use systemctl
+            out, err, rc = run_cmd("systemctl --user list-units --type=service --all --no-pager --no-legend 2>/dev/null")
+            if rc == 0 and out:
+                for line in out.splitlines():
+                    parts = line.split(None, 4)
+                    if len(parts) < 4:
+                        continue
+                    name = parts[0].replace('.service', '')
+                    load_state = parts[1]
+                    active = parts[2]
+                    sub = parts[3]
+                    desc = parts[4] if len(parts) > 4 else ''
+                    is_npcsh = name.startswith('npcsh-')
+                    items.append({
+                        'name': name,
+                        'load': load_state,
+                        'active': active,
+                        'sub': sub,
+                        'description': desc,
+                        'npcsh': is_npcsh,
+                        'is_job': False,
+                    })
+        return items
+
+    def load_processes():
+        out, err, rc = run_cmd("ps aux 2>/dev/null")
+        items = []
+        if rc == 0 and out:
+            for line in out.splitlines():
+                # Skip header line
+                if line.startswith('USER') or line.startswith('UID'):
+                    continue
+                parts = line.split(None, 10)
+                if len(parts) < 11:
+                    continue
+                try:
+                    cpu = float(parts[2])
+                    mem = float(parts[3])
+                except:
+                    cpu = 0.0
+                    mem = 0.0
+                items.append({
+                    'user': parts[0],
+                    'pid': parts[1],
+                    'cpu': cpu,
+                    'mem': mem,
+                    'vsz': parts[4],
+                    'rss': parts[5],
+                    'tt': parts[6],
+                    'stat': parts[7],
+                    'start': parts[8],
+                    'time': parts[9],
+                    'command': parts[10],
+                    'name': os.path.basename(parts[10].split()[0]) if parts[10] else '',
+                })
+        return sort_processes(items)
+
+    def sort_processes(items):
+        if ui.sort_key == 'cpu':
+            items.sort(key=lambda x: x['cpu'], reverse=True)
+        elif ui.sort_key == 'mem':
+            items.sort(key=lambda x: x['mem'], reverse=True)
+        elif ui.sort_key == 'pid':
+            items.sort(key=lambda x: int(x['pid']))
+        elif ui.sort_key == 'name':
+            items.sort(key=lambda x: x['name'].lower())
+        return items
+
+    def _load_job_templates():
+        """Discover job templates from the jobs/ directory."""
+        import platform
+        import yaml as _yaml
+        items = []
+        is_mac = platform.system() == 'Darwin'
+
+        # Find the jobs directory relative to this jinx
+        jinx_base = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) if '__file__' in dir() else None
+        jobs_dirs = []
+        # Check standard locations
+        for base in [
+            os.path.expanduser('~/.npcsh/team'),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0]))), 'npc_team', 'jinxes') if sys.argv else None,
+        ]:
+            if base:
+                jd = os.path.join(base, 'jobs')
+                if os.path.isdir(jd):
+                    jobs_dirs.append(jd)
+
+        # Also check the package's own jobs directory
+        try:
+            import npcsh
+            pkg_jobs = os.path.join(os.path.dirname(npcsh.__file__), 'npc_team', 'jinxes', 'jobs')
+            if os.path.isdir(pkg_jobs) and pkg_jobs not in jobs_dirs:
+                jobs_dirs.append(pkg_jobs)
+        except:
+            pass
+
+        for jobs_dir in jobs_dirs:
+            for fname in sorted(os.listdir(jobs_dir)):
+                if not fname.endswith('.jinx'):
+                    continue
+                fpath = os.path.join(jobs_dir, fname)
+                try:
+                    with open(fpath) as f:
+                        data = _yaml.safe_load(f.read())
+                    if not isinstance(data, dict):
+                        continue
+                except:
+                    continue
+
+                jname = data.get('jinx_name', fname.replace('.jinx', ''))
+                desc = data.get('description', '')
+                inputs = data.get('inputs', [])
+
+                # Determine job type from steps
+                job_type = 'cron'
+                for step in data.get('steps', []):
+                    eng = step.get('engine', '')
+                    if eng == 'systemd':
+                        job_type = 'daemon'
+                        break
+
+                # Extract default schedule from inputs
+                schedule = ''
+                for inp in inputs:
+                    if isinstance(inp, dict) and 'schedule' in inp:
+                        schedule = inp['schedule']
+
+                # Check if this job is currently active
+                active = False
+                if job_type == 'cron':
+                    if is_mac:
+                        ppath = os.path.expanduser(f'~/Library/LaunchAgents/com.npcsh.job.{jname}.plist')
+                        active = os.path.exists(ppath)
+                    else:
+                        out_text, _, rc = run_cmd('crontab -l 2>/dev/null')
+                        if rc == 0:
+                            active = any(f'npcsh:{jname}' in l for l in out_text.splitlines())
+                else:
+                    if is_mac:
+                        ppath = os.path.expanduser(f'~/Library/LaunchAgents/com.npcsh.daemon.{jname}.plist')
+                        active = os.path.exists(ppath)
+                    else:
+                        _, _, rc = run_cmd(f'systemctl --user is-active npcsh-{jname} 2>/dev/null')
+                        active = (rc == 0)
+
+                items.append({
+                    'name': jname,
+                    'description': desc.strip('"').strip("'"),
+                    'type': job_type,
+                    'schedule': schedule,
+                    'active': active,
+                    'path': fpath,
+                    'data': data,
+                })
+        return items
+
+    def load_tab_data():
+        if ui.tab == 0:
+            ui.items = load_cron()
+        elif ui.tab == 1:
+            ui.items = load_daemons()
+        elif ui.tab == 2:
+            ui.items = load_processes()
+        ui.sel = min(ui.sel, max(0, len(get_filtered()) - 1))
+
+    def get_filtered():
+        items = ui.items
+        if ui.search_query:
+            q = ui.search_query.lower()
+            if ui.tab == 0:
+                items = [x for x in items if q in x['command'].lower() or q in x['schedule'].lower()]
+            elif ui.tab == 1:
+                items = [x for x in items if q in x['name'].lower() or q in x.get('description', '').lower()]
+            elif ui.tab == 2:
+                items = [x for x in items if q in x['name'].lower() or q in x['command'].lower() or q in x['user'].lower()]
+        return items
+
+    # ── rendering ────────────────────────────────────────
+    def wline(row, text):
+        return f"\033[{row};1H\033[K{text}"
+
+    def render():
+        W, H = term_size()
+        out = []
+        out.append("\033[H")
+
+        # ── header ──
+        hdr = " CROND - System Task Manager "
+        out.append(wline(1, f"\033[7;1m{hdr.ljust(W)}\033[0m"))
+
+        # ── tabs ──
+        tb = ""
+        for i, t in enumerate(ui.tabs):
+            if i == ui.tab:
+                tb += f"\033[7;1m [{t}] \033[0m"
+            else:
+                tb += f"  {t}  "
+        out.append(wline(2, f" {tb}"))
+
+        # ── separator + count ──
+        out.append(wline(3, f"\033[90m{'-' * W}\033[0m"))
+
+        filtered = get_filtered()
+        total = len(ui.items)
+        count = len(filtered)
+        if ui.search_query:
+            count_text = f'  {count} matching (of {total}) | search: "{ui.search_query}"'
+        else:
+            count_text = f"  {count} {ui.tabs[ui.tab].lower()}"
+
+        if ui.tab == 2:
+            count_text += f"  [sort: {ui.sort_key}]"
+
+        out.append(wline(4, count_text))
+        out.append(wline(5, f"\033[90m{'-' * W}\033[0m"))
+
+        # ── body ──
+        body_start = 6
+        body_end = H - 3
+        body_h = max(1, body_end - body_start + 1)
+
+        if ui.detail:
+            render_detail(out, W, body_start, body_h)
+        elif ui.input_mode:
+            render_input(out, W, body_start, body_h)
+        else:
+            if ui.tab == 0:
+                render_cron_list(out, W, body_start, body_h, filtered)
+            elif ui.tab == 1:
+                render_daemon_list(out, W, body_start, body_h, filtered)
+            elif ui.tab == 2:
+                render_process_list(out, W, body_start, body_h, filtered)
+
+        # ── separator ──
+        out.append(wline(H - 2, f"\033[90m{'-' * W}\033[0m"))
+
+        # ── status / search / confirm ──
+        if ui.confirm_action:
+            out.append(wline(H - 1, f" \033[1;33m{ui.confirm_action[0]} (y/n)?\033[0m"))
+        elif ui.search_mode:
+            out.append(wline(H - 1, f" \033[33m/\033[0m\033[1m{ui.search_buf}\033[0m\033[90m_\033[0m"))
+        elif ui.status:
+            out.append(wline(H - 1, f" \033[33m{ui.status[:W-2]}\033[0m"))
+        else:
+            out.append(wline(H - 1, ""))
+
+        # ── footer ──
+        if ui.confirm_action:
+            foot = " [y] Confirm  [n] Cancel "
+        elif ui.search_mode:
+            foot = " [Enter] Apply  [Esc] Cancel "
+        elif ui.input_mode:
+            foot = " Type text, [Enter] Submit  [Esc] Cancel "
+        elif ui.detail:
+            foot = " [j/k] Scroll  [q/Esc] Back "
+        elif ui.tab == 0:
+            foot = " [Tab] Switch  [j/k] Nav  [Enter] Toggle  [r] Run  [v] Detail  [n] New  [d] Delete  [/] Search  [q] Quit "
+        elif ui.tab == 1:
+            foot = " [Tab] Switch  [j/k] Nav  [Enter] Detail/Toggle  [n] New  [s/S] Start/Stop  [d] Delete  [l] Logs  [/] Search  [q] Quit "
+        elif ui.tab == 2:
+            foot = " [Tab] Switch  [j/k] Nav  [s] Sort  [K] Kill  [R] Refresh  [/] Search  [q] Quit "
+        out.append(wline(H, f"\033[7m{foot[:W].ljust(W)}\033[0m"))
+
+        sys.stdout.write(''.join(out))
+        sys.stdout.flush()
+
+    def render_cron_list(out, W, start, body_h, filtered):
+        vis = filtered[ui.scroll:ui.scroll + body_h]
+        for r in range(body_h):
+            row = start + r
+            idx = r + ui.scroll
+            if r >= len(vis):
+                out.append(wline(row, ""))
+                continue
+            item = vis[r]
+            if item.get('is_job'):
+                # Job template row
+                job = item['job']
+                if job['active']:
+                    toggle = "\033[32m[ON] \033[0m"
+                else:
+                    toggle = "\033[90m[OFF]\033[0m"
+                sched = item['schedule'][:15].ljust(15)
+                name = item['command'][:25].ljust(25)
+                desc = job['description'][:W - 52]
+                if idx == ui.sel:
+                    active_txt = '[ON] ' if job['active'] else '[OFF]'
+                    line = f" > {active_txt} {sched} {item['command'][:25].ljust(25)} {desc}"
+                    out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+                else:
+                    out.append(wline(row, f"   {toggle} \033[33m{sched}\033[0m \033[36m{name}\033[0m \033[90m{desc}\033[0m"))
+            else:
+                # Raw crontab entry
+                tag = "\033[35m[npc]\033[0m " if item['npcsh'] else "      "
+                sched = item['schedule'][:20].ljust(20)
+                cmd = item['command'][:W - 32]
+                if idx == ui.sel:
+                    line = f" > {sched} {cmd}"
+                    out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+                else:
+                    out.append(wline(row, f"   {tag}{sched} \033[90m{cmd}\033[0m"))
+        if not filtered:
+            out.append(wline(start, "  \033[90mNo cron jobs found.\033[0m"))
+            for r in range(1, body_h):
+                out.append(wline(start + r, ""))
+
+    def render_daemon_list(out, W, start, body_h, filtered):
+        vis = filtered[ui.scroll:ui.scroll + body_h]
+        for r in range(body_h):
+            row = start + r
+            idx = r + ui.scroll
+            if r >= len(vis):
+                out.append(wline(row, ""))
+                continue
+            item = vis[r]
+            if item.get('is_job'):
+                # Job template row
+                job = item['job']
+                if job['active']:
+                    toggle = "\033[32m[ON] \033[0m"
+                else:
+                    toggle = "\033[90m[OFF]\033[0m"
+                name = item['name'][:25].ljust(25)
+                desc = job['description'][:W - 40]
+                if idx == ui.sel:
+                    active_txt = '[ON] ' if job['active'] else '[OFF]'
+                    line = f" > {active_txt} {item['name'][:25].ljust(25)} {desc}"
+                    out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+                else:
+                    out.append(wline(row, f"   {toggle} \033[36m{name}\033[0m \033[90m{desc}\033[0m"))
+            else:
+                # Raw system daemon entry
+                tag = "\033[35m[npc]\033[0m " if item['npcsh'] else "      "
+                if item['active'] == 'active' or item['active'] == 'running':
+                    state_color = "\033[32m"
+                elif item['active'] == 'failed':
+                    state_color = "\033[31m"
+                else:
+                    state_color = "\033[90m"
+                state_str = state_color + item['active'].ljust(10) + "\033[0m"
+                name = item['name'][:25].ljust(25)
+                desc = item.get('description', '')[:W - 50]
+                if idx == ui.sel:
+                    line = f" > {item['name'][:25].ljust(25)} {item['active'].ljust(10)} {desc}"
+                    out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+                else:
+                    out.append(wline(row, f"   {tag}{name} {state_str} \033[90m{desc}\033[0m"))
+        if not filtered:
+            out.append(wline(start, "  \033[90mNo daemons found.\033[0m"))
+            for r in range(1, body_h):
+                out.append(wline(start + r, ""))
+
+    def render_process_list(out, W, start, body_h, filtered):
+        # Header row
+        hdr = "   PID      Name                 User         CPU%   MEM%   Status"
+        out.append(wline(start, f"\033[1m{hdr[:W]}\033[0m"))
+
+        vis = filtered[ui.scroll:ui.scroll + body_h - 1]
+        for r in range(body_h - 1):
+            row = start + 1 + r
+            idx = r + ui.scroll
+            if r >= len(vis):
+                out.append(wline(row, ""))
+                continue
+            item = vis[r]
+            pid = item['pid'][:8].ljust(8)
+            name = item['name'][:20].ljust(20)
+            user = item['user'][:12].ljust(12)
+            cpu = str(item['cpu'])[:6].ljust(6)
+            mem = str(item['mem'])[:6].ljust(6)
+            stat = item['stat'][:8]
+
+            # Color coding for CPU/MEM
+            cpu_color = "\033[31m" if item['cpu'] > 50 else ("\033[33m" if item['cpu'] > 20 else "")
+            mem_color = "\033[31m" if item['mem'] > 50 else ("\033[33m" if item['mem'] > 20 else "")
+            cpu_str = f"{cpu_color}{cpu}{'\033[0m' if cpu_color else ''}"
+            mem_str = f"{mem_color}{mem}{'\033[0m' if mem_color else ''}"
+
+            if idx == ui.sel:
+                line = f" > {pid} {name} {user} {str(item['cpu'])[:6].ljust(6)} {str(item['mem'])[:6].ljust(6)} {stat}"
+                out.append(wline(row, f"\033[7m{line[:W].ljust(W)}\033[0m"))
+            else:
+                out.append(wline(row, f"   {pid} {name} {user} {cpu_str} {mem_str} \033[90m{stat}\033[0m"))
+        if not filtered:
+            out.append(wline(start + 1, "  \033[90mNo processes found.\033[0m"))
+            for r in range(2, body_h):
+                out.append(wline(start + r, ""))
+
+    def render_detail(out, W, start, body_h):
+        vis = ui.detail_lines[ui.detail_scroll:ui.detail_scroll + body_h]
+        for r in range(body_h):
+            row = start + r
+            if r < len(vis):
+                out.append(wline(row, f"  {vis[r][:W-4]}"))
+            else:
+                out.append(wline(row, ""))
+
+    def render_input(out, W, start, body_h):
+        out.append(wline(start, ""))
+        out.append(wline(start + 1, f"  \033[1m{ui.input_label}\033[0m"))
+        out.append(wline(start + 2, ""))
+        out.append(wline(start + 3, f"  > \033[7m {ui.input_buf} \033[0m"))
+        for r in range(4, body_h):
+            out.append(wline(start + r, ""))
+
+    # ── actions ──────────────────────────────────────────
+    def show_cron_detail():
+        filtered = get_filtered()
+        if not filtered:
+            return
+        item = filtered[ui.sel]
+        ui.detail_lines = [
+            "\033[1mCron Job Detail\033[0m",
+            "",
+            f"\033[1mSchedule:\033[0m  {item['schedule']}",
+            f"\033[1mCommand:\033[0m   {item['command']}",
+            f"\033[1mRaw:\033[0m       {item['raw']}",
+            f"\033[1mNPCSH:\033[0m     {'Yes' if item['npcsh'] else 'No'}",
+        ]
+        # Check for log file
+        if item['npcsh'] and '/.npcsh/npc_team/jobs/' in item['command']:
+            import re
+            m = re.search(r'(~?/[^\s]+\.log)', item['command'])
+            if m:
+                log_path = os.path.expanduser(m.group(1))
+                ui.detail_lines.append("")
+                ui.detail_lines.append(f"\033[1mLog file:\033[0m  {log_path}")
+                if os.path.isfile(log_path):
+                    try:
+                        with open(log_path) as lf:
+                            tail = lf.readlines()[-20:]
+                        ui.detail_lines.append("")
+                        ui.detail_lines.append("\033[1mRecent log output:\033[0m")
+                        for l in tail:
+                            ui.detail_lines.append(f"  {l.rstrip()}")
+                    except:
+                        pass
+        ui.detail = True
+        ui.detail_scroll = 0
+
+    def show_daemon_detail():
+        import platform
+        filtered = get_filtered()
+        if not filtered:
+            return
+        item = filtered[ui.sel]
+        if item.get('is_job'):
+            show_job_detail()
+            return
+        ui.detail_lines = [
+            f"\033[1mDaemon Detail: {item['name']}\033[0m",
+            "",
+        ]
+        if platform.system() == 'Darwin':
+            out_text, _, _ = run_cmd(f"launchctl print gui/$(id -u)/{item['name']} 2>/dev/null")
+            if not out_text:
+                out_text, _, _ = run_cmd(f"launchctl list {item['name']} 2>/dev/null")
+        else:
+            out_text, _, _ = run_cmd(f"systemctl --user status {item['name']}.service 2>/dev/null")
+        for line in out_text.splitlines():
+            ui.detail_lines.append(line)
+        if not out_text:
+            ui.detail_lines.append("\033[90mNo detail available.\033[0m")
+        ui.detail = True
+        ui.detail_scroll = 0
+
+    def show_daemon_logs():
+        import platform
+        filtered = get_filtered()
+        if not filtered:
+            return
+        item = filtered[ui.sel]
+        if platform.system() == 'Darwin':
+            # macOS: check common log locations
+            log_path = os.path.expanduser(f'~/.npcsh/npc_team/logs/daemon_{item["name"]}.log')
+            ui.detail_lines = [
+                f"\033[1mLogs: {item['name']}\033[0m",
+                "",
+            ]
+            if os.path.isfile(log_path):
+                try:
+                    with open(log_path) as lf:
+                        tail = lf.readlines()[-50:]
+                    for l in tail:
+                        ui.detail_lines.append(l.rstrip())
+                except:
+                    ui.detail_lines.append("\033[90mCould not read log file.\033[0m")
+            else:
+                ui.detail_lines.append(f"\033[90mNo log file found at {log_path}\033[0m")
+        else:
+            out_text, _, _ = run_cmd(f"journalctl --user -u {item['name']}.service -n 50 --no-pager 2>/dev/null")
+            ui.detail_lines = [
+                f"\033[1mLogs: {item['name']}\033[0m",
+                "",
+            ]
+            for line in out_text.splitlines():
+                ui.detail_lines.append(line)
+        ui.detail = True
+        ui.detail_scroll = 0
+
+    def delete_cron_job():
+        filtered = get_filtered()
+        if not filtered:
+            return
+        item = filtered[ui.sel]
+        out_text, _, rc = run_cmd("crontab -l 2>/dev/null")
+        if rc != 0:
+            ui.status = "Failed to read crontab"
+            return
+        lines = out_text.splitlines()
+        new_lines = [l for i, l in enumerate(lines) if i != item['idx']]
+        new_crontab = '\n'.join(new_lines) + '\n' if new_lines else ''
+        proc = subprocess.run("crontab -", shell=True, input=new_crontab, capture_output=True, text=True)
+        if proc.returncode == 0:
+            ui.status = "Deleted cron job"
+            load_tab_data()
+        else:
+            ui.status = f"Failed to delete: {proc.stderr[:40]}"
+
+    def edit_cron_job():
+        filtered = get_filtered()
+        if not filtered:
+            return
+        item = filtered[ui.sel]
+        ui.input_mode = True
+        ui.input_buf = item['raw']
+        ui.input_label = "Edit cron line:"
+        def on_submit(val):
+            out_text, _, rc = run_cmd("crontab -l 2>/dev/null")
+            if rc != 0:
+                ui.status = "Failed to read crontab"
+                return
+            lines = out_text.splitlines()
+            if item['idx'] < len(lines):
+                lines[item['idx']] = val
+            new_crontab = '\n'.join(lines) + '\n'
+            proc = subprocess.run("crontab -", shell=True, input=new_crontab, capture_output=True, text=True)
+            if proc.returncode == 0:
+                ui.status = "Updated cron job"
+                load_tab_data()
+            else:
+                ui.status = f"Failed to update: {proc.stderr[:40]}"
+        ui.input_callback = on_submit
+
+    def new_cron_job():
+        ui.input_mode = True
+        ui.input_buf = ""
+        ui.input_label = "Describe the cron job in natural language:"
+        def on_submit(val):
+            try:
+                from npcpy.work.plan import execute_plan_command
+                npc_obj = context.get('npc')
+                result = execute_plan_command(
+                    f"Create a cron job that: {val}",
+                    npc_obj,
+                    context.get('messages', []),
+                )
+                if isinstance(result, dict):
+                    ui.status = result.get('output', 'Cron job created')[:60]
+                else:
+                    ui.status = str(result)[:60]
+                load_tab_data()
+            except Exception as e:
+                ui.status = f"Error: {str(e)[:50]}"
+        ui.input_callback = on_submit
+
+    def new_daemon():
+        ui.input_mode = True
+        ui.input_buf = ""
+        ui.input_label = "Describe the daemon in natural language:"
+        def on_submit(val):
+            try:
+                from npcpy.work.trigger import execute_trigger_command
+                npc_obj = context.get('npc')
+                result = execute_trigger_command(
+                    f"Create a daemon that: {val}",
+                    npc_obj,
+                    context.get('messages', []),
+                )
+                if isinstance(result, dict):
+                    ui.status = result.get('output', 'Daemon created')[:60]
+                else:
+                    ui.status = str(result)[:60]
+                load_tab_data()
+            except Exception as e:
+                ui.status = f"Error: {str(e)[:50]}"
+        ui.input_callback = on_submit
+
+    def daemon_start():
+        filtered = get_filtered()
+        if not filtered:
+            return
+        name = filtered[ui.sel]['name']
+        _, err, rc = run_cmd(f"systemctl --user start {name}.service")
+        ui.status = f"Started {name}" if rc == 0 else f"Failed: {err[:40]}"
+        load_tab_data()
+
+    def daemon_stop():
+        filtered = get_filtered()
+        if not filtered:
+            return
+        name = filtered[ui.sel]['name']
+        _, err, rc = run_cmd(f"systemctl --user stop {name}.service")
+        ui.status = f"Stopped {name}" if rc == 0 else f"Failed: {err[:40]}"
+        load_tab_data()
+
+    def daemon_restart():
+        filtered = get_filtered()
+        if not filtered:
+            return
+        name = filtered[ui.sel]['name']
+        _, err, rc = run_cmd(f"systemctl --user restart {name}.service")
+        ui.status = f"Restarted {name}" if rc == 0 else f"Failed: {err[:40]}"
+        load_tab_data()
+
+    def delete_daemon():
+        filtered = get_filtered()
+        if not filtered:
+            return
+        name = filtered[ui.sel]['name']
+        run_cmd(f"systemctl --user stop {name}.service")
+        run_cmd(f"systemctl --user disable {name}.service")
+        svc_path = os.path.expanduser(f"~/.config/systemd/user/{name}.service")
+        if os.path.isfile(svc_path):
+            os.remove(svc_path)
+        run_cmd("systemctl --user daemon-reload")
+        ui.status = f"Deleted daemon: {name}"
+        load_tab_data()
+
+    def kill_process():
+        filtered = get_filtered()
+        if not filtered:
+            return
+        pid = filtered[ui.sel]['pid']
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+            ui.status = f"Sent SIGTERM to PID {pid}"
+        except Exception as e:
+            ui.status = f"Kill failed: {str(e)[:40]}"
+        load_tab_data()
+
+    def _get_cron_jinx():
+        """Get the cron utility jinx from the team."""
+        if state and hasattr(state, 'team') and state.team:
+            return state.team.jinxes_dict.get('cron')
+        return None
+
+    def _get_job_step_params(job):
+        """Extract schedule/command/name from the job's engine:cron step."""
+        params = {}
+        for step in job['data'].get('steps', []):
+            eng = step.get('engine', '')
+            if eng in ('cron', 'systemd'):
+                for k, v in step.items():
+                    if k not in ('engine', 'name'):
+                        params[k] = v
+                break
+        # Resolve template variables from inputs
+        defaults = {}
+        for inp in job['data'].get('inputs', []):
+            if isinstance(inp, dict):
+                defaults.update(inp)
+        for k, v in params.items():
+            if isinstance(v, str):
+                for dk, dv in defaults.items():
+                    params[k] = params[k].replace(f'{{{{{dk}}}}}', str(dv))
+        if 'name' not in params:
+            params['name'] = job['name']
+        return params
+
+    def toggle_job():
+        """Toggle a job schedule on or off via the cron jinx."""
+        filtered = get_filtered()
+        if not filtered:
+            return
+        item = filtered[ui.sel]
+        if not item.get('is_job'):
+            return
+        job = item['job']
+        jname = job['name']
+
+        cron_jinx = _get_cron_jinx()
+        if not cron_jinx:
+            ui.status = 'Error: cron jinx not found in team'
+            return
+
+        params = _get_job_step_params(job)
+
+        if job['active']:
+            params['action'] = 'remove'
+        else:
+            params['action'] = 'add'
+
+        try:
+            result = cron_jinx.execute(
+                input_values=params,
+                npc=context.get('npc'),
+                messages=context.get('messages', []),
+                extra_globals={'state': state},
+            )
+            output = result.get('output', '') if isinstance(result, dict) else str(result)
+            if 'error' in output.lower() or 'failed' in output.lower():
+                ui.status = output[:60]
+            else:
+                action = 'Disabled' if job['active'] else 'Enabled'
+                ui.status = f'{action}: {jname}'
+        except Exception as e:
+            ui.status = f'Error: {str(e)[:50]}'
+
+        load_tab_data()
+
+    def run_job():
+        """Run a job's command now for testing."""
+        filtered = get_filtered()
+        if not filtered:
+            return
+        item = filtered[ui.sel]
+        if not item.get('is_job'):
+            return
+        job = item['job']
+        jname = job['name']
+        params = _get_job_step_params(job)
+        cmd = params.get('command', '')
+        if not cmd:
+            ui.status = f'No command defined for {jname}'
+            return
+
+        # Execute the jinx command in-process
+        jinx_cmd = cmd.lstrip('/')
+        if state and hasattr(state, 'team') and state.team:
+            jinx_name = jinx_cmd.split()[0]
+            target_jinx = state.team.jinxes_dict.get(jinx_name)
+            if target_jinx:
+                try:
+                    # Parse any args from the command string
+                    from npcpy.npc_compiler import extract_jinx_inputs
+                    import shlex
+                    try:
+                        parts = shlex.split(cmd)
+                    except ValueError:
+                        parts = cmd.split()
+                    args = parts[1:] if len(parts) > 1 else []
+                    input_vals = extract_jinx_inputs(args, target_jinx)
+                    result = target_jinx.execute(
+                        input_values=input_vals,
+                        npc=context.get('npc'),
+                        messages=context.get('messages', []),
+                        extra_globals={'state': state},
+                    )
+                    output = result.get('output', '') if isinstance(result, dict) else str(result)
+                    ui.detail_lines = [
+                        f"\033[1mRun: {jname}\033[0m",
+                        f"\033[90mCommand: {cmd}\033[0m",
+                        "",
+                    ]
+                    for line in output.splitlines():
+                        ui.detail_lines.append(line)
+                    ui.detail = True
+                    ui.detail_scroll = 0
+                    ui.status = f'Ran: {jname}'
+                    return
+                except Exception as e:
+                    ui.status = f'Error running {jname}: {str(e)[:40]}'
+                    return
+        ui.status = f'Cannot run: {cmd[:40]}'
+
+    def show_job_detail():
+        filtered = get_filtered()
+        if not filtered:
+            return
+        item = filtered[ui.sel]
+        if not item.get('is_job'):
+            return
+        job = item['job']
+        ui.detail_lines = [
+            f"\033[1mJob: {job['name']}\033[0m",
+            "",
+            f"\033[1mType:\033[0m      {job['type']}",
+            f"\033[1mStatus:\033[0m    {'\033[32mActive\033[0m' if job['active'] else '\033[90mInactive\033[0m'}",
+            f"\033[1mSchedule:\033[0m  {job['schedule'] or 'N/A'}",
+            f"\033[1mSource:\033[0m    {job['path']}",
+            "",
+            "\033[1mDescription:\033[0m",
+            f"  {job['description']}",
+        ]
+        logs_dir = os.path.expanduser('~/.npcsh/npc_team/logs')
+        if job['type'] == 'cron':
+            log_path = os.path.join(logs_dir, job['name'] + '.log')
+        else:
+            log_path = os.path.join(logs_dir, 'daemon_' + job['name'] + '.log')
+        if os.path.isfile(log_path):
+            ui.detail_lines.append("")
+            ui.detail_lines.append("\033[1mRecent log:\033[0m")
+            try:
+                with open(log_path) as lf:
+                    tail = lf.readlines()[-15:]
+                for l in tail:
+                    ui.detail_lines.append(f"  {l.rstrip()}")
+            except:
+                pass
+        ui.detail = True
+        ui.detail_scroll = 0
+
+    # ── input handling ─────────────────────────────────────
+    def handle(c):
+        if ui.confirm_action:
+            return handle_confirm(c)
+        if ui.search_mode:
+            return handle_search(c)
+        if ui.input_mode:
+            return handle_text_input(c)
+        if ui.detail:
+            return handle_detail(c)
+        if c == '\x1b':
+            return handle_esc()
+
+        if c == 'q':
+            return False
+        elif c == '\t':
+            ui.tab = (ui.tab + 1) % len(ui.tabs)
+            ui.sel = 0
+            ui.scroll = 0
+            ui.detail = False
+            ui.search_query = ""
+            ui.status = ""
+            load_tab_data()
+        elif c == 'j':
+            nav_down()
+        elif c == 'k':
+            nav_up()
+        elif c in ('\r', '\n'):
+            do_enter()
+        elif c == '/':
+            ui.search_mode = True
+            ui.search_buf = ui.search_query
+            ui.status = ""
+        # Tab-specific keys
+        elif ui.tab == 0:
+            handle_cron_key(c)
+        elif ui.tab == 1:
+            handle_daemon_key(c)
+        elif ui.tab == 2:
+            handle_process_key(c)
+        return True
+
+    def handle_cron_key(c):
+        if c == 'v':
+            filtered = get_filtered()
+            if filtered and filtered[ui.sel].get('is_job'):
+                show_job_detail()
+        elif c == 'r':
+            filtered = get_filtered()
+            if filtered and filtered[ui.sel].get('is_job'):
+                run_job()
+        elif c == 'n':
+            new_cron_job()
+        elif c == 'e':
+            edit_cron_job()
+        elif c == 'd':
+            filtered = get_filtered()
+            if filtered:
+                ui.confirm_action = (f"Delete cron job: {filtered[ui.sel]['command'][:30]}", delete_cron_job)
+
+    def handle_daemon_key(c):
+        if c == 'v':
+            filtered = get_filtered()
+            if filtered and filtered[ui.sel].get('is_job'):
+                show_job_detail()
+        elif c == 'n':
+            new_daemon()
+        elif c == 's':
+            daemon_start()
+        elif c == 'S':
+            daemon_stop()
+        elif c == 'r':
+            daemon_restart()
+        elif c == 'l':
+            show_daemon_logs()
+        elif c == 'd':
+            filtered = get_filtered()
+            if filtered:
+                ui.confirm_action = (f"Delete daemon: {filtered[ui.sel]['name']}", delete_daemon)
+
+    def handle_process_key(c):
+        if c == 's':
+            cycle = ['cpu', 'mem', 'pid', 'name']
+            idx = cycle.index(ui.sort_key) if ui.sort_key in cycle else 0
+            ui.sort_key = cycle[(idx + 1) % len(cycle)]
+            ui.items = sort_processes(ui.items)
+            ui.status = f"Sorted by {ui.sort_key}"
+        elif c == 'K':
+            filtered = get_filtered()
+            if filtered:
+                ui.confirm_action = (f"Kill PID {filtered[ui.sel]['pid']} ({filtered[ui.sel]['name']})", kill_process)
+        elif c == 'R':
+            load_tab_data()
+            ui.status = "Refreshed"
+
+    def handle_esc():
+        if select.select([fd], [], [], 0.05)[0]:
+            c2 = os.read(fd, 1).decode('latin-1')
+            if c2 == '[':
+                c3 = os.read(fd, 1).decode('latin-1')
+                if c3 == 'A':
+                    nav_up()
+                elif c3 == 'B':
+                    nav_down()
+        else:
+            if ui.search_query:
+                ui.search_query = ""
+                ui.sel = 0
+                ui.scroll = 0
+                ui.status = "Search cleared"
+        return True
+
+    def handle_detail(c):
+        if c == '\x1b':
+            if select.select([fd], [], [], 0.05)[0]:
+                c2 = os.read(fd, 1).decode('latin-1')
+                if c2 == '[':
+                    c3 = os.read(fd, 1).decode('latin-1')
+                    if c3 == 'A':
+                        ui.detail_scroll = max(0, ui.detail_scroll - 1)
+                    elif c3 == 'B':
+                        ui.detail_scroll += 1
+            else:
+                ui.detail = False
+                ui.detail_scroll = 0
+            return True
+        if c == 'q':
+            ui.detail = False
+            ui.detail_scroll = 0
+        elif c == 'j':
+            ui.detail_scroll += 1
+        elif c == 'k':
+            ui.detail_scroll = max(0, ui.detail_scroll - 1)
+        return True
+
+    def handle_confirm(c):
+        if c in ('y', 'Y'):
+            cb = ui.confirm_action[1]
+            ui.confirm_action = None
+            cb()
+        elif c in ('n', 'N', '\x1b'):
+            ui.confirm_action = None
+            ui.status = "Cancelled"
+        elif c in ('\r', '\n'):
+            pass  # Ignore trailing Enter from the keypress that opened confirm
+        else:
+            ui.status = f"Press y or n (got: {repr(c)})"
+        return True
+
+    def handle_search(c):
+        if c == '\x1b':
+            if select.select([fd], [], [], 0.05)[0]:
+                c2 = os.read(fd, 1).decode('latin-1')
+                if c2 == '[':
+                    os.read(fd, 1).decode('latin-1')
+            else:
+                ui.search_mode = False
+                ui.search_buf = ""
+                ui.status = "Search cancelled"
+        elif c in ('\r', '\n'):
+            ui.search_mode = False
+            ui.search_query = ui.search_buf
+            ui.search_buf = ""
+            ui.sel = 0
+            ui.scroll = 0
+            filtered = get_filtered()
+            if ui.search_query:
+                ui.status = f'Filter: "{ui.search_query}" ({len(filtered)} results)'
+            else:
+                ui.status = "Search cleared"
+        elif c in ('\x7f', '\x08'):
+            ui.search_buf = ui.search_buf[:-1]
+        elif c == '\x15':
+            ui.search_buf = ""
+        elif 32 <= ord(c) <= 126:
+            ui.search_buf += c
+        return True
+
+    def handle_text_input(c):
+        if c == '\x1b':
+            if select.select([fd], [], [], 0.05)[0]:
+                c2 = os.read(fd, 1).decode('latin-1')
+                if c2 == '[':
+                    os.read(fd, 1).decode('latin-1')
+            else:
+                ui.input_mode = False
+                ui.input_buf = ""
+                ui.input_callback = None
+                ui.status = "Cancelled"
+        elif c in ('\r', '\n'):
+            val = ui.input_buf
+            cb = ui.input_callback
+            ui.input_mode = False
+            ui.input_buf = ""
+            ui.input_callback = None
+            if cb and val.strip():
+                cb(val)
+        elif c in ('\x7f', '\x08'):
+            ui.input_buf = ui.input_buf[:-1]
+        elif c == '\x15':
+            ui.input_buf = ""
+        elif 32 <= ord(c) <= 126:
+            ui.input_buf += c
+        return True
+
+    def nav_up():
+        if ui.sel > 0:
+            ui.sel -= 1
+            if ui.sel < ui.scroll:
+                ui.scroll = ui.sel
+        ui.status = ""
+
+    def nav_down():
+        _, H = term_size()
+        body_h = max(1, H - 8)
+        if ui.tab == 2:
+            body_h -= 1  # account for header row
+        filtered = get_filtered()
+        mx = max(0, len(filtered) - 1)
+        if ui.sel < mx:
+            ui.sel += 1
+            if ui.sel >= ui.scroll + body_h:
+                ui.scroll = ui.sel - body_h + 1
+        ui.status = ""
+
+    def do_enter():
+        filtered = get_filtered()
+        if not filtered:
+            return
+        item = filtered[ui.sel]
+        if ui.tab == 0:
+            if item.get('is_job'):
+                job = item['job']
+                action = 'Disable' if job['active'] else 'Enable'
+                ui.confirm_action = (action + ' ' + job['name'], toggle_job)
+            else:
+                show_cron_detail()
+        elif ui.tab == 1:
+            if item.get('is_job'):
+                job = item['job']
+                action = 'Disable' if job['active'] else 'Enable'
+                ui.confirm_action = (action + ' ' + job['name'], toggle_job)
+            else:
+                show_daemon_detail()
+
+    # ── main loop ──────────────────────────────────────────
+    load_tab_data()
+
+    fd = sys.stdin.fileno()
+    old_attrs = termios.tcgetattr(fd)
+    termios.tcflush(fd, termios.TCIFLUSH)  # Flush any stale input
+
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.write('\033[?25l')
+        sys.stdout.write('\033[2J\033[H')
+        sys.stdout.flush()
+        render()
+        while True:
+            # Auto-refresh on processes tab using select timeout
+            if ui.tab == 2 and not ui.detail and not ui.search_mode and not ui.input_mode and not ui.confirm_action:
+                ready, _, _ = select.select([fd], [], [], 2.0)
+                if not ready:
+                    load_tab_data()
+                    render()
+                    continue
+            else:
+                ready, _, _ = select.select([fd], [], [], None)
+
+            c = os.read(fd, 1).decode('latin-1')
+            if not handle(c):
+                break
+            render()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+        sys.stdout.write('\033[?25h\033[2J\033[H')
+        sys.stdout.flush()
+
+    context['output'] = "Crond closed."

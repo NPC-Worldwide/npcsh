@@ -1,0 +1,32 @@
+import subprocess
+import os
+
+cmd = {{ bash_command | tojson }}
+output = ""
+
+# Pipe previous step output as stdin — commands that need it (cat, tee)
+# read it; commands that don't (ls, mkdir) ignore it. Unix standard.
+stdin_data = context.get('previous_output') or None
+
+try:
+    cwd = state.current_path
+except (NameError, AttributeError):
+    cwd = os.getcwd()
+process = subprocess.Popen(
+    cmd,
+    shell=True,
+    cwd=cwd,
+    stdin=subprocess.PIPE if stdin_data else None,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE
+)
+stdout, stderr = process.communicate(
+    input=stdin_data.encode('utf-8') if stdin_data else None
+)
+
+if process.returncode != 0 and stderr:
+    output = f"Error (exit {process.returncode}): {stderr.decode('utf-8')}"
+elif stdout.strip():
+    output = stdout.decode('utf-8')
+else:
+    output = "(no output)"

@@ -1,0 +1,89 @@
+from npcpy.data.web import search_web
+
+query = context.get('query', '').strip()
+
+# Force text mode when called by an agent (non-interactive context)
+try:
+    text_mode
+except NameError:
+    text_mode = False
+if not text_mode:
+    try:
+        if ('state' in dir() and state is not None
+                and getattr(state, 'current_mode', '') in ('agent', 'cmd')):
+            text_mode = True
+        elif not sys.stdin.isatty():
+            text_mode = True
+    except Exception:
+        pass
+
+if not query:
+    context['output'] = "Usage: /web_search <query>"
+else:
+    provider = context.get('provider') or None
+    try:
+        provider = provider or (state.search_provider if 'state' in dir() and state else None)
+    except:
+        pass
+    num_results = int(context.get('num_results') or 10)
+
+    try:
+        raw_results = search_web(query, provider=provider, num_results=num_results)
+
+        # Normalize results - handle different provider formats
+        results = []
+        if raw_results:
+            # Perplexity returns [answer_text, [url1, url2, ...]]
+            if (len(raw_results) == 2
+                and isinstance(raw_results[0], str)
+                and isinstance(raw_results[1], (list, tuple))):
+                answer_text = raw_results[0]
+                citations = raw_results[1]
+                results.append({
+                    'title': 'AI Answer',
+                    'url': '',
+                    'snippet': answer_text[:500]
+                })
+                for url in citations:
+                    url_str = str(url).strip()
+                    try:
+                        from urllib.parse import urlparse
+                        domain = urlparse(url_str).netloc
+                    except:
+                        domain = url_str[:40]
+                    results.append({
+                        'title': domain or url_str[:60],
+                        'url': url_str,
+                        'snippet': ''
+                    })
+            else:
+                for res in raw_results:
+                    if isinstance(res, dict):
+                        results.append({
+                            'title': res.get('title', 'No title'),
+                            'url': res.get('url', res.get('link', '')),
+                            'snippet': res.get('snippet', res.get('description', res.get('content', '')))
+                        })
+                    elif isinstance(res, str):
+                        if res.startswith('http'):
+                            results.append({'title': res[:60], 'url': res, 'snippet': ''})
+                        else:
+                            results.append({'title': res[:60], 'url': '', 'snippet': res[:200]})
+                    else:
+                        results.append({'title': str(res)[:60], 'url': str(res), 'snippet': ''})
+
+        if not results:
+            context['output'] = "No web results found."
+        else:
+            lines = []
+            for res in results:
+                lines.append(f"- {res['title']}")
+                lines.append(f"  {res['url']}")
+                if res.get('snippet'):
+                    lines.append(f"  {res['snippet'][:200]}")
+                lines.append("")
+            context['output'] = "\n".join(lines)
+
+    except Exception as e:
+        import traceback
+        context['output'] = "Web search error: " + str(e) + "\n" + traceback.format_exc()

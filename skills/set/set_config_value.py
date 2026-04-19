@@ -1,0 +1,31 @@
+import traceback
+# Assuming set_npcsh_config_value is accessible
+try:
+    from npcsh._state import set_npcsh_config_value
+except ImportError:
+    def set_npcsh_config_value(key, value):
+        print(f"Mock: Setting config '{key}' to '{value}'")
+        # In a real scenario, this might write to a config file or global state
+        pass
+
+key = context.get('key')
+value = context.get('value')
+output_messages = context.get('messages', [])
+
+output_result = ""
+if not key or not value:
+    context['output'] = "Usage: /set <key>=<value>"
+    context['messages'] = output_messages
+    exit()
+
+try:
+    set_npcsh_config_value(key, value)
+    output_result = f"Configuration value '{key}' set."
+except NameError:
+    output_result = "Set function (set_npcsh_config_value) not available."
+except Exception as e:
+    traceback.print_exc()
+    output_result = f"Error setting configuration '{key}': {e}"
+
+context['output'] = output_result
+context['messages'] = output_messages

@@ -1,0 +1,18 @@
+from npcpy.work.desktop import perform_action
+
+text = context.get('text', '')
+messages = context.get('messages', [])
+
+if not text:
+    context['output'] = "Usage: /type_text <text to type>"
+    context['messages'] = messages
+    exit()
+
+try:
+    perform_action({'type': 'type', 'text': text})
+    preview = text[:30] + "..." if len(text) > 30 else text
+    context['output'] = f"Typed: {preview}"
+except Exception as e:
+    context['output'] = f"Type failed: {e}"
+
+context['messages'] = messages

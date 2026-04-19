@@ -1,0 +1,661 @@
+import os
+import sys
+import traceback
+from npcpy.llm_funcs import breathe
+from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db, start_new_conversation, save_conversation_message
+from npcpy.memory.knowledge_graph import kg_sleep_process, kg_dream_process
+
+# --- Get all inputs from context ---
+flush_n_str = context.get('flush')
+is_sleeping = context.get('sleep')
+is_dreaming = context.get('dream')
+operations_str = context.get('ops')
+user_context = context.get('context', '') or ''
+llm_model = context.get('model')
+llm_provider = context.get('provider')
+output_messages = context.get('messages', [])
+
+# --- Detect if called with explicit flags ---
+is_flushing = flush_n_str is not None and str(flush_n_str).strip() != ''
+has_explicit_args = is_flushing or is_sleeping or is_dreaming
+
+# ========== Execution Functions ==========
+def do_compress():
+    """Compact conversation context via breathe(), starting a new linked conversation."""
+    try:
+        current_npc = context.get('npc')
+        m = llm_model or (current_npc.model if current_npc and hasattr(current_npc, 'model') and current_npc.model else None)
+        p = llm_provider or (current_npc.provider if current_npc and hasattr(current_npc, 'provider') and current_npc.provider else None)
+        result = breathe(messages=output_messages, model=m, provider=p, npc=current_npc, context=user_context)
+        summary = result.get('output', 'Context compressed.') if isinstance(result, dict) else str(result)
+
+        # Link old conversation to new one
+        old_cid = state.conversation_id if state else None
+        last_msg_id = None
+        ch = None
+        try:
+            db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
+            ch = CommandHistory(db_path)
+            if old_cid:
+                last_msg_id = ch.get_last_message_id(old_cid)
+
+            new_cid = start_new_conversation()
+            if state:
+                state.conversation_id = new_cid
+
+            # Build new message list
+            summary_content = "Session context (continued from " + str(old_cid) + "): " + summary
+            recent = list(output_messages[-6:])
+            context['messages'] = [{"role": "system", "content": summary_content}] + recent
+
+            # Save linking message to DB
+            npc_name = current_npc.name if current_npc else "npcsh"
+            team_obj = context.get('team')
+            team_name = team_obj.name if team_obj else "npcsh"
+            save_conversation_message(
+                ch, new_cid, "system", summary_content,
+                npc=npc_name, team=team_name,
+                parent_message_id=last_msg_id,
+            )
+        finally:
+            if ch:
+                ch.close()
+
+        link_info = " (linked via " + str(last_msg_id) + ")" if last_msg_id else ""
+        return "Compressed. New conversation: " + str(state.conversation_id if state else new_cid) + link_info
+    except Exception as e:
+        traceback.print_exc()
+        return "Error during context compression: " + str(e)
+
+def do_flush(n):
+    """Remove last N messages from context"""
+    messages_list = list(output_messages)
+    original_len = len(messages_list)
+    if messages_list and messages_list[0].get("role") == "system":
+        system_message = messages_list.pop(0)
+        num_to_remove = min(n, len(messages_list))
+        final_messages = [system_message] + messages_list[:-num_to_remove] if num_to_remove < len(messages_list) else [system_message]
+    else:
+        num_to_remove = min(n, original_len)
+        final_messages = messages_list[:-num_to_remove] if num_to_remove < original_len else []
+    removed_count = original_len - len(final_messages)
+    context['messages'] = final_messages
+    return "Flushed " + str(removed_count) + " message(s). Context is now " + str(len(final_messages)) + " messages."
+
+def do_sleep(model, provider, ops_str, dream=False):
+    """Evolve knowledge graph via sleep/dream"""
+    current_npc = context.get('npc')
+    current_team = context.get('team')
+    operations_config = [op.strip() for op in ops_str.split(',')] if ops_str else None
+    if not model and current_npc: model = current_npc.model
+    if not provider and current_npc: provider = current_npc.provider
+    if not model: model = state.chat_model if state else "llama3.2"
+    if not provider: provider = state.chat_provider if state else "ollama"
+    team_name = current_team.name if current_team else "__none__"
+    npc_name = current_npc.name if current_npc else "__none__"
+    current_path = os.getcwd()
+    scope_str = "Team: '" + team_name + "', NPC: '" + npc_name + "', Path: '" + current_path + "'"
+    command_history = None
+    try:
+        db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
+        command_history = CommandHistory(db_path)
+        engine = command_history.engine
+        current_kg = load_kg_from_db(engine, team_name, npc_name, current_path)
+        if not current_kg or not current_kg.get('facts'):
+            return "Knowledge graph for the current scope is empty. Nothing to process.\n- Scope: " + scope_str
+        original_facts = len(current_kg.get('facts', []))
+        original_concepts = len(current_kg.get('concepts', []))
+        evolved_kg, _ = kg_sleep_process(existing_kg=current_kg, model=model, provider=provider, npc=current_npc, context=user_context, operations_config=operations_config)
+        process_type = "Sleep"
+        if dream:
+            evolved_kg, _ = kg_dream_process(existing_kg=evolved_kg, model=model, provider=provider, npc=current_npc, context=user_context)
+            process_type += " & Dream"
+        save_kg_to_db(engine, evolved_kg, team_name, npc_name, current_path)
+        new_facts = len(evolved_kg.get('facts', []))
+        new_concepts = len(evolved_kg.get('concepts', []))
+        return (process_type + " process complete.\n"
+                "- Facts: " + str(original_facts) + " -> " + str(new_facts) + " (" + str(new_facts - original_facts) + ")\n"
+                "- Concepts: " + str(original_concepts) + " -> " + str(new_concepts) + " (" + str(new_concepts - original_concepts) + ")")
+    except Exception as e:
+        traceback.print_exc()
+        return "Error during KG evolution: " + str(e)
+    finally:
+        if command_history: command_history.close()
+
+# ========== Direct execution (flags provided) ==========
+if has_explicit_args:
+    if is_sleeping and is_flushing:
+        context['output'] = "Error: --sleep and --flush are mutually exclusive."
+        context['messages'] = output_messages
+    elif is_sleeping:
+        context['output'] = do_sleep(llm_model, llm_provider, operations_str, dream=bool(is_dreaming))
+        context['messages'] = output_messages
+    elif is_flushing:
+        try:
+            n = int(flush_n_str)
+            if n <= 0:
+                context['output'] = "Error: Number of messages to flush must be positive."
+            else:
+                context['output'] = do_flush(n)
+        except ValueError:
+            context['output'] = "Error: Invalid number '" + str(flush_n_str) + "'."
+
+# ========== Interactive TUI (no flags) ==========
+elif sys.stdin.isatty():
+    import tty
+    import termios
+    import select as _sel
+
+    class CompressState:
+        def __init__(self):
+            self.actions = [
+                {'name': 'Compress', 'desc': 'Compact conversation context (breathe)', 'key': 'compress'},
+                {'name': 'Flush', 'desc': 'Remove last N messages from context', 'key': 'flush'},
+                {'name': 'Sleep', 'desc': 'Evolve knowledge graph', 'key': 'sleep'},
+                {'name': 'Sleep + Dream', 'desc': 'Evolve KG with creative synthesis', 'key': 'dream'},
+            ]
+            self.sel = 0
+            self.mode = 'menu'  # menu, params, editing, preview, running
+            # Params for each action
+            self.flush_n = "5"
+            self.sleep_model = ""
+            self.sleep_provider = ""
+            self.sleep_ops = ""
+            self.status = "Select an action"
+            self.msg_count = len(output_messages)
+            # Param editing
+            self.param_sel = 0
+            self.edit_buf = ""
+            self.edit_cursor = 0
+            # Preview
+            self.preview_lines = []  # [(label, value, editable), ...]
+            self.preview_sel = 0
+            self.preview_scroll = 0
+
+        def get_params(self):
+            """Return list of (label, value) for current action"""
+            key = self.actions[self.sel]['key']
+            if key == 'compress':
+                return [('Messages in context', str(self.msg_count), False)]
+            elif key == 'flush':
+                return [
+                    ('Messages to flush', self.flush_n, True),
+                    ('Messages in context', str(self.msg_count), False),
+                ]
+            elif key == 'sleep':
+                return [
+                    ('Model', self.sleep_model or '(default)', True),
+                    ('Provider', self.sleep_provider or '(default)', True),
+                    ('Operations', self.sleep_ops or '(all)', True),
+                ]
+            elif key == 'dream':
+                return [
+                    ('Model', self.sleep_model or '(default)', True),
+                    ('Provider', self.sleep_provider or '(default)', True),
+                    ('Operations', self.sleep_ops or '(all)', True),
+                ]
+            return []
+
+        def set_param(self, idx, val):
+            key = self.actions[self.sel]['key']
+            if key == 'flush':
+                if idx == 0: self.flush_n = val
+            elif key in ('sleep', 'dream'):
+                if idx == 0: self.sleep_model = val
+                elif idx == 1: self.sleep_provider = val
+                elif idx == 2: self.sleep_ops = val
+
+    st = CompressState()
+
+    def get_size():
+        try:
+            s = os.get_terminal_size()
+            return s.columns, s.lines
+        except:
+            return 80, 24
+
+    def generate_preview():
+        """Build preview data for the selected action."""
+        key = st.actions[st.sel]['key']
+        lines = []
+
+        if key == 'compress':
+            st.status = "Generating compression preview..."
+            render()
+            try:
+                current_npc = context.get('npc')
+                m = llm_model or (current_npc.model if current_npc and hasattr(current_npc, 'model') and current_npc.model else None)
+                p = llm_provider or (current_npc.provider if current_npc and hasattr(current_npc, 'provider') and current_npc.provider else None)
+                result = breathe(messages=output_messages, model=m, provider=p, npc=current_npc, context=user_context)
+                summary_data = result.get('summary', {}) if isinstance(result, dict) else {}
+                summary = result.get('output', '') if isinstance(result, dict) else str(result)
+            except Exception as e:
+                summary_data = {}
+                summary = "Error generating preview: " + str(e)
+
+            lines.append(('Action', 'Compress (breathe)', False))
+            lines.append(('Messages', str(st.msg_count) + ' -> condensed summary', False))
+            lines.append(('', '', False))
+            if summary_data:
+                obj = str(summary_data.get('high_level_objective', ''))
+                task = str(summary_data.get('most_recent_task', ''))
+                acc = summary_data.get('accomplishments', [])
+                fail = summary_data.get('failures', [])
+                lines.append(('Objective', obj, True))
+                lines.append(('Current Task', task, True))
+                lines.append(('', '', False))
+                if acc:
+                    lines.append(('Accomplishments', '', False))
+                    for a in (acc if isinstance(acc, list) else [acc]):
+                        lines.append(('  -', str(a), True))
+                if fail:
+                    lines.append(('Failures', '', False))
+                    for f in (fail if isinstance(fail, list) else [fail]):
+                        lines.append(('  -', str(f), True))
+            else:
+                lines.append(('Summary', summary[:200], True))
+            st._preview_summary = summary
+
+        elif key == 'flush':
+            try:
+                n = int(st.flush_n)
+            except ValueError:
+                n = 0
+            n = min(n, len(output_messages))
+            lines.append(('Action', 'Flush ' + str(n) + ' message(s)', False))
+            lines.append(('Before', str(len(output_messages)) + ' messages', False))
+            lines.append(('After', str(max(0, len(output_messages) - n)) + ' messages', False))
+            lines.append(('', '', False))
+            lines.append(('--- Messages to remove ---', '', False))
+            # Show the messages that will be removed
+            msgs_to_show = output_messages[-n:] if n > 0 else []
+            for i, msg in enumerate(msgs_to_show):
+                role = msg.get('role', '?')
+                content = msg.get('content', '')
+                if content:
+                    content = content[:80].replace('\n', ' ')
+                lines.append(('[' + role + ']', content, False))
+
+        elif key in ('sleep', 'dream'):
+            current_npc = context.get('npc')
+            current_team = context.get('team')
+            team_name = current_team.name if current_team else "__none__"
+            npc_name = current_npc.name if current_npc else "__none__"
+            current_path = os.getcwd()
+            lines.append(('Action', 'Sleep + Dream' if key == 'dream' else 'Sleep', False))
+            lines.append(('Scope', team_name + ' / ' + npc_name, False))
+            lines.append(('Path', current_path, False))
+            lines.append(('Model', st.sleep_model or '(default)', False))
+            lines.append(('Provider', st.sleep_provider or '(default)', False))
+            lines.append(('', '', False))
+            # Load KG stats
+            try:
+                db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
+                ch = CommandHistory(db_path)
+                kg = load_kg_from_db(ch.engine, team_name, npc_name, current_path)
+                ch.close()
+                if kg and kg.get('facts'):
+                    facts = kg.get('facts', [])
+                    concepts = kg.get('concepts', [])
+                    gen = kg.get('generation', 0)
+                    orphaned = len(set(f['statement'] for f in facts) - set(kg.get('fact_to_concept_links', {}).keys()))
+                    lines.append(('Generation', str(gen), False))
+                    lines.append(('Facts', str(len(facts)), False))
+                    lines.append(('Concepts', str(len(concepts)), False))
+                    lines.append(('Orphaned facts', str(orphaned), False))
+                    if st.sleep_ops:
+                        lines.append(('Operations', st.sleep_ops, False))
+                    else:
+                        lines.append(('Operations', '(all default)', False))
+                else:
+                    lines.append(('KG Status', 'Empty - nothing to process', False))
+            except Exception as e:
+                lines.append(('KG Error', str(e)[:60], False))
+
+        st.preview_lines = lines
+        st.preview_sel = 0
+        st.preview_scroll = 0
+        st.status = "Review plan. Enter to execute, e to edit, b to go back."
+
+    def render():
+        width, height = get_size()
+        out = []
+        out.append("\033[H")
+
+        # Header
+        header = " COMPRESS - Context & Memory Manager "
+        out.append("\033[1;1H\033[7;1m" + header.ljust(width) + "\033[0m")
+
+        if st.mode == 'menu':
+            out.append("\033[3;1H\033[36;1m Actions \033[90m" + ("-" * (width - 11)) + "\033[0m")
+            for i, act in enumerate(st.actions):
+                row = 4 + i
+                out.append("\033[" + str(row) + ";1H\033[K")
+                line = "  " + act['name'].ljust(18) + "\033[90m" + act['desc'][:width-24] + "\033[0m"
+                if i == st.sel:
+                    out.append("\033[7m>" + line + "\033[0m")
+                else:
+                    out.append(" " + line)
+
+            # Show params preview below
+            params = st.get_params()
+            param_start = 4 + len(st.actions) + 1
+            out.append("\033[" + str(param_start) + ";1H\033[33;1m Parameters \033[90m" + ("-" * (width - 14)) + "\033[0m")
+            for j, (label, val, editable) in enumerate(params):
+                row = param_start + 1 + j
+                out.append("\033[" + str(row) + ";1H\033[K")
+                marker = "[e]" if editable else "   "
+                out.append("  " + label.ljust(22) + val[:width-30] + "  \033[90m" + marker + "\033[0m")
+
+            # Clear remaining lines
+            clear_start = param_start + 1 + len(params)
+            for r in range(clear_start, height - 2):
+                out.append("\033[" + str(r) + ";1H\033[K")
+
+        elif st.mode == 'params':
+            params = st.get_params()
+            act = st.actions[st.sel]
+            out.append("\033[3;1H\033[36;1m " + act['name'] + " Parameters \033[90m" + ("-" * (width - len(act['name']) - 16)) + "\033[0m")
+            for j, (label, val, editable) in enumerate(params):
+                row = 4 + j
+                out.append("\033[" + str(row) + ";1H\033[K")
+                if st.mode == 'editing' and j == st.param_sel:
+                    line = "  " + label.ljust(22) + "\033[7m " + st.edit_buf + " \033[0m"
+                else:
+                    marker = " [e]" if editable else ""
+                    line = "  " + label.ljust(22) + val[:width-30] + "\033[90m" + marker + "\033[0m"
+                if j == st.param_sel:
+                    out.append("\033[7m>" + line + "\033[0m")
+                else:
+                    out.append(" " + line)
+
+            clear_start = 4 + len(params)
+            for r in range(clear_start, height - 2):
+                out.append("\033[" + str(r) + ";1H\033[K")
+
+        elif st.mode == 'editing':
+            # Same as params but with edit field
+            params = st.get_params()
+            act = st.actions[st.sel]
+            out.append("\033[3;1H\033[36;1m " + act['name'] + " Parameters \033[90m" + ("-" * (width - len(act['name']) - 16)) + "\033[0m")
+            for j, (label, val, editable) in enumerate(params):
+                row = 4 + j
+                out.append("\033[" + str(row) + ";1H\033[K")
+                if j == st.param_sel:
+                    line = "  " + label.ljust(22) + "\033[7m " + st.edit_buf + " \033[0m"
+                    out.append(">" + line)
+                else:
+                    marker = " [e]" if editable else ""
+                    line = "  " + label.ljust(22) + val[:width-30] + "\033[90m" + marker + "\033[0m"
+                    out.append(" " + line)
+
+            clear_start = 4 + len(params)
+            for r in range(clear_start, height - 2):
+                out.append("\033[" + str(r) + ";1H\033[K")
+
+        elif st.mode == 'preview':
+            act = st.actions[st.sel]
+            out.append("\033[3;1H\033[36;1m " + act['name'] + " Plan \033[90m" + ("-" * (width - len(act['name']) - 9)) + "\033[0m")
+            lcol = 18
+            val_w = width - lcol - 8
+            vis = height - 7
+            for i in range(vis):
+                row = 4 + i
+                out.append("\033[" + str(row) + ";1H\033[K")
+                idx = st.preview_scroll + i
+                if idx >= len(st.preview_lines):
+                    continue
+                label, val, editable = st.preview_lines[idx]
+                if not label and not val:
+                    continue
+                if label.startswith('---'):
+                    out.append("  \033[90m" + label + "\033[0m")
+                    continue
+                marker = " [e]" if editable else ""
+                display = "  " + label.ljust(lcol) + val[:val_w] + "\033[90m" + marker + "\033[0m"
+                if idx == st.preview_sel:
+                    out.append("\033[7m>" + display + "\033[0m")
+                else:
+                    out.append(" " + display)
+
+        elif st.mode == 'preview_edit':
+            act = st.actions[st.sel]
+            out.append("\033[3;1H\033[36;1m " + act['name'] + " Plan \033[90m" + ("-" * (width - len(act['name']) - 9)) + "\033[0m")
+            lcol = 18
+            vis = height - 7
+            for i in range(vis):
+                row = 4 + i
+                out.append("\033[" + str(row) + ";1H\033[K")
+                idx = st.preview_scroll + i
+                if idx >= len(st.preview_lines):
+                    continue
+                label, val, editable = st.preview_lines[idx]
+                if not label and not val:
+                    continue
+                if label.startswith('---'):
+                    out.append("  \033[90m" + label + "\033[0m")
+                    continue
+                if idx == st.preview_sel:
+                    display = "  " + label.ljust(lcol) + "\033[7m " + st.edit_buf + " \033[0m"
+                    out.append(">" + display)
+                else:
+                    marker = " [e]" if editable else ""
+                    val_w = width - lcol - 8
+                    display = "  " + label.ljust(lcol) + val[:val_w] + "\033[90m" + marker + "\033[0m"
+                    out.append(" " + display)
+
+        elif st.mode == 'running':
+            out.append("\033[3;1H\033[K")
+            out.append("\033[4;1H\033[K  Running " + st.actions[st.sel]['name'] + "...")
+            for r in range(5, height - 2):
+                out.append("\033[" + str(r) + ";1H\033[K")
+
+        # Status + footer
+        out.append("\033[" + str(height-2) + ";1H\033[K\033[90m" + ("-" * width) + "\033[0m")
+        out.append("\033[" + str(height-1) + ";1H\033[K " + st.status[:width-2])
+
+        if st.mode == 'menu':
+            footer = " j/k:Nav  Enter:Configure  G:Run Now  q:Quit "
+        elif st.mode == 'params':
+            footer = " j/k:Nav  e:Edit  Enter:Preview  b:Back  q:Quit "
+        elif st.mode == 'editing':
+            footer = " Type value  Enter:Confirm  Esc:Cancel "
+        elif st.mode == 'preview':
+            footer = " j/k:Nav  e:Edit  Enter:Execute  b:Back  q:Quit "
+        elif st.mode == 'preview_edit':
+            footer = " Type value  Enter:Confirm  Esc:Cancel "
+        else:
+            footer = " Running... "
+        out.append("\033[" + str(height) + ";1H\033[K\033[7m" + footer.ljust(width) + "\033[0m")
+
+        sys.stdout.write(''.join(out))
+        sys.stdout.flush()
+
+    def execute_action():
+        """Run the selected action and return result text"""
+        key = st.actions[st.sel]['key']
+        st.mode = 'running'
+        render()
+
+        if key == 'compress':
+            return do_compress()
+        elif key == 'flush':
+            try:
+                n = int(st.flush_n)
+                if n <= 0:
+                    return "Error: Number must be positive."
+                return do_flush(n)
+            except ValueError:
+                return "Error: Invalid number '" + st.flush_n + "'."
+        elif key == 'sleep':
+            return do_sleep(st.sleep_model or None, st.sleep_provider or None, st.sleep_ops or None, dream=False)
+        elif key == 'dream':
+            return do_sleep(st.sleep_model or None, st.sleep_provider or None, st.sleep_ops or None, dream=True)
+        return "Unknown action."
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    result_text = None
+
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.write('\033[?25l')
+        sys.stdout.write('\033[2J')
+        render()
+
+        running = True
+        while running:
+            c = os.read(fd, 1).decode('latin-1')
+
+            # Editing modes (params editing and preview editing)
+            if st.mode in ('editing', 'preview_edit'):
+                return_mode = 'params' if st.mode == 'editing' else 'preview'
+                if c == '\x1b':
+                    if _sel.select([fd], [], [], 0.05)[0]:
+                        os.read(fd, 2)
+                    st.mode = return_mode
+                elif c in ('\r', '\n'):
+                    if st.mode == 'editing':
+                        st.set_param(st.param_sel, st.edit_buf)
+                        st.status = "Parameter updated."
+                    else:
+                        # Update preview line
+                        if st.preview_sel < len(st.preview_lines):
+                            old = st.preview_lines[st.preview_sel]
+                            st.preview_lines[st.preview_sel] = (old[0], st.edit_buf, old[2])
+                        st.status = "Preview field updated."
+                    st.mode = return_mode
+                elif c == '\x7f' or c == '\x08':
+                    if st.edit_cursor > 0:
+                        st.edit_buf = st.edit_buf[:st.edit_cursor-1] + st.edit_buf[st.edit_cursor:]
+                        st.edit_cursor -= 1
+                elif c >= ' ' and c <= '~':
+                    st.edit_buf = st.edit_buf[:st.edit_cursor] + c + st.edit_buf[st.edit_cursor:]
+                    st.edit_cursor += 1
+                render()
+                continue
+
+            if c == '\x1b':
+                if _sel.select([fd], [], [], 0.05)[0]:
+                    c2 = os.read(fd, 1).decode('latin-1')
+                    if c2 == '[':
+                        c3 = os.read(fd, 1).decode('latin-1')
+                        if c3 == 'A':  # Up
+                            if st.mode == 'menu':
+                                st.sel = max(0, st.sel - 1)
+                            elif st.mode == 'params':
+                                st.param_sel = max(0, st.param_sel - 1)
+                            elif st.mode == 'preview':
+                                st.preview_sel = max(0, st.preview_sel - 1)
+                                if st.preview_sel < st.preview_scroll:
+                                    st.preview_scroll = st.preview_sel
+                        elif c3 == 'B':  # Down
+                            if st.mode == 'menu':
+                                st.sel = min(len(st.actions) - 1, st.sel + 1)
+                            elif st.mode == 'params':
+                                params = st.get_params()
+                                st.param_sel = min(len(params) - 1, st.param_sel + 1)
+                            elif st.mode == 'preview':
+                                st.preview_sel = min(len(st.preview_lines) - 1, st.preview_sel + 1)
+                                _, h = get_size()
+                                vis = max(1, h - 7)
+                                if st.preview_sel >= st.preview_scroll + vis:
+                                    st.preview_scroll = st.preview_sel - vis + 1
+                else:
+                    if st.mode == 'params':
+                        st.mode = 'menu'
+                        st.status = "Select an action"
+                    elif st.mode == 'preview':
+                        st.mode = 'params'
+                        st.status = "Configure parameters, then Enter for preview"
+                    else:
+                        result_text = "Cancelled."
+                        running = False
+                render()
+                continue
+
+            if c == 'q' or c == '\x03':
+                result_text = "Cancelled."
+                running = False
+            elif st.mode == 'menu':
+                if c == 'j':
+                    st.sel = min(len(st.actions) - 1, st.sel + 1)
+                elif c == 'k':
+                    st.sel = max(0, st.sel - 1)
+                elif c in ('\r', '\n'):
+                    params = st.get_params()
+                    editable = [p for p in params if p[2]]
+                    if editable:
+                        st.mode = 'params'
+                        st.param_sel = 0
+                        st.status = "Configure parameters, then Enter for preview"
+                    else:
+                        # No params to edit (e.g. Compress) - go straight to preview
+                        generate_preview()
+                        st.mode = 'preview'
+                        sys.stdout.write('\033[2J')
+                elif c == 'G':
+                    result_text = execute_action()
+                    running = False
+            elif st.mode == 'params':
+                if c == 'j':
+                    params = st.get_params()
+                    st.param_sel = min(len(params) - 1, st.param_sel + 1)
+                elif c == 'k':
+                    st.param_sel = max(0, st.param_sel - 1)
+                elif c == 'e':
+                    params = st.get_params()
+                    if st.param_sel < len(params) and params[st.param_sel][2]:
+                        st.mode = 'editing'
+                        val = params[st.param_sel][1]
+                        st.edit_buf = "" if val.startswith('(') else val
+                        st.edit_cursor = len(st.edit_buf)
+                elif c == 'b':
+                    st.mode = 'menu'
+                    st.status = "Select an action"
+                elif c in ('\r', '\n'):
+                    generate_preview()
+                    st.mode = 'preview'
+                    sys.stdout.write('\033[2J')
+            elif st.mode == 'preview':
+                if c == 'j':
+                    st.preview_sel = min(len(st.preview_lines) - 1, st.preview_sel + 1)
+                    _, h = get_size()
+                    vis = max(1, h - 7)
+                    if st.preview_sel >= st.preview_scroll + vis:
+                        st.preview_scroll = st.preview_sel - vis + 1
+                elif c == 'k':
+                    st.preview_sel = max(0, st.preview_sel - 1)
+                    if st.preview_sel < st.preview_scroll:
+                        st.preview_scroll = st.preview_sel
+                elif c == 'e':
+                    if st.preview_sel < len(st.preview_lines) and st.preview_lines[st.preview_sel][2]:
+                        st.mode = 'preview_edit'
+                        val = st.preview_lines[st.preview_sel][1]
+                        st.edit_buf = val
+                        st.edit_cursor = len(st.edit_buf)
+                elif c == 'b':
+                    st.mode = 'params'
+                    st.status = "Configure parameters, then Enter for preview"
+                elif c in ('\r', '\n'):
+                    result_text = execute_action()
+                    running = False
+
+            render()
+
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        sys.stdout.write('\033[?25h')
+        sys.stdout.write('\033[2J\033[H')
+        sys.stdout.flush()
+
+    context['output'] = result_text or "Cancelled."
+    if 'messages' not in context:
+        context['messages'] = output_messages
+
+# ========== Non-interactive fallback ==========
+else:
+    result = do_compress()
+    context['output'] = result
+    if 'messages' not in context:
+        context['messages'] = output_messages

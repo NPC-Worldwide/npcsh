@@ -1,0 +1,775 @@
+import os
+import sys
+try:
+    import tty
+    import termios
+except ImportError:
+    tty = None
+    termios = None
+import subprocess
+import urllib.request
+import urllib.parse
+import urllib.error
+import xml.etree.ElementTree as ET
+import textwrap
+import time
+
+def log(msg):
+    sys.stderr.write(f"DEBUG [arxiv] {msg}\n")
+    sys.stderr.flush()
+
+def fetch_url_with_retry(url, timeout=60, max_retries=5, initial_delay=10):
+    """Fetch URL with exponential backoff for rate limiting."""
+    log(f"fetch_url_with_retry: url={url[:120]}... timeout={timeout}")
+    for attempt in range(max_retries):
+        t0 = time.time()
+        try:
+            log(f"  attempt {attempt+1}/{max_retries} ...")
+            req = urllib.request.Request(url, headers={"User-Agent": "npcsh/1.0 (https://github.com/npc-worldwide/npcsh; mailto:contact@npcworldwide.com)"})
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                status = response.getcode()
+                data = response.read().decode('utf-8')
+                elapsed = time.time() - t0
+                log(f"  attempt {attempt+1} OK: status={status}, len={len(data)}, elapsed={elapsed:.2f}s")
+                return data
+        except urllib.error.HTTPError as e:
+            elapsed = time.time() - t0
+            log(f"  attempt {attempt+1} HTTPError: code={e.code}, reason={e.reason}, elapsed={elapsed:.2f}s")
+            if e.code in (429, 503) and attempt < max_retries - 1:
+                delay = initial_delay * (2 ** attempt)
+                log(f"  retryable ({e.code}), sleeping {delay}s before retry...")
+                time.sleep(delay)
+            else:
+                raise
+        except (urllib.error.URLError, TimeoutError) as e:
+            elapsed = time.time() - t0
+            log(f"  attempt {attempt+1} URLError/Timeout: {e}, elapsed={elapsed:.2f}s")
+            if attempt < max_retries - 1:
+                delay = initial_delay * (2 ** attempt)
+                log(f"  sleeping {delay}s before retry...")
+                time.sleep(delay)
+            else:
+                raise
+        except Exception as e:
+            elapsed = time.time() - t0
+            log(f"  attempt {attempt+1} unexpected error: {type(e).__name__}: {e}, elapsed={elapsed:.2f}s")
+            raise
+    return None
+
+def get_terminal_size():
+    try:
+        size = os.get_terminal_size()
+        return size.columns, size.lines
+    except:
+        return 80, 24
+
+def image_to_ascii(image_path, width=40):
+    """Convert image to ASCII art"""
+    try:
+        from PIL import Image
+        img = Image.open(image_path)
+
+        # Skip tiny images (likely icons/logos)
+        if img.width < 50 or img.height < 50:
+            return None
+
+        # Convert to grayscale
+        img = img.convert('L')
+        # Resize - smaller for inline viewing
+        aspect = img.height / img.width
+        new_height = int(width * aspect * 0.4)
+        new_height = min(new_height, 20)  # Cap height
+        img = img.resize((width, new_height))
+        # ASCII chars from dark to light
+        chars = ' .,:;+*?%#@'
+        pixels = list(img.getdata())
+        ascii_img = []
+        for i in range(0, len(pixels), width):
+            row = pixels[i:i+width]
+            ascii_row = ''.join(chars[min(p // 25, len(chars)-1)] for p in row)
+            ascii_img.append('    ' + ascii_row)  # Indent
+        return ascii_img
+    except Exception as e:
+        return [f'    [Image error: {str(e)[:30]}]']
+
+def render_pdf_terminal(pdf_path, width=80):
+    """Render PDF as text + ASCII figures"""
+    import tempfile
+    lines = []
+
+    # Extract text - no layout flag for cleaner output
+    try:
+        result = subprocess.run(['pdftotext', '-nopgbrk', pdf_path, '-'],
+                                 capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            text_lines = result.stdout.split('\n')
+            # Clean up lines - remove excessive whitespace
+            for line in text_lines:
+                cleaned = line.strip()
+                if cleaned:
+                    lines.append(cleaned[:width])
+                elif lines and lines[-1] != '':
+                    lines.append('')  # Keep single blank lines
+    except Exception as e:
+        lines.append(f'[Text extraction failed: {e}]')
+
+    # Try to extract and render images
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subprocess.run(['pdfimages', '-png', pdf_path, tmpdir + '/img'],
+                           capture_output=True, timeout=60)
+            import glob
+            images = sorted(glob.glob(tmpdir + '/img*.png'))
+            # Filter to significant images only
+            sig_images = []
+            for img_path in images:
+                try:
+                    from PIL import Image
+                    img = Image.open(img_path)
+                    if img.width >= 100 and img.height >= 100:
+                        sig_images.append(img_path)
+                except:
+                    pass
+
+            if sig_images:
+                lines.append('')
+                lines.append('─' * 50)
+                lines.append('FIGURES')
+                lines.append('─' * 50)
+                for i, img_path in enumerate(sig_images[:6]):  # Max 6 figures
+                    lines.append('')
+                    lines.append(f'Fig {i+1}:')
+                    ascii_lines = image_to_ascii(img_path, min(50, width-8))
+                    if ascii_lines:
+                        lines.extend(ascii_lines)
+    except Exception as e:
+        pass  # Silently skip figure errors
+
+    return lines
+
+def latex_to_unicode(text):
+    import re
+    # Greek letters
+    greek = {
+        r'\alpha': 'α', r'\beta': 'β', r'\gamma': 'γ', r'\delta': 'δ',
+        r'\epsilon': 'ε', r'\zeta': 'ζ', r'\eta': 'η', r'\theta': 'θ',
+        r'\iota': 'ι', r'\kappa': 'κ', r'\lambda': 'λ', r'\mu': 'μ',
+        r'\nu': 'ν', r'\xi': 'ξ', r'\pi': 'π', r'\rho': 'ρ',
+        r'\sigma': 'σ', r'\tau': 'τ', r'\upsilon': 'υ', r'\phi': 'φ',
+        r'\chi': 'χ', r'\psi': 'ψ', r'\omega': 'ω',
+        r'\Gamma': 'Γ', r'\Delta': 'Δ', r'\Theta': 'Θ', r'\Lambda': 'Λ',
+        r'\Xi': 'Ξ', r'\Pi': 'Π', r'\Sigma': 'Σ', r'\Phi': 'Φ',
+        r'\Psi': 'Ψ', r'\Omega': 'Ω',
+    }
+    # Math symbols
+    symbols = {
+        r'\times': '×', r'\div': '÷', r'\pm': '±', r'\mp': '∓',
+        r'\cdot': '·', r'\ast': '∗', r'\star': '★',
+        r'\leq': '≤', r'\geq': '≥', r'\neq': '≠', r'\approx': '≈',
+        r'\lesssim': '≲', r'\gtrsim': '≳', r'\ll': '≪', r'\gg': '≫',
+        r'\equiv': '≡', r'\sim': '∼', r'\simeq': '≃', r'\propto': '∝',
+        r'\infty': '∞', r'\partial': '∂', r'\nabla': '∇',
+        r'\sum': 'Σ', r'\prod': 'Π', r'\int': '∫',
+        r'\sqrt': '√', r'\circ': '°', r'\deg': '°',
+        r'\rightarrow': '→', r'\leftarrow': '←', r'\leftrightarrow': '↔',
+        r'\Rightarrow': '⇒', r'\Leftarrow': '⇐', r'\Leftrightarrow': '⇔',
+        r'\forall': '∀', r'\exists': '∃', r'\in': '∈', r'\notin': '∉',
+        r'\subset': '⊂', r'\supset': '⊃', r'\cup': '∪', r'\cap': '∩',
+        r'\emptyset': '∅', r'\ldots': '…', r'\cdots': '⋯',
+        r'\prime': '′', r'\hbar': 'ℏ', r'\ell': 'ℓ',
+        r'\odot': '⊙', r'\oplus': '⊕', r'\otimes': '⊗',
+        r'\%': '%', r'\&': '&', r'\#': '#',
+        r'\log': 'log', r'\ln': 'ln', r'\exp': 'exp',
+        r'\sin': 'sin', r'\cos': 'cos', r'\tan': 'tan',
+        r'\arcsin': 'arcsin', r'\arccos': 'arccos', r'\arctan': 'arctan',
+        r'\sinh': 'sinh', r'\cosh': 'cosh', r'\tanh': 'tanh',
+        r'\max': 'max', r'\min': 'min', r'\lim': 'lim',
+        r'\det': 'det', r'\ker': 'ker', r'\dim': 'dim',
+        r'\mathrm': '', r'\mathbf': '', r'\mathit': '', r'\textrm': '',
+        r'\textit': '', r'\textbf': '', r'\emph': '',
+        r'\AA': 'Å', r'\angstrom': 'Å',
+        r'\degree': '°', r'\celsius': '℃',
+        r'\le': '≤', r'\ge': '≥', r'\ne': '≠',
+        r'\to': '→', r'\gets': '←',
+    }
+    # Superscripts
+    superscripts = {'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+                    '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+                    '+': '⁺', '-': '⁻', 'n': 'ⁿ', 'i': 'ⁱ', '*': '✱'}
+    # Subscripts
+    subscripts = {'0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
+                  '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+                  '+': '₊', '-': '₋', 'a': 'ₐ', 'e': 'ₑ', 'i': 'ᵢ',
+                  'o': 'ₒ', 'r': 'ᵣ', 'u': 'ᵤ', 'v': 'ᵥ', 'x': 'ₓ',
+                  '*': '∗', 'X': 'ₓ'}
+
+    # Apply Greek letters and symbols
+    for latex, uni in greek.items():
+        text = text.replace(latex, uni)
+    for latex, uni in symbols.items():
+        text = text.replace(latex, uni)
+
+    # Handle superscripts: ^{...} or ^x
+    def replace_super(m):
+        content = m.group(1) if m.group(1) else m.group(2)
+        return ''.join(superscripts.get(c, c) for c in content)
+    text = re.sub(r'\^{([^}]+)}|\^(\w)', replace_super, text)
+
+    # Handle subscripts: _{...} or _x
+    def replace_sub(m):
+        content = m.group(1) if m.group(1) else m.group(2)
+        return ''.join(subscripts.get(c, c) for c in content)
+    text = re.sub(r'_{([^}]+)}|_(\w)', replace_sub, text)
+
+    # Clean up $ delimiters and braces
+    text = text.replace('$', '')
+    text = re.sub(r'\\[a-zA-Z]+{([^}]*)}', r'\1', text)  # \cmd{text} -> text
+    text = text.replace('{', '').replace('}', '')
+    text = text.replace('\\,', ' ')  # thin space
+    text = text.replace('\\ ', ' ')  # explicit space
+    text = text.replace('\\!', '')   # negative space
+
+    # Common astronomy: M_* -> M∗, L_X -> Lₓ
+    text = text.replace('M*', 'M∗').replace('L*', 'L∗')
+
+    return text
+
+query = context.get('query', '').strip()
+author = context.get('author', '').strip()
+category = context.get('category', '').strip()
+title_filter = context.get('title', '').strip()
+abstract_filter = context.get('abstract', '').strip()
+limit = int(context.get('limit', 10) or 10)
+text_only = str(context.get('text', 'false')).lower() in ('true', '1', 'yes')
+
+# Build search query from inputs
+search_parts = []
+
+# Category expansion for parent categories
+cat_expansions = {
+    'astro-ph': ['astro-ph', 'astro-ph.GA', 'astro-ph.CO', 'astro-ph.EP', 'astro-ph.HE', 'astro-ph.IM', 'astro-ph.SR'],
+    'cond-mat': ['cond-mat', 'cond-mat.dis-nn', 'cond-mat.mes-hall', 'cond-mat.mtrl-sci', 'cond-mat.other', 'cond-mat.quant-gas', 'cond-mat.soft', 'cond-mat.stat-mech', 'cond-mat.str-el', 'cond-mat.supr-con'],
+    'hep': ['hep-ex', 'hep-lat', 'hep-ph', 'hep-th'],
+    'physics': ['physics.acc-ph', 'physics.ao-ph', 'physics.atm-clus', 'physics.atom-ph', 'physics.bio-ph', 'physics.chem-ph', 'physics.class-ph', 'physics.comp-ph', 'physics.data-an', 'physics.flu-dyn', 'physics.gen-ph', 'physics.geo-ph', 'physics.hist-ph', 'physics.ins-det', 'physics.med-ph', 'physics.optics', 'physics.plasm-ph', 'physics.pop-ph', 'physics.soc-ph', 'physics.space-ph'],
+}
+
+def quote_term(term):
+    """Wrap multi-word terms in %22 (double quotes) for arXiv API phrase search."""
+    t = term.strip()
+    if ' ' in t:
+        return '%22' + t.replace(' ', '+') + '%22'
+    return t
+
+if author:
+    for a in author.split(','):
+        search_parts.append(f"au:{quote_term(a)}")
+if category:
+    if category in cat_expansions:
+        cat_or = "+OR+".join([f"cat:{c}" for c in cat_expansions[category]])
+        search_parts.append(f"({cat_or})")
+    else:
+        search_parts.append(f"cat:{category}")
+if title_filter:
+    search_parts.append(f"ti:{quote_term(title_filter)}")
+if abstract_filter:
+    search_parts.append(f"abs:{quote_term(abstract_filter)}")
+if query:
+    search_parts.append(f"all:{quote_term(query)}")
+
+if not search_parts:
+    help_text = [
+        "Usage: /arxiv <query> [author=...] [category=...] [title=...] [limit=N]",
+        "",
+        "Inputs:",
+        "  query     - General search terms",
+        "  author    - Author name(s), comma-separated",
+        "  category  - arXiv category (astro-ph, astro-ph.GA, cs.AI, etc.)",
+        "  title     - Title keywords",
+        "  abstract  - Abstract keywords",
+        "  limit     - Max results (default 10)",
+        "  text      - Plain text output (true/false)",
+        "",
+        "Examples:",
+        "  /arxiv author=Agostino",
+        "  /arxiv author=Agostino category=astro-ph",
+        "  /arxiv 'active galactic nuclei' author=Urry",
+        "  /arxiv category=astro-ph.GA title='AGN feedback'",
+        "  /arxiv author='Einstein, Bohr' limit=20"
+    ]
+    context['output'] = "\n".join(help_text)
+else:
+    # Build search query
+    log(f"search_parts: {search_parts}")
+    if len(search_parts) > 1:
+        search_query = "+AND+".join(search_parts)
+    else:
+        search_query = search_parts[0]
+
+    # Build URL - spaces already handled by quote_term, just replace any remaining
+    encoded_query = search_query.replace(' ', '+')
+    url = f"https://export.arxiv.org/api/query?search_query={encoded_query}&start=0&max_results={limit}&sortBy=relevance&sortOrder=descending"
+    log(f"full URL: {url}")
+
+    try:
+        t_start = time.time()
+        data = fetch_url_with_retry(url, timeout=60)
+        t_total = time.time() - t_start
+        log(f"fetch complete: {len(data)} bytes in {t_total:.2f}s")
+
+        root = ET.fromstring(data)
+        ns = {'atom': 'http://www.w3.org/2005/Atom'}
+        entries = root.findall('atom:entry', ns)
+        log(f"parsed XML: {len(entries)} entries found")
+
+        # Check for API error responses
+        total_results_el = root.find('{http://a9.com/-/spec/opensearch/1.1/}totalResults')
+        if total_results_el is not None:
+            log(f"totalResults: {total_results_el.text}")
+
+        if not entries:
+            context['output'] = f"No papers found for: {query}"
+            log(f"no entries for query={query}")
+        elif text_only:
+            results = []
+            for i, entry in enumerate(entries, 1):
+                title = entry.find('atom:title', ns).text.strip().replace('\n', ' ')
+                summary = entry.find('atom:summary', ns).text.strip()[:300] + '...'
+                published = entry.find('atom:published', ns).text[:10]
+                authors = [a.find('atom:name', ns).text for a in entry.findall('atom:author', ns)]
+                author_str = ', '.join(authors[:6])
+                if len(authors) > 6:
+                    author_str += f' et al. ({len(authors)})'
+                link = entry.find('atom:id', ns).text
+
+                results.append(f"{i}. {title}")
+                results.append(f"   Authors: {author_str}")
+                results.append(f"   Published: {published}")
+                results.append(f"   Abstract: {summary}")
+                results.append(f"   URL: {link}")
+                results.append("")
+
+            context['output'] = f"Found {len(entries)} papers on arXiv:\n\n" + "\n".join(results)
+        else:
+            papers = []
+            for entry in entries:
+                title = entry.find('atom:title', ns).text.strip().replace('\n', ' ')
+                abstract = entry.find('atom:summary', ns).text.strip()
+                published = entry.find('atom:published', ns).text[:10]
+                updated = entry.find('atom:updated', ns).text[:10] if entry.find('atom:updated', ns) is not None else published
+                authors = [a.find('atom:name', ns).text for a in entry.findall('atom:author', ns)]
+                arxiv_id = entry.find('atom:id', ns).text
+                aid = arxiv_id.split('/')[-1]
+                pdf_link = arxiv_id.replace('/abs/', '/pdf/') + '.pdf'
+
+                # Get primary category
+                primary_cat = entry.find('{http://arxiv.org/schemas/atom}primary_category')
+                cat = primary_cat.get('term') if primary_cat is not None else ''
+
+                # Get all categories
+                all_cats = [c.get('term') for c in entry.findall('atom:category', ns)]
+
+                # Get comment (often has page count)
+                comment_el = entry.find('{http://arxiv.org/schemas/atom}comment')
+                comment = comment_el.text if comment_el is not None else ''
+
+                # Get DOI if available
+                doi_el = entry.find('{http://arxiv.org/schemas/atom}doi')
+                doi = doi_el.text if doi_el is not None else ''
+
+                # Get journal ref if available
+                journal_el = entry.find('{http://arxiv.org/schemas/atom}journal_ref')
+                journal = journal_el.text if journal_el is not None else ''
+
+                papers.append({
+                    'title': title,
+                    'authors': authors,
+                    'first_author': authors[0].split()[-1] if authors else '',
+                    'num_authors': len(authors),
+                    'abstract': abstract,
+                    'published': published,
+                    'updated': updated,
+                    'url': arxiv_id,
+                    'aid': aid,
+                    'pdf': pdf_link,
+                    'category': cat,
+                    'categories': all_cats,
+                    'comment': comment,
+                    'doi': doi,
+                    'journal': journal
+                })
+
+            # Sorting and filtering
+            sort_key = 'relevance'
+            all_papers = papers[:]
+            filter_year = None
+            filter_author = None
+
+            width, height = get_terminal_size()
+            selected = 0
+            scroll = 0
+            list_height = height - 6
+            mode = 'list'
+            detail_scroll = 0
+            pdf_scroll = 0
+            pdf_lines = []
+            input_mode = None
+            input_buffer = ''
+
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+
+            def apply_filters(papers, year, author):
+                result = papers
+                if year:
+                    result = [p for p in result if p['published'].startswith(year)]
+                if author:
+                    author_lower = author.lower()
+                    result = [p for p in result if any(author_lower in a.lower() for a in p['authors'])]
+                return result
+
+            def sort_papers(papers, key, reverse=True):
+                if key == 'date':
+                    return sorted(papers, key=lambda p: p['published'], reverse=reverse)
+                elif key == 'author':
+                    return sorted(papers, key=lambda p: p['first_author'].lower(), reverse=not reverse)
+                elif key == 'title':
+                    return sorted(papers, key=lambda p: p['title'].lower(), reverse=not reverse)
+                return papers
+
+            try:
+                tty.setcbreak(fd)
+                sys.stdout.write('\033[?25l')
+                sys.stdout.write('\033[2J\033[H')
+
+                while True:
+                    width, height = get_terminal_size()
+                    list_height = height - 6
+
+                    if mode == 'list':
+                        if selected < scroll:
+                            scroll = selected
+                        elif selected >= scroll + list_height:
+                            scroll = selected - list_height + 1
+
+                    sys.stdout.write('\033[H')
+
+                    # Header
+                    if input_mode:
+                        header = f" FILTER BY {input_mode.upper()}: {input_buffer}_ "
+                    elif mode == 'list':
+                        filter_info = []
+                        if filter_year:
+                            filter_info.append(f"year:{filter_year}")
+                        if filter_author:
+                            filter_info.append(f"author:{filter_author}")
+                        filter_str = ' '.join(filter_info)
+                        if filter_str:
+                            header = f" ARXIV: '{query}' ({len(papers)}/{len(all_papers)}) [{sort_key}] {filter_str} "
+                        else:
+                            header = f" ARXIV: '{query}' ({len(papers)} papers) [sort:{sort_key}] "
+                    else:
+                        header = f" {papers[selected]['title'][:width-4]} "
+                    sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
+
+                    if mode == 'list':
+                        # Column headers
+                        date_w = 11
+                        cat_w = 12
+                        auth_w = 30
+                        title_w = width - date_w - cat_w - auth_w - 6
+                        col_header = f" {'DATE'.ljust(date_w)} {'CAT'.ljust(cat_w)} {'AUTHORS'.ljust(auth_w)} {'TITLE'.ljust(title_w)}"
+                        sys.stdout.write('\033[90m' + col_header[:width] + '\033[0m\n')
+                        sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+
+                        for i in range(list_height):
+                            idx = scroll + i
+                            sys.stdout.write(f'\033[{4+i};1H\033[K')
+                            if idx >= len(papers):
+                                continue
+
+                            p = papers[idx]
+                            date = p['published']
+                            cat = p['category'][:cat_w-1]
+                            # Show multiple authors
+                            author_names = [a.split()[-1] for a in p['authors'][:5]]
+                            if p['num_authors'] > 5:
+                                auth = f"{', '.join(author_names)} +{p['num_authors']-5}"
+                            else:
+                                auth = ', '.join(author_names)
+                            auth = auth[:auth_w-1]
+                            title = p['title'][:title_w-1]
+
+                            line = f" {date.ljust(date_w)} {cat.ljust(cat_w)} {auth.ljust(auth_w)} {title}"
+                            line = line[:width-1]
+
+                            if idx == selected:
+                                sys.stdout.write('\033[7;1m>' + line.ljust(width-1) + '\033[0m')
+                            else:
+                                sys.stdout.write(' ' + line)
+
+                        sys.stdout.write(f'\033[{height-1};1H\033[K\033[90m{"─" * width}\033[0m')
+                        sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav Enter:View o/i/p:Open d:Download  1-3:Sort y/a:Filter c:Clear  q:Quit [{selected+1}/{len(papers)}] \033[0m')
+
+                    elif mode == 'detail':
+                        sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+                        p = papers[selected]
+                        lines = []
+                        lines.append(f'\033[1mTitle:\033[0m {latex_to_unicode(p["title"])}')
+                        lines.append('')
+                        lines.append(f"\033[1mAuthors ({p['num_authors']}):\033[0m {', '.join(p['authors'])}")
+                        lines.append(f"\033[1mPublished:\033[0m {p['published']}  \033[1mUpdated:\033[0m {p['updated']}")
+                        lines.append(f"\033[1mCategory:\033[0m {p['category']}  \033[1mAll:\033[0m {', '.join(p['categories'][:5])}")
+                        lines.append(f"\033[1mArXiv ID:\033[0m {p['aid']}")
+                        lines.append(f"\033[1mURL:\033[0m {p['url']}")
+                        lines.append(f"\033[1mPDF:\033[0m {p['pdf']}")
+                        if p['doi']:
+                            lines.append(f"\033[1mDOI:\033[0m {p['doi']}")
+                        if p['journal']:
+                            lines.append(f"\033[1mJournal:\033[0m {p['journal']}")
+                        if p['comment']:
+                            lines.append(f"\033[1mComment:\033[0m {p['comment'][:80]}")
+                        lines.append('')
+                        lines.append('\033[1mAbstract:\033[0m')
+                        abstract_rendered = latex_to_unicode(p['abstract'])
+                        wrapped = textwrap.wrap(abstract_rendered, width=width-4)
+                        lines.extend(wrapped)
+
+                        for i in range(list_height + 1):
+                            idx = detail_scroll + i
+                            sys.stdout.write(f'\033[{3+i};1H\033[K')
+                            if idx < len(lines):
+                                sys.stdout.write(f'  {lines[idx][:width-4]}')
+
+                        sys.stdout.write(f'\033[{height-1};1H\033[K\033[90m{"─" * width}\033[0m')
+                        sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Scroll  b:Back  o:Browser  i:Incognide  p:PDF  d:Download  v:TermView  q:Quit \033[0m')
+
+                    elif mode == 'pdfview':
+                        # PDF terminal view mode
+                        p = papers[selected]
+                        header = f" PDF VIEW: {p['aid']} "
+                        sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
+                        sys.stdout.write(f'\033[90m{"─" * width}\033[0m\n')
+
+                        view_height = height - 4
+                        for i in range(view_height):
+                            idx = pdf_scroll + i
+                            sys.stdout.write(f'\033[{3+i};1H\033[K')
+                            if idx < len(pdf_lines):
+                                line = pdf_lines[idx]
+                                # Apply LaTeX rendering to text
+                                line = latex_to_unicode(line)
+                                sys.stdout.write(f'  {line[:width-4]}')
+
+                        sys.stdout.write(f'\033[{height-1};1H\033[K\033[90m{"─" * width}\033[0m')
+                        pct = int((pdf_scroll / max(1, len(pdf_lines) - view_height)) * 100) if len(pdf_lines) > view_height else 100
+                        sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k/PgDn/PgUp:Scroll  b:Back  d:Download  q:Quit  [{pct}%] \033[0m')
+
+                    sys.stdout.flush()
+
+                    c = sys.stdin.read(1)
+
+                    # Handle input mode (for filters)
+                    if input_mode:
+                        if c in ('\r', '\n'):
+                            if input_mode == 'year' and input_buffer:
+                                filter_year = input_buffer
+                            elif input_mode == 'author' and input_buffer:
+                                filter_author = input_buffer
+                            papers = apply_filters(all_papers, filter_year, filter_author)
+                            selected = 0
+                            scroll = 0
+                            input_mode = None
+                            input_buffer = ''
+                            sys.stdout.write('\033[2J\033[H')
+                        elif c == '\x1b':
+                            input_mode = None
+                            input_buffer = ''
+                            sys.stdout.write('\033[2J\033[H')
+                        elif c == '\x7f' or c == '\b':
+                            input_buffer = input_buffer[:-1]
+                        elif c.isprintable():
+                            input_buffer += c
+                        continue
+
+                    if c == '\x1b':
+                        c2 = sys.stdin.read(1)
+                        if c2 == '[':
+                            c3 = sys.stdin.read(1)
+                            if c3 == 'A':  # Up
+                                if mode == 'list' and selected > 0:
+                                    selected -= 1
+                                elif mode == 'detail' and detail_scroll > 0:
+                                    detail_scroll -= 1
+                                elif mode == 'pdfview' and pdf_scroll > 0:
+                                    pdf_scroll -= 1
+                            elif c3 == 'B':  # Down
+                                if mode == 'list' and selected < len(papers) - 1:
+                                    selected += 1
+                                elif mode == 'detail':
+                                    detail_scroll += 1
+                                elif mode == 'pdfview':
+                                    pdf_scroll += 1
+                            elif c3 == '5':  # Page Up
+                                sys.stdin.read(1)  # consume ~
+                                if mode == 'pdfview':
+                                    pdf_scroll = max(0, pdf_scroll - (height - 6))
+                            elif c3 == '6':  # Page Down
+                                sys.stdin.read(1)  # consume ~
+                                if mode == 'pdfview':
+                                    pdf_scroll += height - 6
+                        else:
+                            if mode == 'pdfview':
+                                mode = 'detail'
+                                sys.stdout.write('\033[2J\033[H')
+                            elif mode == 'detail':
+                                mode = 'list'
+                                sys.stdout.write('\033[2J\033[H')
+                            else:
+                                context['output'] = "Cancelled."
+                                break
+                        continue
+
+                    if c == 'q' or c == '\x03':
+                        context['output'] = f"Searched: {query} ({len(papers)} results)"
+                        break
+                    elif c == 'k':
+                        if mode == 'list' and selected > 0:
+                            selected -= 1
+                        elif mode == 'detail' and detail_scroll > 0:
+                            detail_scroll -= 1
+                        elif mode == 'pdfview' and pdf_scroll > 0:
+                            pdf_scroll -= 1
+                    elif c == 'j':
+                        if mode == 'list' and selected < len(papers) - 1:
+                            selected += 1
+                        elif mode == 'detail':
+                            detail_scroll += 1
+                        elif mode == 'pdfview':
+                            pdf_scroll += 1
+                    elif c in ('\r', '\n') and mode == 'list':
+                        mode = 'detail'
+                        detail_scroll = 0
+                        sys.stdout.write('\033[2J\033[H')
+                    elif c == 'b':
+                        if mode == 'pdfview':
+                            mode = 'detail'
+                            sys.stdout.write('\033[2J\033[H')
+                        elif mode == 'detail':
+                            mode = 'list'
+                            sys.stdout.write('\033[2J\033[H')
+                    elif c == 'o':
+                        p = papers[selected]
+                        try:
+                            subprocess.Popen(['xdg-open', p['url']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        except:
+                            pass
+                    elif c == 'i':
+                        p = papers[selected]
+                        try:
+                            subprocess.Popen(['incognidev', p['url']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        except:
+                            try:
+                                subprocess.Popen(['incognidev', '--url', p['url']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            except:
+                                pass
+                    elif c == 'p':
+                        p = papers[selected]
+                        try:
+                            subprocess.Popen(['xdg-open', p['pdf']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        except:
+                            pass
+                    elif c == 'd':
+                        # Download PDF to current directory
+                        p = papers[selected]
+                        pdf_url = p['pdf']
+                        # Create filename from arxiv ID
+                        arxiv_id = p['aid'].replace('/', '_').replace('.', '_')
+                        filename = arxiv_id + '.pdf'
+                        filepath = os.path.join(os.getcwd(), filename)
+                        try:
+                            sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m Downloading {filename}... \033[0m')
+                            sys.stdout.flush()
+                            urllib.request.urlretrieve(pdf_url, filepath)
+                            sys.stdout.write(f'\033[{height};1H\033[K\033[42;30m Downloaded: {filepath} \033[0m')
+                            sys.stdout.flush()
+                            import time
+                            time.sleep(1)
+                        except Exception as e:
+                            sys.stdout.write(f'\033[{height};1H\033[K\033[41;37m Download failed: {str(e)[:50]} \033[0m')
+                            sys.stdout.flush()
+                            import time
+                            time.sleep(2)
+                    elif c == 'v':
+                        # View PDF in terminal (text + ASCII figures)
+                        p = papers[selected]
+                        pdf_url = p['pdf']
+                        import tempfile
+                        try:
+                            sys.stdout.write(f'\033[{height};1H\033[K\033[43;30m Fetching PDF for terminal view... \033[0m')
+                            sys.stdout.flush()
+                            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+                                tmp_path = tmp.name
+                                urllib.request.urlretrieve(pdf_url, tmp_path)
+                            pdf_lines = render_pdf_terminal(tmp_path, width-4)
+                            os.unlink(tmp_path)
+                            # Switch to PDF view mode
+                            mode = 'pdfview'
+                            pdf_scroll = 0
+                            sys.stdout.write('\033[2J\033[H')
+                        except Exception as e:
+                            sys.stdout.write(f'\033[{height};1H\033[K\033[41;37m PDF view failed: {str(e)[:50]} \033[0m')
+                            sys.stdout.flush()
+                            import time
+                            time.sleep(2)
+                    # Filter keys
+                    elif c == 'y' and mode == 'list':
+                        input_mode = 'year'
+                        input_buffer = ''
+                    elif c == 'a' and mode == 'list':
+                        input_mode = 'author'
+                        input_buffer = ''
+                    elif c == 'c' and mode == 'list':
+                        filter_year = None
+                        filter_author = None
+                        papers = all_papers[:]
+                        selected = 0
+                        scroll = 0
+                        sys.stdout.write('\033[2J\033[H')
+                    # Sorting keys
+                    elif c == '1':
+                        sort_key = 'date'
+                        papers = sort_papers(papers, 'date', True)
+                        selected = 0
+                        scroll = 0
+                        sys.stdout.write('\033[2J\033[H')
+                    elif c == '2':
+                        sort_key = 'author'
+                        papers = sort_papers(papers, 'author', False)
+                        selected = 0
+                        scroll = 0
+                        sys.stdout.write('\033[2J\033[H')
+                    elif c == '3':
+                        sort_key = 'title'
+                        papers = sort_papers(papers, 'title', False)
+                        selected = 0
+                        scroll = 0
+                        sys.stdout.write('\033[2J\033[H')
+                    elif c == '0':
+                        sort_key = 'relevance'
+                        papers = apply_filters(all_papers, filter_year, filter_author)
+                        selected = 0
+                        scroll = 0
+                        sys.stdout.write('\033[2J\033[H')
+
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                sys.stdout.write('\033[?25h')
+                sys.stdout.write('\033[2J\033[H')
+                sys.stdout.flush()
+
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        log(f"EXCEPTION: {type(e).__name__}: {e}")
+        log(tb)
+        context['output'] = f"arXiv error: {e}\n{tb}"

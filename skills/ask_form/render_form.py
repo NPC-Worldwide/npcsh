@@ -1,0 +1,229 @@
+import os
+import sys
+import json
+
+title = {{ title | tojson }}
+fields_raw = {{ fields | tojson }}
+
+try:
+    field_defs = json.loads(fields_raw) if isinstance(fields_raw, str) else fields_raw
+except (json.JSONDecodeError, TypeError):
+    field_defs = []
+
+if not field_defs:
+    context['output'] = json.dumps({"error": "No fields defined"})
+
+elif not sys.stdin.isatty():
+    context['output'] = json.dumps({"error": "Form requires interactive terminal"})
+
+else:
+    import tty
+    import termios
+    from npcsh.ui import read_key
+
+    class FormState:
+        def __init__(self, fields):
+            self.fields = fields
+            self.sel = 0
+            self.values = {}
+            self.editing = False
+            self.edit_buf = ""
+            self.option_sel = 0
+            self.option_open = False
+            self.cancelled = False
+            self.submitted = False
+
+            # Initialize default values
+            for f in self.fields:
+                name = f['name']
+                ftype = f.get('type', 'text')
+                default = f.get('default', '')
+                if ftype == 'multiselect':
+                    self.values[name] = list(default) if isinstance(default, list) else []
+                elif ftype == 'select':
+                    self.values[name] = default if default else (f.get('options', [''])[0] if f.get('options') else '')
+                else:
+                    self.values[name] = str(default) if default else ''
+
+    st = FormState(field_defs)
+
+    def get_size():
+        try:
+            s = os.get_terminal_size()
+            return s.columns, s.lines
+        except:
+            return 80, 24
+
+    def render():
+        w, h = get_size()
+        out = []
+        out.append("\033[H\033[2J")
+
+        # Header
+        header = " " + title + " "
+        out.append("\033[1;1H\033[7;1m" + header.ljust(w) + "\033[0m")
+        out.append("\033[2;1H")
+
+        vis = h - 5
+        for i in range(min(vis, len(st.fields))):
+            row = 3 + i
+            out.append("\033[" + str(row) + ";1H\033[K")
+            f = st.fields[i]
+            label = f.get('label', f['name'])
+            ftype = f.get('type', 'text')
+            name = f['name']
+            required = f.get('required', False)
+            req_mark = " *" if required else ""
+
+            if ftype == 'text':
+                val = st.values.get(name, '')
+                if st.editing and i == st.sel:
+                    display = "  " + label + req_mark + ": \033[7m " + st.edit_buf + " \033[0m"
+                else:
+                    display = "  " + label + req_mark + ": " + (val if val else "\033[90m(empty)\033[0m")
+            elif ftype == 'select':
+                val = st.values.get(name, '')
+                opts = f.get('options', [])
+                if st.option_open and i == st.sel:
+                    display = "  " + label + req_mark + ":"
+                    out.append(("\033[7m> " if i == st.sel else "  ") + display + "\033[0m")
+                    # Render inline options
+                    for oi, opt in enumerate(opts):
+                        row += 1
+                        out.append("\033[" + str(row) + ";1H\033[K")
+                        marker = "\033[32m>\033[0m " if oi == st.option_sel else "  "
+                        check = "\033[1m" + opt + "\033[0m" if opt == val else opt
+                        out.append("      " + marker + check)
+                    continue
+                else:
+                    display = "  " + label + req_mark + ": " + (val if val else "\033[90m(none)\033[0m")
+            elif ftype == 'multiselect':
+                selected = st.values.get(name, [])
+                if st.option_open and i == st.sel:
+                    display = "  " + label + req_mark + ":"
+                    out.append(("\033[7m> " if i == st.sel else "  ") + display + "\033[0m")
+                    opts = f.get('options', [])
+                    for oi, opt in enumerate(opts):
+                        row += 1
+                        out.append("\033[" + str(row) + ";1H\033[K")
+                        marker = "\033[32m>\033[0m " if oi == st.option_sel else "  "
+                        check = "[x]" if opt in selected else "[ ]"
+                        out.append("      " + marker + check + " " + opt)
+                    continue
+                else:
+                    summary = ", ".join(selected) if selected else "\033[90m(none)\033[0m"
+                    display = "  " + label + req_mark + ": " + summary
+            else:
+                val = st.values.get(name, '')
+                display = "  " + label + req_mark + ": " + str(val)
+
+            if i == st.sel:
+                out.append("\033[7m> " + display + "\033[0m")
+            else:
+                out.append("  " + display)
+
+        # Status / footer
+        out.append("\033[" + str(h - 2) + ";1H\033[K\033[90m" + ("-" * w) + "\033[0m")
+        if st.editing:
+            footer = " Type value  Enter:Confirm  Esc:Cancel "
+        elif st.option_open:
+            ftype = st.fields[st.sel].get('type', 'text')
+            if ftype == 'multiselect':
+                footer = " j/k:Nav  Space:Toggle  Enter:Done  Esc:Close "
+            else:
+                footer = " j/k:Nav  Enter:Select  Esc:Close "
+        else:
+            footer = " j/k:Nav  Enter:Edit  Ctrl+D:Submit  q:Cancel "
+        out.append("\033[" + str(h - 1) + ";1H\033[K " + str(len([f for f in st.fields if st.values.get(f['name'])])) + "/" + str(len(st.fields)) + " filled")
+        out.append("\033[" + str(h) + ";1H\033[K\033[7m" + footer.ljust(w) + "\033[0m")
+
+        sys.stdout.write(''.join(out))
+        sys.stdout.flush()
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.write("\033[?25l")
+        render()
+
+        while not st.submitted and not st.cancelled:
+            key = read_key(fd, poll_timeout=0.1)
+            if key is None:
+                continue
+
+            if st.editing:
+                if key == '\r' or key == '\n':
+                    name = st.fields[st.sel]['name']
+                    st.values[name] = st.edit_buf
+                    st.editing = False
+                elif key == 'esc':
+                    st.editing = False
+                elif key == '\x7f' or key == '\x08':
+                    if st.edit_buf:
+                        st.edit_buf = st.edit_buf[:-1]
+                elif len(key) == 1 and key >= ' ':
+                    st.edit_buf += key
+                render()
+                continue
+
+            if st.option_open:
+                f = st.fields[st.sel]
+                opts = f.get('options', [])
+                ftype = f.get('type', 'text')
+
+                if key == 'esc':
+                    st.option_open = False
+                elif key in ('down', 'j') and st.option_sel < len(opts) - 1:
+                    st.option_sel += 1
+                elif key in ('up', 'k') and st.option_sel > 0:
+                    st.option_sel -= 1
+                elif key == ' ' and ftype == 'multiselect':
+                    opt = opts[st.option_sel]
+                    selected = st.values.get(f['name'], [])
+                    if opt in selected:
+                        selected.remove(opt)
+                    else:
+                        selected.append(opt)
+                    st.values[f['name']] = selected
+                elif key == '\r' or key == '\n':
+                    if ftype == 'select':
+                        st.values[f['name']] = opts[st.option_sel] if opts else ''
+                    st.option_open = False
+                render()
+                continue
+
+            if key == 'q':
+                st.cancelled = True
+            elif key == '\x04':
+                st.submitted = True
+            elif key in ('down', 'j') and st.sel < len(st.fields) - 1:
+                st.sel += 1
+            elif key in ('up', 'k') and st.sel > 0:
+                st.sel -= 1
+            elif key == '\r' or key == '\n':
+                f = st.fields[st.sel]
+                ftype = f.get('type', 'text')
+                if ftype == 'text':
+                    st.editing = True
+                    st.edit_buf = st.values.get(f['name'], '')
+                elif ftype in ('select', 'multiselect'):
+                    st.option_open = True
+                    st.option_sel = 0
+                    opts = f.get('options', [])
+                    cur = st.values.get(f['name'], '')
+                    if ftype == 'select' and cur in opts:
+                        st.option_sel = opts.index(cur)
+
+            render()
+
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        sys.stdout.write("\033[?25h\033[2J\033[H")
+        sys.stdout.flush()
+
+    if st.cancelled:
+        context['output'] = json.dumps({"cancelled": True})
+    else:
+        context['output'] = json.dumps(st.values)

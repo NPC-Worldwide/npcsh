@@ -1,0 +1,36 @@
+import os
+from sqlalchemy import create_engine
+from npcpy.memory.kg_population import load_population, save_population
+
+_q = (context.get('query') or '').strip()
+_pid = (context.get('population_id') or '').strip()
+_top_k = int(context.get('top_k', 15) or 15)
+
+if not _q or not _pid:
+    output = "Error: both query and population_id are required"
+else:
+    _db = os.getenv('NPCSH_DB_PATH', os.path.expanduser('~/npcsh_history.db'))
+    _engine = create_engine('sqlite:///' + _db)
+    _mgr = load_population(_engine, _pid)
+    if not _mgr:
+        output = f"Error: population '{_pid}' not found. List available via /api/kg/populations."
+    else:
+        _rankings = _mgr.query_and_rank(_q)
+        try: save_population(_engine, _pid, _pid, _mgr)
+        except Exception: pass
+        import json as _json
+        output = _json.dumps({
+            'population_id': _pid,
+            'candidates': [
+                {
+                    'rank': c.get('rank'),
+                    'individual_id': c['individual'].individual_id,
+                    'response': c['response'],
+                    'n_facts': c['n_facts'],
+                    'context_facts': c['context_facts'][:_top_k],
+                    'lambda_depth': c['individual'].genome.lambda_depth,
+                    'lambda_breadth': c['individual'].genome.lambda_breadth,
+                }
+                for c in _rankings
+            ],
+        }, indent=2)

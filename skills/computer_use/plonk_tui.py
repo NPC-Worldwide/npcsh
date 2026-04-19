@@ -1,0 +1,626 @@
+import os
+import sys
+try:
+    import tty
+    import termios
+except ImportError:
+    tty = None
+    termios = None
+import select
+import time
+import json
+import platform
+from datetime import datetime
+
+from npcpy.llm_funcs import get_llm_response
+
+# Helper to log jinx executions to DB
+def _log_jinx(trigger_id, npc_name, inputs, output, status="success", error_msg=None):
+    try:
+        if state and hasattr(state, 'command_history') and state.command_history is not None and hasattr(state.command_history, 'save_jinx_execution'):
+            _conv_id = getattr(state, 'conversation_id', None) or ''
+            state.command_history.save_jinx_execution(
+                triggering_message_id=f"{_conv_id}-{trigger_id}",
+                conversation_id=_conv_id,
+                npc_name=npc_name,
+                jinx_name="plonk",
+                jinx_inputs=inputs,
+                jinx_output=str(output) if output else "",
+                status=status,
+                team_name=state.team.name if state and hasattr(state, 'team') and state.team else None,
+                error_message=error_msg,
+            )
+    except Exception:
+        pass
+
+try:
+    from npcpy.data.image import capture_screenshot
+    from npcpy.work.desktop import perform_action
+    VISION_AVAILABLE = True
+except ImportError:
+    VISION_AVAILABLE = False
+
+npc = context.get('npc')
+team = context.get('team')
+messages = context.get('messages', [])
+
+if isinstance(npc, str) and team:
+    npc = team.get(npc) if hasattr(team, 'get') else None
+elif isinstance(npc, str):
+    npc = None
+
+vision_model = context.get('vmodel') or (npc.model if npc and hasattr(npc, 'model') else None)
+vision_provider = context.get('vprovider') or (npc.provider if npc and hasattr(npc, 'provider') else None)
+max_iterations = int(context.get('max_iterations', 10))
+
+system_name = platform.system()
+if system_name == "Windows":
+    app_examples = "start firefox, notepad, calc"
+elif system_name == "Darwin":
+    app_examples = "open -a Firefox, open -a TextEdit"
+else:
+    app_examples = "firefox &, gedit &, gnome-calculator &"
+
+json_schema_example = '{"action":"click","x":50,"y":30,"reason":"Click the URL bar"}'
+
+# ========== State ==========
+class PlonkState:
+    def __init__(self):
+        self.tasks = []       # [{"text":str, "status":"pending|running|done|failed", "actions":[]}]
+        self.sel = 0
+        self.scroll = 0
+        self.panel = 0        # 0=tasks, 1=actions
+        self.mode = 'idle'    # idle, input, running, paused, step
+        self.input_buf = ""
+        self.input_cursor = 0
+        self.current_task = -1
+        self.iteration = 0
+        self.max_iter = max_iterations
+        self.status = "Ready"
+        self.action_scroll = 0
+        self.last_screenshot = ""
+
+ui = PlonkState()
+
+# ========== Helpers ==========
+def get_size():
+    try:
+        s = os.get_terminal_size()
+        return s.columns, s.lines
+    except:
+        return 80, 24
+
+def add_task(text):
+    ui.tasks.append({"text": text.strip(), "status": "pending", "actions": []})
+
+def delete_task():
+    if ui.tasks and ui.mode == 'idle':
+        del ui.tasks[ui.sel]
+        if ui.sel >= len(ui.tasks):
+            ui.sel = max(0, len(ui.tasks) - 1)
+
+def get_current_actions():
+    if ui.panel == 1 and 0 <= ui.sel < len(ui.tasks):
+        return ui.tasks[ui.sel].get('actions', [])
+    if ui.current_task >= 0 and ui.current_task < len(ui.tasks):
+        return ui.tasks[ui.current_task].get('actions', [])
+    return []
+
+# ========== Automation ==========
+def run_one_step():
+    if ui.current_task < 0 or ui.current_task >= len(ui.tasks):
+        ui.mode = 'idle'
+        ui.status = "No task"
+        return
+
+    task = ui.tasks[ui.current_task]
+
+    if ui.iteration >= ui.max_iter:
+        task['status'] = 'failed'
+        task['actions'].append({"action": "fail", "reason": "Max iterations reached"})
+        advance_to_next_task()
+        return
+
+    if not VISION_AVAILABLE:
+        task['status'] = 'failed'
+        task['actions'].append({"action": "fail", "reason": "Vision/desktop modules not available"})
+        advance_to_next_task()
+        return
+
+    ui.iteration += 1
+    ui.status = "Capturing screen..."
+    render_screen()
+
+    try:
+        ss = capture_screenshot(full=True)
+        if not ss or 'file_path' not in ss:
+            task['actions'].append({"action": "fail", "reason": "Screenshot failed"})
+            task['status'] = 'failed'
+            advance_to_next_task()
+            return
+
+        screenshot_path = ss['file_path']
+        ui.last_screenshot = screenshot_path
+
+        history_context = ""
+        if task['actions']:
+            history_context = "\nPrevious actions:\n"
+            for i, act in enumerate(task['actions'][-8:], 1):
+                history_context += "  " + str(i) + ". " + act.get('action', '?')
+                if act.get('x'):
+                    history_context += " at (" + str(act.get('x', '?')) + ", " + str(act.get('y', '?')) + ")"
+                if act.get('text'):
+                    history_context += ' "' + act.get('text', '')[:50] + '"'
+                if act.get('command'):
+                    history_context += ' [' + act.get('command', '')[:30] + ']'
+                history_context += " - " + act.get('reason', '') + "\n"
+            # Detect repetition: if last 3 actions are the same type, warn
+            recent = task['actions'][-3:]
+            if len(recent) == 3 and all(a.get('action') == recent[0].get('action') for a in recent):
+                history_context += "\n*** WARNING: You have repeated '" + recent[0].get('action', '?') + "' 3 times. "
+                history_context += "This is NOT working. You MUST try a completely different approach. ***\n"
+
+        prompt = "You are a GUI automation assistant. Analyze this screenshot and determine the next action.\n\n"
+        prompt += "CRITICAL RULES:\n"
+        prompt += "1. VERIFY: Check the screenshot BEFORE acting. Does it show the result of your last action? If not, wait.\n"
+        prompt += "2. NO REPEATS: If an action failed or had no effect, try a DIFFERENT approach. Never repeat the same action.\n"
+        prompt += "3. FULL TEXT: Always type the COMPLETE text in a single 'type' action. Never truncate or split text.\n"
+        prompt += "4. FOCUS FIRST: Before typing, make sure the target field is focused (click it or use keyboard shortcut).\n\n"
+        prompt += "KEYBOARD SHORTCUTS (use 'key' action with these):\n"
+        prompt += "- ctrl+l or F6: Focus browser address/search bar\n"
+        prompt += "- ctrl+a: Select all text in current field\n"
+        prompt += "- ctrl+t: New browser tab\n"
+        prompt += "- tab/shift+tab: Move between form fields\n"
+        prompt += "- escape: Close popups, cancel autocomplete\n\n"
+        prompt += "TASK: " + task['text'] + "\n"
+        prompt += history_context + "\n"
+        prompt += "Available actions:\n"
+        prompt += "- click: Click at x,y (0-100 % of screen). Fields: x, y\n"
+        prompt += "- type: Type text into focused field. Fields: text (MUST be complete text)\n"
+        prompt += "- key: Press key(s). Fields: text (e.g. 'enter', 'ctrl+l', 'tab', 'escape')\n"
+        prompt += "- launch: Launch application. Fields: command (e.g. " + app_examples + ")\n"
+        prompt += "- wait: Wait seconds. Fields: duration\n"
+        prompt += "- done: Task completed\n"
+        prompt += "- fail: Task impossible\n\n"
+        prompt += "Respond with JSON, e.g.: " + json_schema_example
+
+        ui.status = "Thinking... (iter " + str(ui.iteration) + "/" + str(ui.max_iter) + ")"
+        render_screen()
+
+        resp = get_llm_response(
+            prompt,
+            model=vision_model,
+            provider=vision_provider,
+            images=[screenshot_path],
+            format="json",
+            npc=npc
+        )
+
+        action_response = resp.get('response', {})
+        if isinstance(action_response, str):
+            try:
+                action_response = json.loads(action_response)
+            except:
+                task['actions'].append({"action": "error", "reason": "Invalid JSON from model"})
+                _log_jinx(f"plonk-task-{ui.current_task}-iter-{ui.iteration}",
+                          npc.name if npc and hasattr(npc, 'name') else "plonk",
+                          {"task": task['text'], "iteration": ui.iteration, "type": "analysis"},
+                          str(resp.get('response', '')), status="error", error_msg="Invalid JSON from model")
+                ui.status = "Bad response, retrying..."
+                return
+
+        action = action_response.get('action', 'fail')
+        reason = action_response.get('reason', '')
+
+        _npc_name = npc.name if npc and hasattr(npc, 'name') else "plonk"
+        _log_jinx(f"plonk-task-{ui.current_task}-iter-{ui.iteration}",
+                  _npc_name,
+                  {"task": task['text'], "iteration": ui.iteration, "screenshot": screenshot_path,
+                   "type": "analysis"},
+                  json.dumps(action_response))
+
+        if action == 'done':
+            task['status'] = 'done'
+            task['actions'].append({"action": "done", "reason": reason})
+            _log_jinx(f"plonk-task-{ui.current_task}-done", _npc_name,
+                      {"task": task['text'], "type": "task_complete", "total_actions": len(task['actions'])},
+                      reason)
+            advance_to_next_task()
+            return
+
+        if action == 'fail':
+            task['status'] = 'failed'
+            task['actions'].append({"action": "fail", "reason": reason})
+            _log_jinx(f"plonk-task-{ui.current_task}-fail", _npc_name,
+                      {"task": task['text'], "type": "task_failed", "total_actions": len(task['actions'])},
+                      reason, status="error", error_msg=reason)
+            advance_to_next_task()
+            return
+
+        # Execute the action
+        act_record = {"action": action, "reason": reason}
+
+        if action == 'click':
+            x, y = action_response.get('x', 50), action_response.get('y', 50)
+            perform_action({"type": "click", "x": x, "y": y})
+            act_record['x'] = x
+            act_record['y'] = y
+        elif action == 'type':
+            txt = action_response.get('text', '')
+            perform_action({"type": "type", "text": txt})
+            act_record['text'] = txt
+        elif action == 'key':
+            key = action_response.get('text', 'enter')
+            # Detect combo keys like ctrl+l, ctrl+a, shift+tab
+            if '+' in key:
+                parts = [k.strip() for k in key.split('+')]
+                perform_action({"type": "hotkey", "keys": parts})
+            else:
+                perform_action({"type": "key", "keys": key})
+            act_record['key'] = key
+        elif action == 'launch':
+            cmd = action_response.get('command', '')
+            perform_action({"type": "shell", "command": cmd})
+            act_record['command'] = cmd
+            time.sleep(2)
+        elif action == 'wait':
+            dur = action_response.get('duration', 1)
+            time.sleep(dur)
+            act_record['duration'] = dur
+
+        task['actions'].append(act_record)
+        ui.status = action + " - " + reason[:40]
+        # Wait for UI to settle after state-changing actions
+        if action in ('key', 'click'):
+            time.sleep(2.0)
+        elif action == 'type':
+            time.sleep(0.5)
+        else:
+            time.sleep(0.3)
+
+        if ui.mode == 'step':
+            ui.mode = 'paused'
+            ui.status = "Paused (step done)"
+
+    except Exception as e:
+        task['actions'].append({"action": "error", "reason": str(e)})
+        _log_jinx(f"plonk-task-{ui.current_task}-iter-{ui.iteration}-error",
+                  npc.name if npc and hasattr(npc, 'name') else "plonk",
+                  {"task": task['text'] if task else "unknown", "iteration": ui.iteration, "type": "error"},
+                  str(e), status="error", error_msg=str(e))
+        ui.status = "Error: " + str(e)[:40]
+
+def advance_to_next_task():
+    # Find next pending task
+    for i in range(len(ui.tasks)):
+        if ui.tasks[i]['status'] == 'pending':
+            start_task(i)
+            return
+    # All done
+    ui.mode = 'idle'
+    ui.current_task = -1
+    done_count = sum(1 for t in ui.tasks if t['status'] == 'done')
+    fail_count = sum(1 for t in ui.tasks if t['status'] == 'failed')
+    ui.status = "Complete: " + str(done_count) + " done, " + str(fail_count) + " failed"
+
+def start_task(idx):
+    ui.current_task = idx
+    ui.tasks[idx]['status'] = 'running'
+    ui.iteration = 0
+    ui.mode = 'running'
+    ui.status = "Running: " + ui.tasks[idx]['text'][:30]
+
+def start_selected():
+    if not ui.tasks:
+        return
+    if ui.tasks[ui.sel]['status'] in ('pending', 'failed'):
+        ui.tasks[ui.sel]['status'] = 'pending'
+        ui.tasks[ui.sel]['actions'] = []
+        start_task(ui.sel)
+
+def run_all():
+    if not ui.tasks:
+        return
+    for t in ui.tasks:
+        if t['status'] != 'done':
+            t['status'] = 'pending'
+            t['actions'] = []
+    # Find first pending
+    for i, t in enumerate(ui.tasks):
+        if t['status'] == 'pending':
+            start_task(i)
+            return
+
+# ========== Rendering ==========
+def render_screen():
+    width, height = get_size()
+    out = []
+    out.append("\033[H")
+
+    # Header
+    mode_str = ui.mode.upper()
+    if ui.mode == 'running' and ui.current_task >= 0:
+        mode_str = "RUNNING [" + str(ui.iteration) + "/" + str(ui.max_iter) + "]"
+    header = " PLONK - Visual Task Automation "
+    mode_display = " [" + mode_str + "] "
+    out.append("\033[1;1H\033[7;1m" + header.ljust(width) + "\033[0m")
+    out.append("\033[1;" + str(width - len(mode_display) - 1) + "H\033[33;1m" + mode_display + "\033[0m")
+
+    # Split: top = tasks, bottom = actions
+    split = max(6, (height - 4) // 2)
+    task_h = split - 2
+    action_h = height - split - 4
+
+    # ── Tasks panel ──
+    task_label = " Tasks (" + str(len(ui.tasks)) + ") "
+    if ui.panel == 0:
+        out.append("\033[3;1H\033[36;1m" + task_label + "\033[90m" + ("-" * (width - len(task_label))) + "\033[0m")
+    else:
+        out.append("\033[3;1H\033[90m" + task_label + ("-" * (width - len(task_label))) + "\033[0m")
+
+    if ui.mode == 'input':
+        # Show input line
+        out.append("\033[4;1H\033[K  New task: \033[7m " + ui.input_buf + " \033[0m")
+        for i in range(1, task_h):
+            out.append("\033[" + str(4+i) + ";1H\033[K")
+    elif not ui.tasks:
+        out.append("\033[4;1H\033[K\033[90m  No tasks. Press 'a' to add a task.\033[0m")
+        for i in range(1, task_h):
+            out.append("\033[" + str(4+i) + ";1H\033[K")
+    else:
+        if ui.sel < ui.scroll:
+            ui.scroll = ui.sel
+        elif ui.sel >= ui.scroll + task_h:
+            ui.scroll = ui.sel - task_h + 1
+
+        for i in range(task_h):
+            idx = ui.scroll + i
+            row = 4 + i
+            out.append("\033[" + str(row) + ";1H\033[K")
+            if idx >= len(ui.tasks):
+                continue
+
+            t = ui.tasks[idx]
+            status = t['status']
+            icon = {"pending": "\033[90m-", "running": "\033[33m>", "done": "\033[32m+", "failed": "\033[31mx"}.get(status, " ")
+            action_count = str(len(t.get('actions', [])))
+            text = t['text'][:width - 25]
+
+            line = "  " + icon + "\033[0m " + text + " \033[90m[" + status + "] (" + action_count + " acts)\033[0m"
+
+            if idx == ui.sel and ui.panel == 0:
+                out.append("\033[7m>" + line + "\033[0m")
+            else:
+                out.append(" " + line)
+
+    # ── Actions panel ──
+    action_row = 3 + split
+    acts = get_current_actions()
+    act_label = " Actions (" + str(len(acts)) + ") "
+    if ui.panel == 1:
+        out.append("\033[" + str(action_row) + ";1H\033[36;1m" + act_label + "\033[90m" + ("-" * (width - len(act_label))) + "\033[0m")
+    else:
+        out.append("\033[" + str(action_row) + ";1H\033[90m" + act_label + ("-" * (width - len(act_label))) + "\033[0m")
+
+    if not acts:
+        out.append("\033[" + str(action_row+1) + ";1H\033[K\033[90m  No actions yet.\033[0m")
+        for i in range(1, action_h):
+            out.append("\033[" + str(action_row+1+i) + ";1H\033[K")
+    else:
+        if ui.action_scroll < 0:
+            ui.action_scroll = 0
+
+        for i in range(action_h):
+            idx = ui.action_scroll + i
+            row = action_row + 1 + i
+            out.append("\033[" + str(row) + ";1H\033[K")
+            if idx >= len(acts):
+                continue
+
+            a = acts[idx]
+            action = a.get('action', '?')
+            reason = a.get('reason', '')[:width - 35]
+            coords = ""
+            if a.get('x') is not None:
+                coords = "(" + str(a.get('x', '')) + "," + str(a.get('y', '')) + ") "
+            elif a.get('text'):
+                coords = '"' + str(a['text'])[:40] + '" '
+            elif a.get('key'):
+                coords = '[' + str(a['key']) + '] '
+            elif a.get('command'):
+                coords = str(a['command'])[:20] + ' '
+
+            act_color = {"click": "\033[33m", "type": "\033[36m", "key": "\033[35m",
+                         "launch": "\033[34m", "done": "\033[32m", "fail": "\033[31m",
+                         "error": "\033[31m", "wait": "\033[90m"}.get(action, "")
+
+            line = "  " + str(idx+1) + ". " + act_color + action + "\033[0m " + coords + "\033[90m" + reason + "\033[0m"
+
+            if idx == ui.action_scroll and ui.panel == 1:
+                out.append("\033[7m " + line + "\033[0m")
+            else:
+                out.append(" " + line)
+
+    # ── Status bar ──
+    out.append("\033[" + str(height-2) + ";1H\033[K\033[90m" + ("-" * width) + "\033[0m")
+    status_line = " " + ui.status + "  |  Model: " + str(vision_model) + "  |  Max: " + str(ui.max_iter)
+    out.append("\033[" + str(height-1) + ";1H\033[K" + status_line[:width])
+
+    # ── Footer ──
+    if ui.mode == 'input':
+        footer = " Type task, Enter:Confirm  Esc:Cancel "
+    elif ui.mode in ('running', 'step'):
+        footer = " p:Pause  s:Step  Q:Abort  Tab:Panel  j/k:Scroll "
+    elif ui.mode == 'paused':
+        footer = " r:Resume  s:Step  Q:Abort  Tab:Panel  j/k:Scroll "
+    else:
+        footer = " a:Add  d:Delete  Enter:Run  R:RunAll  Tab:Panel  j/k:Nav  q:Quit "
+    out.append("\033[" + str(height) + ";1H\033[K\033[7m" + footer.ljust(width) + "\033[0m")
+
+    sys.stdout.write(''.join(out))
+    sys.stdout.flush()
+
+# ========== Input Handling ==========
+def handle_input(c, fd):
+    if ui.mode == 'input':
+        return handle_input_mode(c, fd)
+
+    # Escape sequences
+    if c == '\x1b':
+        if select.select([fd], [], [], 0.05)[0]:
+            c2 = os.read(fd, 1).decode('latin-1')
+            if c2 == '[':
+                c3 = os.read(fd, 1).decode('latin-1')
+                if c3 == 'A':    # Up
+                    nav_up()
+                elif c3 == 'B':  # Down
+                    nav_down()
+        else:
+            # Bare Esc
+            if ui.mode == 'paused':
+                ui.mode = 'idle'
+                ui.status = "Aborted"
+                if ui.current_task >= 0 and ui.current_task < len(ui.tasks):
+                    ui.tasks[ui.current_task]['status'] = 'failed'
+                ui.current_task = -1
+        return True
+
+    if c == 'q' and ui.mode == 'idle':
+        return False
+    if c == 'Q':
+        # Abort running
+        if ui.mode in ('running', 'paused', 'step'):
+            ui.mode = 'idle'
+            if ui.current_task >= 0 and ui.current_task < len(ui.tasks):
+                ui.tasks[ui.current_task]['status'] = 'failed'
+            ui.current_task = -1
+            ui.status = "Aborted"
+        elif ui.mode == 'idle':
+            return False
+        return True
+
+    if c == 'j':
+        nav_down()
+    elif c == 'k':
+        nav_up()
+    elif c == '\t':
+        ui.panel = 1 - ui.panel
+        ui.action_scroll = 0
+    elif c == 'a' and ui.mode == 'idle':
+        ui.mode = 'input'
+        ui.input_buf = ""
+        ui.input_cursor = 0
+    elif c == 'd' and ui.mode == 'idle':
+        delete_task()
+    elif c in ('\r', '\n') and ui.mode == 'idle':
+        start_selected()
+    elif c == 'R' and ui.mode == 'idle':
+        run_all()
+    elif c == 'p' and ui.mode == 'running':
+        ui.mode = 'paused'
+        ui.status = "Paused"
+    elif c == 'r' and ui.mode == 'paused':
+        ui.mode = 'running'
+        ui.status = "Resumed"
+    elif c == 's' and ui.mode in ('paused', 'idle'):
+        if ui.current_task >= 0:
+            ui.mode = 'step'
+        elif ui.tasks and ui.tasks[ui.sel]['status'] in ('pending', 'failed'):
+            ui.tasks[ui.sel]['actions'] = []
+            start_task(ui.sel)
+            ui.mode = 'step'
+
+    return True
+
+def handle_input_mode(c, fd):
+    if c == '\x1b':
+        # Cancel input
+        if select.select([fd], [], [], 0.05)[0]:
+            os.read(fd, 2)  # consume rest of escape seq
+        ui.mode = 'idle'
+        ui.input_buf = ""
+        return True
+
+    if c in ('\r', '\n'):
+        if ui.input_buf.strip():
+            add_task(ui.input_buf)
+            ui.sel = len(ui.tasks) - 1
+        ui.mode = 'idle'
+        ui.input_buf = ""
+        return True
+
+    if c == '\x7f' or c == '\x08':  # Backspace
+        if ui.input_cursor > 0:
+            ui.input_buf = ui.input_buf[:ui.input_cursor-1] + ui.input_buf[ui.input_cursor:]
+            ui.input_cursor -= 1
+    elif c >= ' ' and c <= '~':
+        ui.input_buf = ui.input_buf[:ui.input_cursor] + c + ui.input_buf[ui.input_cursor:]
+        ui.input_cursor += 1
+
+    return True
+
+def nav_up():
+    if ui.panel == 0:
+        ui.sel = max(0, ui.sel - 1)
+    else:
+        ui.action_scroll = max(0, ui.action_scroll - 1)
+
+def nav_down():
+    if ui.panel == 0:
+        ui.sel = min(max(0, len(ui.tasks) - 1), ui.sel + 1)
+    else:
+        acts = get_current_actions()
+        ui.action_scroll = min(max(0, len(acts) - 1), ui.action_scroll + 1)
+
+# ========== Auto-add task from CLI ==========
+task_arg = context.get('task')
+if task_arg:
+    add_task(str(task_arg))
+
+# ========== Main Loop ==========
+if not sys.stdin.isatty():
+    context['output'] = "Plonk requires an interactive terminal."
+else:
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.write('\033[?25l')
+        sys.stdout.write('\033[2J')
+        render_screen()
+
+        running = True
+        while running:
+            if ui.mode in ('running', 'step'):
+                # Non-blocking check for user input
+                if select.select([fd], [], [], 0.05)[0]:
+                    c = os.read(fd, 1).decode('latin-1')
+                    running = handle_input(c, fd)
+                else:
+                    run_one_step()
+            else:
+                # Blocking wait for input
+                c = os.read(fd, 1).decode('latin-1')
+                running = handle_input(c, fd)
+
+            render_screen()
+
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        sys.stdout.write('\033[?25h')
+        sys.stdout.write('\033[2J\033[H')
+        sys.stdout.flush()
+
+    # Summary output
+    if ui.tasks:
+        lines = ["PLONK SESSION SUMMARY", "=" * 40]
+        for i, t in enumerate(ui.tasks):
+            lines.append(str(i+1) + ". [" + t['status'] + "] " + t['text'])
+            for j, a in enumerate(t.get('actions', [])):
+                lines.append("   " + str(j+1) + ". " + a.get('action', '?') + " - " + a.get('reason', '')[:50])
+        context['output'] = "\n".join(lines)
+    else:
+        context['output'] = "Plonk session ended."
+
+    context['messages'] = messages

@@ -1,0 +1,165 @@
+from termcolor import colored
+from npcpy.llm_funcs import get_llm_response
+
+# Try to get spinner for status updates
+try:
+    from npcsh.ui import get_current_spinner
+    spinner = get_current_spinner()
+except:
+    spinner = None
+
+target_name = {{ npc_name | default("") | tojson }}.lower().strip()
+task_request = {{ task | default("") | tojson }}
+max_iters = int({{ max_iterations | default("10") | tojson }} or "10")
+
+team_obj = context.get('team') or getattr(npc, 'team', None)
+orchestrator = context.get('npc') or npc
+orchestrator_name = getattr(orchestrator, 'name', 'orchestrator')
+
+if not team_obj:
+    output = "Error: No team available for delegation"
+    exit()
+
+if not hasattr(team_obj, 'npcs') or target_name not in team_obj.npcs:
+    available = list(team_obj.npcs.keys()) if hasattr(team_obj, 'npcs') else []
+    output = f"Error: NPC '{target_name}' not found. Available: {', '.join(available)}"
+    exit()
+
+target_npc = team_obj.npcs[target_name]
+target_jinxes = dict((k, v) for k, v in target_npc.jinxes_dict.items() if k != 'delegate')
+
+sep = '-' * 60
+print(colored(f"\n{sep}", "cyan"))
+print(colored(f"  Delegating to @{target_name}", "yellow", attrs=["bold"]))
+print(colored(f"  Task: {task_request}", "white", attrs=["dark"]))
+print(colored(sep + "\n", "cyan"))
+print(colored(f"  [{target_name}] Model: {target_npc.model}", "white", attrs=["dark"]))
+jinx_list = ', '.join(list(target_jinxes.keys())[:8])
+print(colored(f"  [{target_name}] Jinxes: {jinx_list}...", "white", attrs=["dark"]))
+
+# Update spinner to show sub-agent
+if spinner:
+    spinner.set_message(f"{orchestrator_name} delegated to {target_name}")
+
+current_task = task_request
+iteration = 0
+final_output = None
+task_complete = False
+
+while iteration < max_iters and not task_complete:
+    iteration += 1
+
+    # Update spinner with current iteration
+    if spinner:
+        spinner.set_message(f"{target_name} working (iter {iteration}/{max_iters})")
+
+    if iteration > 1:
+        print(colored(f"\n{sep}", "yellow"))
+        iter_msg = f"  Iteration {iteration}/{max_iters} - Re-tasking @{target_name}"
+        print(colored(iter_msg, "yellow", attrs=["bold"]))
+        print(colored(sep + "\n", "yellow"))
+
+    try:
+        result = target_npc.check_llm_command(
+            current_task,
+            context=context,
+            team=team_obj,
+            jinxes=target_jinxes,
+            stream=False,
+        )
+
+        if isinstance(result, dict):
+            delegate_output = result.get('output') or result.get('response') or str(result)
+            delegate_messages = result.get('messages', [])
+        else:
+            delegate_output = str(result)
+            delegate_messages = []
+
+        print(colored(f"\n{sep}", "cyan"))
+        print(colored(f"  @{target_name} iteration {iteration} complete", "green"))
+        print(colored(sep + "\n", "cyan"))
+
+        # Update spinner for review phase
+        if spinner:
+            spinner.set_message(f"{orchestrator_name} reviewing {target_name}'s work")
+
+        # Build review prompt without f-strings to avoid YAML issues
+        output_preview = delegate_output[:2000] if delegate_output else 'No output received'
+        msg_preview = str(delegate_messages[-5:]) if delegate_messages else 'No messages'
+
+        review_prompt = f"""You are reviewing work done by @{target_name} on this task:
+
+          ORIGINAL TASK: {task_request}
+
+          ITERATION: {iteration}/{max_iters}
+
+          SUB-AGENT OUTPUT:
+          {output_preview}
+
+          RECENT MESSAGES:
+          {msg_preview}
+
+          Evaluate if the task is complete. Consider:
+          1. Did the sub-agent accomplish what was asked?
+          2. Are there obvious errors or incomplete steps?
+          3. For GUI tasks: Did they fill in all required fields?
+
+          Respond EXACTLY like this:
+          COMPLETE: YES or NO
+          FEEDBACK: If NO, what should be done next
+          SUMMARY: Brief summary of progress"""
+
+        review_result = get_llm_response(
+            review_prompt,
+            model=getattr(orchestrator, 'model', None) or (state.chat_model if state else 'llama3.2'),
+            provider=getattr(orchestrator, 'provider', None) or (state.chat_provider if state else 'ollama'),
+            npc=orchestrator,
+            temperature=0.3
+        )
+
+        review_text = str(review_result.get('response', ''))
+        is_complete = 'COMPLETE: YES' in review_text.upper()
+
+        feedback = ""
+        if 'FEEDBACK:' in review_text:
+            fb_start = review_text.find('FEEDBACK:') + 9
+            fb_end = review_text.find('SUMMARY:', fb_start) if 'SUMMARY:' in review_text else len(review_text)
+            feedback = review_text[fb_start:fb_end].strip()
+
+        summary = ""
+        if 'SUMMARY:' in review_text:
+            summary = review_text[review_text.find('SUMMARY:') + 8:].strip()
+
+        if is_complete:
+            task_complete = True
+            print(colored("\n  Task completed successfully", "green", attrs=["bold"]))
+            if summary:
+                print(colored(f"  Summary: {summary}", "white", attrs=["dark"]))
+            final_output = f"[{target_name}] Task completed.\n{summary}"
+        else:
+            print(colored("\n  Task incomplete - providing feedback", "yellow"))
+            if feedback:
+                print(colored(f"  Feedback: {feedback}", "white", attrs=["dark"]))
+
+            current_task = f"""Continue the previous task. Feedback from orchestrator:
+
+            ORIGINAL TASK: {task_request}
+
+            FEEDBACK: {feedback}
+
+            Continue and complete the task based on this feedback."""
+
+            if delegate_messages:
+                context['messages'] = delegate_messages
+
+    except Exception as e:
+        print(colored(f"  Error in iteration {iteration}: {e}", "red"))
+        final_output = f"Error delegating to {target_name}: {str(e)}"
+        break
+
+if not task_complete and iteration >= max_iters:
+    print(colored(f"\n  Max iterations ({max_iters}) reached", "yellow"))
+    status = summary if summary else 'Unknown'
+    final_output = f"[{target_name}] Task incomplete after {max_iters} iterations. Status: {status}"
+
+output = final_output or f"[{target_name}]: No output received"

@@ -1,0 +1,69 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
+import traceback
+
+INCOGNIDEV_DIR = Path.home() / ".npcsh" / "incognidev"
+
+user_command = context.get('user_command')
+output_messages = context.get('messages', [])
+output_result = ""
+
+try:
+    if not INCOGNIDEV_DIR.exists():
+        os.makedirs(INCOGNIDEV_DIR.parent, exist_ok=True)
+        subprocess.check_call([
+            "git", "clone",
+            "https://github.com/npc-worldwide/npc-studio.git",
+            str(INCOGNIDEV_DIR)
+        ])
+    else:
+        subprocess.check_call(
+            ["git", "pull"],
+            cwd=INCOGNIDEV_DIR
+        )
+
+    subprocess.check_call(
+        ["npm", "install"],
+        cwd=INCOGNIDEV_DIR
+    )
+
+    req_file = INCOGNIDEV_DIR / "requirements.txt"
+    if req_file.exists():
+        subprocess.check_call([
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "-r",
+            str(req_file)
+        ])
+
+    backend = subprocess.Popen(
+        [sys.executable, "npc_studio_serve.py"],
+        cwd=INCOGNIDEV_DIR
+    )
+
+    dev_server = subprocess.Popen(
+        ["npm", "run", "dev"],
+        cwd=INCOGNIDEV_DIR
+    )
+
+    frontend = subprocess.Popen(
+        ["npm", "start"],
+        cwd=INCOGNIDEV_DIR
+    )
+
+    output_result = (
+        f"incognidev started!\n"
+        f"Backend PID={backend.pid}, "
+        f"Dev Server PID={dev_server.pid}, "
+        f"Frontend PID={frontend.pid}"
+    )
+except Exception as e:
+    traceback.print_exc()
+    output_result = f"Failed to start incognidev: {e}"
+
+context['output'] = output_result
+context['messages'] = output_messages

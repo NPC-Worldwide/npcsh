@@ -1,0 +1,163 @@
+import json
+import os
+from datetime import datetime
+
+goal = {{ goal | default("") | tojson }} or {{ task | default("") | tojson }}
+action = {{ action | default("create") | tojson }}
+steps_input = {{ steps | default("") | tojson }}
+state = context.get('state')
+
+# --- action: get ---
+if action == "get":
+    if state and getattr(state, '_active_plan', None):
+        output = json.dumps(state._active_plan)
+    else:
+        output = json.dumps({"steps": [], "goal": None})
+    exit()
+
+# --- action: mark ---
+if action == "mark":
+    if not (state and getattr(state, '_active_plan', None)):
+        output = json.dumps({"error": "No active plan"})
+        exit()
+    plan = state._active_plan
+    current = plan.get('current_step', 0)
+    steps = plan.get('steps', [])
+    if current >= len(steps):
+        output = json.dumps({"status": "plan_complete"})
+        exit()
+    steps[current]['status'] = 'done'
+    plan['current_step'] = current + 1
+    next_step = steps[current + 1] if current + 1 < len(steps) else None
+    output = json.dumps({
+        "status": "step_completed",
+        "completed_step": steps[current],
+        "next_step": next_step,
+    })
+    exit()
+
+# --- action: revise ---
+if action == "revise":
+    if not state:
+        output = json.dumps({"error": "No state available"})
+        exit()
+    if not steps_input:
+        output = json.dumps({"error": "No steps provided for revision"})
+        exit()
+    current_plan = getattr(state, '_active_plan', None) or {}
+    if isinstance(steps_input, str):
+        try:
+            steps_input = json.loads(steps_input)
+        except Exception:
+            steps_input = [
+                {"id": i + 1, "description": s.strip()}
+                for i, s in enumerate(steps_input.split('\n')) if s.strip()
+            ]
+    current_plan['steps'] = steps_input
+    current_plan['current_step'] = 0
+    state._active_plan = current_plan
+    output = json.dumps({"status": "revised", "plan": current_plan})
+    exit()
+
+# --- action: create ---
+if action != "create":
+    output = json.dumps({"error": "Unknown action. Use create/get/revise/mark"})
+    exit()
+
+if not goal:
+    if steps_input:
+        goal = "User-provided steps"
+    else:
+        output = json.dumps({"error": "Please provide a goal or task to plan for."})
+        exit()
+
+# Build LLM prompt
+from npcpy.llm_funcs import get_llm_response
+
+npc = context.get('npc')
+current_path = state.current_path if state else os.getcwd()
+
+plan_prompt = f"""\
+Create a step-by-step execution plan for this task:
+
+GOAL: {goal}
+
+CURRENT DIRECTORY: {current_path}
+
+Break this into 3-10 concrete steps. Each step should be:
+- Clear and specific
+- Include likely tools (sh, edit_file, web_search, etc.)
+- Risk level: safe (read-only), moderate (edits), dangerous (destructive)
+
+Return ONLY JSON in this format:
+{{
+  "goal": "brief restatement",
+  "estimated_steps": 5,
+  "steps": [
+    {{"id": 1, "description": "Check current state", "tools": ["sh"], "risk": "safe"}},
+    {{"id": 2, "description": "Create backup", "tools": ["sh"], "risk": "safe"}},
+    {{"id": 3, "description": "Edit config", "tools": ["edit_file"], "risk": "moderate"}}
+  ]
+}}
+
+Use double quotes for all strings. Risk must be safe/moderate/dangerous."""
+
+try:
+    model = npc.model if npc else (state.chat_model if state else 'qwen3.5:2b')
+    provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
+
+    result = get_llm_response(plan_prompt, model=model, provider=provider, stream=False)
+    response_text = result.get('response', '') if isinstance(result, dict) else str(result)
+
+    # Extract JSON from possible markdown fences
+    json_text = response_text
+    if '```json' in response_text:
+        json_text = response_text.split('```json')[1].split('```')[0]
+    elif '```' in response_text:
+        json_text = response_text.split('```')[1].split('```')[0]
+
+    plan_data = json.loads(json_text.strip())
+
+    for step in plan_data.get('steps', []):
+        step['status'] = 'pending'
+        step['result'] = None
+
+except Exception as e:
+    plan_data = {
+        "goal": goal,
+        "estimated_steps": 3,
+        "steps": [
+            {"id": 1, "description": f"Analyze: {goal}", "tools": ["sh"], "risk": "safe", "status": "pending"},
+            {"id": 2, "description": "Execute primary action", "tools": ["sh"], "risk": "moderate", "status": "pending"},
+            {"id": 3, "description": "Verify results", "tools": ["sh"], "risk": "safe", "status": "pending"},
+        ],
+    }
+
+# Store plan in state
+if state:
+    plan_data['current_step'] = 0
+    plan_data['started_at'] = datetime.now().isoformat()
+    state._active_plan = plan_data
+
+# Format output
+goal_display = plan_data.get('goal', 'N/A')
+if len(goal_display) > 55:
+    goal_display = f"{goal_display[:55]}..."
+
+step_lines = []
+for s in plan_data.get('steps', []):
+    icon = '[ ]' if s.get('status') == 'pending' else '[x]'
+    step_lines.append(f"  [{s['id']}] {icon} {s.get('description', '')} ({s.get('risk', 'safe')})")
+steps_text = '\n'.join(step_lines)
+
+output = f"""=== PLAN CREATED ===
+Goal: {goal_display}
+
+Steps:
+{steps_text}
+
+The agent will execute this plan step by step.
+Before each action, it references the active plan.
+Use /plan action=mark after completing a step.
+Use /plan action=revise to change the plan.
+===================="""
