@@ -80,3 +80,44 @@ jobs:
             print(f'Jinx validation error: {e}')
             sys.exit(1)
         "
+
+  no-committed-binaries:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Fail if npcsh/bin contains anything other than .gitkeep
+      run: |
+        unexpected=$(git ls-files npcsh/bin/ | grep -v '^npcsh/bin/\.gitkeep$' || true)
+        if [ -n "$unexpected" ]; then
+          echo "ERROR: binary files committed under npcsh/bin/:"
+          echo "$unexpected"
+          echo "These must be downloaded per-platform by setup.py, not checked in."
+          exit 1
+        fi
+
+  launcher-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-13, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install npcsh (python-only mode)
+      env:
+        NPCSH_ENGINE: python
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+    - name: Launcher import + arch-check smoke
+      shell: python
+      run: |
+        from npcsh.launcher import _find_rust_binary, _binary_matches_host, _host_binary_kind
+        print("host kind:", _host_binary_kind())
+        bin_path = _find_rust_binary()
+        print("resolved binary:", bin_path)
+        if bin_path is not None:
+            assert _binary_matches_host(bin_path), f"{bin_path} arch mismatch on host"
