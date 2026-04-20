@@ -7,15 +7,25 @@ import sys
 from pathlib import Path
 
 
-NPCRS_REPO = "NPC-Worldwide/npcrs"
+NPCRS_REPO = "NPC-Worldwide/npcsh"
 
-# Map (system, machine) → release artifact name
 _NPCRS_ARTIFACT = {
-    ("Linux", "x86_64"): "npcrs-linux-x64",
-    ("Darwin", "arm64"): "npcrs-macos-arm64",
-    ("Darwin", "x86_64"): "npcrs-macos-x64",
-    ("Windows", "AMD64"): "npcrs-windows-x64.exe",
+    ("Linux", "x86_64"): "npcsh-linux-x86_64",
+    ("Darwin", "arm64"): "npcsh-macos-aarch64",
+    ("Darwin", "x86_64"): "npcsh-macos-x86_64",
+    ("Windows", "AMD64"): "npcsh-windows-x86_64.exe",
 }
+
+
+def _purge_stale_binaries(bin_dir: Path) -> None:
+    """Remove any pre-existing binary from bin_dir so we never ship a stale arch."""
+    for p in bin_dir.iterdir():
+        if p.name == ".gitkeep":
+            continue
+        try:
+            p.unlink()
+        except OSError:
+            pass
 
 
 def _download_npcrs(bin_dir: Path) -> bool:
@@ -60,13 +70,14 @@ def _download_npcrs(bin_dir: Path) -> bool:
 
 
 class BuildWithRust(build_py):
-    """Download pre-built npcrs binary into npcsh/bin/ before packaging."""
+    """Download the pre-built npcrs binary matching the host arch before packaging."""
 
     def run(self):
         bin_dir = Path(__file__).parent / "npcsh" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
 
-        # Try to download the pre-built npcrs binary from GitHub releases
+        _purge_stale_binaries(bin_dir)
+
         if not _download_npcrs(bin_dir):
             print("Warning: npcrs binary unavailable — falling back to Python-only mode")
 

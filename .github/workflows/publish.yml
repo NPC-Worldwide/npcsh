@@ -41,6 +41,10 @@ jobs:
             target: aarch64-apple-darwin
             artifact: npcsh-macos-aarch64
             plat_name: macosx_14_0_arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: npcsh-windows-x86_64.exe
+            plat_name: win_amd64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -57,22 +61,31 @@ jobs:
           python-version: '3.12'
 
       - name: Switch to published npcrs
+        shell: python
         run: |
-          if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' 's|npcrs = { path = "../../npcrs".*}|npcrs = { version = "0.1", default-features = false, features = ["ffi"] }|' rust/Cargo.toml
-          else
-            sed -i 's|npcrs = { path = "../../npcrs".*}|npcrs = { version = "0.1", default-features = false, features = ["ffi"] }|' rust/Cargo.toml
-          fi
+          from pathlib import Path
+          import re
+          p = Path("rust/Cargo.toml")
+          p.write_text(re.sub(
+              r'npcrs = \{ path = "\.\./\.\./npcrs".*\}',
+              'npcrs = { version = "0.1", default-features = false, features = ["ffi"] }',
+              p.read_text(),
+          ))
 
       - name: Build Rust binary
         working-directory: rust
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Place binary in package
+        shell: bash
         run: |
           mkdir -p npcsh/bin
-          cp rust/target/${{ matrix.target }}/release/npcsh npcsh/bin/npcsh
-          chmod +x npcsh/bin/npcsh
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            cp rust/target/${{ matrix.target }}/release/npcsh.exe npcsh/bin/npcrs.exe
+          else
+            cp rust/target/${{ matrix.target }}/release/npcsh npcsh/bin/npcrs
+            chmod +x npcsh/bin/npcrs
+          fi
 
       - name: Build platform wheel
         run: |
@@ -86,10 +99,15 @@ jobs:
           path: dist/*.whl
 
       - name: Package standalone binary
+        shell: bash
         run: |
           mkdir -p release
-          cp rust/target/${{ matrix.target }}/release/npcsh release/${{ matrix.artifact }}
-          chmod +x release/${{ matrix.artifact }}
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            cp rust/target/${{ matrix.target }}/release/npcsh.exe release/${{ matrix.artifact }}
+          else
+            cp rust/target/${{ matrix.target }}/release/npcsh release/${{ matrix.artifact }}
+            chmod +x release/${{ matrix.artifact }}
+          fi
 
       - name: Package .deb
         if: contains(matrix.target, 'linux')

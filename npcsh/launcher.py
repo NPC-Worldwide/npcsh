@@ -5,22 +5,65 @@ import shutil
 import platform
 
 
+_MAGIC_ELF = b"\x7fELF"
+_MAGIC_MACHO = {
+    b"\xcf\xfa\xed\xfe",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xfe\xed\xfa\xce",
+}
+_MAGIC_PE = b"MZ"
+
+
+def _host_binary_kind():
+    system = platform.system()
+    if system == "Linux":
+        return "elf"
+    if system == "Darwin":
+        return "macho"
+    if system == "Windows":
+        return "pe"
+    return None
+
+
+def _binary_matches_host(path: str) -> bool:
+    """Check the file's magic bytes match the host OS. Returns False for any mismatch."""
+    kind = _host_binary_kind()
+    if kind is None:
+        return True
+    try:
+        with open(path, "rb") as f:
+            header = f.read(4)
+    except OSError:
+        return False
+    if kind == "elf":
+        return header.startswith(_MAGIC_ELF)
+    if kind == "macho":
+        return header in _MAGIC_MACHO
+    if kind == "pe":
+        return header.startswith(_MAGIC_PE)
+    return True
+
+
 def _find_rust_binary():
-    """Find the npcrs binary — check package dir first, then PATH."""
+    """Find a host-compatible npcrs binary. Skip any binary whose arch doesn't match."""
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     bin_dir = os.path.join(pkg_dir, "bin")
 
     ext = ".exe" if platform.system() == "Windows" else ""
 
-    # Check inside the package (npcrs binary downloaded at build time)
     for name in (f"npcrs{ext}", f"npcsh{ext}"):
         pkg_bin = os.path.join(bin_dir, name)
         if os.path.isfile(pkg_bin) and os.access(pkg_bin, os.X_OK):
-            return pkg_bin
+            if _binary_matches_host(pkg_bin):
+                return pkg_bin
+            print(
+                f"Warning: {pkg_bin} exists but is not a {platform.system()} binary — skipping",
+                file=sys.stderr,
+            )
 
-    # Check PATH for standalone npcrs binary (installed via cargo)
     found = shutil.which("npcrs")
-    if found:
+    if found and _binary_matches_host(found):
         return found
 
     return None
@@ -64,6 +107,11 @@ def _ask_engine():
     return engine
 
 
+def _fallback_to_python():
+    from npcsh.npcsh import main as python_main
+    python_main()
+
+
 def main():
     engine = _load_npcshrc_engine()
     if engine is None:
@@ -72,9 +120,14 @@ def main():
     if engine == 'rust':
         rust_bin = _find_rust_binary()
         if rust_bin:
-            os.execvp(rust_bin, [rust_bin] + sys.argv[1:])
+            try:
+                os.execvp(rust_bin, [rust_bin] + sys.argv[1:])
+            except OSError as e:
+                print(
+                    f"Warning: failed to exec {rust_bin} ({e}) — falling back to Python",
+                    file=sys.stderr,
+                )
         else:
-            print("Warning: Rust engine selected but npcrs binary not found. Falling back to Python.")
+            print("Warning: Rust engine selected but no compatible npcrs binary found. Falling back to Python.", file=sys.stderr)
 
-    from npcsh.npcsh import main as python_main
-    python_main()
+    _fallback_to_python()

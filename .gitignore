@@ -20,6 +20,10 @@ dist/
 rust/target/
 rust/Cargo.lock
 
+# Platform-specific Rust binaries — downloaded at install time, never committed
+npcsh/bin/*
+!npcsh/bin/.gitkeep
+
 # Data / media (don't commit large files)
 *.png
 *.jpg
