@@ -176,10 +176,27 @@ def clean_task_artifacts(task: dict = None):
                 pass
 
 
+# Jinxes that require an interactive user — drop for non-interactive bench runs.
+_BENCH_DROP_JINXES = {"ask_form"}
+
+
 def _setup_state(model: str, provider: str, state, work_dir: str = None,
                  think=None):
     """One-time setup for a task: load team, register jinxes, configure model."""
     command_history, team, default_npc = setup_shell()
+
+    for obj in (default_npc, team):
+        d = getattr(obj, "jinxes_dict", None)
+        if d:
+            for name in _BENCH_DROP_JINXES:
+                d.pop(name, None)
+        c = getattr(obj, "jinx_tool_catalog", None)
+        if c:
+            for name in _BENCH_DROP_JINXES:
+                c.pop(name, None)
+
+    state.check_tool_permission = lambda tool_name, arguments: "allow"
+
     if team and hasattr(team, 'jinxes_dict'):
         for jinx_name, jinx_obj in team.jinxes_dict.items():
             router.register_jinx(jinx_obj)
