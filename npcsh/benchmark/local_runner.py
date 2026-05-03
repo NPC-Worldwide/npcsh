@@ -32,6 +32,20 @@ from npcsh._state import (
     setup_shell,
 )
 import npcsh.ui as _ui
+SUPPORTED_FRAMEWORKS = (
+    "npcsh",
+    "claude", "opencode", "nanocoder",
+    "npc-claude", "npc-codex", "npc-gemini", "npc-opencode",
+)
+
+# Categories that exercise npcsh-specific primitives. Their verify_cmds only
+# check artifacts, so running them on other frameworks just measures script
+# writing — not what they claim to measure.
+NPCSH_SPECIFIC_CATEGORIES = frozenset({
+    "delegation", "tool-chain", "image-gen", "audio-gen", "web-search",
+})
+
+
 @dataclass
 class TaskResult:
     task_id: str
@@ -63,11 +77,15 @@ def load_tasks(
     category: Optional[str] = None,
     difficulty: Optional[str] = None,
     task_id: Optional[str] = None,
+    framework: str = "npcsh",
 ) -> list:
     if task_file is None:
         task_file = Path(__file__).parent / "tasks.csv"
 
     tasks = pd.read_csv(task_file).to_dict('records')
+
+    if framework != "npcsh":
+        tasks = [t for t in tasks if t["category"] not in NPCSH_SPECIFIC_CATEGORIES]
 
     if task_id:
         tasks = [t for t in tasks if t["id"] == task_id]
@@ -278,6 +296,132 @@ def _reset_ollama_client():
         print(f"  [warn] ollama client reset failed: {e}", flush=True)
 
 
+def _build_external_command(framework: str, instruction: str, model: str,
+                            npc: str = "sibiji") -> tuple:
+    """Build (cmd_list, env_dict) for shelling out to a non-npcsh framework."""
+    env = os.environ.copy()
+    opencode_bin = os.path.expanduser("~/.opencode/bin")
+    if opencode_bin not in env.get("PATH", ""):
+        env["PATH"] = opencode_bin + ":" + env.get("PATH", "")
+
+    def _claude_env(e):
+        e["ANTHROPIC_AUTH_TOKEN"] = "ollama"
+        e["ANTHROPIC_BASE_URL"] = "http://localhost:11434"
+        e["DISABLE_AUTOUPDATER"] = "1"
+        e["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+        e.pop("CLAUDECODE", None)
+        e.pop("CLAUDE_CODE_ENTRYPOINT", None)
+        return e
+
+    if framework == "claude":
+        return [
+            "claude", "-p", instruction,
+            "--dangerously-skip-permissions", "--model", model,
+        ], _claude_env(env)
+    if framework == "npc-claude":
+        return [
+            "npc-claude", "--npc", npc,
+            "-p", instruction,
+            "--dangerously-skip-permissions", "--model", model,
+        ], _claude_env(env)
+    if framework == "opencode":
+        return [
+            os.path.expanduser("~/.opencode/bin/opencode"),
+            "run", instruction, "-m", f"ollama/{model}",
+        ], env
+    if framework == "npc-opencode":
+        return [
+            "npc-opencode", "--npc", npc,
+            "run", instruction, "-m", f"ollama/{model}",
+        ], env
+    if framework == "nanocoder":
+        return ["nanocoder", "run", instruction], env
+    if framework == "npc-codex":
+        return ["npc-codex", "--npc", npc, "exec", instruction], env
+    if framework == "npc-gemini":
+        return ["npc-gemini", "--npc", npc, "-p", instruction], env
+
+    raise ValueError(f"Unsupported external framework: {framework}")
+
+
+def _kill_descendants(root_pid: int) -> None:
+    """SIGKILL the process group AND every descendant, then poll until reaped."""
+    import signal as _signal
+    try:
+        pgid = os.getpgid(root_pid)
+        os.killpg(pgid, _signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    descendants: list = []
+    try:
+        import psutil
+        try:
+            root = psutil.Process(root_pid)
+            descendants = root.children(recursive=True)
+        except psutil.NoSuchProcess:
+            descendants = []
+        for child in descendants:
+            try:
+                child.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        psutil.wait_procs(descendants, timeout=3)
+    except ImportError:
+        try:
+            subprocess.run(["pkill", "-9", "-P", str(root_pid)],
+                           capture_output=True, timeout=5)
+        except Exception:
+            pass
+
+
+def _run_external_attempt(instruction: str, framework: str, model: str,
+                          attempt_timeout: float, work_dir: str) -> str:
+    """Subprocess-launch an external framework CLI in `work_dir`.
+
+    `cwd=work_dir` is non-negotiable — without it, claude/opencode/etc
+    inherit the runner's cwd and run git/file commands against the real repo.
+    """
+    cmd, env = _build_external_command(framework, instruction, model)
+    print(f"  [{framework}] {' '.join(cmd[:3])}... (cwd={work_dir})", flush=True)
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            cwd=work_dir,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        return f"Exception: {framework} CLI not found on PATH"
+
+    hard_deadline = time.time() + attempt_timeout + 5.0
+    try:
+        stdout, stderr = proc.communicate(timeout=attempt_timeout)
+        return (stdout or "") + (stderr or "")
+    except subprocess.TimeoutExpired:
+        pass
+
+    _kill_descendants(proc.pid)
+    try:
+        proc.kill()
+    except Exception:
+        pass
+    while proc.poll() is None and time.time() < hard_deadline:
+        try:
+            proc.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            _kill_descendants(proc.pid)
+    if proc.poll() is None:
+        try:
+            proc.stdout.close()
+            proc.stderr.close()
+        except Exception:
+            pass
+    return f"Timed out after {attempt_timeout:.0f}s"
+
+
 def _run_attempt(instruction: str, state, command_history,
                  attempt_timeout: float = 120) -> tuple:
     """Execute one instruction within an existing session.
@@ -290,6 +434,7 @@ def _run_attempt(instruction: str, state, command_history,
 
     def _worker():
         try:
+            os.chdir(state.current_path)
             fs, out = execute_command(
                 instruction, state, router=router,
                 command_history=command_history,
@@ -372,7 +517,8 @@ def run_task(task: dict,
              provider: str,
              timeout: int = 120,
              max_attempts: int = 5,
-             think=None) -> TaskResult:
+             think=None,
+             framework: str = "npcsh") -> TaskResult:
     """Run a task with retries until it passes or the timeout/attempt budget is exhausted."""
 
     task_id = task["id"]
@@ -392,12 +538,15 @@ def run_task(task: dict,
 
     # Every task gets its own temp dir — no cross-task pollution possible.
     task_dir = tempfile.mkdtemp(prefix=f"npcsh_bench_{task_id}_")
+    os.chdir(task_dir)
 
-    # Set up once per task — fresh messages, same session for retries
-    command_history = _setup_state(model, provider, initial_state, work_dir=task_dir,
-                                   think=think)
-
-    msg_count_before = len(initial_state.messages)
+    if framework == "npcsh":
+        command_history = _setup_state(model, provider, initial_state,
+                                       work_dir=task_dir, think=think)
+        msg_count_before = len(initial_state.messages)
+    else:
+        command_history = None
+        msg_count_before = 0
 
     while attempt < max_attempts:
         remaining = deadline - time.time()
@@ -407,7 +556,7 @@ def run_task(task: dict,
         attempt += 1
         clean_task_artifacts(task)
 
-        # Run setup_cmd — bounded by remaining time
+        # Run setup_cmd — bounded by remaining time, pinned to task_dir
         if setup_cmd:
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -416,6 +565,7 @@ def run_task(task: dict,
                 subprocess.run(
                     ["bash", "-c", setup_cmd],
                     timeout=min(remaining, 15), capture_output=True, text=True,
+                    cwd=task_dir,
                 )
             except Exception as e:
                 print(f"  setup_cmd failed: {e}", flush=True)
@@ -427,20 +577,22 @@ def run_task(task: dict,
         if attempt == 1:
             current_instruction = instruction
         else:
-            # Build summary of previous actions from state.messages
-            prev_msgs = initial_state.messages[msg_count_before:]
-            prev_summary_parts = []
-            for msg in prev_msgs:
-                role = msg.get("role", "")
-                for tc in msg.get("tool_calls", []):
-                    fn = tc.get("function", {})
-                    name = fn.get("name", "?")
-                    args = fn.get("arguments", "")
-                    prev_summary_parts.append(f"Called {name} with: {args}")
-                if role == "tool":
-                    content = msg.get("content", "")
-                    prev_summary_parts.append(f"Result: {content}")
-            prev_summary = "\n".join(prev_summary_parts) if prev_summary_parts else last_output
+            if framework == "npcsh":
+                prev_msgs = initial_state.messages[msg_count_before:]
+                prev_summary_parts = []
+                for msg in prev_msgs:
+                    role = msg.get("role", "")
+                    for tc in msg.get("tool_calls", []):
+                        fn = tc.get("function", {})
+                        name = fn.get("name", "?")
+                        args = fn.get("arguments", "")
+                        prev_summary_parts.append(f"Called {name} with: {args}")
+                    if role == "tool":
+                        content = msg.get("content", "")
+                        prev_summary_parts.append(f"Result: {content}")
+                prev_summary = "\n".join(prev_summary_parts) if prev_summary_parts else last_output
+            else:
+                prev_summary = last_output
 
             current_instruction = f"""{instruction}
 
@@ -458,10 +610,16 @@ Try a different approach. Do not search the web about this."""
             print(f"  [retry prompt] {current_instruction}", flush=True)
 
         try:
-            _, output_str = _run_attempt(
-                current_instruction, initial_state, command_history,
-                attempt_timeout=attempt_timeout,
-            )
+            if framework == "npcsh":
+                _, output_str = _run_attempt(
+                    current_instruction, initial_state, command_history,
+                    attempt_timeout=attempt_timeout,
+                )
+            else:
+                output_str = _run_external_attempt(
+                    current_instruction, framework, model,
+                    attempt_timeout=attempt_timeout, work_dir=task_dir,
+                )
         except Exception as e:
             output_str = f"Exception: {e}"
 
@@ -479,12 +637,13 @@ Try a different approach. Do not search the web about this."""
         if remaining <= 0:
             break
 
-        # Verify — bounded by remaining time
+        # Verify — bounded by remaining time, pinned to task_dir
         try:
             verify = subprocess.run(
                 ["bash", "-c", verify_cmd],
                 capture_output=True, text=True,
                 timeout=min(remaining, verify_timeout),
+                cwd=task_dir,
             )
             passed = verify.returncode == 0
         except Exception as e:
@@ -525,17 +684,19 @@ def run_benchmark(
     timeout: int = 120,
     resume: bool = False,
     think=None,
+    framework: str = "npcsh",
 ) -> BenchmarkReport:
 
     setup_bench_env()
-    tasks = load_tasks(category=category, difficulty=difficulty, task_id=task_id)
+    tasks = load_tasks(category=category, difficulty=difficulty, task_id=task_id,
+                       framework=framework)
     report = BenchmarkReport(model=model, provider=provider, total=len(tasks))
 
     # Resume: load completed tasks from checkpoint CSV
     import csv as csv_mod
     csv_mod.field_size_limit(10**7)
     report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
-    checkpoint_file = report_dir / f"{provider}_{model}_running.csv"
+    checkpoint_file = report_dir / f"{framework}_{provider}_{model}_running.csv"
     completed_ids = set()
     if resume and checkpoint_file.exists():
         with open(checkpoint_file) as f:
@@ -570,7 +731,7 @@ def run_benchmark(
                     report.by_difficulty[diff]["passed"] += 1
         print(f"Resumed {len(completed_ids)} tasks from checkpoint", flush=True)
 
-    print(f"\nnpcsh benchmark: {provider}/{model} (timeout={timeout}s per task)", flush=True)
+    print(f"\n{framework} benchmark: {provider}/{model} (timeout={timeout}s per task)", flush=True)
     print(f"Tasks: {len(tasks)} ({len(completed_ids)} already done)", flush=True)
     print("=" * 60, flush=True)
 
@@ -583,7 +744,8 @@ def run_benchmark(
         print(f"\n[{i+1}/{len(tasks)}] {tid} ({task['category']}/{task['difficulty']})", flush=True)
         print(f"  {task['description']}", flush=True)
 
-        result = run_task(task, model, provider, timeout, think=think)
+        result = run_task(task, model, provider, timeout, think=think,
+                          framework=framework)
         report.results.append(result)
 
         if result.passed:
@@ -619,7 +781,7 @@ def run_benchmark(
         # Save after every task so we don't lose progress
         report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
         report_dir.mkdir(parents=True, exist_ok=True)
-        checkpoint_file = report_dir / f"{provider}_{model}_running.csv"
+        checkpoint_file = report_dir / f"{framework}_{provider}_{model}_running.csv"
         df = pd.DataFrame([
             {"task_id": r.task_id, "category": r.category, "difficulty": r.difficulty,
              "passed": r.passed, "attempts": r.attempts, "duration": round(r.duration, 1), "error": r.error or "",
@@ -649,7 +811,8 @@ def run_benchmark(
     report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
     report_dir.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
-    report_file = report_dir / f"{provider}_{model}_{ts}.csv"
+    safe_model = model.replace("/", "_").replace(":", "_")
+    report_file = report_dir / f"{framework}_{provider}_{safe_model}_{ts}.csv"
     df = pd.DataFrame([
         {"task_id": r.task_id, "category": r.category, "difficulty": r.difficulty,
          "passed": r.passed, "duration": round(r.duration, 1), "error": r.error or "",
@@ -659,7 +822,7 @@ def run_benchmark(
     df.to_csv(report_file, index=False)
 
     # Remove checkpoint file
-    checkpoint = report_dir / f"{provider}_{model}_running.csv"
+    checkpoint = report_dir / f"{framework}_{provider}_{model}_running.csv"
     if checkpoint.exists():
         checkpoint.unlink()
 
@@ -673,6 +836,7 @@ def compare_models(
     difficulty: Optional[str] = None,
     timeout: int = 120,
     think=None,
+    framework: str = "npcsh",
 ) -> dict:
     """Run benchmark across multiple models and print comparison."""
     all_results = {}
@@ -680,7 +844,7 @@ def compare_models(
     for model, provider in models:
         key = f"{provider}/{model}"
         print(f"\n{'='*60}")
-        print(f"  MODEL: {key}")
+        print(f"  MODEL: {key}  ({framework})")
         print(f"{'='*60}")
         report = run_benchmark(
             model=model,
@@ -689,6 +853,7 @@ def compare_models(
             difficulty=difficulty,
             timeout=timeout,
             think=think,
+            framework=framework,
         )
         all_results[key] = report
 
@@ -737,7 +902,7 @@ def compare_models(
 
 
 def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
-                 think=None):
+                 think=None, framework: str = "npcsh"):
     """Re-run only the failed tasks from an existing CSV and overwrite results in-place."""
     setup_bench_env()
     import csv as csv_mod
@@ -752,14 +917,14 @@ def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
         rows = list(csv_mod.DictReader(f))
 
     failed_ids = [r["task_id"] for r in rows if r.get("passed", "").lower() != "true"]
-    print(f"\nRerun failed tasks from {csv_path.name}")
+    print(f"\nRerun failed tasks from {csv_path.name}  ({framework})")
     print(f"Total rows: {len(rows)}, Failed: {len(failed_ids)}")
 
     if not failed_ids:
         print("No failed tasks to rerun.")
         return
 
-    all_tasks = load_tasks()
+    all_tasks = load_tasks(framework=framework)
     task_lookup = {t["id"]: t for t in all_tasks}
 
     # Build index: task_id -> row index
@@ -776,7 +941,8 @@ def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
         task = task_lookup[tid]
         print(f"\n  [{j+1}/{len(failed_ids)}] {tid} ({task['category']}/{task['difficulty']})", flush=True)
 
-        result = run_task(task, model, provider, timeout, think=think)
+        result = run_task(task, model, provider, timeout, think=think,
+                          framework=framework)
 
         if result.passed:
             print(f"    PASS ({result.duration:.1f}s) — upgraded!", flush=True)
@@ -822,6 +988,9 @@ def main():
                         help="Resume from _running.csv checkpoint, skip already-completed tasks")
     parser.add_argument("--think", default=None,
                         help="Control thinking mode for ollama models (true/false, default: model default)")
+    parser.add_argument("--framework", "-f", default="npcsh",
+                        choices=list(SUPPORTED_FRAMEWORKS),
+                        help="Which framework runs the task (default: npcsh)")
 
     args = parser.parse_args()
 
@@ -842,6 +1011,7 @@ def main():
             provider=args.provider,
             timeout=args.timeout,
             think=think_val,
+            framework=args.framework,
         )
     elif args.compare:
         models = [
@@ -872,6 +1042,7 @@ def main():
             difficulty=args.difficulty,
             timeout=args.timeout,
             think=think_val,
+            framework=args.framework,
         )
     else:
         run_benchmark(
@@ -883,6 +1054,7 @@ def main():
             timeout=args.timeout,
             resume=args.resume,
             think=think_val,
+            framework=args.framework,
         )
 
 
