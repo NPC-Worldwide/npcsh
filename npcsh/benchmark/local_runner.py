@@ -538,6 +538,7 @@ def run_task(task: dict,
 
     # Every task gets its own temp dir — no cross-task pollution possible.
     task_dir = tempfile.mkdtemp(prefix=f"npcsh_bench_{task_id}_")
+    os.chdir(task_dir)
 
     if framework == "npcsh":
         command_history = _setup_state(model, provider, initial_state,
