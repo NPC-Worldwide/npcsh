@@ -105,7 +105,7 @@ from npcpy.memory.command_history import (
     load_kg_from_db,
 )
 from npcpy.memory.search import execute_rag_command, execute_brainblast_command
-from npcpy.npc_compiler import NPC, Team, build_jinx_tool_catalog
+from npcpy.npc_compiler import NPC, CLIAgent, _is_cli_provider, Team, build_jinx_tool_catalog
 from npcpy.tools import flatten_tool_messages
 from npcpy.npc_sysenv import (
     print_and_process_stream_with_markdown,
@@ -279,6 +279,8 @@ def _load_permission_file(path: str) -> Dict[str, str]:
 class ShellState:
     npc: Optional[Union[NPC, str]] = None
     team: Optional[Team] = None
+    teams: Dict[str, str] = field(default_factory=dict)  # name -> path registry
+    current_team_name: str = ""
     messages: List[Dict[str, Any]] = field(default_factory=list)
     mcp_client: Optional[Any] = None
     conversation_id: Optional[int] = None
@@ -3762,10 +3764,17 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
     model_name = target_npc.model if hasattr(target_npc, 'model') else 'unknown'
 
     try:
-        with SpinnerContext(f"{npc_name} processing with {model_name}", style="dots_pulse"):
-            result = target_npc.check_llm_command(command, team=state.team)
-
-        output = result.get("output") or result.get("response", "")
+        # Check if NPC is a CLIAgent - use session context from DB
+        if isinstance(target_npc, CLIAgent):
+            session_ctx = get_cli_session_context(state.conversation_id, target_npc.name)
+            with SpinnerContext(f"{npc_name} processing via {target_npc.cli_provider}", style="dots_pulse"):
+                output = target_npc.run(command, session_context=session_ctx, verbose=False)
+        else:
+            with SpinnerContext(f"{npc_name} processing with {model_name}", style="dots_pulse"):
+                result = target_npc.check_llm_command(command, team=state.team)
+            output = result.get("output") or result.get("response", "")
+            if result.get("messages"):
+                state.messages = result["messages"]
         if result.get("messages"):
             state.messages = result["messages"]
 
@@ -3954,6 +3963,73 @@ def execute_command(
         return state, response.get('response', '')
 
 
+def load_team_registry() -> Dict[str, str]:
+    """Load team registry from ~/.npcsh/teams.yaml."""
+    registry_path = os.path.expanduser("~/.npcsh/teams.yaml")
+    if not os.path.exists(registry_path):
+        return {}
+    try:
+        with open(registry_path, "r") as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("teams", {}) if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def get_cli_session_context(conversation_id: int, npc_name: str, max_turns: int = 10) -> str:
+    """Get accumulated session context from DB for CLI agent.
+
+    Reads recent conversation turns from npcsh history DB and formats them
+    as context for CLI subprocess injection.
+    """
+    if not hasattr(state, 'command_history') or state.command_history is None:
+        return ""
+
+    try:
+        messages = state.command_history.get_messages_by_conversation(conversation_id, n_last=max_turns * 2)
+        if not messages:
+            return ""
+
+        context_lines = ["# Conversation context\n"]
+        for msg in messages:
+            role = msg.get('role', 'unknown')
+            content = msg.get('content', '')
+            if role == 'user':
+                context_lines.append(f"## User\n\n{content}\n")
+            elif role == 'assistant':
+                context_lines.append(f"## Assistant\n\n{content}\n")
+
+        return "\n".join(context_lines)
+    except Exception:
+        return ""
+
+
+def load_team(team_name: str, state: ShellState) -> bool:
+    """Load a team from the registry and update state."""
+    if team_name not in state.teams:
+        print(f"Team '{team_name}' not found in registry.")
+        return False
+
+    team_path = state.teams[team_name]
+    team_path = os.path.expanduser(team_path)
+
+    if not os.path.exists(team_path):
+        print(f"Team path does not exist: {team_path}")
+        return False
+
+    try:
+        from npcpy.npc_compiler import Team
+        new_team = Team(team_path=team_path, db_conn=state.command_history.engine if hasattr(state, 'command_history') else None)
+        state.team = new_team
+        state.npc = new_team.forenpc
+        state.current_team_name = team_name
+        print(f"Switched to team: {team_name}")
+        return True
+    except Exception as e:
+        print(f"Error loading team: {e}")
+        return False
+
+
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     setup_npcsh_config()
 
@@ -3961,6 +4037,10 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     db_path = os.path.expanduser(db_path)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     command_history = CommandHistory(db_path)
+
+    # Load team registry
+    team_registry = load_team_registry()
+    initial_state.teams = team_registry
 
     if not is_npcsh_initialized():
         print("Setting up npcsh for first use...")
@@ -4056,6 +4136,8 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
             team.name = "npcsh"
     else:
         team.name = "npcsh"
+
+    initial_state.current_team_name = team.name
 
     return command_history, team, forenpc_obj
 def initialize_router_with_jinxes(team, router):
