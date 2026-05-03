@@ -42,6 +42,7 @@ from npcsh._state import (
     process_result,
     setup_shell,
     get_multiline_input,
+    _shell_input,
 )
 from npcsh.ui import BottomBar
 import npcsh.ui as _ui_module
@@ -300,8 +301,17 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                     print(colored(f"  Context at {ctx_pct}% ({msg_count} messages). {action}", "cyan"))
                     print(colored("  [Enter] compress  [s] skip  [f] flush N instead", "cyan"))
 
+                    import termios
+                    fd = sys.stdin.fileno()
                     try:
-                        choice = input("  > ").strip().lower()
+                        new_settings = termios.tcgetattr(fd)
+                        new_settings[3] = new_settings[3] | termios.ICANON | termios.ECHO
+                        termios.tcsetattr(fd, termios.TCSANOW, new_settings)
+                    except:
+                        pass
+
+                    try:
+                        choice = _shell_input("  > ").strip().lower()
                     except (EOFError, KeyboardInterrupt):
                         choice = ""
 
@@ -316,7 +326,14 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                         flush_part = choice[1:].strip() if len(choice) > 1 else ""
                         if not flush_part:
                             try:
-                                flush_part = input("  Flush how many? ").strip()
+                                fd = sys.stdin.fileno()
+                                new_settings = termios.tcgetattr(fd)
+                                new_settings[3] = new_settings[3] | termios.ICANON | termios.ECHO
+                                termios.tcsetattr(fd, termios.TCSANOW, new_settings)
+                            except:
+                                pass
+                            try:
+                                flush_part = _shell_input("  Flush how many? ").strip()
                             except (EOFError, KeyboardInterrupt):
                                 flush_part = ""
                         try:
