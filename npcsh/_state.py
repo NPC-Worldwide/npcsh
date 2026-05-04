@@ -3232,7 +3232,13 @@ def process_pipeline_command(
     exec_model = model_override or npc_model or state.chat_model
     exec_provider = provider_override or npc_provider or state.chat_provider
 
-    if cmd_to_process.startswith("/"):
+    # Check if this is a slash command OR a jinx command (which can run without /)
+    is_slash_cmd = cmd_to_process.startswith("/")
+    is_jinx_cmd = router and router.is_jinx_command(cmd_to_process.split()[0] if cmd_to_process else "")
+    
+    if is_slash_cmd or is_jinx_cmd:
+        # Normalize: always pass to execute_slash_command which handles both /cmd and cmd
+        # The router's get_route normalizes commands by stripping /
         result = execute_slash_command(
             cmd_to_process,
             stdin_input,
