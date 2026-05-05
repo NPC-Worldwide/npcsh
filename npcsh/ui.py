@@ -125,7 +125,50 @@ class BottomBar:
                             if spinner:
                                 spinner.set_status(f"[{len(self.queue)} queued]")
                         self._buf = ""
-                    elif c in ('\x03', '\x1b'):     # Ctrl-C or ESC → interrupt
+                    elif c == '\x03':     # Ctrl-C → interrupt
+                        self._stop.set()
+                        os.kill(os.getpid(), signal.SIGINT)
+                        break
+                    elif c == '\x1b':     # ESC - always ignore to prevent arrow key interruption
+                        # Drain any following characters and ignore
+                        try:
+                            while _sel.select([fd], [], [], 0.1)[0]:
+                                os.read(fd, 1)
+                        except:
+                            pass
+                        continue
+                        seq = ''
+                        try:
+                            if _sel.select([fd], [], [], 0.2)[0]:
+                                ch = os.read(fd, 1).decode('latin-1')
+                                seq += ch
+                                with open("/tmp/bottombar_debug.log", "a") as f:
+                                    f.write(f"  read1: {ch!r}\n")
+                                if seq == '[' and _sel.select([fd], [], [], 0.05)[0]:
+                                    ch2 = os.read(fd, 1).decode('latin-1')
+                                    seq += ch2
+                                    with open("/tmp/bottombar_debug.log", "a") as f:
+                                        f.write(f"  read2: {ch2!r}\n")
+                            else:
+                                with open("/tmp/bottombar_debug.log", "a") as f:
+                                    f.write(f"  select timeout, no chars\n")
+                        except Exception as e:
+                            with open("/tmp/bottombar_debug.log", "a") as f:
+                                f.write(f"  exception: {e}\n")
+                        is_arrow = seq in ('[A', '[B', '[C', '[D')
+                        with open("/tmp/bottombar_debug.log", "a") as f:
+                            f.write(f"  seq={seq!r}, is_arrow={is_arrow}\n")
+                        if seq in ('[A', '[B', '[C', '[D'):
+                            with open("/tmp/bottombar_debug.log", "a") as f:
+                                f.write("  -> ARROW, ignore\n")
+                            continue
+                        with open("/tmp/bottombar_debug.log", "a") as f:
+                            f.write("  -> NOT ARROW, interrupt\n")
+                        try:
+                            while _sel.select([fd], [], [], 0.05)[0]:
+                                os.read(fd, 1)
+                        except:
+                            pass
                         self._stop.set()
                         os.kill(os.getpid(), signal.SIGINT)
                         break

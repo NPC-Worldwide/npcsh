@@ -1,4 +1,4 @@
-jinx_name: git
+jinx_name: gitt
 description: Interactive terminal UI for git status, staging, diffs, log, and commits
 inputs:
   - path: ""
