@@ -2,6 +2,7 @@ jinx_name: ask_form
 description: Display a structured form for the user to fill out. Returns JSON dict of field values. Used by agents to gather structured input.
 inputs:
 - title: "Input Required"
+- command_label: ""
 - fields: "[]"
 steps:
   - name: "render_form"
@@ -10,297 +11,149 @@ steps:
       import os
       import sys
       import json
-
-      title = {{ title | tojson }}
-      fields_raw = {{ fields | tojson }}
-
       try:
-          field_defs = json.loads(fields_raw) if isinstance(fields_raw, str) else fields_raw
-      except (json.JSONDecodeError, TypeError):
-          field_defs = []
-
-      if not field_defs:
-          context['output'] = json.dumps({"error": "No fields defined"})
-
-      elif not sys.stdin.isatty():
-          context['output'] = json.dumps({"error": "Form requires interactive terminal"})
-
-      else:
           import tty
           import termios
-          import select
+      except ImportError:
+          tty = None
+          termios = None
+      import select
 
-          class FormState:
-              def __init__(self, fields):
-                  self.fields = fields
-                  self.sel = 0
-                  self.values = {}
-                  self.editing = False
-                  self.edit_buf = ""
-                  self.option_sel = 0
-                  self.option_open = False
-                  self.cancelled = False
-                  self.submitted = False
-
-                  # Initialize default values
-                  for f in self.fields:
-                      name = f['name']
-                      ftype = f.get('type', 'text')
-                      default = f.get('default', '')
-                      if ftype == 'multiselect':
-                          self.values[name] = list(default) if isinstance(default, list) else []
-                      elif ftype == 'select':
-                          self.values[name] = default if default else (f.get('options', [''])[0] if f.get('options') else '')
-                      else:
-                          self.values[name] = str(default) if default else ''
-
-          st = FormState(field_defs)
-
-          # Auto-focus first select field and open its dropdown immediately
-          for _i, _f in enumerate(st.fields):
-              if _f.get('type') in ('select', 'multiselect'):
-                  st.sel = _i
-                  st.option_open = True
-                  cur = st.values.get(_f['name'], '')
-                  opts = _f.get('options', [])
-                  if cur in opts:
-                      st.option_sel = opts.index(cur)
-                  break
-
-          def get_size():
-              try:
-                  s = os.get_terminal_size()
-                  return s.columns, s.lines
-              except:
-                  return 80, 24
-
-          def render():
-              w, h = get_size()
-              out = []
-
-              # Calculate compact box dimensions
-              box_width = min(60, w - 4)
-              content_width = box_width - 4
-
-              # Calculate content height
-              content_height = len(st.fields) + 2  # fields + header + footer
-              for i, f in enumerate(st.fields):
-                  if st.option_open and i == st.sel:
-                      if f.get('type') in ('select', 'multiselect'):
-                          content_height += len(f.get('options', []))
-              box_height = min(content_height, h - 4)
-
-              # Center the box
-              start_row = max(1, (h - box_height) // 2)
-              start_col = max(1, (w - box_width) // 2)
-
-              # Clear the box area first
-              for r in range(start_row, start_row + box_height + 1):
-                  out.append("\033[" + str(r) + ";" + str(start_col) + "H\033[K")
-
-              # Draw box border top
-              border = "+" + "-" * (box_width - 2) + "+"
-              out.append("\033[" + str(start_row) + ";" + str(start_col) + "H\033[7m " + title[:content_width].center(box_width - 2) + " \033[0m")
-
-              # Draw fields
-              row = start_row + 1
-              field_offset = 0
-              for i, f in enumerate(st.fields):
-                  if row >= start_row + box_height:
-                      break
-
-                  label = f.get('label', f['name'])
-                  ftype = f.get('type', 'text')
-                  name = f['name']
-                  required = f.get('required', False)
-                  req_mark = "*" if required else ""
-
-                  if ftype == 'text':
-                      val = st.values.get(name, '')
-                      if st.editing and i == st.sel:
-                          line = " " + label + req_mark + ": \033[7m" + st.edit_buf[:content_width//2] + "\033[0m"
-                      else:
-                          disp = val if val else "(empty)"
-                          line = " " + label + req_mark + ": " + disp[:content_width//2]
-                  elif ftype == 'select':
-                      val = st.values.get(name, '')
-                      opts = f.get('options', [])
-                      if st.option_open and i == st.sel:
-                          line = " " + label + req_mark + ":"
-                          out.append("\033[" + str(row) + ";" + str(start_col + 1) + "H" + ("\033[7m>\033[0m " if i == st.sel else "  ") + line)
-                          row += 1
-                          for oi, opt in enumerate(opts):
-                              if row >= start_row + box_height:
-                                  break
-                              marker = "\033[32m>\033[0m" if oi == st.option_sel else " "
-                              check = "\033[1m" + opt + "\033[0m" if opt == val else opt
-                              out.append("\033[" + str(row) + ";" + str(start_col + 3) + "H" + marker + " " + check[:content_width-2])
-                              row += 1
-                          continue
-                      else:
-                          disp = val if val else "(none)"
-                          line = " " + label + req_mark + ": " + disp[:content_width//2]
-                  elif ftype == 'multiselect':
-                      selected = st.values.get(name, [])
-                      opts = f.get('options', [])
-                      if st.option_open and i == st.sel:
-                          line = " " + label + req_mark + ":"
-                          out.append("\033[" + str(row) + ";" + str(start_col + 1) + "H" + ("\033[7m>\033[0m " if i == st.sel else "  ") + line)
-                          row += 1
-                          for oi, opt in enumerate(opts):
-                              if row >= start_row + box_height:
-                                  break
-                              marker = "\033[32m>\033[0m" if oi == st.option_sel else " "
-                              check = "[x]" if opt in selected else "[ ]"
-                              out.append("\033[" + str(row) + ";" + str(start_col + 3) + "H" + marker + " " + check + " " + opt[:content_width-6])
-                              row += 1
-                          continue
-                      else:
-                          summary = ", ".join(selected) if selected else "(none)"
-                          line = " " + label + req_mark + ": " + summary[:content_width//2]
-                  else:
-                      val = str(st.values.get(name, ''))
-                      line = " " + label + req_mark + ": " + val[:content_width//2]
-
-                  prefix = "\033[7m>\033[0m " if i == st.sel else "  "
-                  out.append("\033[" + str(row) + ";" + str(start_col + 1) + "H" + prefix + line[:content_width])
-                  row += 1
-
-              # Footer with controls
-              if row < start_row + box_height:
-                  if st.editing:
-                      footer = "Enter:Confirm  Esc:Cancel"
-                  elif st.option_open:
-                      ftype = st.fields[st.sel].get('type', 'text')
-                      if ftype == 'multiselect':
-                          footer = "j/k:Nav  Space:Toggle  Enter:Done"
-                      else:
-                          footer = "j/k:Nav  Enter:Select  Esc:Close"
-                  else:
-                      footer = "j/k:Nav  Enter:Edit  ^D:Submit  q:Cancel"
-                  filled = str(len([f for f in st.fields if st.values.get(f['name'])])) + "/" + str(len(st.fields))
-                  out.append("\033[" + str(start_row + box_height - 1) + ";" + str(start_col + 1) + "H\033[90m" + "-" * (box_width - 2) + "\033[0m")
-                  out.append("\033[" + str(start_row + box_height) + ";" + str(start_col + 1) + "H\033[7m " + (filled + " | " + footer).ljust(box_width - 3) + " \033[0m")
-
-              sys.stdout.write(''.join(out))
-              sys.stdout.flush()
-
-          fd = sys.stdin.fileno()
-          old_settings = termios.tcgetattr(fd)
-
-          def read_ch():
-              return os.read(fd, 1).decode('latin-1')
+      if not sys.stdin.isatty():
+          context['output'] = json.dumps({"error": "Form requires interactive terminal"})
+      else:
+          title = {{ title | tojson }}
+          command_label = {{ command_label | tojson }}
+          fields_raw = {{ fields | tojson }}
 
           try:
-              tty.setcbreak(fd)
-              termios.tcflush(fd, termios.TCIFLUSH)
-              sys.stdout.write("\033[?25l")
-              render()
+              field_defs = json.loads(fields_raw) if isinstance(fields_raw, str) else fields_raw
+          except (json.JSONDecodeError, TypeError):
+              field_defs = []
 
-              while not st.submitted and not st.cancelled:
-                  ch = read_ch()
-
-                  if ch == '\x1b':
-                      if select.select([fd], [], [], 0.05)[0]:
-                          ch2 = read_ch()
-                          if ch2 == '[' or ch2 == 'O':
-                              ch3 = read_ch()
-                              if ch3 == 'A':
-                                  ch = 'k'
-                              elif ch3 == 'B':
-                                  ch = 'j'
-                              else:
-                                  render()
-                                  continue
-                          else:
-                              if st.editing:
-                                  st.editing = False
-                              elif st.option_open:
-                                  st.option_open = False
-                              render()
-                              continue
-                      else:
-                          # Standalone Escape key
-                          if st.editing:
-                              st.editing = False
-                          elif st.option_open:
-                              st.option_open = False
-                          render()
-                          continue
-
-                  if st.editing:
-                      if ch == '\r' or ch == '\n':
-                          name = st.fields[st.sel]['name']
-                          st.values[name] = st.edit_buf
-                          st.editing = False
-                      elif ch == '\x7f' or ch == '\b':
-                          if st.edit_buf:
-                              st.edit_buf = st.edit_buf[:-1]
-                      elif ch >= ' ':
-                          st.edit_buf += ch
-                      render()
-                      continue
-
-                  if st.option_open:
-                      f = st.fields[st.sel]
-                      opts = f.get('options', [])
-                      ftype = f.get('type', 'text')
-
-                      if ch == 'j' and st.option_sel < len(opts) - 1:
-                          st.option_sel += 1
-                      elif ch == 'k' and st.option_sel > 0:
-                          st.option_sel -= 1
-                      elif ch == ' ' and ftype == 'multiselect':
-                          opt = opts[st.option_sel]
-                          selected = st.values.get(f['name'], [])
-                          if opt in selected:
-                              selected.remove(opt)
-                          else:
-                              selected.append(opt)
-                          st.values[f['name']] = selected
-                      elif ch == '\r' or ch == '\n':
-                          if ftype == 'select':
-                              st.values[f['name']] = opts[st.option_sel] if opts else ''
-                          st.option_open = False
-                          all_filled = all(
-                              st.values.get(ff['name'])
-                              for ff in st.fields if ff.get('required', False)
-                          )
-                          if all_filled:
-                              st.submitted = True
-                      render()
-                      continue
-
-                  if ch == 'q':
-                      st.cancelled = True
-                  elif ch == '\x04':
-                      st.submitted = True
-                  elif ch == 'j' and st.sel < len(st.fields) - 1:
-                      st.sel += 1
-                  elif ch == 'k' and st.sel > 0:
-                      st.sel -= 1
-                  elif ch == '\r' or ch == '\n':
-                      f = st.fields[st.sel]
-                      ftype = f.get('type', 'text')
-                      if ftype == 'text':
-                          st.editing = True
-                          st.edit_buf = st.values.get(f['name'], '')
-                      elif ftype in ('select', 'multiselect'):
-                          st.option_open = True
-                          st.option_sel = 0
-                          opts = f.get('options', [])
-                          cur = st.values.get(f['name'], '')
-                          if ftype == 'select' and cur in opts:
-                              st.option_sel = opts.index(cur)
-
-                  render()
-
-          finally:
-              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-              sys.stdout.write("\033[?25h")  # Show cursor
-              sys.stdout.flush()
-
-          if st.cancelled:
-              context['output'] = json.dumps({"cancelled": True})
+          if not field_defs:
+              context['output'] = json.dumps({"error": "No fields defined"})
           else:
-              context['output'] = json.dumps(st.values)
+              def get_size():
+                  try:
+                      return os.get_terminal_size()
+                  except:
+                      return os.terminal_size((80, 24))
+
+              # Build flat list of selectable options
+              options = []
+              for f in field_defs:
+                  ftype = f.get('type', 'text')
+                  fname = f['name']
+                  if ftype in ('select', 'multiselect'):
+                      for opt in f.get('options', []):
+                          options.append((fname, opt, opt))
+                  else:
+                      flabel = f.get('label', fname)
+                      options.append((fname, None, flabel))
+
+              if not options:
+                  context['output'] = json.dumps({"error": "No fields defined"})
+              else:
+                  class St:
+                      sel = 0
+                      cancelled = False
+
+                  st = St()
+
+                  # Calculate starting row to position form near bottom
+                  def calc_start_row():
+                      w, h = get_size()
+                      num_rows = len(options) + 5
+                      return max(1, h - num_rows - 2)
+
+                  def render():
+                      w, h = get_size()
+                      start_row = calc_start_row()
+                      out = []
+
+                      # Clear screen
+                      out.append('\033[2J')
+
+                      # Header at calculated position
+                      header = f" {title} "
+                      out.append(f"\033[{start_row};1H\033[K\033[7;1m{header.ljust(w)}\033[0m")
+                      out.append(f"\033[{start_row+1};1H\033[K\033[90m{'─' * w}\033[0m")
+
+                      # Command label
+                      out.append(f"\033[{start_row+2};1H\033[K \033[1m{command_label}\033[0m")
+
+                      # Options
+                      for i, (fname, opt, label) in enumerate(options):
+                          row = start_row + 3 + i
+                          prefix = ">" if i == st.sel else " "
+                          out.append(f"\033[{row};1H\033[K {prefix} {label}")
+
+                      # Help text at bottom
+                      out.append(f"\033[{h-2};1H\033[K\033[90m{'─' * w}\033[0m")
+                      help_text = " [j/k] Nav | Enter: select | q: Quit "
+                      out.append(f"\033[{h};1H\033[K\033[7m{help_text.ljust(w)}\033[0m")
+
+                      sys.stdout.write(''.join(out))
+                      sys.stdout.flush()
+
+                  def move_up():
+                      st.sel = (st.sel - 1) % len(options)
+
+                  def move_down():
+                      st.sel = (st.sel + 1) % len(options)
+
+                  def handle_input(c):
+                      if c == 'q' or c == '\x03':
+                          st.cancelled = True
+                          return False
+
+                      if c == '\x1b':
+                          if select.select([fd], [], [], 0.05)[0]:
+                              c2 = os.read(fd, 1).decode('latin-1')
+                              if c2 == '[':
+                                  c3 = os.read(fd, 1).decode('latin-1')
+                                  if c3 == 'A':
+                                      move_up()
+                                  elif c3 == 'B':
+                                      move_down()
+                          return True
+
+                      if c == 'j':
+                          move_down()
+                      elif c == 'k':
+                          move_up()
+                      elif c in ('\r', '\n'):
+                          return False
+
+                      return True
+
+                  fd = sys.stdin.fileno()
+                  old_settings = termios.tcgetattr(fd)
+
+                  try:
+                      tty.setcbreak(fd)
+                      sys.stdout.write('\033[?25l')
+                      sys.stdout.write('\033[2J')
+                      render()
+
+                      while True:
+                          c = os.read(fd, 1).decode('latin-1')
+                          if not handle_input(c):
+                              # Drain any pending input before exiting
+                              while select.select([fd], [], [], 0.05)[0]:
+                                  os.read(fd, 1024)
+                              break
+                          render()
+
+                  finally:
+                      termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                      sys.stdout.write('\033[?25h')
+                      sys.stdout.write('\033[2J\033[H')
+                      sys.stdout.flush()
+
+                  if st.cancelled:
+                      context['output'] = json.dumps({"cancelled": True})
+                  else:
+                      fname, opt, label = options[st.sel]
+                      context['output'] = json.dumps({fname: opt or label})

@@ -20,12 +20,7 @@ jinxes:
 {% for j in jinxes_list('lib/browser_*') %}
   - {{ j }}
 {% endfor %}
-  - {{ Jinx('click') }}
-  - {{ Jinx('key_press') }}
-  - {{ Jinx('launch_app') }}
   - {{ Jinx('screenshot') }}
-  - {{ Jinx('trigger') }}
-  - {{ Jinx('type_text') }}
   - {{ Jinx('wait') }}
   - {{ Jinx('sh') }}
   - {{ Jinx('python') }}

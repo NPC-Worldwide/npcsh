@@ -3028,6 +3028,8 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
                             jinja_env=jinja_env
                         )
                         return ctx.get("output", ctx)
+                    except KeyboardInterrupt:
+                        return {"cancelled": True}
                     except Exception as exc:
                         return f"Jinx '{tool_name}' failed: {exc}"
                 return runner
@@ -3232,7 +3234,13 @@ def process_pipeline_command(
     exec_model = model_override or npc_model or state.chat_model
     exec_provider = provider_override or npc_provider or state.chat_provider
 
-    if cmd_to_process.startswith("/"):
+    # Check if this is a slash command OR a jinx command (which can run without /)
+    is_slash_cmd = cmd_to_process.startswith("/")
+    is_jinx_cmd = router and router.is_jinx_command(cmd_to_process.split()[0] if cmd_to_process else "")
+    
+    if is_slash_cmd or is_jinx_cmd:
+        # Normalize: always pass to execute_slash_command which handles both /cmd and cmd
+        # The router's get_route normalizes commands by stripping /
         result = execute_slash_command(
             cmd_to_process,
             stdin_input,
@@ -3494,18 +3502,40 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                     # Ask user via ask_form jinx
                                     _ask_index += 1
                                     cmd_key = _build_command_key(tool_name, arguments)
-                                    perm_title = f"Permission Required ({_ask_index} of {_ask_total}): {tool_name}" if _ask_total > 1 else f"Permission Required: {tool_name}"
-                                    ask_result = tool_exec_map["ask_form"](
-                                        title=perm_title,
-                                        fields=json.dumps([
-                                            {"name": "info", "type": "text", "label": "Command", "default": cmd_key, "required": False},
-                                            {"name": "decision", "type": "select", "label": "Allow?", "options": ["Yes", "Yes (conversation)", "Yes (always)", "No", "No (never)"], "required": True}
-                                        ])
-                                    )
+                                    # Show cmd_key in title so user sees actual command
+                                    perm_title = f"Permission Required ({_ask_index} of {_ask_total}): {cmd_key}" if _ask_total > 1 else f"Permission Required: {cmd_key}"
+                                    label_text = "Command: " + cmd_key
+                                    # Pause BottomBar so it doesn't interfere with form input
+                                    from npcsh.ui import pause_bottom_bar, resume_bottom_bar
+                                    pause_bottom_bar()
+                                    try:
+                                        ask_result = tool_exec_map["ask_form"](
+                                            title=perm_title,
+                                            command_label=label_text,
+                                            fields=json.dumps([
+                                                {"name": "decision", "type": "select", "label": label_text, "options": ["Yes", "Yes (conversation)", "Yes (always)", "No", "No (never)"], "required": True}
+                                            ])
+                                        )
+                                    except KeyboardInterrupt:
+                                        ask_result = {"cancelled": True}
+                                    finally:
+                                        # Drain any pending input before resuming BottomBar
+                                        # (prevents arrow key sequences from triggering SIGINT)
+                                        try:
+                                            import select as _sel
+                                            fd = sys.stdin.fileno()
+                                            while _sel.select([fd], [], [], 0.1)[0]:
+                                                os.read(fd, 1024)
+                                        except:
+                                            pass
+                                        resume_bottom_bar()
                                     if isinstance(ask_result, str):
                                         ask_result = json.loads(ask_result)
                                     if isinstance(ask_result, dict):
-                                        decision = ask_result.get("decision", "No")
+                                        if ask_result.get("cancelled"):
+                                            decision = "No"
+                                        else:
+                                            decision = ask_result.get("decision", "No")
                                     else:
                                         decision = "No"
 

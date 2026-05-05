@@ -125,24 +125,41 @@ class CommandRouter:
             }
 
     def get_route(self, command: str) -> Optional[Callable]:
+        # Normalize command - strip leading slash if present
+        command = command.lstrip('/')
         if command in self.routes:
             return self.routes[command]
         elif command in self.jinx_routes:
             return self.jinx_routes[command]
         return None
 
+    def is_jinx_command(self, command: str) -> bool:
+        """Check if a command matches a registered jinx name."""
+        command = command.lstrip('/')
+        return command in self.jinx_routes
+
     def execute(self, command_str: str, **kwargs) -> Any:
-        command_name = command_str.split()[0].lstrip('/')
+        parts = command_str.split()
+        if not parts:
+            return None
+        command_name = parts[0].lstrip('/')
         route_func = self.get_route(command_name)
         if route_func:
             return route_func(command=command_str, **kwargs)
         return None
 
     def get_commands(self) -> List[str]:
+        # Return commands without leading slash (first-class shell commands)
         all_commands = list(self.routes.keys()) + list(self.jinx_routes.keys())
         return sorted(set(all_commands))
 
+    def get_slash_commands(self) -> List[str]:
+        """Return commands with leading slash prefix (for completion when user types /)."""
+        return [f"/{cmd}" for cmd in self.get_commands()]
+
     def get_help(self, command: str = None) -> Dict[str, str]:
+        # Normalize command - strip leading slash if present
+        command = command.lstrip('/') if command else None
         if command:
             if command in self.help_info:
                 return {command: self.help_info[command]}

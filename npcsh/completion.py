@@ -95,7 +95,10 @@ def get_file_completions(text: str) -> List[str]:
 
 
 def get_slash_commands(state: Any, router: Any) -> List[str]:
-    """Get list of available slash commands"""
+    """Get list of available slash commands - for / tab completion.
+    
+    Returns commands WITH leading slash so they show up when user types /.
+    """
     commands = set()
 
     # Built-in commands and modes
@@ -109,11 +112,28 @@ def get_slash_commands(state: Any, router: Any) -> List[str]:
         for name in state.team.jinxes_dict:
             commands.add(f'/{name}')
 
-    # Router jinxes
-    if router and hasattr(router, 'jinx_routes'):
+    # Router jinxes - use get_slash_commands() if available, fallback to jinx_routes
+    if router and hasattr(router, 'get_slash_commands'):
+        commands.update(router.get_slash_commands())
+    elif router and hasattr(router, 'jinx_routes'):
         for name in router.jinx_routes:
             commands.add(f'/{name}')
 
+    return sorted(commands)
+
+
+def get_jinx_commands(state: Any, router: Any) -> List[str]:
+    """Get list of jinx commands WITHOUT leading slash (first-class shell commands)."""
+    commands = set()
+    
+    # Team jinxes
+    if state.team and hasattr(state.team, 'jinxes_dict'):
+        commands.update(state.team.jinxes_dict.keys())
+    
+    # Router jinxes
+    if router and hasattr(router, 'jinx_routes'):
+        commands.update(router.jinx_routes.keys())
+    
     return sorted(commands)
 
 
@@ -162,10 +182,11 @@ def make_completer(shell_state: Any, router: Any):
 
             # Refresh slash commands and NPC mentions each time (they may change)
             slash_commands = get_slash_commands(shell_state, router)
+            jinx_commands = get_jinx_commands(shell_state, router)
             npc_mentions = get_npc_mentions(shell_state)
 
             if text.startswith('/'):
-                # Slash command completion
+                # Slash command completion - show slash-prefixed commands
                 options = [c for c in slash_commands if c.startswith(text)]
 
             elif text.startswith('@'):
@@ -177,8 +198,10 @@ def make_completer(shell_state: Any, router: Any):
                 options = get_file_completions(text)
 
             elif is_command_position(buffer, begidx):
-                # Command completion
+                # Command completion - include both executables AND jinx commands (first-class)
                 options = [e for e in executables if e.startswith(text)]
+                # Add jinx commands without slash (they can be run directly)
+                options.extend([j for j in jinx_commands if j.startswith(text)])
 
             else:
                 # Default to file completion

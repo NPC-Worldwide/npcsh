@@ -21,7 +21,6 @@ jinxes:
   - {{ Jinx('db_search') }}
   - {{ Jinx('sh') }}
   - {{ Jinx('python') }}
-  - {{ Jinx('sql') }}
   - {{ Jinx('load_file') }}
   - {{ Jinx('edit_file') }}
   - {{ Jinx('chat') }}

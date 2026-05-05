@@ -17,7 +17,6 @@ primary_directive: |
   Use python to demonstrate ideas visually when math is involved.
 jinxes:
   - {{ Jinx('python') }}
-  - {{ Jinx('sql') }}
   - {{ Jinx('sh') }}
   - {{ Jinx('load_file') }}
   - {{ Jinx('web_search') }}
