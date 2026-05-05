@@ -19,21 +19,80 @@ steps:
           context['output'] = "Models TUI requires an interactive terminal."
 
       else:
+          import shutil
           from npcpy.npc_sysenv import get_locally_available_models
+          from npcpy.llm_funcs import _CLI_PROVIDERS
           from npcsh.config import set_npcsh_config_value
 
           LOCAL_PROVIDERS = {'ollama', 'llamacpp', 'lmstudio', 'mlx', 'lora'}
           CLOUD_PROVIDERS = {'openai', 'anthropic', 'gemini', 'deepseek'}
 
+          # Map provider name → executable to probe with shutil.which
+          _CLI_BINARY = {
+              'claude_code': 'claude',
+              'claude':      'claude',
+              'opencode':    'opencode',
+              'codex':       'codex',
+              'amp':         'amp',
+              'gemini':      'gemini',
+              'aider':       'aider',
+              'kimi':        'kimi',
+              'kimi_code':   'kimi',
+              'kilo':        'kilo',
+          }
+
+          def _try_list_cli_models(provider, binary):
+              """Attempt to list models via the CLI binary.
+
+              Supported (expose a non-interactive listing command):
+                opencode  → `opencode models`    → "provider/model" per line
+                codex     → `codex debug models` → JSON
+                kilo      → `kilo models`        → one model per line
+
+              Not supported (no non-interactive listing command):
+                claude_code → no `claude models` command (feature request open)
+                kimi_code   → no non-interactive listing command
+              """
+              import subprocess, json as _json
+              try:
+                  if provider == 'opencode':
+                      r = subprocess.run(
+                          ['opencode', 'models'],
+                          capture_output=True, text=True, timeout=15,
+                      )
+                      if r.returncode == 0:
+                          return [l.strip() for l in r.stdout.splitlines() if l.strip()]
+                  elif provider == 'codex':
+                      r = subprocess.run(
+                          ['codex', 'debug', 'models'],
+                          capture_output=True, text=True, timeout=15,
+                      )
+                      if r.returncode == 0:
+                          data = _json.loads(r.stdout)
+                          items = data if isinstance(data, list) else data.get('data', data.get('models', []))
+                          return [m['id'] if isinstance(m, dict) else str(m) for m in items if m]
+                  elif provider == 'kilo':
+                      r = subprocess.run(
+                          ['kilo', 'models'],
+                          capture_output=True, text=True, timeout=15,
+                      )
+                      if r.returncode == 0:
+                          return [l.split()[0] for l in r.stdout.splitlines()
+                                  if l.strip() and not l.startswith('#')]
+              except Exception:
+                  pass
+              return []
+
           class TUIState:
               def __init__(self):
                   self.tab = 0
-                  self.tabs = ['All', 'Local', 'Cloud', 'Active']
+                  self.tabs = ['All', 'Local', 'Cloud', 'Active', 'CLI']
                   self.sel = 0
                   self.scroll = 0
                   self.status = ""
                   self.models = []        # list of (provider, model_id)
                   self.filtered = []      # filtered view
+                  self.cli_models = []    # list of (provider, model_id, binary, available)
                   self.chat_model = ''
                   self.chat_provider = ''
                   self.vision_model = ''
@@ -62,6 +121,30 @@ steps:
               ui.reasoning_model = os.environ.get('NPCSH_REASONING_MODEL', '')
               ui.reasoning_provider = os.environ.get('NPCSH_REASONING_PROVIDER', '')
 
+          # CLI providers in scope for this PR (subset of _CLI_PROVIDERS).
+          _CLI_SUPPORTED = {'claude_code', 'opencode', 'codex', 'kimi_code', 'kilo'}
+
+          # Subset of _CLI_SUPPORTED providers that accept image input / expose thinking.
+          # (gemini supports --image in _build_cli_cmd but is not in _CLI_SUPPORTED.)
+          _CLI_VISION_PROVIDERS = {'claude_code'}
+          _CLI_REASONING_PROVIDERS = {'claude_code', 'kimi_code'}
+
+          def detect_cli_models():
+              ui.cli_models = []
+              for provider in sorted(_CLI_SUPPORTED):
+                  binary = _CLI_BINARY.get(provider, provider.replace('_code', ''))
+                  available = shutil.which(binary) is not None
+                  if not available:
+                      continue  # binary absent — skip entirely
+                  models = _try_list_cli_models(provider, binary)
+                  if models:
+                      for model_id in models:
+                          ui.cli_models.append((provider, model_id, binary, True))
+                  else:
+                      # No listing available (claude_code, kimi_code) — show binary as
+                      # a single entry; the CLI will use its own configured model.
+                      ui.cli_models.append((provider, binary, binary, True))
+
           def detect_models():
               ui.status = "Detecting models..."
               try:
@@ -73,6 +156,7 @@ steps:
               if models_dict:
                   for model_id, provider in sorted(models_dict.items(), key=lambda x: (x[1], x[0])):
                       ui.models.append((provider, model_id))
+              detect_cli_models()
               if ui.models and not ui.status.startswith("Detection error"):
                   ui.status = f"Found {len(ui.models)} models"
               apply_filter()
@@ -94,9 +178,22 @@ steps:
                       active.add((ui.embed_provider, ui.embed_model))
                   if ui.reasoning_model and ui.reasoning_provider:
                       active.add((ui.reasoning_provider, ui.reasoning_model))
-                  ui.filtered = [(p, m) for p, m in ui.models if (p, m) in active]
+                  # Include CLI model entries if assigned as active.
+                  cli_entries = [(p, m) for p, m, b, _ in ui.cli_models]
+                  ui.filtered = [
+                      (p, m) for p, m in (list(ui.models) + cli_entries)
+                      if (p, m) in active
+                  ]
+              elif ui.tab == 4:
+                  ui.filtered = [(p, m) for p, m, b, _ in ui.cli_models]
               ui.sel = min(ui.sel, max(0, len(ui.filtered) - 1))
               ui.scroll = min(ui.scroll, max(0, ui.sel))
+
+          def cli_is_available(provider, model_id):
+              for p, m, b, avail in ui.cli_models:
+                  if p == provider and m == model_id:
+                      return avail
+              return False
 
           def model_roles(provider, model_id):
               roles = []
@@ -163,18 +260,39 @@ steps:
                       role_str = ""
                       role_plain = ""
 
-                  disp_model = model_id
+                  # On the CLI tab, disambiguate the model column:
+                  # - real model  → "model-name (provider)"
+                  # - placeholder → "binary (default CLI model)"  when no listing is available
+                  if ui.tab == 4:
+                      binary = next((b for p, m, b, _ in ui.cli_models
+                                     if p == provider and m == model_id), model_id)
+                      if model_id == binary:
+                          disp_model = f"{model_id} (default CLI model)"
+                      else:
+                          disp_model = f"{model_id} ({provider})"
+                  else:
+                      disp_model = model_id
                   if len(disp_model) > model_w - 1:
                       disp_model = disp_model[:model_w - 4] + '...'
 
                   line_plain = f"   {provider:<{prov_w}}{disp_model:<{model_w}}{role_plain}"
 
+                  # For CLI tab: replace roles with availability indicator.
+                  if ui.tab == 4:
+                      avail = cli_is_available(provider, model_id)
+                      role_str = "\033[32m✓ installed\033[0m" if avail else "\033[31m✗ not found\033[0m"
+                      role_plain = "✓ installed" if avail else "✗ not found"
+
                   if idx == ui.sel:
-                      # highlighted row
                       line_sel = f" > {provider:<{prov_w}}{disp_model:<{model_w}}{role_plain}"
                       out.append(wline(row, f"\033[7m{line_sel[:W].ljust(W)}\033[0m"))
                   else:
-                      prov_color = "\033[36m" if provider in LOCAL_PROVIDERS else "\033[35m"
+                      if provider in _CLI_PROVIDERS:
+                          prov_color = "\033[33m"   # yellow for CLI providers
+                      elif provider in LOCAL_PROVIDERS:
+                          prov_color = "\033[36m"
+                      else:
+                          prov_color = "\033[35m"
                       line_fmt = f"   {prov_color}{provider:<{prov_w}}\033[0m{disp_model:<{model_w}}{role_str}"
                       out.append(wline(row, line_fmt))
 
@@ -187,13 +305,17 @@ steps:
               # -- active summary --
               parts = []
               if ui.chat_model:
-                  parts.append(f"chat: {ui.chat_model}/{ui.chat_provider}")
+                  _sfx = " (CLI)" if ui.chat_provider in _CLI_PROVIDERS else ""
+                  parts.append(f"chat: {ui.chat_model}/{ui.chat_provider}{_sfx}")
               if ui.vision_model:
-                  parts.append(f"vision: {ui.vision_model}/{ui.vision_provider}")
+                  _sfx = " (CLI)" if ui.vision_provider in _CLI_PROVIDERS else ""
+                  parts.append(f"vision: {ui.vision_model}/{ui.vision_provider}{_sfx}")
               if ui.embed_model:
-                  parts.append(f"embed: {ui.embed_model}/{ui.embed_provider}")
+                  _sfx = " (CLI)" if ui.embed_provider in _CLI_PROVIDERS else ""
+                  parts.append(f"embed: {ui.embed_model}/{ui.embed_provider}{_sfx}")
               if ui.reasoning_model:
-                  parts.append(f"reasoning: {ui.reasoning_model}/{ui.reasoning_provider}")
+                  _sfx = " (CLI)" if ui.reasoning_provider in _CLI_PROVIDERS else ""
+                  parts.append(f"reasoning: {ui.reasoning_model}/{ui.reasoning_provider}{_sfx}")
               summary = '  '.join(parts)
               if summary:
                   out.append(wline(H - 2, f" \033[33m{summary[:W-2]}\033[0m"))
@@ -205,8 +327,10 @@ steps:
                   stat_line = f" \033[33m{ui.status[:W-2]}\033[0m"
               else:
                   stat_line = ""
-              # combine status into footer area
-              foot = " [Tab] Filter  [j/k] Nav  [c] Set Chat  [v] Set Vision  [e] Set Embed  [r] Set Reasoning  [d] Refresh  [q] Quit"
+              if ui.tab == 4:
+                  foot = " [Tab] Filter  [j/k] Nav  [c] Chat  [v] Vision (claude_code)  [r] Reasoning (claude_code/kimi_code)  [d] Refresh  [q] Quit"
+              else:
+                  foot = " [Tab] Filter  [j/k] Nav  [c] Set Chat  [v] Set Vision  [e] Set Embed  [r] Set Reasoning  [d] Refresh  [q] Quit"
               out.append(wline(H - 1, stat_line))
               out.append(wline(H, f"\033[7m{foot[:W].ljust(W)}\033[0m"))
 
@@ -287,6 +411,16 @@ steps:
                   ui.status = "No model selected."
                   return
               provider, model_id = ui.filtered[ui.sel]
+              if provider in _CLI_PROVIDERS:
+                  if role == 'embed':
+                      ui.status = "CLI providers do not support Embed assignment ([e])."
+                      return
+                  if role == 'vision' and provider not in _CLI_VISION_PROVIDERS:
+                      ui.status = f"{provider} does not support Vision ([v])."
+                      return
+                  if role == 'reasoning' and provider not in _CLI_REASONING_PROVIDERS:
+                      ui.status = f"{provider} does not support Reasoning ([r])."
+                      return
 
               if role == 'chat':
                   set_npcsh_config_value('NPCSH_CHAT_MODEL', model_id)
