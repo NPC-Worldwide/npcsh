@@ -97,8 +97,6 @@ from npcpy.data.web import search_web
 from npcpy.llm_funcs import (
     check_llm_command,
     get_llm_response,
-    _CLI_PROVIDERS,
-    _run_cli_provider,
 )
 from npcpy.memory.command_history import (
     CommandHistory,
@@ -3212,12 +3210,8 @@ def process_pipeline_command(
     if not cmd_segment:
         return state, stdin_input
 
-    # Skip the expensive local-model probe when the effective provider is a CLI tool.
-    _prelim_provider = (
-        (state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else None)
-        or state.chat_provider
-    )
-    if _prelim_provider in _CLI_PROVIDERS:
+    # Skip the expensive local-model probe when the active NPC is a CLI agent.
+    if isinstance(state.npc, CLIAgent):
         available_models_all = {}
     else:
         available_models_all = get_locally_available_models(state.current_path)
@@ -3338,55 +3332,14 @@ def process_pipeline_command(
 
         # Note: Don't append user message here - get_llm_response/check_llm_command handle it
 
-        # CLI provider routing — bypass litellm/tool loop entirely.
-        if exec_provider in _CLI_PROVIDERS:
-            _npc_name = state.npc.name if isinstance(state.npc, NPC) else ''
-            _cli_key = (exec_provider, _npc_name)
-            _sid = state.cli_sessions.get(_cli_key)
-            # Pass the NPC's primary_directive (system prompt) so CLI tools
-            # respect the NPC's role/rules, not just the raw user message.
-            _system_prompt = (
-                get_system_message(state.npc, state.team)
-                if isinstance(state.npc, NPC) else None
-            )
-            _cli_result = _run_cli_provider(
-                exec_provider, exec_model, full_llm_cmd,
-                system_prompt=_system_prompt,
-                session_id=_sid, npc_name=_npc_name,
-                history=state.messages,
-                images=state.attachments,
-                think=state.think,
-                stream=state.stream_output,
-            )
-            if _cli_result is not None:
-                _new_sid = _cli_result.get('session_id')
-                if _new_sid:
-                    state.cli_sessions[_cli_key] = _new_sid
-                _usage = _cli_result.get('usage', {})
-                state.session_input_tokens += _usage.get('input_tokens', 0)
-                state.session_output_tokens += _usage.get('output_tokens', 0)
-                state.session_cost_usd += _usage.get('cost_usd', 0.0)
-                _response_text = _cli_result.get('response', '')
-                # If the active NPC is the forenpc, scan its response for
-                # @npc-name mentions and chain-delegate. Match the inline-print
-                # behavior to whether the CLI actually streamed: when stream=True
-                # the architect text is on screen so sub-responses go inline;
-                # when stream=False process_result will render the augmented
-                # text — printing inline here would duplicate it.
-                _orig_streamed = _cli_result.get('response_already_streamed', False)
-                if _is_forenpc(state) and _response_text:
-                    state, _response_text = _scan_and_apply_delegations(
-                        state, _npc_name, _response_text,
-                        delegation_depth=0,
-                        response_already_streamed=_orig_streamed,
-                    )
-                return state, {
-                    'output': _response_text,
-                    'response_already_streamed': _cli_result.get('response_already_streamed', False),
-                    'usage': _usage,
-                    'model': exec_model,
-                    'provider': exec_provider,
-                }
+        # CLI agent short-circuit — bypass litellm/tool loop entirely.
+        if isinstance(state.npc, CLIAgent):
+            session_ctx = get_cli_session_context(state.conversation_id, state.npc.name)
+            with SpinnerContext(f"{state.npc.name} processing via {state.npc.cli_provider}", style="dots_pulse"):
+                result = state.npc.run(full_llm_cmd, session_context=session_ctx, verbose=False)
+            if isinstance(result, dict):
+                return state, result
+            return state, {"output": str(result), "messages": state.messages}
 
         tools_for_llm: List[Dict[str, Any]] = []
         tool_exec_map: Dict[str, Callable] = {}
@@ -3959,38 +3912,31 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
     target_npc = state.team.npcs[npc_name]
     model_name = target_npc.model if hasattr(target_npc, 'model') else 'unknown'
 
-    # CLI providers (opencode, claude_code, codex, ...) run their own spinner
-    # inside _run_cli_provider; avoid stacking two spinners that would alternate
-    # on the same terminal line.
-    target_provider = getattr(target_npc, 'provider', None)
-    from npcpy.llm_funcs import _CLI_PROVIDERS as _NPCPY_CLI_PROVIDERS
-    target_is_cli = target_provider in _NPCPY_CLI_PROVIDERS
-
     try:
         _t0 = time.monotonic()
+        session_ctx = None
         if isinstance(target_npc, CLIAgent):
             session_ctx = get_cli_session_context(state.conversation_id, target_npc.name)
             print(colored(
                 f"\n→ Delegating to @{npc_name} via {target_npc.cli_provider}", "cyan"
             ))
-            output = target_npc.run(command, session_context=session_ctx, verbose=False)
-            result = {'output': output}
-        elif target_is_cli:
+        else:
             print(colored(
                 f"\n→ Delegating to @{npc_name} ({model_name})", "cyan"
             ))
-            result = target_npc.check_llm_command(command, team=state.team)
-        else:
-            with SpinnerContext(
-                f"{npc_name} processing with {model_name}", style="dots_pulse"
-            ):
-                result = target_npc.check_llm_command(command, team=state.team)
+        with SpinnerContext(
+            f"{npc_name} processing with {model_name}", style="dots_pulse"
+        ):
+            result = target_npc.run(command, team=state.team, session_context=session_ctx, verbose=False)
         _elapsed = time.monotonic() - _t0
         print(colored(f"  ✓ @{npc_name} done in {_elapsed:.0f}s", "green"))
 
-        output = result.get("output") or result.get("response", "")
-        if result.get("messages"):
-            state.messages = result["messages"]
+        if isinstance(result, dict):
+            output = result.get("output") or result.get("response", "")
+            if result.get("messages"):
+                state.messages = result["messages"]
+        else:
+            output = str(result)
 
         # Only first-level delegations have their @mentions chained.
         if delegation_depth == 0:

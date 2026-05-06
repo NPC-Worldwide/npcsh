@@ -21,7 +21,7 @@ steps:
       else:
           import shutil
           from npcpy.npc_sysenv import get_locally_available_models
-          from npcpy.llm_funcs import _CLI_PROVIDERS
+          from npcpy.npc_compiler import _is_cli_provider
           from npcsh.config import set_npcsh_config_value
 
           LOCAL_PROVIDERS = {'ollama', 'llamacpp', 'lmstudio', 'mlx', 'lora'}
@@ -121,7 +121,7 @@ steps:
               ui.reasoning_model = os.environ.get('NPCSH_REASONING_MODEL', '')
               ui.reasoning_provider = os.environ.get('NPCSH_REASONING_PROVIDER', '')
 
-          # CLI providers in scope for this PR (subset of _CLI_PROVIDERS).
+          # CLI providers in scope for this PR (subset of _is_cli_provider).
           _CLI_SUPPORTED = {'claude_code', 'opencode', 'codex', 'kimi_code', 'kilo'}
 
           # Subset of _CLI_SUPPORTED providers that accept image input / expose thinking.
@@ -287,7 +287,7 @@ steps:
                       line_sel = f" > {provider:<{prov_w}}{disp_model:<{model_w}}{role_plain}"
                       out.append(wline(row, f"\033[7m{line_sel[:W].ljust(W)}\033[0m"))
                   else:
-                      if provider in _CLI_PROVIDERS:
+                      if _is_cli_provider(provider):
                           prov_color = "\033[33m"   # yellow for CLI providers
                       elif provider in LOCAL_PROVIDERS:
                           prov_color = "\033[36m"
@@ -305,16 +305,16 @@ steps:
               # -- active summary --
               parts = []
               if ui.chat_model:
-                  _sfx = " (CLI)" if ui.chat_provider in _CLI_PROVIDERS else ""
+                  _sfx = " (CLI)" if _is_cli_provider(ui.chat_provider) else ""
                   parts.append(f"chat: {ui.chat_model}/{ui.chat_provider}{_sfx}")
               if ui.vision_model:
-                  _sfx = " (CLI)" if ui.vision_provider in _CLI_PROVIDERS else ""
+                  _sfx = " (CLI)" if _is_cli_provider(ui.vision_provider) else ""
                   parts.append(f"vision: {ui.vision_model}/{ui.vision_provider}{_sfx}")
               if ui.embed_model:
-                  _sfx = " (CLI)" if ui.embed_provider in _CLI_PROVIDERS else ""
+                  _sfx = " (CLI)" if _is_cli_provider(ui.embed_provider) else ""
                   parts.append(f"embed: {ui.embed_model}/{ui.embed_provider}{_sfx}")
               if ui.reasoning_model:
-                  _sfx = " (CLI)" if ui.reasoning_provider in _CLI_PROVIDERS else ""
+                  _sfx = " (CLI)" if _is_cli_provider(ui.reasoning_provider) else ""
                   parts.append(f"reasoning: {ui.reasoning_model}/{ui.reasoning_provider}{_sfx}")
               summary = '  '.join(parts)
               if summary:
@@ -411,7 +411,7 @@ steps:
                   ui.status = "No model selected."
                   return
               provider, model_id = ui.filtered[ui.sel]
-              if provider in _CLI_PROVIDERS:
+              if _is_cli_provider(provider):
                   if role == 'embed':
                       ui.status = "CLI providers do not support Embed assignment ([e])."
                       return
