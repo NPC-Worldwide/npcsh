@@ -20,7 +20,21 @@
 
 `npcsh` makes the most of LLMs and agents through slash commands and interactive modes, all from the command line. Build teams of agents, schedule them on jobs, engineer context, and design custom Jinja Execution templates (Jinxes) for you and your agents to invoke.
 
+To get started, view the latest release in the sidebar on github, and download the executable binary for your system. Once downloaded, ensure that it is executable.
+
 ```bash
+#linux
+chmod +x npcsh-binary-path
+```
+Then run the executable 
+```bash
+./npcsh-binary-path
+```
+Alternatively, you can install with brew or pip if you want to develop on top of this library.
+```bash
+brew install npcsh
+```
+```
 pip install 'npcsh[lite]'
 ```
 
