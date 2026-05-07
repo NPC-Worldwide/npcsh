@@ -4147,12 +4147,18 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
             npc_obj.model = initial_state.chat_model
         if not npc_obj.provider:
             npc_obj.provider = initial_state.chat_provider
+        # Inject NPCSH_API_URL for openai-like provider if not explicitly set
+        if not getattr(npc_obj, 'api_url', None) and npc_obj.provider == 'openai-like':
+            npc_obj.api_url = os.environ.get("NPCSH_API_URL")
 
     if team.forenpc and isinstance(team.forenpc, NPC):
         if not team.forenpc.model:
             team.forenpc.model = initial_state.chat_model
         if not team.forenpc.provider:
             team.forenpc.provider = initial_state.chat_provider
+        # Inject NPCSH_API_URL for openai-like provider if not explicitly set
+        if not getattr(team.forenpc, 'api_url', None) and team.forenpc.provider == 'openai-like':
+            team.forenpc.api_url = os.environ.get("NPCSH_API_URL")
     
     team_name_from_ctx = team_ctx.get("name")
     if team_name_from_ctx:
