@@ -4153,18 +4153,42 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
             print(f"Error: Project team at '{team_dir}' has compilation errors.")
             print("Please check your .npc files and jinx references.")
             raise
-
-    forenpc_obj = team.forenpc if hasattr(team, 'forenpc') and team.forenpc else None
-
     for npc_name, npc_obj in team.npcs.items():
         if not npc_obj.model:
             npc_obj.model = initial_state.chat_model
         if not npc_obj.provider:
             npc_obj.provider = initial_state.chat_provider
+        # Resolve provider reference if NPC references a named provider
+        if hasattr(npc_obj, 'provider') and npc_obj.provider in providers_dict:
+            prov_config = providers_dict[npc_obj.provider]
+            # Inject provider config fields if NPC doesn't have explicit values
+            if not getattr(npc_obj, 'api_url', None) and 'api_url' in prov_config:
+                npc_obj.api_url = prov_config['api_url']
+            if not getattr(npc_obj, 'api_key', None) and 'api_key' in prov_config:
+                npc_obj.api_key = prov_config['api_key']
+            # Use provider_type from provider config if set
+            if 'provider_type' in prov_config and prov_config['provider_type']:
+                npc_obj.provider = prov_config['provider_type']
+            # Inject model from provider if NPC doesn't have one
+            if not getattr(npc_obj, 'model', None) and 'model' in prov_config:
+                npc_obj.model = prov_config['model']
 
     if team.forenpc and isinstance(team.forenpc, NPC):
         if not team.forenpc.model:
             team.forenpc.model = initial_state.chat_model
+        if not team.forenpc.provider:
+            team.forenpc.provider = initial_state.chat_provider
+        # Resolve provider reference for forenpc
+        if hasattr(team.forenpc, 'provider') and team.forenpc.provider in providers_dict:
+            prov_config = providers_dict[team.forenpc.provider]
+            if not getattr(team.forenpc, 'api_url', None) and 'api_url' in prov_config:
+                team.forenpc.api_url = prov_config['api_url']
+            if not getattr(team.forenpc, 'api_key', None) and 'api_key' in prov_config:
+                team.forenpc.api_key = prov_config['api_key']
+            if 'provider_type' in prov_config and prov_config['provider_type']:
+                team.forenpc.provider = prov_config['provider_type']
+            if not getattr(team.forenpc, 'model', None) and 'model' in prov_config:
+                team.forenpc.model = prov_config['model']
         if not team.forenpc.provider:
             team.forenpc.provider = initial_state.chat_provider
     
