@@ -3395,6 +3395,38 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     # Guard against orphaned tool calls from a prior interrupt
                     state.messages = sanitize_messages(state.messages)
 
+                    # ── DEBUG: dump full message state to file ──
+                    try:
+                        with open("/tmp/npcsh_tool_loop.log", "a") as _df:
+                            _df.write(f"\n=== iter {iteration} BEFORE get_llm_response ===\n")
+                            _df.write(f"prompt: {full_llm_cmd if iteration == 1 else 'Continue. Call stop when done.'!r}\n")
+                            _df.write(f"messages count: {len(state.messages)}\n")
+                            for _mi, _mm in enumerate(state.messages):
+                                c = _mm.get("content", "")
+                                if isinstance(c, str):
+                                    c = c[:120]
+                                else:
+                                    c = repr(c)[:120]
+                                _df.write(f"  [{_mi}] role={_mm.get('role','?')} content={c!r}\n")
+                                if _mm.get("tool_calls"):
+                                    for _tc in _mm["tool_calls"]:
+                                        try:
+                                            fname = _tc.get("function", {}).get("name", "?")
+                                            fargs = _tc.get("function", {}).get("arguments", "")[:80]
+                                            _df.write(f"      tool_call: {fname}({fargs})\n")
+                                        except Exception:
+                                            _df.write("      tool_call: (unprintable)\n")
+                                if _mm.get("tool_call_id"):
+                                    rc = _mm.get("content", "")
+                                    if isinstance(rc, str):
+                                        rc = rc[:120]
+                                    else:
+                                        rc = repr(rc)[:120]
+                                    _df.write(f"      tool_result: id={_mm['tool_call_id']} content={rc!r}\n")
+                    except Exception:
+                        pass
+                    # ────────────────────────────────────────────
+
                     # Log what the model will see
                     msg_roles = [m.get("role", "?") for m in state.messages[-6:]]
                     iter_prompt = full_llm_cmd if iteration == 1 else "Continue. Call stop when done."
@@ -3455,7 +3487,72 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                         total_usage["output_tokens"] += llm_result['usage'].get('output_tokens', 0)
 
                     if isinstance(llm_result, dict):
-                        state.messages = llm_result.get("messages", state.messages)
+                        # Ensure system message is present in our canonical history
+                        if not state.messages or state.messages[0].get("role") != "system":
+                            system_msg = get_system_message(state.npc, state.team, tool_capable=bool(tools_for_llm))
+                            state.messages.insert(0, {"role": "system", "content": system_msg})
+
+                        # Record the prompt the same way get_llm_response does internally
+                        prompt_to_record = iter_prompt
+                        if iteration == 1 and info:
+                            prompt_to_record = f"{iter_prompt}\n\n\nUser Provided Context: {info}"
+
+                        if state.messages and state.messages[-1].get("role") == "user" and isinstance(state.messages[-1].get("content"), str):
+                            state.messages[-1]["content"] += "\n" + prompt_to_record
+                        else:
+                            state.messages.append({"role": "user", "content": prompt_to_record})
+
+                        # Append assistant response from llm_result instead of replacing history
+                        response_text = llm_result.get("response", "")
+                        raw_tool_calls = llm_result.get("tool_calls")
+                        assistant_msg = {"role": "assistant", "content": response_text or ""}
+                        if raw_tool_calls:
+                            tc_dicts = []
+                            for tc in raw_tool_calls:
+                                if isinstance(tc, dict):
+                                    tc_dicts.append(tc)
+                                else:
+                                    tc_dicts.append({
+                                        "id": getattr(tc, "id", ""),
+                                        "type": "function",
+                                        "function": {
+                                            "name": getattr(tc.function, "name", "") if hasattr(tc, "function") else "",
+                                            "arguments": getattr(tc.function, "arguments", "{}") if hasattr(tc, "function") else "{}"
+                                        }
+                                    })
+                            assistant_msg["tool_calls"] = tc_dicts
+                        state.messages.append(assistant_msg)
+
+                        # ── DEBUG: log message state ──
+                        try:
+                            with open("/tmp/npcsh_tool_loop.log", "a") as _df:
+                                _df.write(f"=== iter {iteration} AFTER get_llm_response ===\n")
+                                _df.write(f"messages count: {len(state.messages)}\n")
+                                for _mi, _mm in enumerate(state.messages):
+                                    c = _mm.get("content", "")
+                                    if isinstance(c, str):
+                                        c = c[:120]
+                                    else:
+                                        c = repr(c)[:120]
+                                    _df.write(f"  [{_mi}] role={_mm.get('role','?')} content={c!r}\n")
+                                    if _mm.get("tool_calls"):
+                                        for _tc in _mm["tool_calls"]:
+                                            try:
+                                                fname = _tc.get("function", {}).get("name", "?")
+                                                fargs = _tc.get("function", {}).get("arguments", "")[:80]
+                                                _df.write(f"      tool_call: {fname}({fargs})\n")
+                                            except Exception:
+                                                _df.write("      tool_call: (unprintable)\n")
+                                    if _mm.get("tool_call_id"):
+                                        rc = _mm.get("content", "")
+                                        if isinstance(rc, str):
+                                            rc = rc[:120]
+                                        else:
+                                            rc = repr(rc)[:120]
+                                        _df.write(f"      tool_result: id={_mm['tool_call_id']} content={rc!r}\n")
+                        except Exception:
+                            pass
+                        # ──────────────────────────────
 
                     raw_tool_calls = llm_result.get("tool_calls") if isinstance(llm_result, dict) else None
                     response_text = llm_result.get("response", "") if isinstance(llm_result, dict) else ""
@@ -3545,10 +3642,16 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                             pass
                                         resume_bottom_bar()
                                     if isinstance(ask_result, str):
-                                        ask_result = json.loads(ask_result)
+                                        try:
+                                            ask_result = json.loads(ask_result)
+                                        except json.JSONDecodeError:
+                                            ask_result = {"_parse_error": True}
+
                                     if isinstance(ask_result, dict):
-                                        if ask_result.get("cancelled"):
-                                            decision = "No"
+                                        if "error" in ask_result or ask_result.get("cancelled") or "_parse_error" in ask_result:
+                                            # Form could not be shown or was cancelled — allow for this session
+                                            state.grant_session(cmd_key)
+                                            decision = "Yes (conversation)"
                                         else:
                                             decision = ask_result.get("decision", "No")
                                     else:
@@ -3592,6 +3695,15 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 "name": tool_name or "unknown",
                                 "content": tool_result_str,
                             })
+                            # ── DEBUG: log tool result append ──
+                            try:
+                                with open("/tmp/npcsh_tool_loop.log", "a") as _df:
+                                    _df.write(f"=== iter {iteration} AFTER tool append ===\n")
+                                    _df.write(f"appended tool result for {tool_name}: {tool_result_str[:120]!r}\n")
+                                    _df.write(f"messages count now: {len(state.messages)}\n")
+                            except Exception:
+                                pass
+                            # ──────────────────────────────────
 
                             # Display tool result content (spinner is stopped here)
                             # Skip if tool already streamed its own output
