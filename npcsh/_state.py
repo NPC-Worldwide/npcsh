@@ -4111,6 +4111,20 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         except Exception as e:
             print(f"Warning: Could not load context file {os.path.basename(team_ctx_path)}: {e}")
     
+    # Parse providers field from team.ctx
+    # providers: list of named provider configs with model, api_url, api_key, provider_type
+    # NPCs can reference these by name and override individual fields
+    _providers = team_ctx.get('providers', [])
+    providers_dict = {}
+    if isinstance(_providers, list):
+        for prov in _providers:
+            if isinstance(prov, dict) and 'name' in prov:
+                # Expand environment variables in provider configs
+                expanded_prov = prov.copy()
+                for key in ['api_url', 'api_key', 'model']:
+                    if key in expanded_prov and isinstance(expanded_prov[key], str):
+                        expanded_prov[key] = os.path.expandvars(expanded_prov[key])
+                providers_dict[prov['name']] = expanded_prov
     forenpc_name = team_ctx.get("forenpc", default_forenpc_name)
     if forenpc_name is None:
         forenpc_name = "sibiji"
