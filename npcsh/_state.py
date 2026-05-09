@@ -3335,9 +3335,21 @@ def process_pipeline_command(
         # CLI agent short-circuit — bypass litellm/tool loop entirely.
         if isinstance(state.npc, CLIAgent):
             session_ctx = get_cli_session_context(state.conversation_id, state.npc.name)
+            session_key = (state.npc.cli_provider, state.npc.name)
+            existing_sid = state.cli_sessions.get(session_key)
             with SpinnerContext(f"{state.npc.name} processing via {state.npc.cli_provider}", style="dots_pulse"):
-                result = state.npc.run(full_llm_cmd, session_context=session_ctx, verbose=False)
+                result = state.npc.run(
+                    full_llm_cmd,
+                    session_context=session_ctx,
+                    session_id=existing_sid,
+                    images=state.attachments,
+                    think=state.think,
+                    verbose=False,
+                )
             if isinstance(result, dict):
+                new_sid = result.get("session_id")
+                if new_sid:
+                    state.cli_sessions[session_key] = new_sid
                 return state, result
             return state, {"output": str(result), "messages": state.messages}
 
@@ -4027,8 +4039,14 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
     try:
         _t0 = time.monotonic()
         session_ctx = None
+        run_kwargs = {"team": state.team, "session_context": session_ctx, "verbose": False}
         if isinstance(target_npc, CLIAgent):
             session_ctx = get_cli_session_context(state.conversation_id, target_npc.name)
+            run_kwargs["session_context"] = session_ctx
+            session_key = (target_npc.cli_provider, target_npc.name)
+            existing_sid = state.cli_sessions.get(session_key)
+            if existing_sid:
+                run_kwargs["session_id"] = existing_sid
             print(colored(
                 f"\n→ Delegating to @{npc_name} via {target_npc.cli_provider}", "cyan"
             ))
@@ -4039,7 +4057,7 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
         with SpinnerContext(
             f"{npc_name} processing with {model_name}", style="dots_pulse"
         ):
-            result = target_npc.run(command, team=state.team, session_context=session_ctx, verbose=False)
+            result = target_npc.run(command, **run_kwargs)
         _elapsed = time.monotonic() - _t0
         print(colored(f"  ✓ @{npc_name} done in {_elapsed:.0f}s", "green"))
 
@@ -4047,6 +4065,8 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
             output = result.get("output") or result.get("response", "")
             if result.get("messages"):
                 state.messages = result["messages"]
+            if isinstance(target_npc, CLIAgent) and result.get("session_id"):
+                state.cli_sessions[session_key] = result["session_id"]
         else:
             output = str(result)
 
