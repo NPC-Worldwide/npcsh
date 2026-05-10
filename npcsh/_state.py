@@ -4360,6 +4360,20 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         except Exception as e:
             print(f"Warning: Could not load context file {os.path.basename(team_ctx_path)}: {e}")
     
+    # Parse providers field from team.ctx
+    # providers: list of named provider configs with model, api_url, api_key, provider_type
+    # NPCs can reference these by name and override individual fields
+    _providers = team_ctx.get('providers', [])
+    providers_dict = {}
+    if isinstance(_providers, list):
+        for prov in _providers:
+            if isinstance(prov, dict) and 'name' in prov:
+                # Expand environment variables in provider configs
+                expanded_prov = prov.copy()
+                for key in ['api_url', 'api_key', 'model']:
+                    if key in expanded_prov and isinstance(expanded_prov[key], str):
+                        expanded_prov[key] = os.path.expandvars(expanded_prov[key])
+                providers_dict[prov['name']] = expanded_prov
     forenpc_name = team_ctx.get("forenpc", default_forenpc_name)
     if forenpc_name is None:
         forenpc_name = "sibiji"
@@ -4388,16 +4402,27 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
             print(f"Error: Project team at '{team_dir}' has compilation errors.")
             print("Please check your .npc files and jinx references.")
             raise
-
-    forenpc_obj = team.forenpc if hasattr(team, 'forenpc') and team.forenpc else None
-
     for npc_name, npc_obj in team.npcs.items():
         if not npc_obj.model:
             npc_obj.model = initial_state.chat_model
         if not npc_obj.provider:
             npc_obj.provider = initial_state.chat_provider
-        # Inject NPCSH_API_URL for openai-like provider if not explicitly set
-        if not getattr(npc_obj, 'api_url', None) and npc_obj.provider == 'openai-like':
+        # Resolve provider reference if NPC references a named provider
+        if hasattr(npc_obj, 'provider') and npc_obj.provider in providers_dict:
+            prov_config = providers_dict[npc_obj.provider]
+            # Inject provider config fields if NPC doesn't have explicit values
+            if not getattr(npc_obj, 'api_url', None) and 'api_url' in prov_config:
+                npc_obj.api_url = prov_config['api_url']
+            if not getattr(npc_obj, 'api_key', None) and 'api_key' in prov_config:
+                npc_obj.api_key = prov_config['api_key']
+            # Use provider_type from provider config if set
+            if 'provider_type' in prov_config and prov_config['provider_type']:
+                npc_obj.provider = prov_config['provider_type']
+            # Inject model from provider if NPC doesn't have one
+            if not getattr(npc_obj, 'model', None) and 'model' in prov_config:
+                npc_obj.model = prov_config['model']
+        # Inject NPCSH_API_URL for openai-like provider if not explicitly set (fallback)
+        elif not getattr(npc_obj, 'api_url', None) and npc_obj.provider == 'openai-like':
             npc_obj.api_url = os.environ.get("NPCSH_API_URL")
 
     if team.forenpc and isinstance(team.forenpc, NPC):
@@ -4405,9 +4430,22 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
             team.forenpc.model = initial_state.chat_model
         if not team.forenpc.provider:
             team.forenpc.provider = initial_state.chat_provider
-        # Inject NPCSH_API_URL for openai-like provider if not explicitly set
-        if not getattr(team.forenpc, 'api_url', None) and team.forenpc.provider == 'openai-like':
+        # Resolve provider reference for forenpc
+        if hasattr(team.forenpc, 'provider') and team.forenpc.provider in providers_dict:
+            prov_config = providers_dict[team.forenpc.provider]
+            if not getattr(team.forenpc, 'api_url', None) and 'api_url' in prov_config:
+                team.forenpc.api_url = prov_config['api_url']
+            if not getattr(team.forenpc, 'api_key', None) and 'api_key' in prov_config:
+                team.forenpc.api_key = prov_config['api_key']
+            if 'provider_type' in prov_config and prov_config['provider_type']:
+                team.forenpc.provider = prov_config['provider_type']
+            if not getattr(team.forenpc, 'model', None) and 'model' in prov_config:
+                team.forenpc.model = prov_config['model']
+        # Inject NPCSH_API_URL for openai-like provider if not explicitly set (fallback)
+        elif not getattr(team.forenpc, 'api_url', None) and team.forenpc.provider == 'openai-like':
             team.forenpc.api_url = os.environ.get("NPCSH_API_URL")
+        if not team.forenpc.provider:
+            team.forenpc.provider = initial_state.chat_provider
     
     team_name_from_ctx = team_ctx.get("name")
     if team_name_from_ctx:
