@@ -112,7 +112,7 @@ from npcpy.npc_sysenv import (
     render_markdown,
     get_model_and_provider,
     get_locally_available_models,
-
+    get_system_message,
 )
 from npcpy.tools import auto_tools
 from npcpy.gen.embeddings import get_embeddings
@@ -334,6 +334,8 @@ class ShellState:
     _permissions_loaded: bool = False
     # Active plan the agent is executing
     _active_plan: Optional[Dict[str, Any]] = None
+    # CLI session IDs keyed by (provider, npc_name) for session continuity
+    cli_sessions: Dict[tuple, str] = field(default_factory=dict)
 
     # ── permission helpers ──────────────────────────────────────────────
 
@@ -3208,7 +3210,11 @@ def process_pipeline_command(
     if not cmd_segment:
         return state, stdin_input
 
-    available_models_all = get_locally_available_models(state.current_path)
+    # Skip the expensive local-model probe when the active NPC is a CLI agent.
+    if isinstance(state.npc, CLIAgent):
+        available_models_all = {}
+    else:
+        available_models_all = get_locally_available_models(state.current_path)
     available_models_all_list = [
         item for key, item in available_models_all.items()
     ]
@@ -3326,6 +3332,27 @@ def process_pipeline_command(
 
         # Note: Don't append user message here - get_llm_response/check_llm_command handle it
 
+        # CLI agent short-circuit — bypass litellm/tool loop entirely.
+        if isinstance(state.npc, CLIAgent):
+            session_ctx = get_cli_session_context(state.conversation_id, state.npc.name)
+            session_key = (state.npc.cli_provider, state.npc.name)
+            existing_sid = state.cli_sessions.get(session_key)
+            with SpinnerContext(f"{state.npc.name} processing via {state.npc.cli_provider}", style="dots_pulse"):
+                result = state.npc.run(
+                    full_llm_cmd,
+                    session_context=session_ctx,
+                    session_id=existing_sid,
+                    images=state.attachments,
+                    think=state.think,
+                    verbose=False,
+                )
+            if isinstance(result, dict):
+                new_sid = result.get("session_id")
+                if new_sid:
+                    state.cli_sessions[session_key] = new_sid
+                return state, result
+            return state, {"output": str(result), "messages": state.messages}
+
         tools_for_llm: List[Dict[str, Any]] = []
         tool_exec_map: Dict[str, Callable] = {}
         tool_capable = model_supports_tool_calls(exec_model, exec_provider)
@@ -3379,6 +3406,38 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
 
                     # Guard against orphaned tool calls from a prior interrupt
                     state.messages = sanitize_messages(state.messages)
+
+                    # ── DEBUG: dump full message state to file ──
+                    try:
+                        with open("/tmp/npcsh_tool_loop.log", "a") as _df:
+                            _df.write(f"\n=== iter {iteration} BEFORE get_llm_response ===\n")
+                            _df.write(f"prompt: {full_llm_cmd if iteration == 1 else 'Continue. Call stop when done.'!r}\n")
+                            _df.write(f"messages count: {len(state.messages)}\n")
+                            for _mi, _mm in enumerate(state.messages):
+                                c = _mm.get("content", "")
+                                if isinstance(c, str):
+                                    c = c[:120]
+                                else:
+                                    c = repr(c)[:120]
+                                _df.write(f"  [{_mi}] role={_mm.get('role','?')} content={c!r}\n")
+                                if _mm.get("tool_calls"):
+                                    for _tc in _mm["tool_calls"]:
+                                        try:
+                                            fname = _tc.get("function", {}).get("name", "?")
+                                            fargs = _tc.get("function", {}).get("arguments", "")[:80]
+                                            _df.write(f"      tool_call: {fname}({fargs})\n")
+                                        except Exception:
+                                            _df.write("      tool_call: (unprintable)\n")
+                                if _mm.get("tool_call_id"):
+                                    rc = _mm.get("content", "")
+                                    if isinstance(rc, str):
+                                        rc = rc[:120]
+                                    else:
+                                        rc = repr(rc)[:120]
+                                    _df.write(f"      tool_result: id={_mm['tool_call_id']} content={rc!r}\n")
+                    except Exception:
+                        pass
+                    # ────────────────────────────────────────────
 
                     # Log what the model will see
                     msg_roles = [m.get("role", "?") for m in state.messages[-6:]]
@@ -3440,7 +3499,72 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                         total_usage["output_tokens"] += llm_result['usage'].get('output_tokens', 0)
 
                     if isinstance(llm_result, dict):
-                        state.messages = llm_result.get("messages", state.messages)
+                        # Ensure system message is present in our canonical history
+                        if not state.messages or state.messages[0].get("role") != "system":
+                            system_msg = get_system_message(state.npc, state.team, tool_capable=bool(tools_for_llm))
+                            state.messages.insert(0, {"role": "system", "content": system_msg})
+
+                        # Record the prompt the same way get_llm_response does internally
+                        prompt_to_record = iter_prompt
+                        if iteration == 1 and info:
+                            prompt_to_record = f"{iter_prompt}\n\n\nUser Provided Context: {info}"
+
+                        if state.messages and state.messages[-1].get("role") == "user" and isinstance(state.messages[-1].get("content"), str):
+                            state.messages[-1]["content"] += "\n" + prompt_to_record
+                        else:
+                            state.messages.append({"role": "user", "content": prompt_to_record})
+
+                        # Append assistant response from llm_result instead of replacing history
+                        response_text = llm_result.get("response", "")
+                        raw_tool_calls = llm_result.get("tool_calls")
+                        assistant_msg = {"role": "assistant", "content": response_text or ""}
+                        if raw_tool_calls:
+                            tc_dicts = []
+                            for tc in raw_tool_calls:
+                                if isinstance(tc, dict):
+                                    tc_dicts.append(tc)
+                                else:
+                                    tc_dicts.append({
+                                        "id": getattr(tc, "id", ""),
+                                        "type": "function",
+                                        "function": {
+                                            "name": getattr(tc.function, "name", "") if hasattr(tc, "function") else "",
+                                            "arguments": getattr(tc.function, "arguments", "{}") if hasattr(tc, "function") else "{}"
+                                        }
+                                    })
+                            assistant_msg["tool_calls"] = tc_dicts
+                        state.messages.append(assistant_msg)
+
+                        # ── DEBUG: log message state ──
+                        try:
+                            with open("/tmp/npcsh_tool_loop.log", "a") as _df:
+                                _df.write(f"=== iter {iteration} AFTER get_llm_response ===\n")
+                                _df.write(f"messages count: {len(state.messages)}\n")
+                                for _mi, _mm in enumerate(state.messages):
+                                    c = _mm.get("content", "")
+                                    if isinstance(c, str):
+                                        c = c[:120]
+                                    else:
+                                        c = repr(c)[:120]
+                                    _df.write(f"  [{_mi}] role={_mm.get('role','?')} content={c!r}\n")
+                                    if _mm.get("tool_calls"):
+                                        for _tc in _mm["tool_calls"]:
+                                            try:
+                                                fname = _tc.get("function", {}).get("name", "?")
+                                                fargs = _tc.get("function", {}).get("arguments", "")[:80]
+                                                _df.write(f"      tool_call: {fname}({fargs})\n")
+                                            except Exception:
+                                                _df.write("      tool_call: (unprintable)\n")
+                                    if _mm.get("tool_call_id"):
+                                        rc = _mm.get("content", "")
+                                        if isinstance(rc, str):
+                                            rc = rc[:120]
+                                        else:
+                                            rc = repr(rc)[:120]
+                                        _df.write(f"      tool_result: id={_mm['tool_call_id']} content={rc!r}\n")
+                        except Exception:
+                            pass
+                        # ──────────────────────────────
 
                     raw_tool_calls = llm_result.get("tool_calls") if isinstance(llm_result, dict) else None
                     response_text = llm_result.get("response", "") if isinstance(llm_result, dict) else ""
@@ -3530,10 +3654,16 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                             pass
                                         resume_bottom_bar()
                                     if isinstance(ask_result, str):
-                                        ask_result = json.loads(ask_result)
+                                        try:
+                                            ask_result = json.loads(ask_result)
+                                        except json.JSONDecodeError:
+                                            ask_result = {"_parse_error": True}
+
                                     if isinstance(ask_result, dict):
-                                        if ask_result.get("cancelled"):
-                                            decision = "No"
+                                        if "error" in ask_result or ask_result.get("cancelled") or "_parse_error" in ask_result:
+                                            # Form could not be shown or was cancelled — allow for this session
+                                            state.grant_session(cmd_key)
+                                            decision = "Yes (conversation)"
                                         else:
                                             decision = ask_result.get("decision", "No")
                                     else:
@@ -3577,6 +3707,15 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 "name": tool_name or "unknown",
                                 "content": tool_result_str,
                             })
+                            # ── DEBUG: log tool result append ──
+                            try:
+                                with open("/tmp/npcsh_tool_loop.log", "a") as _df:
+                                    _df.write(f"=== iter {iteration} AFTER tool append ===\n")
+                                    _df.write(f"appended tool result for {tool_name}: {tool_result_str[:120]!r}\n")
+                                    _df.write(f"messages count now: {len(state.messages)}\n")
+                            except Exception:
+                                pass
+                            # ──────────────────────────────────
 
                             # Display tool result content (spinner is stopped here)
                             # Skip if tool already streamed its own output
@@ -3690,6 +3829,19 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
             state.messages = new_messages
             output_text = llm_result.get("output") or llm_result.get("response")
 
+            # Forenpc auto-delegation: scan for @npc-name mentions in the
+            # response and chain-delegate to specialists. Only applies on the
+            # litellm/non-CLI path here; the CLI path scans before returning.
+            if (
+                _is_forenpc(state)
+                and isinstance(output_text, str)
+                and output_text
+            ):
+                state, output_text = _scan_and_apply_delegations(
+                    state, state.npc.name, output_text,
+                    delegation_depth=0, response_already_streamed=False,
+                )
+
             # Preserve usage info for process_result to accumulate
             output = {
                 'output': output_text,
@@ -3773,18 +3925,109 @@ def check_mode_switch(command:str , state: ShellState):
     return False, state
 
 
+_AT_MENTION_PATTERN = r'@(\w+)\s*,?\s*(?:could you|can you|please|would you)?[^.!?\n]*[.!?\n]?'
+_MAX_DELEGATION_DEPTH = 1
+
+
+def _scan_and_apply_delegations(
+    state: ShellState,
+    originating_npc_name: str,
+    response_text: str,
+    delegation_depth: int = 0,
+    response_already_streamed: bool = False,
+) -> Tuple[ShellState, str]:
+    """Scan response_text for @npc_name mentions and run sub-delegations.
+
+    If response_already_streamed is True, sub-NPC responses are printed inline
+    (the original response is already on screen). Otherwise sub-responses are
+    just appended to the augmented text and the caller handles display.
+
+    Returns (state, augmented_text).
+    """
+    import re
+
+    if delegation_depth >= _MAX_DELEGATION_DEPTH:
+        return state, response_text
+    if not response_text or not isinstance(response_text, str):
+        return state, response_text
+    if not state.team or not hasattr(state.team, 'npcs'):
+        return state, response_text
+
+    matches = re.findall(_AT_MENTION_PATTERN, response_text, re.IGNORECASE)
+    augmented = response_text
+    seen = set()
+    for mentioned_npc in matches:
+        mentioned_npc = mentioned_npc.lower()
+        if mentioned_npc in seen:
+            continue
+        seen.add(mentioned_npc)
+        if mentioned_npc not in state.team.npcs or mentioned_npc == originating_npc_name:
+            continue
+        delegation_match = re.search(
+            rf'@{mentioned_npc}\s*,?\s*(.*?)(?:\n|$)',
+            response_text,
+            re.IGNORECASE,
+        )
+        specific_instruction = (
+            delegation_match.group(1).strip() if delegation_match else ""
+        )
+
+        # CLI providers can't invoke the `delegate` jinx as a tool call, so the
+        # forenpc just text-mentions @npc. Pass the full forenpc response as
+        # context so the sub-NPC sees the spec, not just the line of the mention.
+        sub_request = (
+            f"You were delegated to by @{originating_npc_name}. "
+            f"Their full message below is your spec/context.\n\n"
+            f"--- SPEC FROM @{originating_npc_name} ---\n"
+            f"{response_text}\n"
+            f"--- END SPEC ---\n\n"
+            f"Your specific instruction: "
+            f"{specific_instruction or 'Act on the parts of the spec relevant to your role.'}"
+        )
+
+        state, sub_output = _delegate_to_npc(
+            state, mentioned_npc, sub_request, delegation_depth + 1
+        )
+        if isinstance(sub_output, dict):
+            sub_text = sub_output.get('output', '')
+        else:
+            sub_text = str(sub_output)
+        if not sub_text:
+            continue
+
+        header = f"\n\n--- Response from {mentioned_npc} ---\n"
+        if response_already_streamed:
+            # Original response already on screen; print sub-response inline.
+            print(header)
+            try:
+                render_markdown(sub_text)
+            except Exception:
+                print(sub_text)
+        augmented += header + sub_text
+
+    return state, augmented
+
+
+def _is_forenpc(state: ShellState) -> bool:
+    """Return True if the active NPC is the team's forenpc."""
+    if not state.team or not state.npc:
+        return False
+    forenpc = getattr(state.team, 'forenpc', None)
+    if not forenpc:
+        return False
+    forenpc_name = getattr(forenpc, 'name', None) or getattr(state.team, 'forenpc_name', None)
+    active_name = getattr(state.npc, 'name', None)
+    return bool(forenpc_name and active_name and forenpc_name == active_name)
+
+
 def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_depth: int = 0) -> Tuple[ShellState, Any]:
     """
     Delegate a command to a specific NPC.
 
     Specialists just receive the task directly - no mention of delegation.
-    Only forenpc can delegate (depth 0), and we catch @mentions in forenpc responses.
+    Only the first level of delegation (depth 0) scans for @mentions.
     """
-    import re
-
-    MAX_DELEGATION_DEPTH = 1  # Only allow one level of delegation
-
-    if delegation_depth > MAX_DELEGATION_DEPTH:
+    if delegation_depth > _MAX_DELEGATION_DEPTH:
         return state, {'output': "⚠ Maximum delegation depth reached."}
 
     if not state.team or not hasattr(state.team, 'npcs') or npc_name not in state.team.npcs:
@@ -3794,49 +4037,45 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
     model_name = target_npc.model if hasattr(target_npc, 'model') else 'unknown'
 
     try:
-        # Check if NPC is a CLIAgent - use session context from DB
+        _t0 = time.monotonic()
+        session_ctx = None
+        run_kwargs = {"team": state.team, "session_context": session_ctx, "verbose": False}
         if isinstance(target_npc, CLIAgent):
             session_ctx = get_cli_session_context(state.conversation_id, target_npc.name)
-            with SpinnerContext(f"{npc_name} processing via {target_npc.cli_provider}", style="dots_pulse"):
-                output = target_npc.run(command, session_context=session_ctx, verbose=False)
+            run_kwargs["session_context"] = session_ctx
+            session_key = (target_npc.cli_provider, target_npc.name)
+            existing_sid = state.cli_sessions.get(session_key)
+            if existing_sid:
+                run_kwargs["session_id"] = existing_sid
+            print(colored(
+                f"\n→ Delegating to @{npc_name} via {target_npc.cli_provider}", "cyan"
+            ))
         else:
-            with SpinnerContext(f"{npc_name} processing with {model_name}", style="dots_pulse"):
-                result = target_npc.check_llm_command(command, team=state.team)
+            print(colored(
+                f"\n→ Delegating to @{npc_name} ({model_name})", "cyan"
+            ))
+        with SpinnerContext(
+            f"{npc_name} processing with {model_name}", style="dots_pulse"
+        ):
+            result = target_npc.run(command, **run_kwargs)
+        _elapsed = time.monotonic() - _t0
+        print(colored(f"  ✓ @{npc_name} done in {_elapsed:.0f}s", "green"))
+
+        if isinstance(result, dict):
             output = result.get("output") or result.get("response", "")
             if result.get("messages"):
                 state.messages = result["messages"]
-        if result.get("messages"):
-            state.messages = result["messages"]
+            if isinstance(target_npc, CLIAgent) and result.get("session_id"):
+                state.cli_sessions[session_key] = result["session_id"]
+        else:
+            output = str(result)
 
-        # Only forenpc/sibiji (depth 0) can have @mentions processed
-        if delegation_depth == 0 and output and isinstance(output, str):
-            # Look for @npc_name patterns in the response
-            at_mention_pattern = r'@(\w+)\s*,?\s*(?:could you|can you|please|would you)?[^.!?\n]*[.!?\n]?'
-            matches = re.findall(at_mention_pattern, output, re.IGNORECASE)
-
-            for mentioned_npc in matches:
-                mentioned_npc = mentioned_npc.lower()
-                if mentioned_npc in state.team.npcs and mentioned_npc != npc_name:
-                    # Extract what they're asking the other NPC to do
-                    delegation_match = re.search(
-                        rf'@{mentioned_npc}\s*,?\s*(.*?)(?:\n|$)',
-                        output,
-                        re.IGNORECASE
-                    )
-                    if delegation_match:
-                        sub_request = delegation_match.group(1).strip()
-                        if sub_request:
-                            # Recursive delegation will show its own spinner
-                            state, sub_output = _delegate_to_npc(
-                                state, mentioned_npc, sub_request, delegation_depth + 1
-                            )
-                            # Append the sub-NPC's response
-                            if isinstance(sub_output, dict):
-                                sub_text = sub_output.get('output', '')
-                            else:
-                                sub_text = str(sub_output)
-                            if sub_text:
-                                output += f"\n\n--- Response from {mentioned_npc} ---\n{sub_text}"
+        # Only first-level delegations have their @mentions chained.
+        if delegation_depth == 0:
+            state, output = _scan_and_apply_delegations(
+                state, npc_name, output, delegation_depth=delegation_depth,
+                response_already_streamed=False,
+            )
 
         return state, {'output': output}
 
@@ -3902,8 +4141,18 @@ def execute_command(
                 router=router
             )
 
-            if output is not None and isinstance(output, str):
-                store_command_embeddings(original_command_for_embedding, output, state)
+            # Extract response text from dict outputs (process_pipeline_command
+            # returns a dict with 'output' or 'response'); legacy str outputs
+            # remain supported.
+            _embed_text = None
+            if isinstance(output, str):
+                _embed_text = output
+            elif isinstance(output, dict):
+                _candidate = output.get('output') or output.get('response')
+                if isinstance(_candidate, str) and _candidate:
+                    _embed_text = _candidate
+            if _embed_text:
+                store_command_embeddings(original_command_for_embedding, _embed_text, state)
 
             return state, output
 
@@ -4297,6 +4546,10 @@ def process_result(
             )
         return
 
+    response_already_streamed = (
+        isinstance(output, dict) and output.get('response_already_streamed', False)
+    )
+
     if isinstance(output, dict):
         # Use None-safe check to not skip empty strings
         output_content = output.get('output') if 'output' in output else output.get('response')
@@ -4334,6 +4587,11 @@ def process_result(
     if output_content is None:
         # No output to display - tool results already shown during execution
         pass
+    elif response_already_streamed:
+        # CLI provider already streamed the response to stdout — don't
+        # re-render it, but record final_output_str so the message is
+        # appended to history below.
+        final_output_str = output_content if isinstance(output_content, str) else str(output_content)
     elif user_input == '/help':
         if isinstance(output_content, str):
             render_markdown(output_content)
