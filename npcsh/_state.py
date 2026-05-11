@@ -3334,7 +3334,7 @@ def process_pipeline_command(
 
         # CLI agent short-circuit — bypass litellm/tool loop entirely.
         if isinstance(state.npc, CLIAgent):
-            session_ctx = get_cli_session_context(state.conversation_id, state.npc.name)
+            session_ctx = get_cli_session_context(state.command_history, state.conversation_id, state.npc.name)
             session_key = (state.npc.cli_provider, state.npc.name)
             existing_sid = state.cli_sessions.get(session_key)
             with SpinnerContext(f"{state.npc.name} processing via {state.npc.cli_provider}", style="dots_pulse"):
@@ -4041,7 +4041,7 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
         session_ctx = None
         run_kwargs = {"team": state.team, "session_context": session_ctx, "verbose": False}
         if isinstance(target_npc, CLIAgent):
-            session_ctx = get_cli_session_context(state.conversation_id, target_npc.name)
+            session_ctx = get_cli_session_context(state.command_history, state.conversation_id, target_npc.name)
             run_kwargs["session_context"] = session_ctx
             session_key = (target_npc.cli_provider, target_npc.name)
             existing_sid = state.cli_sessions.get(session_key)
@@ -4255,17 +4255,17 @@ def load_team_registry() -> Dict[str, str]:
         return {}
 
 
-def get_cli_session_context(conversation_id: int, npc_name: str, max_turns: int = 10) -> str:
+def get_cli_session_context(command_history, conversation_id: int, npc_name: str, max_turns: int = 10) -> str:
     """Get accumulated session context from DB for CLI agent.
 
     Reads recent conversation turns from npcsh history DB and formats them
     as context for CLI subprocess injection.
     """
-    if not hasattr(state, 'command_history') or state.command_history is None:
+    if command_history is None:
         return ""
 
     try:
-        messages = state.command_history.get_messages_by_conversation(conversation_id, n_last=max_turns * 2)
+        messages = command_history.get_messages_by_conversation(conversation_id, n_last=max_turns * 2)
         if not messages:
             return ""
 
@@ -4403,34 +4403,29 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
             print("Please check your .npc files and jinx references.")
             raise
     for npc_name, npc_obj in team.npcs.items():
-        if not npc_obj.model:
-            npc_obj.model = initial_state.chat_model
-        if not npc_obj.provider:
-            npc_obj.provider = initial_state.chat_provider
-        # Resolve provider reference if NPC references a named provider
+        # Resolve named provider references FIRST so NPC inherits model/provider
+        # before falling back to global defaults.
         if hasattr(npc_obj, 'provider') and npc_obj.provider in providers_dict:
             prov_config = providers_dict[npc_obj.provider]
-            # Inject provider config fields if NPC doesn't have explicit values
             if not getattr(npc_obj, 'api_url', None) and 'api_url' in prov_config:
                 npc_obj.api_url = prov_config['api_url']
             if not getattr(npc_obj, 'api_key', None) and 'api_key' in prov_config:
                 npc_obj.api_key = prov_config['api_key']
-            # Use provider_type from provider config if set
             if 'provider_type' in prov_config and prov_config['provider_type']:
                 npc_obj.provider = prov_config['provider_type']
-            # Inject model from provider if NPC doesn't have one
             if not getattr(npc_obj, 'model', None) and 'model' in prov_config:
                 npc_obj.model = prov_config['model']
+        # Fall back to global defaults for anything still missing
+        if not npc_obj.model:
+            npc_obj.model = initial_state.chat_model
+        if not npc_obj.provider:
+            npc_obj.provider = initial_state.chat_provider
         # Inject NPCSH_API_URL for openai-like provider if not explicitly set (fallback)
         if not getattr(npc_obj, 'api_url', None) and npc_obj.provider == 'openai-like':
             npc_obj.api_url = os.environ.get("NPCSH_API_URL")
 
     if team.forenpc and isinstance(team.forenpc, NPC):
-        if not team.forenpc.model:
-            team.forenpc.model = initial_state.chat_model
-        if not team.forenpc.provider:
-            team.forenpc.provider = initial_state.chat_provider
-        # Resolve provider reference for forenpc
+        # Resolve named provider references FIRST for forenpc as well
         if hasattr(team.forenpc, 'provider') and team.forenpc.provider in providers_dict:
             prov_config = providers_dict[team.forenpc.provider]
             if not getattr(team.forenpc, 'api_url', None) and 'api_url' in prov_config:
@@ -4441,6 +4436,11 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                 team.forenpc.provider = prov_config['provider_type']
             if not getattr(team.forenpc, 'model', None) and 'model' in prov_config:
                 team.forenpc.model = prov_config['model']
+        # Fall back to global defaults
+        if not team.forenpc.model:
+            team.forenpc.model = initial_state.chat_model
+        if not team.forenpc.provider:
+            team.forenpc.provider = initial_state.chat_provider
         # Inject NPCSH_API_URL for openai-like provider if not explicitly set (fallback)
         if not getattr(team.forenpc, 'api_url', None) and team.forenpc.provider == 'openai-like':
             team.forenpc.api_url = os.environ.get("NPCSH_API_URL")
@@ -4460,7 +4460,7 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
 
     initial_state.current_team_name = team.name
 
-    return command_history, team, forenpc_obj
+    return command_history, team, team.forenpc
 def initialize_router_with_jinxes(team, router):
     """Load global and team Jinxes into router"""
     global_jinxes_dir = os.path.expanduser("~/.npcsh/npc_team/jinxes")

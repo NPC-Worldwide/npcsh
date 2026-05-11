@@ -52,4 +52,39 @@ preferences:
 - Never write unit tests unless explicitly requested.
 - If we want you to write tests, we mean we want you to write example use cases that
   show how the code works.
+# ── Example provider configurations ─────────────────────────────────────────
+# The `providers` field lets you define named provider configs that NPCs can
+# reference by name. This centralizes API URLs, keys, and models so individual
+# NPC definitions stay focused on their role.
+#
+# providers:
+#   - name: ollama_cloud
+#     provider_type: openai-like
+#     model: llama3.2
+#     api_url: https://your-ollama-cloud.example.com/v1
+#     api_key: ${OLLAMA_CLOUD_KEY}
+#
+#   - name: local_ollama
+#     provider_type: openai-like
+#     model: mistral
+#     api_url: http://localhost:11434/v1
+#
+#   - name: claude_api
+#     provider_type: anthropic
+#     model: claude-sonnet-4-6
+#
+#   - name: opencode_local
+#     provider_type: opencode
+#     model: opencode-default
+#
+# NPCs reference them like:
+#   provider: ollama_cloud
+# Or override individual fields:
+#   provider: local_ollama
+#   model: codellama
+#
+# For openai-like providers without a named provider or explicit api_url,
+# the NPCSH_API_URL environment variable is used as a fallback.
+# ──────────────────────────────────────────────────────────────────────────
+
 use_global_jinxes: true
