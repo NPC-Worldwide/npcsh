@@ -151,7 +151,7 @@ class BottomBar:
                                         f.write(f"  read2: {ch2!r}\n")
                             else:
                                 with open("/tmp/bottombar_debug.log", "a") as f:
-                                    f.write(f"  select timeout, no chars\n")
+                                    f.write("  select timeout, no chars\n")
                         except Exception as e:
                             with open("/tmp/bottombar_debug.log", "a") as f:
                                 f.write(f"  exception: {e}\n")
