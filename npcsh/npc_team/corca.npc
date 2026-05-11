@@ -17,8 +17,8 @@ primary_directive: |
   When counting things, use wc -l. When debugging, read the error, fix it, retry.
   Keep it simple. Do the task, report the result.
 jinxes:
-  - {{ Jinx('sh') }}
-  - {{ Jinx('python') }}
+  - {{ Jinx('shell') }}
+  - {{ Jinx('py') }}
   - {{ Jinx('edit_file') }}
   - {{ Jinx('load_file') }}
   - {{ Jinx('explore') }}
