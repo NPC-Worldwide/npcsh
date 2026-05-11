@@ -105,7 +105,7 @@ from npcpy.memory.command_history import (
     load_kg_from_db,
 )
 from npcpy.memory.search import execute_rag_command, execute_brainblast_command
-from npcpy.npc_compiler import NPC, CLIAgent, _is_cli_provider, Team, build_jinx_tool_catalog
+from npcpy.npc_compiler import NPC, CLIAgent, Team, build_jinx_tool_catalog
 from npcpy.tools import flatten_tool_messages
 from npcpy.npc_sysenv import (
     print_and_process_stream_with_markdown,

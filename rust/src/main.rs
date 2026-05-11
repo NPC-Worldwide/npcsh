@@ -305,7 +305,8 @@ async fn main() -> Result<()> {
     let mut session_cost: f64 = 0.0;
     let session_start = std::time::Instant::now();
     // CLI session IDs keyed by (provider, npc_name) for session continuity.
-    let mut cli_sessions: std::collections::HashMap<(String, String), String> = std::collections::HashMap::new();
+    // TODO: re-enable once npcrs publishes CLI provider support.
+    // let mut cli_sessions: std::collections::HashMap<(String, String), String> = std::collections::HashMap::new();
 
     let daemon_handle = std::sync::Arc::new(tokio::sync::Mutex::new(Some(daemon_handle)));
 
@@ -676,39 +677,9 @@ async fn main() -> Result<()> {
         let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".to_string());
 
         // CLI provider routing — intercept before kernel.exec when provider is a CLI tool.
-        let cli_intercepted = if npcrs::llm_funcs::CLI_PROVIDERS.contains(&provider_str.as_str()) {
-            let cli_key = (provider_str.clone(), npc_name_str.clone());
-            let sid = cli_sessions.get(&cli_key).map(String::as_str);
-            let system_prompt = kernel
-                .get_process(current_pid)
-                .map(|p| p.npc.system_prompt(None))
-                .unwrap_or_else(|| "You are a helpful assistant.".to_string());
-            let cli_result = npcrs::llm_funcs::run_cli_provider(
-                &provider_str,
-                &model_str,
-                &input,
-                &system_prompt,
-                sid,
-                &npc_name_str,
-                true,  // TODO: respect NPCSH_STREAM_OUTPUT once threaded through
-            )
-            .await;
-            if let Some(result) = cli_result {
-                if let Some(new_sid) = result.session_id {
-                    cli_sessions.insert(cli_key, new_sid);
-                }
-                if let Some(u) = &result.usage {
-                    session_input_tokens += u.input_tokens;
-                    session_output_tokens += u.output_tokens;
-                }
-                session_cost += result.cost_usd;
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
+        // TODO: re-enable once npcrs publishes CLI_PROVIDERS + run_cli_provider
+        // (depends on NPC-Worldwide/npcrs#2 and NPC-Worldwide/npcpy#235).
+        let cli_intercepted = false;
 
         let exec_result = if cli_intercepted {
             None // output already printed by run_cli_provider
