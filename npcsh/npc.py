@@ -103,14 +103,13 @@ def _exec_jinx_file(jinx_path: str, args: list):
 def _exec_npc_file(npc_path: str, args: list):
     """Execute a .npc file directly (shebang: #!/usr/bin/env npc)."""
     from npcpy.npc_compiler import NPC
-    from npcpy.llm_funcs import get_llm_response
 
     npc = NPC(file=npc_path)
     prompt = ' '.join(args) if args else None
 
     if prompt:
         # One-shot mode
-        result = get_llm_response(prompt, npc=npc, model=npc.model, provider=npc.provider)
+        result = npc.run(prompt)
         if isinstance(result, dict):
             output = result.get('response', result.get('output', ''))
         else:
