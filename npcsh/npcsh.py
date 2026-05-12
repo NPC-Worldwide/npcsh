@@ -27,10 +27,15 @@ try:
 except:
     print('no readline support, some features may not work as desired. ')
 
-try:
-    VERSION = importlib.metadata.version("npcsh")
-except importlib.metadata.PackageNotFoundError:
-    VERSION = "unknown"
+_pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_version_file = os.path.join(_pkg_dir, "VERSION")
+if os.path.exists(_version_file):
+    VERSION = open(_version_file).read().strip()
+else:
+    try:
+        VERSION = importlib.metadata.version("npcsh")
+    except importlib.metadata.PackageNotFoundError:
+        VERSION = "unknown"
 
 from npcsh._state import (
     initial_state,
@@ -46,6 +51,11 @@ from npcsh._state import (
 )
 from npcsh.ui import BottomBar
 import npcsh.ui as _ui_module
+
+try:
+    from npcsh.version_check import VersionCheck
+except Exception:
+    VersionCheck = None
 
 
 def display_usage(state: ShellState):
@@ -117,20 +127,16 @@ def print_welcome_art(npc=None):
     RUST = "\033[1;38;5;202m"
 
     print(f"""
-{BLUE}___________________________________________{RESET}
-
-Welcome to {BLUE}npc{RESET}{RUST}sh{RESET}!
-{BLUE}                    {RESET}{RUST}        _       \\{RESET}
-{BLUE} _ __   _ __    ___ {RESET}{RUST}  ___  | |___    \\{RESET}
-{BLUE}| '_ \\ | '_ \\  / __|{RESET}{RUST} / __/ | |_ _|    \\{RESET}
-{BLUE}| | | || |_) |( |__ {RESET}{RUST} \\_  \\ | | | |    //{RESET}
-{BLUE}|_| |_|| .__/  \\___/{RESET}{RUST} |___/ |_| |_|   //{RESET}
-       {BLUE}|🤖|          {RESET}{RUST}               //{RESET}
-       {BLUE}|🤖|{RESET}
-       {BLUE}|🤖|{RESET}
-{RUST}___________________________________________{RESET}
-
-Ask a question, run a command, or type '/help' to get started.
+  {BLUE}                         {RESET}{RUST}     ██╗     {RESET}
+  {BLUE}                         {RESET}{RUST}     ██║     {RESET}
+  {BLUE}█▀▀▀█╗ ██████╗  ██████╗ {RESET}{RUST}█████╗██████╗ {RESET}
+  {BLUE}██╔═██║██╔══██╗██╔════╝ {RESET}{RUST}██╔══╝██╔═██║ {RESET}
+  {BLUE}██║ ██║██║  ██║██║      {RESET}{RUST}█████╗██║ ██║ {RESET}
+  {BLUE}██║ ██║██║  ██║██║      {RESET}{RUST}╚══██║██║ ██║ {RESET}
+  {BLUE}██║ ██║██████╔╝╚██████╗ {RESET}{RUST}█████║██║ ██║ {RESET}
+  {BLUE}╚═╝ ╚═╝██╔═══╝  ╚═════╝{RESET}{RUST}╚════╝╚═╝ ╚═╝ {RESET}
+  {BLUE}       ██║              {RESET}
+  {BLUE}       ╚═╝              {RESET}
 """)
 
 
@@ -169,7 +175,7 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
         return "\n".join(lines)
 
     if not launched_jinx:
-        print(f"  {DIM}mode:{RESET} {BOLD}{state.current_mode}{RESET}  {DIM}│{RESET}  {DIM}switch:{RESET} /agent  /cmd  /chat")
+        print(f"  {DIM}npcsh {VERSION}{RESET}  {DIM}│{RESET}  {DIM}mode:{RESET} {BOLD}{state.current_mode}{RESET}  {DIM}│{RESET}  {DIM}switch:{RESET} /agent  /cmd  /chat")
 
     # NPCs with @ prefix
     npc_names = [f"@{n}" for n in state.team.npcs.keys()]
@@ -239,7 +245,15 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
 
         print(f"\n  {DIM}/jinxes for full list{RESET}")
     print()
-    
+
+    # Async version check — prints banner if newer version available
+    if VersionCheck is not None:
+        def _show_update(info):
+            print(f"\n  \033[33mUpdate available: {info['current']} → {info['latest']}\033[0m")
+            print(f"  \033[2mRun: {info['command']}\033[0m\n")
+
+        VersionCheck().check_async(_show_update)
+
     is_windows = platform.system().lower().startswith("win")
     try:
         completer = make_completer(state, router)
