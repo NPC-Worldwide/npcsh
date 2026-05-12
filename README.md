@@ -184,8 +184,6 @@ python -m npcsh.benchmark.local_runner --model qwen3:4b --provider ollama
   /db_search "query"                     # Database search
   /file_search "pattern"                 # File search
   /memories                              # Interactive memory browser TUI
-  /kg                                    # Interactive knowledge graph TUI
-  /nql                                   # Database query TUI
   ```
   <p align="center">
       <img src="gh_images/Screenshot%20from%202026-01-29%2015-02-52.png" alt="Web search results", width=600>
@@ -200,22 +198,6 @@ python -m npcsh.benchmark.local_runner --model qwen3:4b --provider ollama
       <img src="gh_images/plonk_task.png" alt="Plonk GUI automation — completed task" width=500>
   </p>
 
-- **Generate Images**
-  ```bash
-  /vixynt 'generate an image of a rabbit eating ham in the brink of dawn' model='gpt-image-1' provider='openai'
-  ```
-  <p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/test_data/rabbit.PNG" alt="a rabbit eating ham in the brink of dawn", width=350>
-  </p>
-
-- **Generate Videos**
-  ```bash
-  /roll 'generate a video of a hat riding a dog' veo-3.1-fast-generate-preview  gemini
-  ```
-  <p align="center">
-    <img src="https://raw.githubusercontent.com/NPC-Worldwide/npcsh/main/test_data/hatridingdog.gif" alt="video of a hat riding a dog", width=350>
-  </p>
-
 - **Multi-Agent Discussions**
   ```bash
   /convene "Is the universe a simulation?" npcs=alicanto,corca,guac rounds=3
@@ -224,10 +206,6 @@ python -m npcsh.benchmark.local_runner --model qwen3:4b --provider ollama
       <img src="gh_images/convene.png" alt="Convene — multi-NPC discussion" width=500>
   </p>
 
-- **Serve an NPC Team**
-  ```bash
-  /serve --port 5337 --cors='http://localhost:5137/'
-  ```
 
 ---
 
@@ -334,6 +312,8 @@ npc-plugin gemini    # same for Gemini CLI
 - **[Image, Audio & Video](https://npc-shell.readthedocs.io/en/latest/guide/#all-commands)** — Generation via Ollama, diffusers, OpenAI, Gemini
 - **[MCP Integration](https://npc-shell.readthedocs.io/en/latest/guide/#all-commands)** — Full MCP server support with agentic shell TUI
 - **[API Server](https://npc-shell.readthedocs.io/en/latest/guide/#serving-an-npc-team)** — Serve teams via OpenAI-compatible REST API
+- **Self-updating** — `/update` checks pip/cargo/brew and tells you the command to upgrade
+- **Self-healing** — `/doctor` auto-fixes stale permissions, broken configs, and DB corruption
 
 Works with all major LLM providers through LiteLLM: `ollama`, `openai`, `anthropic`, `gemini`, `deepseek`, `openai-like`, and more.
 
