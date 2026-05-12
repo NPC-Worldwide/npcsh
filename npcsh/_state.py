@@ -339,6 +339,14 @@ class ShellState:
 
     # ── permission helpers ──────────────────────────────────────────────
 
+    def _workspace_team_dir(self) -> Optional[str]:
+        """Return the workspace team directory if a project team is loaded, else None."""
+        if self.team and getattr(self.team, 'team_path', None):
+            global_path = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
+            if os.path.abspath(self.team.team_path) != os.path.abspath(global_path):
+                return self.team.team_path
+        return None
+
     def _load_permissions(self):
         """Load permission rules: global first, then workspace overrides on top."""
         if self._permissions_loaded:
@@ -347,18 +355,26 @@ class ShellState:
         # Global defaults
         global_path = os.path.expanduser("~/.npcsh/npc_team/permissions.yaml")
         self._permission_rules = _load_permission_file(global_path)
-        # Workspace overrides
-        workspace_path = os.path.join(self.current_path, "npc_team", "permissions.yaml")
-        if os.path.exists(workspace_path):
-            workspace_rules = _load_permission_file(workspace_path)
-            self._permission_rules.update(workspace_rules)
+        # Workspace overrides (only from actual project team, not phantom cwd dir)
+        team_dir = self._workspace_team_dir()
+        if team_dir:
+            workspace_path = os.path.join(team_dir, "permissions.yaml")
+            if os.path.exists(workspace_path):
+                workspace_rules = _load_permission_file(workspace_path)
+                self._permission_rules.update(workspace_rules)
 
     def _save_permission(self, key: str, level: str, scope: str = "workspace"):
         """Persist a permission rule to the appropriate permissions.yaml."""
         if scope == "global":
             dir_path = os.path.expanduser("~/.npcsh/npc_team")
         else:
-            dir_path = os.path.join(self.current_path, "npc_team")
+            team_dir = self._workspace_team_dir()
+            if team_dir:
+                dir_path = team_dir
+            else:
+                # No project team loaded — fall back to global so we don't
+                # create phantom ./npc_team dirs in arbitrary directories.
+                dir_path = os.path.expanduser("~/.npcsh/npc_team")
         os.makedirs(dir_path, exist_ok=True)
         perm_path = os.path.join(dir_path, "permissions.yaml")
         existing = _load_permission_file(perm_path)
