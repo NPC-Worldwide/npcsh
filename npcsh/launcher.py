@@ -62,7 +62,7 @@ def _find_rust_binary():
                 file=sys.stderr,
             )
 
-    found = shutil.which("npcrs")
+    found = shutil.which("npcrsh") or shutil.which("npcrs")
     if found and _binary_matches_host(found):
         return found
 

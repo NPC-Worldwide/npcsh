@@ -11,7 +11,7 @@ categories = ["command-line-utilities"]
 readme = "../README.md"
 
 [[bin]]
-name = "npcsh"
+name = "npcrsh"
 path = "src/main.rs"
 
 [dependencies]
