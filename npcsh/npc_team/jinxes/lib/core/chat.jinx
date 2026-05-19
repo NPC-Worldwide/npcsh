@@ -50,7 +50,12 @@ steps:
               )
               state._tool_output_streamed = True
           context['output'] = f"[Response delivered to user] {result}"
-          context['messages'] = response.get('messages', messages)
+
+          # Preserve original history: only append the new response, don't overwrite with clean_msgs
+          new_msgs = response.get('messages', [])
+          if new_msgs and len(new_msgs) > len(clean_msgs):
+              messages.append(new_msgs[-1])
+          context['messages'] = messages
 
           if 'usage' in response:
               usage = response['usage']
