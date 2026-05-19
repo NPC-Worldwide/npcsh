@@ -228,7 +228,7 @@ async fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
 
-    // npc <file.npc|file.jinx|init> [args...] — detect by extension or subcommand
+    // npc <file.npc|file.jinx|file.nsh|init> [args...] — detect by extension or subcommand
     if invoked_as == "npc" {
         if let Some(file) = args.get(1) {
             if file == "init" {
@@ -239,8 +239,17 @@ async fn main() -> Result<()> {
                 return exec_jinx_file(file, &jinx_args).await;
             } else if file.ends_with(".npc") {
                 return exec_npc_file(file, args.get(2).map(|s| s.as_str())).await;
+            } else if file.ends_with(".nsh") {
+                return exec_nsh_file(file).await;
             }
             // Not a file — fall through to REPL with --npc flag handling below
+        }
+    }
+
+    // Check for .nsh script execution (npcsh script.nsh)
+    if let Some(file) = args.get(1) {
+        if file.ends_with(".nsh") && !file.starts_with('-') {
+            return exec_nsh_file(file).await;
         }
     }
 
@@ -1151,6 +1160,81 @@ async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
             eprintln!("Error: {}", err);
         }
         std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// Execute a .nsh script file (npc-shell script).
+async fn exec_nsh_file(script_path: &str) -> Result<()> {
+    let team_dir = find_team_dir();
+    let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+    let mut kernel = Kernel::boot(&team_dir, &db_path)?;
+
+    let content = std::fs::read_to_string(script_path)?;
+
+    let raw_lines: Vec<&str> = content.lines().collect();
+    let lines: Vec<&str> = raw_lines.into_iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+
+    let mut variables: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut last_output = String::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let line = line.to_string();
+
+        // Variable assignment: $var = value
+        let cmd_to_exec = if let Some((var_name, var_expr)) = line.trim().strip_prefix('$').and_then(|rest| {
+            if let Some(eq_pos) = rest.find('=') {
+                let vname = rest[..eq_pos].trim().to_string();
+                let expr = rest[eq_pos + 1..].trim().to_string();
+                if !vname.is_empty() && vname.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    return Some((vname, expr));
+                }
+            }
+            None
+        }) {
+            Some((var_name, var_expr))
+        } else {
+            None
+        };
+
+        let mut substituted = if let Some((_, ref expr)) = cmd_to_exec {
+            expr.clone()
+        } else {
+            line.clone()
+        };
+        for (k, v) in &variables {
+            substituted = substituted.replace(&format!("${}", k), v);
+            substituted = substituted.replace(&format!("${{{}}}", k), v);
+        }
+        substituted = substituted.replace("$_", &last_output);
+
+        // Strip leading ! for bash
+        let cmd = if substituted.starts_with('!') {
+            substituted[1..].trim().to_string()
+        } else {
+            substituted
+        };
+
+        match kernel.exec(0, &cmd).await {
+            Ok(output) => {
+                last_output = output.clone();
+                if !output.is_empty() {
+                    println!("{}", output);
+                }
+                // Store variable if this was an assignment
+                if let Some((var_name, _)) = cmd_to_exec {
+                    variables.insert(var_name, output);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error on line {}: {}", i + 1, e);
+                std::process::exit(1);
+            }
+        }
     }
 
     Ok(())

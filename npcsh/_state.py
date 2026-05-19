@@ -334,6 +334,8 @@ class ShellState:
     _permissions_loaded: bool = False
     # Active plan the agent is executing
     _active_plan: Optional[Dict[str, Any]] = None
+    # Job variables for .nsh script execution
+    variables: Dict[str, Any] = field(default_factory=dict)
     # CLI session IDs keyed by (provider, npc_name) for session continuity
     cli_sessions: Dict[tuple, str] = field(default_factory=dict)
 

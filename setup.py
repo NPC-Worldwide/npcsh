@@ -235,6 +235,7 @@ setup(
             "npc=npcsh.npc:main",
             # Benchmark runner
             "npcsh-bench=npcsh.benchmark.runner:main",
+            "npcsh-job=npcsh.job_runner:main",
             # Dynamic entry points from data files (NPCs and bin/ jinxes)
         ] + dynamic_entries,
     },
