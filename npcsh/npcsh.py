@@ -720,6 +720,12 @@ def main(npc_name: str = None) -> None:
                 if out_str:
                     print(out_str)
 
+                if getattr(state, '_stop_requested', False):
+                    break
+
+                # Reset conversation history between script lines so each command starts fresh
+                state.messages = []
+
             except Exception as e:
                 print(f"Error on line {i+1}: {e}")
                 sys.exit(1)

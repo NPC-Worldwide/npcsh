@@ -15,6 +15,4 @@ steps:
       if stop_notes:
           context['output'] += f" - {stop_notes}"
 
-      state = context.get('state')
-      if state is not None:
-          state._stop_requested = True
+      state._stop_requested = True
