@@ -1,10 +1,25 @@
 jinx_name: stop
 description: Signal that you are done and have no more actions to take. Call this when your task is complete.
-inputs: []
+inputs:
+  - reason:
+      description: "Why you are stopping - choose from: uncertainty (unsure how to proceed), completeness (task is done), or other (explain in notes)"
+      enum: ["uncertainty", "completeness", "other"]
+      default: "completeness"
+  - notes:
+      description: "Optional additional context about why you're stopping"
+      default: ""
 
 steps:
   - name: stop_agent
     engine: python
     code: |
-      context['output'] = ''
-      state._stop_requested = True
+      stop_reason = {{ reason | default("completeness") | tojson }}
+      stop_notes = {{ notes | default("") | tojson }}
+      
+      context['output'] = f"Stopping: {stop_reason}"
+      if stop_notes:
+          context['output'] += f" - {stop_notes}"
+      
+      # Signal to the main loop that we should stop
+      if 'state' in globals():
+          state._stop_requested = True
