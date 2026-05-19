@@ -228,7 +228,7 @@ async fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
 
-    // npc <file.npc|file.jinx|file.nsh|init> [args...] — detect by extension or subcommand
+    // npc <file.npc|file.jinx|init> [args...] — detect by extension or subcommand
     if invoked_as == "npc" {
         if let Some(file) = args.get(1) {
             if file == "init" {
@@ -239,14 +239,12 @@ async fn main() -> Result<()> {
                 return exec_jinx_file(file, &jinx_args).await;
             } else if file.ends_with(".npc") {
                 return exec_npc_file(file, args.get(2).map(|s| s.as_str())).await;
-            } else if file.ends_with(".nsh") {
-                return exec_nsh_file(file).await;
             }
             // Not a file — fall through to REPL with --npc flag handling below
         }
     }
 
-    // Check for .nsh script execution (npcsh script.nsh)
+    // Check for .nsh script execution (npcsh/npcrsh script.nsh)
     if let Some(file) = args.get(1) {
         if file.ends_with(".nsh") && !file.starts_with('-') {
             return exec_nsh_file(file).await;
