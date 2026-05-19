@@ -244,6 +244,13 @@ async fn main() -> Result<()> {
         }
     }
 
+    // npcsh script.nsh — execute .nsh file
+    if let Some(file) = args.get(1) {
+        if file.ends_with(".nsh") && !file.starts_with('-') {
+            return exec_nsh_file(file).await;
+        }
+    }
+
     // Check for -c flag (single command execution, like npcsh -c "command")
     if let Some(pos) = args.iter().position(|a| a == "-c" || a == "--command") {
         if let Some(command) = args.get(pos + 1) {
@@ -1157,6 +1164,79 @@ async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
 }
 
 /// Execute a .nsh script file (npc-shell script).
+async fn exec_nsh_file(script_path: &str) -> Result<()> {
+    let team_dir = find_team_dir();
+    let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+    let mut kernel = Kernel::boot(&team_dir, &db_path)?;
+
+    let content = std::fs::read_to_string(script_path)?;
+
+    let raw_lines: Vec<&str> = content.lines().collect();
+    let lines: Vec<&str> = raw_lines.into_iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+
+    let mut variables: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut last_output = String::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let line = line.to_string();
+
+        // Variable assignment: $var = value
+        let cmd_to_exec = if let Some((var_name, var_expr)) = line.trim().strip_prefix('$').and_then(|rest| {
+            if let Some(eq_pos) = rest.find('=') {
+                let vname = rest[..eq_pos].trim().to_string();
+                let expr = rest[eq_pos + 1..].trim().to_string();
+                if !vname.is_empty() && vname.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    return Some((vname, expr));
+                }
+            }
+            None
+        }) {
+            Some((var_name, var_expr))
+        } else {
+            None
+        };
+
+        let mut substituted = if let Some((_, ref expr)) = cmd_to_exec {
+            expr.clone()
+        } else {
+            line.clone()
+        };
+        for (k, v) in &variables {
+            substituted = substituted.replace(&format!("${}", k), v);
+            substituted = substituted.replace(&format!("${{{}}}", k), v);
+        }
+        substituted = substituted.replace("$_", &last_output);
+
+        // Strip leading ! for bash
+        let cmd = if substituted.starts_with('!') {
+            substituted[1..].trim().to_string()
+        } else {
+            substituted
+        };
+
+        match kernel.exec(0, &cmd).await {
+            Ok(output) => {
+                last_output = output.clone();
+                if !output.is_empty() {
+                    println!("{}", output);
+                }
+                if let Some((var_name, _)) = cmd_to_exec {
+                    variables.insert(var_name, output);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error on line {}: {}", i + 1, e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// npc init [dir] — create a working npc_team/ in the current directory
 fn init_team(dir: &str) -> Result<()> {
     let dir = std::path::Path::new(dir).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(dir));
