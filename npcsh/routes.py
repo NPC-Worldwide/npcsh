@@ -74,6 +74,8 @@ class CommandRouter:
             from npcpy.data.web import search_web
             
             from npcsh.ui import ctx_editor, pause_bottom_bar, resume_bottom_bar
+            from npcpy.llm_funcs import get_llm_response
+            from npcpy.npc_sysenv import print_and_process_stream_with_markdown
 
             application_globals_for_jinx = {
                 "CommandHistory": CommandHistory,
@@ -85,6 +87,8 @@ class CommandRouter:
                 "ctx_editor": ctx_editor,
                 "pause_bottom_bar": pause_bottom_bar,
                 "resume_bottom_bar": resume_bottom_bar,
+                "get_llm_response": get_llm_response,
+                "print_and_process_stream_with_markdown": print_and_process_stream_with_markdown,
                 'state': kwargs.get('state')
             }
             
