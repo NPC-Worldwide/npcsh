@@ -383,7 +383,7 @@ Full documentation, guides, and API reference at [npc-shell.readthedocs.io](http
 
 ## Community & Support
 
-[Discord](https://discord.gg/VvYVT5YC) | [Monthly donation](https://buymeacoffee.com/npcworldwide) | [Merch](https://enpisi.com/shop) | Consulting: info@npcworldwi.de
+[Discord](https://discord.gg/XrjTFmDAna) | [Monthly donation](https://buymeacoffee.com/npcworldwide) | [Merch](https://enpisi.com/shop) | Consulting: info@npcworldwi.de
 
 ## Contributing
 

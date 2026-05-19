@@ -289,10 +289,11 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                 ctx_pct = (tok_in * 100 // ctx_window) if ctx_window > 0 else 0
 
                 # Thresholds: 50%, 75%, 90%. Track which ones we've already prompted for.
+                # Check from highest to lowest so we immediately alert at the highest crossed threshold.
                 compress_thresholds = [50, 75, 90]
                 last_prompted_pct = getattr(state, '_last_compress_prompted_pct', 0)
                 next_threshold = None
-                for t in compress_thresholds:
+                for t in reversed(compress_thresholds):
                     if ctx_pct >= t and last_prompted_pct < t:
                         next_threshold = t
                         break
@@ -593,6 +594,9 @@ def main(npc_name: str = None) -> None:
     parser.add_argument(
          "--refresh", action="store_true", help="Force refresh of NPCs and jinxes from package."
     )
+    parser.add_argument(
+        "script", nargs="?", help="Path to a .nsh script to execute."
+    )
     args = parser.parse_args()
 
     # Handle refresh flag - reset initialization and re-copy files
@@ -659,6 +663,69 @@ def main(npc_name: str = None) -> None:
 
     initial_state.team = team
     initial_state.command_history = command_history
+
+    if args.script:
+        # Execute .nsh script file
+        script_path = os.path.expanduser(args.script)
+        if not os.path.exists(script_path):
+            print(f"Error: Script not found: {script_path}")
+            sys.exit(1)
+
+        with open(script_path, 'r') as f:
+            lines = [line.rstrip('\n') for line in f if line.strip() and not line.strip().startswith('#')]
+
+        state = initial_state
+        state.current_path = os.getcwd()
+        last_output = ""
+
+        for i, line in enumerate(lines):
+            # Variable assignment: $var = value
+            var_assign = None
+            import re
+            assign_match = re.match(r'^\s*\$(\w+)\s*=\s*(.+)$', line)
+            if assign_match:
+                var_assign = assign_match.group(1)
+                line = assign_match.group(2).strip()
+
+            # Substitute variables
+            def _repl(m):
+                var = m.group(1) or m.group(2)
+                val = state.variables.get(var, '')
+                return str(val) if val is not None else ''
+            substituted = re.sub(r'\$\{(\w+)\}|\$(\w+)', _repl, line)
+
+            # Substitute $_ (last result)
+            substituted = substituted.replace('$_', str(last_output))
+
+            # Strip leading ! for bash commands
+            if substituted.startswith('!'):
+                cmd = substituted[1:].strip()
+            else:
+                cmd = substituted
+
+            try:
+                state, output = execute_command(
+                    cmd, state, review=False, router=router, command_history=command_history
+                )
+
+                if isinstance(output, dict):
+                    out_str = output.get('output', '') or output.get('response', '')
+                else:
+                    out_str = str(output) if output else ''
+
+                if var_assign is not None:
+                    state.variables[var_assign] = out_str
+
+                last_output = out_str
+                if out_str:
+                    print(out_str)
+
+            except Exception as e:
+                print(f"Error on line {i+1}: {e}")
+                sys.exit(1)
+
+        sys.exit(0)
+
     if args.command:
          state = initial_state
          state.current_path = os.getcwd()
