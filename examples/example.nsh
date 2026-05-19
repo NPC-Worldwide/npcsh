@@ -1,23 +1,31 @@
-# Example npcsh script (.nsh file)
-# This script demonstrates the capabilities of .nsh job files
+#!/usr/bin/env npcsh
+# example.nsh
+# Basic demonstration of .nsh script capabilities.
 
-# Set a variable
-$count = 0
+# Set variables
+$project_name = "npcsh"
+$version = "1.2.14"
+
+# Run shell commands
+!echo "Building $project_name v$version"
 
 # Use a jinx to search the web
-/search latest AI news
+/search latest $project_name news
 
-# Save the result to a variable  
-$news_result = $_
+# Capture the result
+$news = $_
 
 # Process with an NPC
-@analyzer summarize the news: $news_result
+@default Summarize this in one sentence: $news
 
-# Run a shell command
-!echo "Job completed at $(date)"
+# Capture NPC response
+$summary = $_
 
-# Increment counter
-$count = $count + 1
+# Combine variables
+$report = "Project: $project_name\nVersion: $version\nNews: $summary"
 
-# Log completion
-!echo "Run #$count completed" >> ~/.npcsh/npc_team/logs/example_counter.log
+# Save report
+!echo "$report" > /tmp/npcsh_status.txt
+
+# Display
+!cat /tmp/npcsh_status.txt
