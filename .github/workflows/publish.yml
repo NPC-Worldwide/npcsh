@@ -81,9 +81,9 @@ jobs:
         run: |
           mkdir -p npcsh/bin
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            cp rust/target/${{ matrix.target }}/release/npcsh.exe npcsh/bin/npcrs.exe
+            cp rust/target/${{ matrix.target }}/release/npcrsh.exe npcsh/bin/npcrs.exe
           else
-            cp rust/target/${{ matrix.target }}/release/npcsh npcsh/bin/npcrs
+            cp rust/target/${{ matrix.target }}/release/npcrsh npcsh/bin/npcrs
             chmod +x npcsh/bin/npcrs
           fi
 
@@ -103,9 +103,9 @@ jobs:
         run: |
           mkdir -p release
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            cp rust/target/${{ matrix.target }}/release/npcsh.exe release/${{ matrix.artifact }}
+            cp rust/target/${{ matrix.target }}/release/npcrsh.exe release/${{ matrix.artifact }}
           else
-            cp rust/target/${{ matrix.target }}/release/npcsh release/${{ matrix.artifact }}
+            cp rust/target/${{ matrix.target }}/release/npcrsh release/${{ matrix.artifact }}
             chmod +x release/${{ matrix.artifact }}
           fi
 
