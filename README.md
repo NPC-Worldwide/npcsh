@@ -38,12 +38,11 @@ brew install npcsh
 pip install 'npcsh[lite]'
 ```
 
-Once installed, run `npcsh` to enter the NPC shell. Also provides the CLI tools `npc`, `wander`, `spool`, `yap`, and `nql`.
+Once installed, run `npcsh` to enter the NPC shell. Also provides the CLI tools `npc` and `npcsh-bench`.
 
-`.npc` and `.jinx` files are directly executable with shebangs (`#!/usr/bin/env npc`):
+`.npc` files are directly executable with shebangs (`#!/usr/bin/env npc`):
 ```bash
 npc ./myagent.npc "summarize this repo"     # run an NPC with a prompt
-npc ./script.jinx bash_command="ls -la"     # run a jinx directly
 ./myagent.npc "hello"                       # or just execute it (with shebang)
 ```
 
@@ -361,7 +360,7 @@ A native Rust build of `npcsh` is available — same shell, same DB, same team f
 
 ```bash
 cd npcsh/rust && cargo build --release
-cp target/release/npcsh ~/.local/bin/npc   # or wherever you want
+cp target/release/npcrsh ~/.local/bin/npc   # or wherever you want
 ```
 
 Both editions share `~/npcsh_history.db` and `~/.npcsh/npc_team/` and can be used interchangeably.
