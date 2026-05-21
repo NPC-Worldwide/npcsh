@@ -778,6 +778,7 @@ class TestCombinedProviderScenarios:
 
         team_ctx = {
             "context": "test",
+            "forenpc": "forenpc",
             "providers": [
                 {
                     "name": "anthropic_cloud",
