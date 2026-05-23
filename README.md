@@ -30,7 +30,7 @@ Then run the executable
 ```bash
 ./npcsh-binary-path
 ```
-Alternatively, you can install with brew or pip if you want to develop on top of this library.
+Alternatively, you can install with brew or pip.
 ```bash
 brew install npcsh
 ```
