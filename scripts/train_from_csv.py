@@ -51,25 +51,33 @@ def load_csv_records(csv_dir: str, pattern: str = "*.csv"):
                     }
 
 
-def build_sft_data(csv_dir: str, pattern: str = "*.csv"):
+def build_sft_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False):
     X, y = [], []
+    task_rates = _compute_task_difficulty(csv_dir, pattern)
     count = 0
     for rec in load_csv_records(csv_dir, pattern):
         if not rec["passed"]:
             continue
         X.append(f"<|im_start|>user\n{rec['instruction']}<|im_end|>\n<|im_start|>assistant\n")
+        tid = rec["task_id"]
+        if hard_only and task_rates.get(tid, 0.5) >= 0.5:
+            continue
         y.append(f"{rec['response']}<|im_end|>")
         count += 1
-    print(f"SFT: {count} passed traces")
+    print(f"SFT: {count} passed traces" + (" (hard-only)" if hard_only else ""))
     return X, y
 
 
-def build_dpo_data(csv_dir: str, pattern: str = "*.csv"):
+def build_dpo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False):
     from datasets import Dataset
 
+    task_rates = _compute_task_difficulty(csv_dir, pattern)
     by_task = {}
     for rec in load_csv_records(csv_dir, pattern):
-        by_task.setdefault(rec["task_id"], []).append(rec)
+        tid = rec["task_id"]
+        if hard_only and task_rates.get(tid, 0.5) >= 0.5:
+            continue
+        by_task.setdefault(tid, []).append(rec)
 
     pairs = []
     for tid, traces in by_task.items():
@@ -85,19 +93,37 @@ def build_dpo_data(csv_dir: str, pattern: str = "*.csv"):
                     "rejected": f["response"],
                 })
 
-    print(f"DPO: {len(pairs)} pairs from {len(by_task)} tasks")
+    print(f"DPO: {len(pairs)} pairs from {len(by_task)} tasks" + (" (hard-only)" if hard_only else ""))
     if len(pairs) < 5:
         return None
     return Dataset.from_list(pairs)
 
 
-def build_grpo_data(csv_dir: str, pattern: str = "*.csv"):
+def _compute_task_difficulty(csv_dir: str, pattern: str = "*.csv"):
+    """Compute per-task success rate for difficulty weighting."""
+    from collections import defaultdict
+    by_task = defaultdict(list)
+    for rec in load_csv_records(csv_dir, pattern):
+        by_task[rec["task_id"]].append(rec["passed"])
+    rates = {}
+    for tid, results in by_task.items():
+        rates[tid] = sum(results) / len(results)
+    return rates
+
+
+def build_grpo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False):
+    task_rates = _compute_task_difficulty(csv_dir, pattern)
     by_task = {}
     for rec in load_csv_records(csv_dir, pattern):
         tid = rec["task_id"]
-        reward = 1.0 if rec["passed"] else -0.5
+        base_rate = task_rates.get(tid, 0.5)
+        if hard_only and base_rate >= 0.5:
+            continue
+        # Difficulty weight: harder tasks get higher reward magnitude
+        difficulty_weight = 1.0 / (base_rate + 0.1)
+        reward = (1.0 if rec["passed"] else -0.5) * difficulty_weight
         if rec["passed"]:
-            reward += max(0, 0.3 * (3 - rec["attempts"]) / 3)
+            reward += max(0, 0.3 * (3 - rec["attempts"]) / 3) * difficulty_weight
         rec["reward"] = reward
         by_task.setdefault(tid, []).append(rec)
 
@@ -109,19 +135,25 @@ def build_grpo_data(csv_dir: str, pattern: str = "*.csv"):
         responses = [(t["response"], t["reward"]) for t in traces]
         groups.append({"prompt": prompt, "responses": responses})
 
-    print(f"GRPO: {len(groups)} groups")
+    print(f"GRPO: {len(groups)} groups" + (" (hard-only)" if hard_only else ""))
     return groups
 
 
-def build_ppo_data(csv_dir: str, pattern: str = "*.csv"):
+def build_ppo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False):
+    task_rates = _compute_task_difficulty(csv_dir, pattern)
     records = []
     for rec in load_csv_records(csv_dir, pattern):
-        reward = 1.0 if rec["passed"] else -0.5
+        tid = rec["task_id"]
+        base_rate = task_rates.get(tid, 0.5)
+        if hard_only and base_rate >= 0.5:
+            continue
+        difficulty_weight = 1.0 / (base_rate + 0.1)
+        reward = (1.0 if rec["passed"] else -0.5) * difficulty_weight
         if rec["passed"]:
-            reward += max(0, 0.3 * (3 - rec["attempts"]) / 3)
+            reward += max(0, 0.3 * (3 - rec["attempts"]) / 3) * difficulty_weight
         rec["reward"] = reward
         records.append(rec)
-    print(f"PPO: {len(records)} traces")
+    print(f"PPO: {len(records)} traces" + (" (hard-only)" if hard_only else ""))
     return records
 
 
@@ -138,6 +170,7 @@ def main():
     common.add_argument("--epochs", type=int, default=3)
     common.add_argument("--lr", type=float, default=2e-5)
     common.add_argument("--lora-r", type=int, default=16)
+    common.add_argument("--hard-only", action="store_true", help="Train only on tasks with <50% success rate")
 
     sub.add_parser("sft", parents=[common])
 
@@ -158,7 +191,7 @@ def main():
     if args.cmd == "sft":
         from npcpy.ft.sft import run_sft, SFTConfig
 
-        X, y = build_sft_data(csv_dir, args.pattern)
+        X, y = build_sft_data(csv_dir, args.pattern, hard_only=args.hard_only)
         if len(X) < 5:
             print("Need >= 5 passed traces.")
             sys.exit(1)
@@ -181,7 +214,7 @@ def main():
     elif args.cmd == "dpo":
         from npcpy.ft.rl import RLConfig, _train_dpo_mlx
 
-        pairs = build_dpo_data(csv_dir, args.pattern)
+        pairs = build_dpo_data(csv_dir, args.pattern, hard_only=args.hard_only)
         if pairs is None or len(pairs) < 5:
             print("Need >= 5 preference pairs.")
             sys.exit(1)
@@ -207,7 +240,7 @@ def main():
     elif args.cmd == "grpo":
         from npcpy.ft.rl import RLConfig, train_with_grpo
 
-        groups = build_grpo_data(csv_dir, args.pattern)
+        groups = build_grpo_data(csv_dir, args.pattern, hard_only=args.hard_only)
         if not groups:
             print("Need tasks with multiple traces for GRPO.")
             sys.exit(1)
@@ -229,7 +262,7 @@ def main():
     elif args.cmd == "ppo":
         from npcpy.ft.rl import RLConfig, train_with_ppo
 
-        records = build_ppo_data(csv_dir, args.pattern)
+        records = build_ppo_data(csv_dir, args.pattern, hard_only=args.hard_only)
         if len(records) < 10:
             print("Need >= 10 traces for PPO.")
             sys.exit(1)
