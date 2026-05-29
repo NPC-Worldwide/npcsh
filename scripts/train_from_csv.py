@@ -58,11 +58,11 @@ def build_sft_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False
     for rec in load_csv_records(csv_dir, pattern):
         if not rec["passed"]:
             continue
-        X.append(f"<|im_start|>user\n{rec['instruction']}<|im_end|>\n<|im_start|>assistant\n")
         tid = rec["task_id"]
         if hard_only and task_rates.get(tid, 0.5) >= 0.5:
             continue
-        y.append(f"{rec['response']}<|im_end|>")
+        X.append(f"<|im_start|>user\n{rec['instruction']}<|im_end|>\n<|im_start|>assistant\n")
+        y.append(f"{rec['response']}<|im_end|>\n")
         count += 1
     print(f"SFT: {count} passed traces" + (" (hard-only)" if hard_only else ""))
     return X, y
