@@ -3714,8 +3714,8 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 tool_result_str = f"Tool '{tool_name}' not found in available tools."
 
                             # Log tool args and result
-                            args_preview = str(arguments)[:150]
-                            result_preview = tool_result_str[:150] if tool_result_str else "(empty)"
+                            args_preview = str(arguments)[:5000]
+                            result_preview = tool_result_str[:10000] if tool_result_str else "(empty)"
                             print(colored(f"  [iter {iteration}] {tool_name} args: {args_preview}", "white", attrs=["dark"]))
                             print(colored(f"  [iter {iteration}] {tool_name} result: {result_preview}", "white", attrs=["dark"]))
 
