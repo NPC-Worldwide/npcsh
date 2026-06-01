@@ -28,8 +28,23 @@ def parse_trace(trace_str: str):
     if user_match:
         instruction = user_match.group(1).strip()
         instruction = re.sub(r"User Provided Context:.*", "", instruction, flags=re.DOTALL).strip()
+
+    # Extract assistant content
     assistant_match = re.search(r"\[assistant\] (.*?) (?:\[tool_call\]|\[user\]|\Z)", trace, re.DOTALL)
     response = assistant_match.group(1).strip() if assistant_match else ""
+
+    # Extract tool calls from [tool_call] markers and append in Qwen3 format.
+    # Actual trace format: [tool_call] name({"arg": "val", ...}) | [tool] result
+    import json
+    for m in re.finditer(r"\[tool_call\]\s+(\w+)\((\{.*?\})\)", trace):
+        fname = m.group(1)
+        try:
+            args = json.loads(m.group(2))
+        except json.JSONDecodeError:
+            args = {}
+        tc = json.dumps({"name": fname, "arguments": args}, ensure_ascii=False)
+        response += f"\n<tool_call>\n{tc}\n</tool_call>"
+
     return {"instruction": instruction, "response": response}
 
 
