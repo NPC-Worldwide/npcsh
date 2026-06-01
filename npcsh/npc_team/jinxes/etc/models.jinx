@@ -241,10 +241,13 @@ steps:
               set_npcsh_config_value('NPCSH_CHAT_PROVIDER', provider)
               os.environ['NPCSH_CHAT_MODEL'] = model_id
               os.environ['NPCSH_CHAT_PROVIDER'] = provider
-              # Also update the running shell state so it takes effect immediately
+              # Also update the running shell state and active NPC so it takes effect immediately
               try:
                   state.chat_model = model_id
                   state.chat_provider = provider
+                  if state.npc is not None:
+                      state.npc.model = model_id
+                      state.npc.provider = provider
               except Exception:
                   pass
               ui.chat_model = model_id
