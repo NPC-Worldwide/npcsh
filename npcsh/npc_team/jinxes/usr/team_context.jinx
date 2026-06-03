@@ -1,0 +1,105 @@
+jinx_name: team_context
+description: |
+  Load files declared in the team's file_patterns configuration and return their
+  contents. Use this to access course documentation, READMEs, and reference
+  material without manually typing paths. If no pattern is given, returns a list
+  of available files.
+inputs:
+- pattern
+- max_files
+steps:
+  - engine: python
+    code: |
+      import os
+      import yaml
+      import fnmatch
+
+      query_pattern = {{ pattern | default('*') | tojson }}
+      max_files = {{ max_files | default(10) | tojson }}
+
+      # Locate team.ctx by walking upward from current directory
+      team_ctx_path = None
+      cwd = os.getcwd()
+      while cwd != '/':
+          candidate = os.path.join(cwd, 'npc_team', 'team.ctx')
+          if os.path.exists(candidate):
+              team_ctx_path = candidate
+              break
+          candidate = os.path.join(cwd, 'team.ctx')
+          if os.path.exists(candidate):
+              team_ctx_path = candidate
+              break
+          cwd = os.path.dirname(cwd)
+
+      if not team_ctx_path:
+          output = "Error: team.ctx not found. Run this from inside a team directory."
+      else:
+          with open(team_ctx_path, 'r') as f:
+              ctx = yaml.safe_load(f)
+
+          file_patterns = ctx.get('file_patterns', [])
+          if not file_patterns:
+              output = "No file_patterns declared in team.ctx."
+          else:
+              ctx_dir = os.path.dirname(team_ctx_path)
+              matches = []
+              count = 0
+
+              for entry in file_patterns:
+                  if count >= max_files:
+                      break
+                  pat = entry.get('pattern', '*')
+                  base = entry.get('base_path', '.')
+                  recursive = entry.get('recursive', False)
+
+                  abs_base = os.path.expanduser(base)
+                  if not os.path.isabs(abs_base):
+                      abs_base = os.path.normpath(os.path.join(ctx_dir, abs_base))
+
+                  if not os.path.exists(abs_base):
+                      continue
+
+                  if recursive:
+                      for root, dirs, files in os.walk(abs_base):
+                          for fname in files:
+                              if count >= max_files:
+                                  break
+                              if fnmatch.fnmatch(fname, pat):
+                                  if query_pattern != '*' and query_pattern not in fname:
+                                      continue
+                                  fpath = os.path.join(root, fname)
+                                  try:
+                                      with open(fpath, 'r', encoding='utf-8') as ff:
+                                          content = ff.read()
+                                      rel = os.path.relpath(fpath, ctx_dir)
+                                      matches.append(f"--- {rel} ---\n{content}\n")
+                                      count += 1
+                                  except Exception:
+                                      pass
+                  else:
+                      try:
+                          for item in os.listdir(abs_base):
+                              if count >= max_files:
+                                  break
+                              if fnmatch.fnmatch(item, pat):
+                                  if query_pattern != '*' and query_pattern not in item:
+                                      continue
+                                  fpath = os.path.join(abs_base, item)
+                                  if os.path.isfile(fpath):
+                                      try:
+                                          with open(fpath, 'r', encoding='utf-8') as ff:
+                                              content = ff.read()
+                                          rel = os.path.relpath(fpath, ctx_dir)
+                                          matches.append(f"--- {rel} ---\n{content}\n")
+                                          count += 1
+                                      except Exception:
+                                          pass
+                      except PermissionError:
+                          pass
+
+              if matches:
+                  output = "\n".join(matches)
+                  if count >= max_files:
+                      output += f"\n(Limit reached: {max_files} files shown. Use max_files=N or a more specific pattern.)"
+              else:
+                  output = f"No files matched pattern: {query_pattern}"
