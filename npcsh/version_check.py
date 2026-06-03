@@ -33,20 +33,22 @@ class VersionCheck:
         except Exception:
             pass
 
-        # If npcrs binary is on PATH and we're the Rust build → cargo
-        cargo_bin = shutil.which("npcrs") or shutil.which("npcsh")
-        if cargo_bin:
-            return "cargo"
+        binary = shutil.which("npcrs") or shutil.which("npcsh")
 
-        # If binary is under Homebrew paths → brew
+        # Check Homebrew before Cargo: a binary under a Homebrew prefix was
+        # installed via brew, not cargo install.  The original code returned
+        # "cargo" unconditionally whenever any binary was found, making the
+        # Homebrew branch unreachable dead code.
         brew_paths = [
             "/opt/homebrew",
             "/usr/local",
             "/home/linuxbrew",
         ]
-        for bp in brew_paths:
-            if cargo_bin and cargo_bin.startswith(bp):
-                return "brew"
+        if binary:
+            for bp in brew_paths:
+                if binary.startswith(bp):
+                    return "brew"
+            return "cargo"
 
         return "pip"  # Default assumption
 
