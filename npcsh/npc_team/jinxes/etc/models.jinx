@@ -24,7 +24,7 @@ steps:
           from npcsh.config import set_npcsh_config_value
 
           LOCAL_PROVIDERS = {'ollama', 'llamacpp', 'lmstudio', 'mlx', 'lora'}
-          CLOUD_PROVIDERS = {'openai', 'anthropic', 'gemini', 'deepseek'}
+          CLOUD_PROVIDERS = set()
 
           _CLI_BINARY = {
               'claude_code': 'claude',
@@ -105,6 +105,25 @@ steps:
                           ui.models.append((provider, model_id))
                   else:
                       ui.models.append((provider, binary))
+              # Cloud providers from litellm env discovery
+              try:
+                  from litellm import utils as _litellm_utils, get_valid_models as _litellm_get_models
+                  available = _litellm_utils._infer_valid_provider_from_env_vars()
+                  for p in available:
+                      prov = p.value
+                      CLOUD_PROVIDERS.add(prov)
+                      try:
+                          models = _litellm_get_models(custom_llm_provider=prov)
+                          if models:
+                              for m in models[:20]:
+                                  ui.models.append((prov, m))
+                          else:
+                              ui.models.append((prov, prov))
+                      except Exception:
+                          ui.models.append((prov, prov))
+              except Exception:
+                  pass
+              ui.models.sort(key=lambda x: (x[0], x[1]))
               if ui.models and not ui.status.startswith("Detection error"):
                   ui.status = f"Found {len(ui.models)} models"
 
