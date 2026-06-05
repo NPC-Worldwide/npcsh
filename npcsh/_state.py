@@ -98,13 +98,13 @@ from npcpy.llm_funcs import (
     check_llm_command,
     get_llm_response,
 )
-from npcpy.memory.command_history import (
+from npcsh.history import (
     CommandHistory,
     start_new_conversation,
     save_conversation_message,
     load_kg_from_db,
 )
-from npcpy.memory.search import execute_rag_command, execute_brainblast_command
+from npcpy.memory.search import execute_rag_command
 from npcpy.npc_compiler import NPC, CLIAgent, Team, build_jinx_tool_catalog
 from npcpy.tools import flatten_tool_messages
 from npcpy.npc_sysenv import (
@@ -3029,7 +3029,6 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
             "CommandHistory": CommandHistory,
             "load_kg_from_db": load_kg_from_db,
             "execute_rag_command": execute_rag_command,
-            "execute_brainblast_command": execute_brainblast_command,
             "load_file_contents": load_file_contents,
             "search_web": search_web,
             "get_relevant_memories": get_relevant_memories,
@@ -3400,7 +3399,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
             "CommandHistory": CommandHistory,
             "load_kg_from_db": load_kg_from_db,
             "execute_rag_command": execute_rag_command,
-            "execute_brainblast_command": execute_brainblast_command,
             "load_file_contents": load_file_contents,
             "search_web": search_web,
             "get_relevant_memories": get_relevant_memories,
