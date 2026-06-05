@@ -15,7 +15,7 @@ except:
     pass
 
 from npcpy.gen.response import get_model_context_window
-from npcpy.memory.command_history import (
+from npcsh.history import (
     CommandHistory,
     start_new_conversation,
     save_conversation_message,
