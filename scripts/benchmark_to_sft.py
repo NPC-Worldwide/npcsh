@@ -5,100 +5,75 @@ benchmark_to_sft.py
 Convert npcsh benchmark CSV traces into SFT training data and run fine-tuning
 via npcpy.ft.sft (MLX on Apple Silicon or torch on CUDA).
 
+Uses the canonical parse_trace from train_from_csv.py to properly reconstruct
+Qwen3 <tool_call> JSON blocks.
+
 Usage:
     python scripts/benchmark_to_sft.py --csv ~/.npcsh/benchmarks/local/npcsh_ollama_qwen3.5_0.8b_20260428_122811.csv --model mlx-community/Qwen3-0.6B-4bit --output models/npcsh_sft
-    python scripts/benchmark_to_sft.py --csv-dir ~/.npcsh/benchmarks/local/ --pattern "npcsh_ollama_qwen3.5*" --model mlx-community/Qwen3-1.7B-4bit --output models/npcsh_sft
+    python scripts/benchmark_to_sft.py --csv-dir ~/.npcsh/benchmarks/local/ --pattern "npcsh_ollama_qwen3.5*" --model mlx-community/Qwen3-1.7B-4bit --output models/npcsh_sft --hard-only
 """
 
 import argparse
 import csv
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
-
-def parse_trace(trace_str: str):
-    """Extract (system_prompt, instruction, assistant_response, tool_calls) from a benchmark trace."""
-    if not trace_str or "---TRACE---" not in trace_str:
-        return None
-
-    parts = trace_str.split("---TRACE---", 1)
-    output_before = parts[0].strip()
-    trace = parts[1].strip()
-
-    system_prompt = ""
-    instruction = ""
-    assistant_response = ""
-    tool_calls = []
-
-    # Extract system prompt: everything between [system] and [user]
-    sys_match = re.search(r"\[system\] (.*?) \[user\]", trace, re.DOTALL)
-    if sys_match:
-        system_prompt = sys_match.group(1).strip()
-
-    # Extract user instruction (first [user] content)
-    user_match = re.search(r"\[user\] (.*?) (?:\[assistant\]|\[tool_call\])", trace, re.DOTALL)
-    if user_match:
-        instruction = user_match.group(1).strip()
-        # Remove the "User Provided Context" boilerplate
-        instruction = re.sub(r"User Provided Context:.*", "", instruction, flags=re.DOTALL).strip()
-
-    # Extract assistant response (first [assistant] content)
-    assistant_match = re.search(r"\[assistant\] (.*?) (?:\[tool_call\]|\[user\]|\Z)", trace, re.DOTALL)
-    if assistant_match:
-        assistant_response = assistant_match.group(1).strip()
-
-    # Extract tool calls
-    for tc_match in re.finditer(r"\[tool_call\] ([\w_]+)\((.*?)\)", trace):
-        tool_calls.append(f"{tc_match.group(1)}({tc_match.group(2)})")
-
-    return {
-        "system_prompt": system_prompt,
-        "instruction": instruction,
-        "assistant_response": assistant_response,
-        "tool_calls": tool_calls,
-        "output_before": output_before,
-    }
+sys.path.insert(0, str(Path(__file__).parent))
+from train_from_csv import parse_trace, _compute_task_difficulty
 
 
-def traces_from_csv(csv_path: str, min_reward: float = 0.5):
+def traces_from_csv(csv_path: str, hard_only: bool = False, task_rates: dict = None):
     """Yield parsed traces from a benchmark CSV, filtering for passed tasks."""
-    field_size = csv.field_size_limit(10**7)
+    csv.field_size_limit(10**7)
+    if task_rates is None:
+        task_rates = {}
     with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             passed = row.get("passed", "").lower()
             if passed not in ("true", "1"):
                 continue
+            tid = row.get("task_id", "")
+            if hard_only and task_rates.get(tid, 0.5) >= 0.5:
+                continue
             trace = parse_trace(row.get("output", ""))
-            if trace and trace["instruction"] and trace["assistant_response"]:
-                trace["task_id"] = row.get("task_id", "")
+            if trace and trace["instruction"] and trace["response"]:
+                trace["task_id"] = tid
                 trace["category"] = row.get("category", "")
+                trace["difficulty"] = row.get("difficulty", "")
                 yield trace
 
 
-def traces_from_dir(csv_dir: str, pattern: str = "npcsh_*.csv"):
+def traces_from_dir(csv_dir: str, pattern: str = "npcsh_*.csv", hard_only: bool = False):
     """Yield traces from all matching CSVs in a directory."""
     path = Path(csv_dir)
+    task_rates = _compute_task_difficulty(csv_dir, pattern) if hard_only else {}
     for csv_file in sorted(path.glob(pattern)):
         print(f"Reading {csv_file.name}...")
-        yield from traces_from_csv(str(csv_file))
+        yield from traces_from_csv(str(csv_file), hard_only=hard_only, task_rates=task_rates)
 
 
 def build_sft_examples(traces, format_style: str = "qwen3"):
-    """Build (X, y) lists for npcpy.ft.sft.run_sft."""
+    """Build (X, y) lists for npcpy.ft.sft.run_sft.
+
+    The response includes reconstructed <tool_call> JSON blocks so the model
+    learns proper tool-calling syntax.
+    """
     X = []
     y = []
 
     for trace in traces:
         instruction = trace["instruction"]
-        response = trace["assistant_response"]
+        response = trace["response"]
+
+        if not instruction or not response:
+            continue
 
         if format_style == "qwen3":
-            prompt_text = f"<|im_start|>system\n{trace['system_prompt']}<|im_end|>\n<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
-            output_text = f"{response}<|im_end|>"
+            prompt_text = f"<|im_start|>user\n{instruction}ocide\n<|im_start|>assistant\n"
+            output_text = f"{response}ocide"
         elif format_style == "gemma":
             prompt_text = f"<start_of_turn>user\n{instruction}<end_of_turn>\n<start_of_turn>model\n"
             output_text = f"{response}<end_of_turn>"
@@ -127,7 +102,9 @@ def main():
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--lr", type=float, default=3e-5)
     parser.add_argument("--max-length", type=int, default=1024)
+    parser.add_argument("--hard-only", action="store_true", help="Train only on tasks with <50% success rate")
     parser.add_argument("--save-jsonl", help="Also save training examples to JSONL file")
+    parser.add_argument("--skip-sft", action="store_true", help="Only compile data, don't train")
     args = parser.parse_args()
 
     if not args.csv and not args.csv_dir:
@@ -136,11 +113,11 @@ def main():
 
     traces = []
     if args.csv:
-        traces = list(traces_from_csv(args.csv))
+        traces = list(traces_from_csv(args.csv, hard_only=args.hard_only))
     else:
-        traces = list(traces_from_dir(args.csv_dir, args.pattern))
+        traces = list(traces_from_dir(args.csv_dir, args.pattern, hard_only=args.hard_only))
 
-    print(f"Collected {len(traces)} successful traces")
+    print(f"Collected {len(traces)} successful traces" + (" (hard-only)" if args.hard_only else ""))
     if len(traces) < 5:
         print("Need at least 5 traces to train. Run more benchmarks.")
         sys.exit(1)
@@ -152,6 +129,10 @@ def main():
             for xi, yi in zip(X, y):
                 f.write(json.dumps({"prompt": xi, "completion": yi}) + "\n")
         print(f"Saved {len(X)} examples to {args.save_jsonl}")
+
+    if args.skip_sft:
+        print("Skipping SFT (--skip-sft)")
+        return
 
     print(f"Training SFT on {len(X)} examples...")
 
@@ -174,7 +155,6 @@ def main():
     adapter_path = run_sft(X, y, config=config, format_style=args.format_style)
     print(f"Adapter saved to: {adapter_path}")
 
-    # Write a small metadata file
     meta = {
         "base_model": args.model,
         "adapter_path": adapter_path,

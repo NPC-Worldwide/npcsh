@@ -201,6 +201,7 @@ def main():
     parser.add_argument("--skip-sft", action="store_true")
     parser.add_argument("--skip-eval", action="store_true")
     parser.add_argument("--fuse", action="store_true", help="Fuse adapter into merged model after training")
+    parser.add_argument("--provider", default="omlx", choices=["omlx", "ollama", "transformers"], help="Provider for evaluation")
     args = parser.parse_args()
 
     input_path = os.path.expanduser(args.jsonl)
@@ -264,12 +265,11 @@ def main():
     # 5. Evaluate
     if not args.skip_eval:
         print("\n--- Baseline Evaluation ---")
-        baseline_pass, baseline_total = evaluate_on_benchmark(args.model, "transformers", num_tasks=10)
+        baseline_pass, baseline_total = evaluate_on_benchmark(args.model, args.provider, num_tasks=10)
 
         print("\n--- Trained Evaluation ---")
         eval_model = fused_path or adapter_path
-        eval_provider = "transformers"
-        trained_pass, trained_total = evaluate_on_benchmark(eval_model, eval_provider, num_tasks=10)
+        trained_pass, trained_total = evaluate_on_benchmark(eval_model, args.provider, num_tasks=10)
 
         print(f"\n{'='*50}")
         print(f"Baseline: {baseline_pass}/{baseline_total}")
