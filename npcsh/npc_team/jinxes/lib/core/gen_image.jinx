@@ -8,6 +8,7 @@ inputs:
 - n_images: 1
 - width: null
 - height: null
+- attachments: null
 steps:
   - name: generate
     engine: python
@@ -36,6 +37,11 @@ steps:
       except Exception:
           pass
 
+      input_images = None
+      attachments = str(context.get('attachments', '') or '').strip()
+      if attachments:
+          input_images = [p.strip() for p in attachments.split(',')]
+
       if not image_prompt:
           context['output'] = "Error: prompt is required"
       else:
@@ -52,6 +58,8 @@ steps:
               kwargs['width'] = width
           if height:
               kwargs['height'] = height
+          if input_images:
+              kwargs['input_images'] = input_images
 
           images_list = None
           try:

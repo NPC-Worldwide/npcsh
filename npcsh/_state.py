@@ -1969,8 +1969,10 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
     except Exception:
         term_width = 80
 
-    # Track how many hint lines were drawn last time (for clearing on redraw)
+    # Track geometry from previous draw so we can reach top of input reliably
+    _prev_num_lines = 1
     _prev_hint_lines = 1
+    _prev_cursor_line = 0
 
     # Tab completion state
     _tab_matches = []
@@ -1978,15 +1980,21 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
     _tab_prefix = ""
 
     def draw():
-        nonlocal _prev_hint_lines
+        nonlocal _prev_num_lines, _prev_hint_lines, _prev_cursor_line
         total_len = prompt_visible_len + len(buf)
-        num_lines = (total_len // term_width) + 1
+        num_lines = max(1, (total_len + term_width - 1) // term_width)
         cursor_total = prompt_visible_len + pos
+        cursor_line = cursor_total // term_width
+        cursor_col = cursor_total % term_width
 
-        # Go to start of first input line
+        # Go to start of first input line from wherever the cursor currently is.
+        # The cursor is on _prev_cursor_line within the old input block, so go
+        # up that many lines to reach the top.  Then clear to end-of-screen.
         sys.stdout.write('\r')
-        for _ in range(num_lines - 1):
+        for _ in range(_prev_cursor_line):
             sys.stdout.write('\033[A')
+        _prev_num_lines = num_lines
+        _prev_cursor_line = cursor_line
 
         # Clear to end of screen and redraw prompt+buf
         sys.stdout.write('\033[J')
@@ -2002,13 +2010,9 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
             _prev_hint_lines = 0
 
         # Move cursor back to correct position in input
-        # First go back up past hint lines
-        total_lines_below = _prev_hint_lines
-        lines_after_cursor = (total_len // term_width) - (cursor_total // term_width)
-        total_lines_below += lines_after_cursor
-        for _ in range(total_lines_below):
+        lines_below = (num_lines - 1 - cursor_line) + _prev_hint_lines
+        for _ in range(lines_below):
             sys.stdout.write('\033[A')
-        cursor_col = cursor_total % term_width
         sys.stdout.write('\r')
         if cursor_col > 0:
             sys.stdout.write('\033[' + str(cursor_col) + 'C')
@@ -2174,14 +2178,12 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                     elif c3 == 'C':  # Right
                         if pos < len(buf):
                             pos += 1
-                            sys.stdout.write('\033[C')
-                            sys.stdout.flush()
+                            draw()
                         continue
                     elif c3 == 'D':  # Left
                         if pos > 0:
                             pos -= 1
-                            sys.stdout.write('\033[D')
-                            sys.stdout.flush()
+                            draw()
                         continue
                     elif c3 == '3':  # Del
                         sys.stdin.read(1)  # ~
