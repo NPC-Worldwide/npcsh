@@ -985,25 +985,20 @@ def ensure_npcshrc_exists() -> str:
             npcshrc.write("export NPCSH_INITIALIZED=0\n")
             npcshrc.write("export NPCSH_DEFAULT_MODE='agent'\n")
             npcshrc.write("export NPCSH_BUILD_KG=1\n")
-            npcshrc.write("export NPCSH_CHAT_PROVIDER='ollama'\n")
-            npcshrc.write("export NPCSH_CHAT_MODEL='qwen3.5:9b'\n")
-            npcshrc.write("export NPCSH_REASONING_PROVIDER='ollama'\n")
-            npcshrc.write("export NPCSH_REASONING_MODEL='qwen3.5:9b'\n")
-            npcshrc.write("export NPCSH_EMBEDDING_PROVIDER='ollama'\n")
-            npcshrc.write("export NPCSH_EMBEDDING_MODEL='nomic-embed-text'\n")
-            npcshrc.write("export NPCSH_VISION_PROVIDER='ollama'\n")
-            npcshrc.write("export NPCSH_VISION_MODEL='llava7b'\n")
-            npcshrc.write(
-                "export NPCSH_IMAGE_GEN_MODEL='runwayml/stable-diffusion-v1-5'\n"
-            )
-
-            npcshrc.write("export NPCSH_IMAGE_GEN_PROVIDER='diffusers'\n")
-            npcshrc.write(
-                "export NPCSH_VIDEO_GEN_MODEL='runwayml/stable-diffusion-v1-5'\n"
-            )
-
-            npcshrc.write("export NPCSH_VIDEO_GEN_PROVIDER='diffusers'\n")
-
+            # Model / provider lines are intentionally left empty.
+            # Run /model or /setup inside npcsh to select your defaults.
+            npcshrc.write("export NPCSH_CHAT_PROVIDER=''\n")
+            npcshrc.write("export NPCSH_CHAT_MODEL=''\n")
+            npcshrc.write("export NPCSH_REASONING_PROVIDER=''\n")
+            npcshrc.write("export NPCSH_REASONING_MODEL=''\n")
+            npcshrc.write("export NPCSH_EMBEDDING_PROVIDER=''\n")
+            npcshrc.write("export NPCSH_EMBEDDING_MODEL=''\n")
+            npcshrc.write("export NPCSH_VISION_PROVIDER=''\n")
+            npcshrc.write("export NPCSH_VISION_MODEL=''\n")
+            npcshrc.write("export NPCSH_IMAGE_GEN_MODEL=''\n")
+            npcshrc.write("export NPCSH_IMAGE_GEN_PROVIDER=''\n")
+            npcshrc.write("export NPCSH_VIDEO_GEN_MODEL=''\n")
+            npcshrc.write("export NPCSH_VIDEO_GEN_PROVIDER=''\n")
             npcshrc.write("export NPCSH_API_URL=''\n")
             npcshrc.write("export NPCSH_DB_PATH='~/npcsh_history.db'\n")
             npcshrc.write("export NPCSH_VECTOR_DB_PATH='~/npcsh_chroma.db'\n")
@@ -2294,9 +2289,37 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                 pos = 0
                 draw()
 
-            elif c == '\x05':  # Ctrl-E
-                pos = len(buf)
-                draw()
+            elif c == '\x05':  # Ctrl-E - show last thinking / reasoning content
+                try:
+                    import builtins
+                    from termcolor import colored
+                    thinking = getattr(builtins, '_npcsh_last_thinking', None)
+                    reasoning = getattr(builtins, '_npcsh_last_reasoning', None)
+                    sys.stdout.write('\n\033[K')
+                    shown = False
+                    if thinking:
+                        sys.stdout.write(colored("═══ Thinking ═══\n", "magenta", attrs=["bold"]))
+                        sys.stdout.write(str(thinking))
+                        sys.stdout.write('\n')
+                        sys.stdout.write(colored("═" * 30 + "\n", "magenta"))
+                        shown = True
+                    if reasoning:
+                        sys.stdout.write(colored("═══ Reasoning ═══\n", "magenta", attrs=["bold"]))
+                        sys.stdout.write(str(reasoning))
+                        sys.stdout.write('\n')
+                        sys.stdout.write(colored("═" * 30 + "\n", "magenta"))
+                        shown = True
+                    if not shown:
+                        sys.stdout.write(colored("(no thinking/reasoning content available)\n", "white", attrs=["dark"]))
+                    sys.stdout.write(prompt)
+                    sys.stdout.write(buf)
+                    sys.stdout.write('\n' + (token_hint or ''))
+                    sys.stdout.write('\033[A\r')
+                    if prompt_visible_len > 0:
+                        sys.stdout.write('\033[' + str(prompt_visible_len + pos) + 'C')
+                    sys.stdout.flush()
+                except Exception:
+                    pass
 
             elif c == '\x15':  # Ctrl-U
                 buf = buf[pos:]
@@ -2393,29 +2416,39 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                     pass
                 continue
 
-            elif c == '\x0f':  # Ctrl-O - show last tool call args
+            elif c == '\x0f':  # Ctrl-O - show last 5 tool calls
                 try:
                     import builtins
+                    from termcolor import colored
+                    recent = getattr(builtins, '_npcsh_recent_tool_calls', None) or []
+                    # Also grab the single last call for backward compat
                     last_call = getattr(builtins, '_npcsh_last_tool_call', None)
-                    if last_call:
-                        from termcolor import colored
-                        # Save cursor, move down past hint, show args, restore
-                        sys.stdout.write('\n\033[K')  # New line, clear
-                        sys.stdout.write(colored(f"─── {last_call['name']} ───\n", "cyan"))
-                        args = last_call.get('arguments', {})
-                        for k, v in args.items():
-                            v_str = str(v)
-                            # Show with syntax highlighting for code
-                            if '\n' in v_str:
-                                sys.stdout.write(colored(f"{k}:\n", "yellow"))
-                                for line in v_str.split('\n')[:30]:  # Limit lines
-                                    sys.stdout.write(f"  {line}\n")
-                                if v_str.count('\n') > 30:
-                                    sys.stdout.write(colored(f"  ... ({v_str.count(chr(10)) - 30} more lines)\n", "white", attrs=["dark"]))
+                    if not recent and last_call:
+                        recent = [last_call]
+                    if recent:
+                        total = len(recent)
+                        sys.stdout.write('\n\033[K')
+                        sys.stdout.write(colored(f"═══ Last {total} tool call{'s' if total > 1 else ''} ═══\n", "cyan", attrs=["bold"]))
+                        for idx, call in enumerate(recent):
+                            name = call.get('name', '?')
+                            sys.stdout.write(colored(f"[{idx+1}/{total}] {name}\n", "cyan"))
+                            args = call.get('arguments', {})
+                            if args:
+                                for k, v in args.items():
+                                    v_str = str(v)
+                                    if '\n' in v_str:
+                                        sys.stdout.write(colored(f"  {k}:\n", "yellow"))
+                                        for line in v_str.split('\n')[:15]:
+                                            sys.stdout.write(f"    {line}\n")
+                                        if v_str.count('\n') > 15:
+                                            sys.stdout.write(colored(f"    ... ({v_str.count(chr(10)) - 15} more lines)\n", "white", attrs=["dark"]))
+                                    else:
+                                        sys.stdout.write(colored(f"  {k}: ", "yellow") + (v_str[:200] + "…" if len(v_str) > 200 else v_str) + "\n")
                             else:
-                                sys.stdout.write(colored(f"{k}: ", "yellow") + f"{v_str}\n")
-                        sys.stdout.write(colored("─" * 40 + "\n", "cyan"))
-                        # Redraw prompt
+                                sys.stdout.write(colored("  (no args)", "white", attrs=["dark"]) + "\n")
+                            if idx < total - 1:
+                                sys.stdout.write(colored("  ────────\n", "white", attrs=["dark"]))
+                        sys.stdout.write(colored("═" * 44 + "\n", "cyan"))
                         sys.stdout.write(prompt)
                         sys.stdout.write(buf)
                         sys.stdout.write('\n' + (token_hint or ''))
@@ -2423,8 +2456,6 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                         if prompt_visible_len > 0:
                             sys.stdout.write('\033[' + str(prompt_visible_len + pos) + 'C')
                         sys.stdout.flush()
-                    else:
-                        pass  # No tool call to show
                 except Exception:
                     pass
 
@@ -2962,6 +2993,18 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
         # Execute tool
         try:
             result = tool_func(**kwargs)
+            # Track in recent tool calls (keep last 5)
+            try:
+                import builtins
+                recent = getattr(builtins, '_npcsh_recent_tool_calls', None)
+                if recent is None:
+                    recent = []
+                    builtins._npcsh_recent_tool_calls = recent
+                recent.append({"name": tool_name, "arguments": kwargs.copy(), "timestamp": __import__('time').time()})
+                if len(recent) > 5:
+                    recent.pop(0)
+            except Exception:
+                pass
             if log_level != "silent" and tool_name != "chat":
                 try:
                     print(colored(" ✓", "green"), flush=True)
@@ -3139,6 +3182,14 @@ def execute_slash_command(command: str,
     except ValueError:
         all_command_parts = command.split()
     command_name = all_command_parts[0].lstrip('/')
+
+    # --- THINKING TOGGLE ---
+    if command_name == 'think':
+        state.think = True
+        return state, {"output": colored("Thinking enabled for next LLM call.", "green"), "messages": state.messages}
+    if command_name == 'nothink':
+        state.think = False
+        return state, {"output": colored("Thinking disabled for next LLM call.", "green"), "messages": state.messages}
 
     # --- QUIT/EXIT HANDLING ---
     if command_name in ['quit', 'exit', 'q']:
@@ -3484,6 +3535,36 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 tool_choice="auto",
                                 **think_kwargs,
                             )
+                        # Extract thinking / reasoning from raw response
+                        try:
+                            import builtins
+                            raw = llm_result.get("raw_response") if isinstance(llm_result, dict) else None
+                            thinking_text = reasoning_text = None
+                            if raw:
+                                # Anthropic reasoning blocks
+                                if hasattr(raw, 'content') and isinstance(getattr(raw, 'content', None), list):
+                                    for block in raw.content:
+                                        if getattr(block, 'type', None) == 'thinking':
+                                            thinking_text = getattr(block, 'thinking', None)
+                                        elif getattr(block, 'type', None) == 'reasoning':
+                                            reasoning_text = getattr(block, 'reasoning', None)
+                                if isinstance(raw, dict):
+                                    thinking_text = raw.get("thinking") or raw.get("reasoning_content") or thinking_text
+                                    reasoning_text = raw.get("reasoning") or reasoning_text
+                                if hasattr(raw, 'choices') and raw.choices:
+                                    first = raw.choices[0]
+                                    if hasattr(first, 'message') and first.message:
+                                        msg = first.message
+                                        if hasattr(msg, 'reasoning_content'):
+                                            reasoning_text = msg.reasoning_content
+                                        if hasattr(msg, 'thinking'):
+                                            thinking_text = msg.thinking
+                            if thinking_text:
+                                builtins._npcsh_last_thinking = thinking_text
+                            if reasoning_text:
+                                builtins._npcsh_last_reasoning = reasoning_text
+                        except Exception:
+                            pass
                     except ContextWindowExceededError:
                         print(colored("  Context window exceeded — compressing and retrying...", "yellow"))
                         try:
@@ -3510,6 +3591,36 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 tool_choice="auto",
                                 **think_kwargs,
                             )
+                        # Extract thinking / reasoning from raw response
+                        try:
+                            import builtins
+                            raw = llm_result.get("raw_response") if isinstance(llm_result, dict) else None
+                            thinking_text = reasoning_text = None
+                            if raw:
+                                # Anthropic reasoning blocks
+                                if hasattr(raw, 'content') and isinstance(getattr(raw, 'content', None), list):
+                                    for block in raw.content:
+                                        if getattr(block, 'type', None) == 'thinking':
+                                            thinking_text = getattr(block, 'thinking', None)
+                                        elif getattr(block, 'type', None) == 'reasoning':
+                                            reasoning_text = getattr(block, 'reasoning', None)
+                                if isinstance(raw, dict):
+                                    thinking_text = raw.get("thinking") or raw.get("reasoning_content") or thinking_text
+                                    reasoning_text = raw.get("reasoning") or reasoning_text
+                                if hasattr(raw, 'choices') and raw.choices:
+                                    first = raw.choices[0]
+                                    if hasattr(first, 'message') and first.message:
+                                        msg = first.message
+                                        if hasattr(msg, 'reasoning_content'):
+                                            reasoning_text = msg.reasoning_content
+                                        if hasattr(msg, 'thinking'):
+                                            thinking_text = msg.thinking
+                            if thinking_text:
+                                builtins._npcsh_last_thinking = thinking_text
+                            if reasoning_text:
+                                builtins._npcsh_last_reasoning = reasoning_text
+                        except Exception:
+                            pass
 
                     # Accumulate usage
                     if isinstance(llm_result, dict) and llm_result.get('usage'):
@@ -4329,6 +4440,11 @@ def load_team(team_name: str, state: ShellState) -> bool:
 
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     setup_npcsh_config()
+
+    # Warn if no chat model is configured
+    if not NPCSH_CHAT_MODEL or not NPCSH_CHAT_PROVIDER:
+        print("⚠️  No default chat model configured.")
+        print("   Run /model inside npcsh to select one, or set NPCSH_CHAT_MODEL + NPCSH_CHAT_PROVIDER in ~/.npcshrc")
 
     db_path = NPCSH_DB_PATH
     db_path = os.path.expanduser(db_path)

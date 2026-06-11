@@ -5,8 +5,6 @@ inputs:
   - task: null
   - max_iterations: "15"
   - max_file_lines: "300"
-  - model: null
-  - provider: null
 
 steps:
   - name: explore_codebase
@@ -30,12 +28,18 @@ steps:
       elif isinstance(_npc, str):
           _npc = None
 
-      _model = (context.get('model')
-               or (_npc.model if _npc and hasattr(_npc, 'model') else None)
-               or os.environ.get('NPCSH_CHAT_MODEL'))
-      _provider = (context.get('provider')
-                   or (_npc.provider if _npc and hasattr(_npc, 'provider') else None)
-                   or os.environ.get('NPCSH_CHAT_PROVIDER'))
+      # Use the shell's current model/provider — NEVER let the LLM override these.
+      _model = None
+      _provider = None
+      try:
+          _model = state.chat_model
+          _provider = state.chat_provider
+      except Exception:
+          pass
+      if not _model and _npc and hasattr(_npc, 'model') and _npc.model:
+          _model = _npc.model
+      if not _provider and _npc and hasattr(_npc, 'provider') and _npc.provider:
+          _provider = _npc.provider
 
       base_path = os.path.expanduser(context.get('path') or '.')
       if not os.path.isabs(base_path):

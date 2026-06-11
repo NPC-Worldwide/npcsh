@@ -72,8 +72,8 @@ def build_sft_examples(traces, format_style: str = "qwen3"):
             continue
 
         if format_style == "qwen3":
-            prompt_text = f"<|im_start|>user\n{instruction}ocide\n<|im_start|>assistant\n"
-            output_text = f"{response}ocide"
+            prompt_text = f"<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
+            output_text = f"{response}<|im_end|>\n"
         elif format_style == "gemma":
             prompt_text = f"<start_of_turn>user\n{instruction}<end_of_turn>\n<start_of_turn>model\n"
             output_text = f"{response}<end_of_turn>"
@@ -93,7 +93,7 @@ def main():
     parser.add_argument("--csv-dir", help="Directory of benchmark CSVs")
     parser.add_argument("--pattern", default="npcsh_*.csv", help="Glob pattern for CSV files")
     parser.add_argument("--model", required=True, help="Base model name (e.g. mlx-community/Qwen3-0.6B-4bit)")
-    parser.add_argument("--output", default="models/npcsh_sft", help="Output adapter path")
+    parser.add_argument("--output", default="adapters/npcsh_sft", help="Output adapter path")
     parser.add_argument("--device", default="mlx", choices=["mlx", "cuda", "cpu"], help="Training backend")
     parser.add_argument("--format-style", default="qwen3", choices=["qwen3", "gemma", "llama", "raw"])
     parser.add_argument("--lora-r", type=int, default=8)

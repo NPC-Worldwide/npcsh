@@ -529,6 +529,9 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                            command_history,
                            )
 
+            from npcsh.ui import print_conversation_usage
+            print_conversation_usage(state, active_bottom_bar=_bar)
+
         except KeyboardInterrupt:
             print(colored("\nInterrupted.", "yellow"))
             state.messages = sanitize_messages(state.messages)

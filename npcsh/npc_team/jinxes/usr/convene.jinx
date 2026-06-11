@@ -4,8 +4,6 @@ inputs:
   - topic: ""
   - npcs: "alicanto,corca,guac"
   - rounds: 3
-  - model: null
-  - provider: null
 steps:
   - name: convene_tui
     engine: python
@@ -49,24 +47,18 @@ steps:
       team = context.get('team')
       messages = context.get('messages', [])
 
-      # Resolve model/provider: context → NPC → state → env → defaults
-      model = context.get('model') or (npc.model if npc and hasattr(npc, 'model') and npc.model else None)
-      if not model:
-          try:
-              model = state.chat_model if state and hasattr(state, 'chat_model') else None
-          except:
-              model = None
-      if not model:
-          model = os.environ.get('NPCSH_CHAT_MODEL', 'llama3.2')
-
-      provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') and npc.provider else None)
-      if not provider:
-          try:
-              provider = state.chat_provider if state and hasattr(state, 'chat_provider') else None
-          except:
-              provider = None
-      if not provider:
-          provider = os.environ.get('NPCSH_CHAT_PROVIDER', 'ollama')
+      # Use the shell's current model/provider — NEVER let the LLM override these.
+      model = None
+      provider = None
+      try:
+          model = state.chat_model
+          provider = state.chat_provider
+      except Exception:
+          pass
+      if not model and npc and hasattr(npc, 'model') and npc.model:
+          model = npc.model
+      if not provider and npc and hasattr(npc, 'provider') and npc.provider:
+          provider = npc.provider
 
       topic = context.get('topic', '')
       npcs_str = context.get('npcs', 'alicanto,corca,guac')

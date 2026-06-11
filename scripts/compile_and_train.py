@@ -18,9 +18,7 @@ import csv
 import json
 import os
 import re
-import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -88,8 +86,8 @@ def build_xy(compact_data: list, system_prompt: str, format_style: str = "qwen3"
         completion = item["completion"]
 
         if format_style == "qwen3":
-            prompt_text = f"<|im_start|>user\n{instruction}<|im_end|>\n<|im_start|>assistant\n"
-            output_text = f"{completion}<|im_end|>"
+            prompt_text = f"<|im_start|>user\n{instruction}\n<|im_start|>assistant\n"
+            output_text = f"{completion}\n"
         elif format_style == "gemma":
             prompt_text = f"<start_of_turn>user\n{instruction}<end_of_turn>\n<start_of_turn>model\n"
             output_text = f"{completion}<end_of_turn>"
@@ -117,71 +115,31 @@ def fuse_adapter(adapter_path: str, output_path: str):
         return output_path
     except Exception as e:
         print(f"Fuse failed: {e}")
-        print("Trying CLI fallback...")
-        try:
-            subprocess.run(
-                ["python", "-m", "mlx_lm.lora", "--adapter-path", adapter_path, "--save-path", output_path],
-                check=True,
-            )
-            return output_path
-        except Exception as e2:
-            print(f"CLI fallback also failed: {e2}")
-            return None
+        return None
 
 
 def evaluate_on_benchmark(model_path: str, provider: str, category: str = None, num_tasks: int = 10):
-    """Run a quick benchmark subset to compare."""
+    """Run a quick benchmark subset using the direct Python API (no subprocess)."""
+    from npcsh.benchmark.local_runner import run_benchmark
+
     print(f"\nEvaluating {model_path} ({provider}) on {num_tasks} tasks...")
 
-    task_file = Path(__file__).parent.parent / "npcsh" / "benchmark" / "tasks.csv"
-    tasks = []
-    with open(task_file) as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if category and row["category"] != category:
-                continue
-            tasks.append(row)
-            if len(tasks) >= num_tasks:
-                break
+    # run_benchmark accepts category, task_id, timeout. We want a subset of tasks.
+    # It does not support max_tasks directly, but we can filter after.
+    report = run_benchmark(
+        model=model_path,
+        provider=provider,
+        category=category,
+        timeout=60,
+    )
 
-    passed = 0
-    for task in tasks:
-        work_dir = tempfile.mkdtemp(prefix=f"eval_{task['id']}_")
-        setup_cmd = task.get("setup_cmd", "") or ""
-        if setup_cmd:
-            subprocess.run(["bash", "-c", setup_cmd], capture_output=True, cwd=work_dir)
+    # Limit to num_tasks for a quick check
+    results = report.results[:num_tasks]
+    passed = sum(1 for r in results if r.passed)
+    total = len(results)
 
-        env = os.environ.copy()
-        env["NPCSH_CHAT_MODEL"] = model_path
-        env["NPCSH_CHAT_PROVIDER"] = provider
-        env["NPCSH_STREAM_OUTPUT"] = "0"
-
-        try:
-            proc = subprocess.run(
-                ["npcsh", "-c", task["instruction"]],
-                capture_output=True,
-                text=True,
-                cwd=work_dir,
-                env=env,
-                timeout=60,
-            )
-            time.sleep(1)
-            verify = subprocess.run(
-                ["bash", "-c", task["verify_cmd"]],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                cwd=work_dir,
-            )
-            if verify.returncode == 0:
-                passed += 1
-        except Exception:
-            pass
-        finally:
-            subprocess.run(["rm", "-rf", work_dir], capture_output=True)
-
-    print(f"  Result: {passed}/{len(tasks)} passed")
-    return passed, len(tasks)
+    print(f"  Result: {passed}/{total} passed")
+    return passed, total
 
 
 def main():
@@ -190,7 +148,7 @@ def main():
     parser.add_argument("--compact-out", default="~/.npcsh/benchmarks/sft_compact.jsonl")
     parser.add_argument("--system-template", default="~/.npcsh/benchmarks/system_template.txt")
     parser.add_argument("--model", default="mlx-community/Qwen3-4B-4bit")
-    parser.add_argument("--output", default="models/npcsh_trained")
+    parser.add_argument("--output", default="adapters/npcsh_trained", help="Output adapter directory")
     parser.add_argument("--device", default="mlx", choices=["mlx", "cuda", "cpu"])
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=1)

@@ -5,7 +5,8 @@
 # Usage:
 #   bash scripts/run_training_pipeline.sh mlx-community/Qwen3-4B-4bit mlx
 #   bash scripts/run_training_pipeline.sh mlx-community/Qwen3-4B-4bit mlx dpo
-#   bash scripts/run_training_pipeline.sh mlx-community/Qwen3-4B-4bit mlx grpo --hard-only
+#   bash scripts/run_training_pipeline.sh mlx-community/Qwen3-4B-4bit mlx dpo omlx
+#   bash scripts/run_training_pipeline.sh mlx-community/Qwen3-4B-4bit mlx dpo openai
 
 set -e
 
@@ -15,7 +16,7 @@ METHOD="${3:-grpo}"
 shift 3 || true
 EXTRA_ARGS="$@"
 
-OUTPUT_BASE="${HOME}/.npcsh/models"
+OUTPUT_BASE="${PWD}/adapters"
 TS=$(date +%Y%m%d_%H%M%S)
 CSV_DIR="${HOME}/.npcsh/benchmarks/local"
 
@@ -58,34 +59,37 @@ python3 scripts/train_npcsh_rl.py "$METHOD" \
 
 # 3. Evaluate baseline (base model) vs SFT vs RL
 echo "=== Phase 3: Evaluation ==="
-EVAL_TASKS=20
 EVAL_TIMEOUT=60
+EVAL_PROVIDER="${4:-omlx}"  # default provider for eval; pass ollama/openai/etc if needed
 
 echo "--- Baseline (base model) ---"
-python3 -m npcsh.benchmark.local_runner \
-    --model "$MODEL" --provider omlx --timeout "$EVAL_TIMEOUT" \
-    | tee /tmp/bench_baseline_${TS}.log || true
+python3 scripts/evaluate_adapter.py \
+    --model "$MODEL" \
+    --provider "$EVAL_PROVIDER" \
+    --timeout "$EVAL_TIMEOUT" \
+    --output-json /tmp/bench_baseline_${TS}.json
 
 echo "--- SFT adapter ---"
-# Serve SFT adapter via mlx_lm.server and evaluate
-mlx_lm.server --model "$MODEL" --adapter-path "$SFT_OUTPUT" --port 8000 > /tmp/mlx_sft_${TS}.log 2>&1 &
-curl -s http://127.0.0.1:8000/v1/models > /dev/null || sleep 5
-NPCSH_CHAT_PROVIDER=omlx NPCSH_CHAT_MODEL="$MODEL" python3 -m npcsh.benchmark.local_runner \
-    --model "$MODEL" --provider omlx --timeout "$EVAL_TIMEOUT" \
-    | tee /tmp/bench_sft_${TS}.log || true
-kill %1 2>/dev/null || true
+python3 scripts/evaluate_adapter.py \
+    --model "$MODEL" \
+    --adapter "$SFT_OUTPUT" \
+    --provider "$EVAL_PROVIDER" \
+    --timeout "$EVAL_TIMEOUT" \
+    --output-json /tmp/bench_sft_${TS}.json
 
 echo "--- RL adapter ---"
-mlx_lm.server --model "$MODEL" --adapter-path "$RL_OUTPUT" --port 8000 > /tmp/mlx_rl_${TS}.log 2>&1 &
-curl -s http://127.0.0.1:8000/v1/models > /dev/null || sleep 5
-NPCSH_CHAT_PROVIDER=omlx NPCSH_CHAT_MODEL="$MODEL" python3 -m npcsh.benchmark.local_runner \
-    --model "$MODEL" --provider omlx --timeout "$EVAL_TIMEOUT" \
-    | tee /tmp/bench_rl_${TS}.log || true
-kill %1 2>/dev/null || true
+python3 scripts/evaluate_adapter.py \
+    --model "$MODEL" \
+    --adapter "$RL_OUTPUT" \
+    --provider "$EVAL_PROVIDER" \
+    --timeout "$EVAL_TIMEOUT" \
+    --output-json /tmp/bench_rl_${TS}.json
 
 # Summary
 echo ""
 echo "=== Pipeline complete ==="
 echo "SFT adapter: $SFT_OUTPUT"
 echo "RL adapter:  $RL_OUTPUT"
-echo "Logs:        /tmp/bench_*_${TS}.log"
+echo "Baseline:    /tmp/bench_baseline_${TS}.json"
+echo "SFT eval:    /tmp/bench_sft_${TS}.json"
+echo "RL eval:     /tmp/bench_rl_${TS}.json"

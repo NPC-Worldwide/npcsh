@@ -41,9 +41,9 @@ COPY {os.path.basename(team_path)} /app/npc_team
 # Expose the port
 EXPOSE {port}
 
-# Set environment variables (override at runtime)
-ENV NPCSH_CHAT_MODEL=gpt-4o-mini
-ENV NPCSH_CHAT_PROVIDER=openai
+# Set environment variables
+ENV NPCSH_CHAT_MODEL=
+ENV NPCSH_CHAT_PROVIDER=
 ENV OPENAI_API_KEY=""
 ENV ANTHROPIC_API_KEY=""
 
@@ -79,8 +79,8 @@ services:
     ports:
       - "{port}:{port}"
     environment:
-      - NPCSH_CHAT_MODEL=${{NPCSH_CHAT_MODEL:-gpt-4o-mini}}
-      - NPCSH_CHAT_PROVIDER=${{NPCSH_CHAT_PROVIDER:-openai}}
+      - NPCSH_CHAT_MODEL=${{NPCSH_CHAT_MODEL:-}}
+      - NPCSH_CHAT_PROVIDER=${{NPCSH_CHAT_PROVIDER:-}}
       - OPENAI_API_KEY=${{OPENAI_API_KEY}}
       - ANTHROPIC_API_KEY=${{ANTHROPIC_API_KEY}}
       - GEMINI_API_KEY=${{GEMINI_API_KEY}}{cors_env}
@@ -94,13 +94,15 @@ services:
         f.write(compose)
 
     env_example = '''# NPC Team Environment Variables
-NPCSH_CHAT_MODEL=gpt-4o-mini
-NPCSH_CHAT_PROVIDER=openai
+# Set your model and provider (defaults to npcsh config if unset)
+NPCSH_CHAT_MODEL=
+NPCSH_CHAT_PROVIDER=
 
-# API Keys (set at least one)
+# API Keys (set at least one based on your provider)
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
+DEEPSEEK_API_KEY=
 '''
 
     env_path = os.path.join(output_dir, '.env.example')

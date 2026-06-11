@@ -26,7 +26,6 @@ import argparse
 import csv
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import time
@@ -34,66 +33,39 @@ from pathlib import Path
 
 # Import our trace parser
 try:
-    from train_from_csv import parse_trace, load_traces
+    from train_from_csv import parse_trace, _compute_task_difficulty
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent))
-    from train_from_csv import parse_trace, load_traces
+    from train_from_csv import parse_trace, _compute_task_difficulty
 
 
-def run_command(cmd, timeout=120, cwd=None, env=None):
-    """Run shell command and return stdout, stderr, returncode."""
-    try:
-        proc = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=cwd,
-            env=env,
-        )
-        return proc.stdout, proc.stderr, proc.returncode
-    except subprocess.TimeoutExpired:
-        return "", f"Timeout after {timeout}s", 1
+def evaluate_model(model: str, provider: str, timeout: int = 60, max_tasks: int = None, category: str = None):
+    """Run benchmark using the direct Python API (no subprocess)."""
+    from npcsh.benchmark.local_runner import run_benchmark
 
-
-def evaluate_model(model: str, provider: str, timeout: int = 60, max_tasks: int = None):
-    """Run benchmark and return results dict."""
     print(f"\n[EVAL] Running benchmark: {model} ({provider})")
 
-    env = os.environ.copy()
-    env["NPCSH_CHAT_MODEL"] = model
-    env["NPCSH_CHAT_PROVIDER"] = provider
-    env["NPCSH_STREAM_OUTPUT"] = "0"
+    report = run_benchmark(
+        model=model,
+        provider=provider,
+        category=category,
+        timeout=timeout,
+    )
 
-    cmd = f"python3 -m npcsh.benchmark.local_runner --model {model} --provider {provider} --timeout {timeout}"
-    if max_tasks:
-        cmd += f" --max-tasks {max_tasks}"
-
-    out, err, rc = run_command(cmd, timeout=timeout * 30 + 300, env=env)
-
-    # Parse the CSV output
     results = {}
-    report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
-    # Find most recent CSV
-    csvs = sorted(report_dir.glob("npcsh_*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if csvs:
-        with open(csvs[0]) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                results[row["task_id"]] = {
-                    "passed": row.get("passed", "").lower() == "true",
-                    "category": row.get("category", ""),
-                    "difficulty": row.get("difficulty", ""),
-                    "duration": float(row.get("duration", "0") or 0),
-                    "attempts": int(row.get("attempts", "1") or 1),
-                }
-        print(f"[EVAL] Loaded {len(results)} results from {csvs[0].name}")
-    else:
-        print("[EVAL] No benchmark CSV found!")
+    for r in report.results:
+        results[r.task_id] = {
+            "passed": r.passed,
+            "category": r.category,
+            "difficulty": r.difficulty,
+            "duration": r.duration,
+            "attempts": r.attempts,
+            "output": r.npcsh_output,
+        }
 
     passed = sum(1 for r in results.values() if r["passed"])
-    print(f"[EVAL] Score: {passed}/{len(results)} ({100*passed/len(results):.0f}%)")
+    total = len(results)
+    print(f"[EVAL] Score: {passed}/{total} ({100*passed/total:.0f}%)")
     return results
 
 
@@ -119,40 +91,65 @@ def identify_weak_categories(results: dict, min_success_rate: float = 0.3):
 
 
 def run_task_with_teacher(task: dict, teacher_model: str, teacher_provider: str, timeout: int = 60):
-    """Run a single task with teacher model, return trace if successful."""
+    """Run a single task with teacher model using direct API, return trace if successful."""
+    from npcsh.benchmark.local_runner import _setup_state, _run_attempt
+    from npcsh._state import initial_state
+
     work_dir = tempfile.mkdtemp(prefix=f"teacher_{task['id']}_")
 
     setup_cmd = task.get("setup_cmd", "") or ""
     if setup_cmd:
-        run_command(setup_cmd, timeout=30, cwd=work_dir)
+        try:
+            import subprocess
+            subprocess.run(
+                ["bash", "-c", setup_cmd],
+                timeout=30, capture_output=True, text=True, cwd=work_dir,
+            )
+        except Exception:
+            pass
 
-    env = os.environ.copy()
-    env["NPCSH_CHAT_MODEL"] = teacher_model
-    env["NPCSH_CHAT_PROVIDER"] = teacher_provider
-    env["NPCSH_STREAM_OUTPUT"] = "0"
-
-    out, err, rc = run_command(
-        f"npcsh -c {repr(task['instruction'])}",
-        timeout=timeout,
-        cwd=work_dir,
-        env=env,
+    # Set up state for teacher model
+    command_history = _setup_state(
+        model=teacher_model,
+        provider=teacher_provider,
+        state=initial_state,
+        work_dir=work_dir,
     )
+
+    try:
+        _, output_str = _run_attempt(
+            instruction=task["instruction"],
+            state=initial_state,
+            command_history=command_history,
+            attempt_timeout=timeout,
+        )
+    except Exception as e:
+        output_str = f"Exception: {e}"
 
     # Verify
     verify_cmd = task.get("verify_cmd", "") or ""
+    passed = False
     if verify_cmd:
-        vout, verr, vrc = run_command(verify_cmd, timeout=15, cwd=work_dir)
-        passed = vrc == 0
+        try:
+            import subprocess
+            verify = subprocess.run(
+                ["bash", "-c", verify_cmd],
+                capture_output=True, text=True,
+                timeout=15, cwd=work_dir,
+            )
+            passed = verify.returncode == 0
+        except Exception:
+            passed = False
     else:
-        passed = rc == 0
+        passed = output_str and "Exception" not in output_str
 
     # Cleanup
-    run_command(f"rm -rf {work_dir}", timeout=10)
+    import shutil
+    shutil.rmtree(work_dir, ignore_errors=True)
 
     if not passed:
         return None
 
-    # Construct a trace record
     trace = {
         "task_id": task["id"],
         "category": task.get("category", ""),
@@ -161,7 +158,7 @@ def run_task_with_teacher(task: dict, teacher_model: str, teacher_provider: str,
         "provider": teacher_provider,
         "passed": True,
         "attempts": 1,
-        "output": out + "\n---TRACE---\n" + err,
+        "output": output_str,
     }
     return trace
 
@@ -216,32 +213,39 @@ def save_traces_to_csv(traces: list, csv_path: str):
 
 
 def train_sft(csv_path: str, model: str, output: str, epochs: int = 5, lora_r: int = 16, lr: float = 2e-5, device: str = "mlx"):
-    """Run SFT training."""
+    """Run SFT training using direct Python API."""
+    from train_from_csv import build_sft_data
+    from npcpy.ft import run_sft, SFTConfig
+
     print(f"\n[TRAIN] SFT training → {output}")
-    cmd = (
-        f"python3 scripts/train_sft_toolcalls.py "
-        f"--csv-dir {Path(csv_path).parent} "
-        f"--model {model} "
-        f"--device {device} "
-        f"--output {output} "
-        f"--epochs {epochs} "
-        f"--lr {lr} "
-        f"--lora-r {lora_r}"
-    )
-    out, err, rc = run_command(cmd, timeout=3600)
-    if rc != 0:
-        print(f"[TRAIN] SFT failed:\n{err}")
+    csv_dir = str(Path(csv_path).parent)
+
+    X, y = build_sft_data(csv_dir, pattern="*.csv", hard_only=False)
+    if len(X) < 5:
+        print("[TRAIN] Not enough training data.")
         return False
-    print(f"[TRAIN] SFT complete: {output}")
-    return True
 
+    cfg = SFTConfig(
+        base_model_name=model,
+        output_model_path=output,
+        device=device,
+        lora_r=lora_r,
+        lora_alpha=lora_r * 2,
+        num_train_epochs=epochs,
+        per_device_train_batch_size=2,
+        learning_rate=lr,
+        max_length=2048,
+        logging_steps=max(1, len(X) // 20),
+        save_steps=max(1, len(X) // 5),
+    )
 
-def merge_adapter(adapter_path: str, output_path: str):
-    """Fuse adapter into base model."""
-    print(f"\n[MERGE] Fusing adapter → {output_path}")
-    cmd = f"python -m mlx_lm.lora --adapter-path {adapter_path} --save-path {output_path}"
-    out, err, rc = run_command(cmd, timeout=600)
-    return rc == 0
+    try:
+        adapter = run_sft(X, y, config=cfg, format_style="qwen3")
+        print(f"[TRAIN] SFT complete: {adapter}")
+        return True
+    except Exception as e:
+        print(f"[TRAIN] SFT failed: {e}")
+        return False
 
 
 def active_loop(args):
@@ -261,15 +265,15 @@ def active_loop(args):
 
         # 1. Evaluate current model
         if iteration == 1 and args.initial_adapter:
-            # Use provided adapter
             current_adapter = args.initial_adapter
             print(f"[INIT] Using initial adapter: {current_adapter}")
-            # Start server with adapter for evaluation
-            # (evaluation via omlx uses mlx_lm.server)
         else:
             current_adapter = args.sft_output + f"_iter{iteration-1}"
 
-        results = evaluate_model(args.model, args.provider, timeout=args.timeout, max_tasks=args.max_tasks)
+        results = evaluate_model(
+            args.model, args.provider,
+            timeout=args.timeout, max_tasks=args.max_tasks, category=args.category,
+        )
         if not results:
             print("[ERROR] No results, skipping iteration")
             continue
@@ -353,7 +357,7 @@ def main():
     parser.add_argument("--provider", default="omlx")
     parser.add_argument("--teacher-model", default="gemma3:27b", help="Teacher model for trace collection")
     parser.add_argument("--teacher-provider", default="ollama")
-    parser.add_argument("--sft-output", default="models/npcsh_sft_active")
+    parser.add_argument("--sft-output", default="adapters/npcsh_sft_active")
     parser.add_argument("--csv-dir", default="~/.npcsh/benchmarks/local")
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--epochs", type=int, default=5)
@@ -367,6 +371,7 @@ def main():
     parser.add_argument("--target-score", type=float, default=0.85, help="Stop when overall score reaches this")
     parser.add_argument("--initial-adapter", default=None, help="Start from this adapter instead of base model")
     parser.add_argument("--skip-train", action="store_true", help="Only evaluate, do not train")
+    parser.add_argument("--category", default=None, help="Limit benchmark to a specific category")
     args = parser.parse_args()
 
     active_loop(args)
