@@ -623,3 +623,80 @@ def ctx_editor(ctx_path, on_save=None):
         termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
         sys.stdout.write('\033[?25h\033[2J\033[H')
         sys.stdout.flush()
+
+
+
+def print_conversation_usage(state, active_bottom_bar=None):
+    """Print a one-line token/cost summary below each iteration.
+
+    Shows current context window % and cumulative session cost.
+    Called after process_result in the REPL loop.
+    """
+    from termcolor import colored
+    try:
+        from npcpy.gen.response import get_model_context_window, calculate_cost
+    except Exception:
+        get_model_context_window = None
+        calculate_cost = None
+
+    # Determine active model/provider
+    from npcpy.npc_compiler import NPC
+    if isinstance(state.npc, NPC) and state.npc.model:
+        active_model = state.npc.model
+        active_provider = state.npc.provider if state.npc.provider else state.chat_provider
+    else:
+        active_model = state.chat_model
+        active_provider = state.chat_provider
+
+    # Is it a local provider (no cost)?
+    is_local = active_provider and active_provider.lower() in ('ollama', 'transformers', 'local')
+
+    inp = state.session_input_tokens
+    out = state.session_output_tokens
+    cost = state.session_cost_usd
+
+    # Context window percentage
+    ctx_window = get_model_context_window(active_model, active_provider) if get_model_context_window else 0
+    if ctx_window > 0:
+        ctx_pct = min((inp * 100) // ctx_window, 100)
+        ctx_str = f"{ctx_pct}% ctx"
+    else:
+        ctx_str = "? ctx"
+
+    # Format tokens
+    def _tok_fmt(n):
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if n >= 1000:
+            return f"{n / 1000:.1f}k"
+        return str(n)
+
+    tok_in_str = _tok_fmt(inp)
+    tok_out_str = _tok_fmt(out)
+
+    # Format cost
+    if is_local or cost == 0:
+        cost_str = "$0.00"
+    elif cost < 0.01:
+        cost_str = f"${cost:.4f}"
+    else:
+        cost_str = f"${cost:.2f}"
+
+    # Build line
+    line = (
+        colored(f"Tokens: {tok_in_str}", "cyan") + colored(" in / ", "white", attrs=["dark"]) +
+        colored(f"{tok_out_str}", "magenta") + colored(" out  |  ", "white", attrs=["dark"]) +
+        colored(f"Context: {ctx_str}", "yellow") + colored("  |  ", "white", attrs=["dark"]) +
+        colored(f"Cost: {cost_str}", "green")
+    )
+
+    # Print below the output. If BottomBar is active, pause it briefly
+    # to avoid the line being overwritten.
+    if active_bottom_bar is not None:
+        active_bottom_bar.pause()
+    try:
+        sys.stdout.write(line + "\n")
+        sys.stdout.flush()
+    finally:
+        if active_bottom_bar is not None:
+            active_bottom_bar.resume()

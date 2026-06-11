@@ -12,8 +12,8 @@ from npcsh._state import setup_shell
 def main():
     parser = argparse.ArgumentParser(description="plonk - Vision-based GUI automation")
     parser.add_argument("task", nargs="*", help="Task description for GUI automation")
-    parser.add_argument("--vmodel", type=str, help="Vision model to use (default: gpt-4o)")
-    parser.add_argument("--vprovider", type=str, help="Vision provider (default: openai)")
+    parser.add_argument("--vmodel", type=str, help="Vision model to use (default: NPCSH_VISION_MODEL env var)")
+    parser.add_argument("--vprovider", type=str, help="Vision provider (default: NPCSH_VISION_PROVIDER env var)")
     parser.add_argument("--max-iterations", type=int, default=10, help="Maximum iterations")
     parser.add_argument("--no-debug", action="store_true", help="Disable debug output")
     args = parser.parse_args()

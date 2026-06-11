@@ -61,11 +61,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv-dir", default="~/.npcsh/benchmarks/local")
     parser.add_argument("--model", default="mlx-community/Qwen3-4B-4bit")
-    parser.add_argument("--output", default="models/npcsh_sft_toolcalls")
+    parser.add_argument("--output", default="adapters/npcsh_sft_toolcalls")
     parser.add_argument("--hard-only", action="store_true")
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--lora-r", type=int, default=16)
+    parser.add_argument("--device", default="mlx", choices=["mlx", "cuda", "cpu"])
     args = parser.parse_args()
 
     csv_dir = os.path.expanduser(args.csv_dir)
@@ -86,7 +87,7 @@ def main():
     cfg = SFTConfig(
         base_model_name=args.model,
         output_model_path=args.output,
-        device="mlx",
+        device=args.device,
         lora_r=args.lora_r,
         lora_alpha=args.lora_r * 2,
         num_train_epochs=args.epochs,

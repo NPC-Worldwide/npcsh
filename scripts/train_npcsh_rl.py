@@ -23,8 +23,6 @@ import argparse
 import csv
 import json
 import os
-import re
-import subprocess
 import sys
 import tempfile
 import time
@@ -58,38 +56,41 @@ def run_npcsh_task(task: dict, model: str, provider: str, work_dir: str) -> dict
     setup_cmd = task.get("setup_cmd", "") or ""
 
     if setup_cmd:
-        subprocess.run(["bash", "-c", setup_cmd], capture_output=True, cwd=work_dir)
+        import shutil
+        # Run setup directly without subprocess
+        try:
+            # Use npcsh's own execution path
+            from npcsh._state import execute_command
+            from npcsh.routes import router
+            os.chdir(work_dir)
+            execute_command(f"bash -c {setup_cmd!r}", None, router=router)
+        except Exception:
+            pass
 
-    env = os.environ.copy()
-    env["NPCSH_CHAT_MODEL"] = model
-    env["NPCSH_CHAT_PROVIDER"] = provider
-    env["NPCSH_STREAM_OUTPUT"] = "0"
+    os.environ["NPCSH_CHAT_MODEL"] = model
+    os.environ["NPCSH_CHAT_PROVIDER"] = provider
+    os.environ["NPCSH_STREAM_OUTPUT"] = "0"
 
     start = time.time()
     try:
-        proc = subprocess.run(
-            ["npcsh", "-c", instruction],
-            capture_output=True,
-            text=True,
-            cwd=work_dir,
-            env=env,
-            timeout=120,
+        from npcsh.benchmark.local_runner import _run_attempt
+        from npcsh._state import _setup_state
+        from npcsh.routes import router
+        
+        initial_state = _setup_state(model, provider)
+        _, output_str = _run_attempt(
+            instruction, initial_state, None, attempt_timeout=120
         )
-        output = proc.stdout + proc.stderr
-    except subprocess.TimeoutExpired:
-        output = "TIMEOUT"
+        output = output_str
+    except Exception as e:
+        output = f"Exception: {e}"
 
     duration = time.time() - start
 
     try:
-        verify = subprocess.run(
-            ["bash", "-c", verify_cmd],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=work_dir,
-        )
-        passed = verify.returncode == 0
+        import shutil
+        result = shutil.which("bash") and os.system(f"cd {work_dir} && bash -c {verify_cmd!r}")
+        passed = result == 0
     except Exception:
         passed = False
 
@@ -139,7 +140,9 @@ def collect_traces(tasks: list, model: str, provider: str, attempts: int = 3, ke
             print(f"  attempt {attempt + 1}: {status} reward={reward:.2f} ({trace['duration']:.1f}s)")
 
             task_traces.append(trace)
-            subprocess.run(["rm", "-rf", work_dir], capture_output=True)
+            # Clean up
+            import shutil
+            shutil.rmtree(work_dir, ignore_errors=True)
 
         if keep_all:
             traces.extend(task_traces)
@@ -353,7 +356,7 @@ def main():
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--model", required=True)
-    common.add_argument("--output", default="models/npcsh_rl")
+    common.add_argument("--output", default="adapters/npcsh_rl")
     common.add_argument("--device", default="mlx", choices=["mlx", "cuda", "cpu"])
     common.add_argument("--category", help="Filter tasks by category")
     common.add_argument("--difficulty", help="Filter tasks by difficulty")

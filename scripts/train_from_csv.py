@@ -200,7 +200,7 @@ def main():
     common.add_argument("--csv-dir", default="~/.npcsh/benchmarks/local")
     common.add_argument("--pattern", default="*.csv")
     common.add_argument("--model", required=True)
-    common.add_argument("--output", default="models/npcsh_trained")
+    common.add_argument("--output", default="adapters/npcsh_trained")
     common.add_argument("--device", default="mlx", choices=["mlx", "cuda", "cpu"])
     common.add_argument("--epochs", type=int, default=3)
     common.add_argument("--lr", type=float, default=2e-5)
@@ -224,7 +224,7 @@ def main():
     csv_dir = os.path.expanduser(args.csv_dir)
 
     if args.cmd == "sft":
-        from npcpy.ft.sft import run_sft, SFTConfig
+        from npcpy.ft import run_sft, SFTConfig
 
         X, y = build_sft_data(csv_dir, args.pattern, hard_only=args.hard_only)
         if len(X) < 5:
