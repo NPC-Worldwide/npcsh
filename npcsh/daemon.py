@@ -2,8 +2,11 @@
 """
 npcsh_llm_daemon.py — Python LLM service for the Rust npcsh runner.
 
-Spawned by the Rust binary as a long-lived subprocess. Reads JSON requests
-from stdin and writes JSON responses to stdout.
+Modes:
+  1. Subprocess mode (default): reads JSON requests from stdin, writes JSON
+     responses to stdout.  Spawned by the Rust binary on each shell session.
+  2. Socket mode (--socket PATH): listens on a Unix domain socket and handles
+     multiple concurrent client connections via threads.
 
 Request format:
     {
@@ -21,7 +24,7 @@ Request format:
         "attachments": [...],         # optional
     }
 
-Response format:
+Response format (stdout in stdio mode, socket wfile in socket mode):
     {
         "ok": true,
         "response": "assistant text",
@@ -39,9 +42,12 @@ Or on error:
 Also supports a "setup" type for initialization (not needed currently
 because setup is done before the REPL loop in Rust).
 """
+import argparse
 import json
 import os
+import socketserver
 import sys
+import threading
 import traceback
 
 # Ensure npcsh/npcrs packages are importable
@@ -77,8 +83,40 @@ finally:
     if _setup_output:
         pass
 
-sys.stderr.write("npcsh-llm-daemon: ready\n")
-sys.stderr.flush()
+
+# ── Shared lock for mutable state updates ──
+# The daemon sets mutable fields (messages, model, provider) on the shared
+# state object for each request.  In socket mode multiple threads may hit
+# this concurrently, so we acquire a short lock around the read-only
+# state snapshot used for a single request.
+_state_lock = threading.Lock()
+
+
+def _get_state_snapshot(req):
+    """Return a dict with all mutable fields needed for an LLM call.
+
+    This avoids mutating the shared `state` object directly — instead we
+    read from it (and from the request) under a lock, then pass the
+    snapshot into get_llm_response()."""
+    with _state_lock:
+        # If the request overrides a field, use that; otherwise fall back
+        # to the shared state's current value.
+        messages = req.get("messages", getattr(state, "messages", []))
+        chat_model = req.get("model", getattr(state, "chat_model", None))
+        chat_provider = req.get("provider", getattr(state, "chat_provider", None))
+        api_url = req.get("api_url", getattr(state, "api_url", None))
+        api_key = req.get("api_key", getattr(state, "api_key", None))
+        think = req.get("think", getattr(state, "think", None))
+        return {
+            "messages": messages,
+            "chat_model": chat_model,
+            "chat_provider": chat_provider,
+            "api_url": api_url,
+            "api_key": api_key,
+            "think": think,
+            "npc": getattr(state, "npc", None),
+            "team": getattr(state, "team", None),
+        }
 
 
 def _serialize_tool_calls(tool_calls):
@@ -138,12 +176,12 @@ def _extract_thinking(raw):
 
 
 def _extract_thinking_from_content(content):
-    """Parse <think>...</think>, <thinking>...</thinking>, or [thinking]...[/thinking] tags from response content."""
+    """Parse  ..., <thinking>...</thinking>, or [thinking]...[/thinking] tags from response content."""
     if not content:
         return None
     import re
-    # <think>...</think>
-    m = re.search(r"<think>(.*?)</think>", content, re.DOTALL)
+    #  ...
+    m = re.search(r"  (.*?) ", content, re.DOTALL)
     if m:
         return m.group(1).strip()
     # <thinking>...</thinking> (deepseek style)
@@ -156,11 +194,18 @@ def _extract_thinking_from_content(content):
         return m.group(1).strip()
     return None
 
-def _consume_stream(llm_result, provider=""):
-    """Consume a streaming response iterator, print chunks to stderr, return final dict.
-    
+
+def _consume_stream(llm_result, provider="", writer=None):
+    """Consume a streaming response iterator, print chunks to writer, return final dict.
+
     Mirrors npcpy.streaming.parse_stream_chunk logic for all provider formats.
+
+    `writer` is a file-like object with .write() and .flush().  Defaults to
+    sys.stderr for backward compat with subprocess mode.
     """
+    if writer is None:
+        writer = sys.stderr
+
     stream = llm_result.get("response")
     if stream is None or isinstance(stream, str):
         return llm_result, False
@@ -261,28 +306,28 @@ def _consume_stream(llm_result, provider=""):
                     import re as _re
                     content = _re.sub(r"\[thinking\].*?\[/thinking\]", "", content, flags=_re.DOTALL).strip()
 
-            # Stream to stderr — thinking via [THINK], content via [STREAM]
-            # Newlines are escaped with \x01 so Rust read_line() can process each chunk as a single line.
+            # Stream to writer — thinking via [THINK], content via [STREAM]
+            # Newlines are escaped with \x01 so read_line() can process each chunk as a single line.
             NL_ESC = "\x01"
             if reasoning:
                 safe = reasoning.replace("\n", NL_ESC)
-                sys.stderr.write(f"[THINK]{safe}\n")
-                sys.stderr.flush()
+                writer.write(f"[THINK]{safe}\n")
+                writer.flush()
                 full_reasoning += reasoning
             if content_thinking:
                 safe = content_thinking.replace("\n", NL_ESC)
-                sys.stderr.write(f"[THINK]{safe}\n")
-                sys.stderr.flush()
+                writer.write(f"[THINK]{safe}\n")
+                writer.flush()
                 full_reasoning += content_thinking
             if content:
                 safe = content.replace("\n", NL_ESC)
-                sys.stderr.write(f"[STREAM]{safe}\n")
-                sys.stderr.flush()
+                writer.write(f"[STREAM]{safe}\n")
+                writer.flush()
                 full_content += content
 
     except Exception as e:
-        sys.stderr.write(f"[daemon-stream-error] {e}\n")
-        sys.stderr.flush()
+        writer.write(f"[daemon-stream-error] {e}\n")
+        writer.flush()
 
     llm_result["response"] = full_content
     if full_reasoning:
@@ -347,46 +392,28 @@ def _consume_stream(llm_result, provider=""):
     return llm_result, True
 
 
+# ── Request processing (shared between stdio and socket modes) ──
 
-# Keep a pristine handle to the real stdout for JSON responses
-_real_stdout = sys.stdout
+def process_request(req, writer):
+    """Process a single JSON request and write the response (and any streaming
+    chunks) to `writer`.
 
-def _send_json(obj):
-    """Serialize obj to JSON and write it to the real stdout, guarding against any accidental prints."""
-    try:
-        payload = json.dumps(obj, default=str) + "\n"
-        _real_stdout.write(payload)
-        _real_stdout.flush()
-    except Exception:
-        fallback = json.dumps({"ok": False, "error": "failed to serialize response"}) + "\n"
-        _real_stdout.write(fallback)
-        _real_stdout.flush()
-
-
-for line in sys.stdin:
-    line = line.strip()
-    if not line:
-        continue
+    `writer` must be a file-like object with `.write(str)` and `.flush()`.
+    In stdio mode this is sys.stderr for streaming + _real_stdout for the
+    final JSON.  In socket mode it is the socket's makefile object for
+    everything.
+    """
+    req_type = req.get("type", "llm")
 
     # Capture anything that mistakenly prints to stdout during processing
     buf = io.StringIO()
+    old_stdout = sys.stdout
     sys.stdout = buf
     resp = {"ok": False, "error": "unhandled"}
-    try:
-        req = json.loads(line)
-        req_type = req.get("type", "llm")
 
+    try:
         if req_type == "llm":
-            # Sync state from request
-            state.messages = req.get("messages", state.messages)
-            state.chat_model = req.get("model", state.chat_model)
-            state.chat_provider = req.get("provider", state.chat_provider)
-            if req.get("api_url"):
-                state.api_url = req["api_url"]
-            if req.get("api_key"):
-                setattr(state, "api_key", req["api_key"])
-            if req.get("think") is not None:
-                state.think = req["think"]
+            snap = _get_state_snapshot(req)
 
             prompt = req.get("prompt", "")
             context = req.get("context", "")
@@ -399,16 +426,16 @@ for line in sys.stdin:
             from npcpy.gen.response import get_model_context_window
 
             think_kwargs = {}
-            if state.think is not None:
-                think_kwargs["think"] = state.think
+            if snap["think"] is not None:
+                think_kwargs["think"] = snap["think"]
 
             llm_result = get_llm_response(
                 prompt,
-                model=state.chat_model,
-                provider=state.chat_provider,
-                npc=state.npc,
-                team=state.team,
-                messages=state.messages,
+                model=snap["chat_model"],
+                provider=snap["chat_provider"],
+                npc=snap["npc"],
+                team=snap["team"],
+                messages=snap["messages"],
                 stream=True,
                 attachments=attachments,
                 context=context if context else None,
@@ -418,7 +445,9 @@ for line in sys.stdin:
             )
 
             # Consume streamed response if needed
-            llm_result, _ = _consume_stream(llm_result, provider=state.chat_provider)
+            llm_result, _ = _consume_stream(
+                llm_result, provider=snap["chat_provider"], writer=writer
+            )
 
             # Extract thinking for display
             raw = llm_result.get("raw_response") if isinstance(llm_result, dict) else None
@@ -459,9 +488,164 @@ for line in sys.stdin:
         resp = {"ok": False, "error": f"{type(e).__name__}: {e}"}
     finally:
         leaked = buf.getvalue()
-        sys.stdout = _real_stdout
+        sys.stdout = old_stdout
         if leaked:
-            sys.stderr.write("[daemon-stdout-leak] " + leaked)
-            sys.stderr.flush()
+            writer.write("[daemon-stdout-leak] " + leaked)
+            writer.flush()
 
-    _send_json(resp)
+    # Write the final JSON response
+    try:
+        payload = json.dumps(resp, default=str) + "\n"
+        writer.write(payload)
+        writer.flush()
+    except Exception:
+        fallback = json.dumps({"ok": False, "error": "failed to serialize response"}) + "\n"
+        writer.write(fallback)
+        writer.flush()
+
+
+# ── Subprocess (stdio) mode ──
+
+def run_stdio():
+    """Read JSON lines from stdin, write JSON responses to stdout.
+    This is the original subprocess mode used when Rust spawns the daemon."""
+    # Keep a pristine handle to the real stdout for JSON responses
+    real_stdout = sys.stdout
+
+    sys.stderr.write("npcsh-llm-daemon: ready\n")
+    sys.stderr.flush()
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            req = json.loads(line)
+        except json.JSONDecodeError as e:
+            payload = json.dumps({"ok": False, "error": f"JSON decode: {e}"}) + "\n"
+            real_stdout.write(payload)
+            real_stdout.flush()
+            continue
+
+        # In stdio mode streaming goes to stderr (consumed by Rust's stderr
+        # reader task) and the final JSON goes to stdout.
+        class StdioWriter:
+            def write(self, text):
+                sys.stderr.write(text)
+            def flush(self):
+                sys.stderr.flush()
+
+        process_request(req, StdioWriter())
+
+
+# ── Socket server mode ──
+
+class DaemonHandler(socketserver.StreamRequestHandler):
+    """One instance per client connection.  Handles multiple requests on the
+    same connection (persistent socket)."""
+
+    def handle(self):
+        # self.rfile / self.wfile are buffered binary file objects
+        # wrapped around the socket.  We need text mode for JSON lines.
+        rfile = self.rfile
+        wfile = self.wfile
+
+        # Track whether we've sent the ready signal for this connection
+        # (Rust waits for "ready" on stderr; in socket mode we send it
+        # as the first line on the socket so the client knows we're live)
+        wfile.write(b"npcsh-llm-daemon: ready\n")
+        wfile.flush()
+
+        for line in rfile:
+            line = line.decode("utf-8").strip()
+            if not line:
+                continue
+            try:
+                req = json.loads(line)
+            except json.JSONDecodeError as e:
+                payload = json.dumps({"ok": False, "error": f"JSON decode: {e}"}) + "\n"
+                wfile.write(payload.encode("utf-8"))
+                wfile.flush()
+                continue
+
+            # In socket mode everything (streaming + final JSON) goes over
+            # the same socket.  We wrap the binary wfile in a tiny text
+            # adapter so process_request can use `.write(str)`.
+            class SocketWriter:
+                def __init__(self, wf):
+                    self._wf = wf
+                def write(self, text):
+                    self._wf.write(text.encode("utf-8"))
+                def flush(self):
+                    self._wf.flush()
+
+            process_request(req, SocketWriter(wfile))
+
+
+class ThreadedUnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    """One thread per client connection."""
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+def run_socket(socket_path):
+    """Listen on a Unix domain socket and handle concurrent connections."""
+    # Remove stale socket file
+    if os.path.exists(socket_path):
+        os.unlink(socket_path)
+
+    # Ensure parent directory exists
+    parent = os.path.dirname(socket_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    server = ThreadedUnixServer(socket_path, DaemonHandler)
+
+    # Make socket accessible to the user (and group)
+    os.chmod(socket_path, 0o660)
+
+    sys.stderr.write(f"npcsh-llm-daemon: listening on {socket_path}\n")
+    sys.stderr.flush()
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        if os.path.exists(socket_path):
+            os.unlink(socket_path)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="npcsh LLM daemon")
+    parser.add_argument(
+        "--socket",
+        metavar="PATH",
+        help="Run in persistent socket mode listening on a Unix domain socket",
+    )
+    parser.add_argument(
+        "--daemon",
+        action="store_true",
+        help="Alias for --socket (used by service managers)",
+    )
+    args = parser.parse_args()
+
+    socket_path = args.socket
+    if args.daemon and not socket_path:
+        # Default socket path — can be overridden with env var so the Rust
+        # client and Python daemon always agree.
+        socket_path = os.environ.get(
+            "NPCSH_DAEMON_SOCKET",
+            os.path.expanduser("~/.npcsh/daemon.sock"),
+        )
+
+    if socket_path:
+        run_socket(socket_path)
+    else:
+        run_stdio()
+
+
+if __name__ == "__main__":
+    main()
