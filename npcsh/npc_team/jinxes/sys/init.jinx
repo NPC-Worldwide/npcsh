@@ -66,13 +66,24 @@ steps:
               return keys
 
           def get_cloud_models(api_keys):
+              # Use litellm env discovery instead of hardcoding model names.
               models = []
-              if api_keys.get('ANTHROPIC_API_KEY'):
-                  models.extend([('anthropic', 'claude-sonnet-4-20250514'), ('anthropic', 'claude-3-5-haiku-20241022')])
-              if api_keys.get('GEMINI_API_KEY'):
-                  models.extend([('gemini', 'gemini-2.5-flash'), ('gemini', 'gemini-1.5-pro')])
-              if api_keys.get('DEEPSEEK_API_KEY'):
-                  models.extend([('deepseek', 'deepseek-chat')])
+              try:
+                  from litellm import utils as _litellm_utils, get_valid_models as _litellm_get_models
+                  available = _litellm_utils._infer_valid_provider_from_env_vars()
+                  for p in available:
+                      prov = p.value
+                      try:
+                          lm_models = _litellm_get_models(custom_llm_provider=prov)
+                          if lm_models:
+                              for m in lm_models[:20]:
+                                  models.append((prov, m))
+                          else:
+                              models.append((prov, prov))
+                      except Exception:
+                          models.append((prov, prov))
+              except Exception:
+                  pass
               return models
 
           def prompt_input(label, default=''):

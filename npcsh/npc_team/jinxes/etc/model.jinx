@@ -1,5 +1,5 @@
-jinx_name: models
-description: Set the active chat model/provider from available options
+jinx_name: model
+description: Set the active chat model/provider from available options (provider-first browser)
 inputs: []
 steps:
   - name: model_browser
@@ -16,9 +16,10 @@ steps:
       import select
 
       if not sys.stdin.isatty():
-          context['output'] = "Models TUI requires an interactive terminal."
+          context['output'] = "Model TUI requires an interactive terminal."
       else:
           import shutil
+          from collections import defaultdict
           from npcpy.npc_sysenv import get_locally_available_models
           from npcpy.npc_compiler import _is_cli_provider
           from npcsh.config import set_npcsh_config_value
@@ -62,10 +63,14 @@ steps:
 
           class TUIState:
               def __init__(self):
-                  self.sel = 0
-                  self.scroll = 0
+                  self.sel = 0               # selected index in current level
+                  self.scroll = 0            # scroll offset in current level
                   self.status = ""
-                  self.models = []       # list of (provider, model_id)
+                  self.providers = []        # list of provider names
+                  self.provider_models = {}  # provider -> list of model_ids
+                  self.expanded = set()      # expanded provider names
+                  self.level = 'providers'   # 'providers' or 'models'
+                  self.active_provider = ''
                   self.chat_model = ''
                   self.chat_provider = ''
 
@@ -84,15 +89,17 @@ steps:
 
           def detect_models():
               ui.status = "Detecting models..."
+              raw_models = []
               try:
                   models_dict = get_locally_available_models('.', airplane_mode=False)
               except Exception as e:
                   models_dict = {}
                   ui.status = f"Detection error: {e}"
-              ui.models = []
+
               if models_dict:
-                  for model_id, provider in sorted(models_dict.items(), key=lambda x: (x[1], x[0])):
-                      ui.models.append((provider, model_id))
+                  for model_id, provider in models_dict.items():
+                      raw_models.append((provider, model_id))
+
               # CLI providers
               _CLI_SUPPORTED = {'claude_code', 'opencode', 'codex', 'kimi_code', 'kilo'}
               for provider in sorted(_CLI_SUPPORTED):
@@ -102,9 +109,10 @@ steps:
                   models = _try_list_cli_models(provider, binary)
                   if models:
                       for model_id in models:
-                          ui.models.append((provider, model_id))
+                          raw_models.append((provider, model_id))
                   else:
-                      ui.models.append((provider, binary))
+                      raw_models.append((provider, binary))
+
               # Cloud providers from litellm env discovery
               try:
                   from litellm import utils as _litellm_utils, get_valid_models as _litellm_get_models
@@ -116,22 +124,53 @@ steps:
                           models = _litellm_get_models(custom_llm_provider=prov)
                           if models:
                               for m in models[:20]:
-                                  ui.models.append((prov, m))
+                                  raw_models.append((prov, m))
                           else:
-                              ui.models.append((prov, prov))
+                              raw_models.append((prov, prov))
                       except Exception:
-                          ui.models.append((prov, prov))
+                          raw_models.append((prov, prov))
               except Exception:
                   pass
-              ui.models.sort(key=lambda x: (x[0], x[1]))
-              if ui.models and not ui.status.startswith("Detection error"):
-                  ui.status = f"Found {len(ui.models)} models"
+
+              # Group by provider
+              grouped = defaultdict(list)
+              for prov, model in raw_models:
+                  grouped[prov].append(model)
+
+              # Sort providers: local first, then cli, then cloud
+              def _provider_sort_key(p):
+                  if p in LOCAL_PROVIDERS:
+                      return (0, p)
+                  if _is_cli_provider(p):
+                      return (1, p)
+                  return (2, p)
+
+              ui.providers = sorted(grouped.keys(), key=_provider_sort_key)
+              ui.provider_models = {p: sorted(set(grouped[p])) for p in ui.providers}
+
+              if ui.providers and not ui.status.startswith("Detection error"):
+                  total = sum(len(v) for v in ui.provider_models.values())
+                  ui.status = f"Found {len(ui.providers)} providers, {total} models"
 
           def is_active(provider, model_id):
               return model_id == ui.chat_model and provider == ui.chat_provider
 
           def wline(row, text):
               return f"\033[{row};1H\033[K{text}"
+
+          def _provider_color(provider):
+              if _is_cli_provider(provider):
+                  return "\033[33m"
+              if provider in LOCAL_PROVIDERS:
+                  return "\033[36m"
+              return "\033[35m"
+
+          def _provider_icon(provider):
+              if _is_cli_provider(provider):
+                  return "[CLI]"
+              if provider in LOCAL_PROVIDERS:
+                  return "[LOC]"
+              return "[CLD]"
 
           def render():
               W, H = term_size()
@@ -145,47 +184,62 @@ steps:
               out.append(f"\033[1;{max(1,(W - len(hdr)) // 2)}H\033[7;1m{hdr}\033[0m")
               out.append(wline(2, f"\033[90m{'─' * W}\033[0m"))
 
-              # column header
-              prov_w = 14
-              model_w = max(24, W - prov_w - 10)
-              col_hdr = f"   {'Provider':<{prov_w}}{'Model':<{model_w}}"
-              out.append(wline(3, f"\033[1m{col_hdr[:W]}\033[0m"))
+              # breadcrumb / status
+              if ui.level == 'providers':
+                  breadcrumb = "  Providers"
+              else:
+                  breadcrumb = f"  {_provider_icon(ui.active_provider)} {ui.active_provider} → Models"
+              if ui.status:
+                  breadcrumb += f"  |  {ui.status}"
+              out.append(wline(3, f"\033[1m{breadcrumb[:W]}\033[0m"))
 
               # body
               body_start = 4
               body_end = H - 3
               body_h = body_end - body_start + 1
 
-              vis = ui.models[ui.scroll:ui.scroll + body_h]
-              for r in range(body_h):
-                  row = body_start + r
-                  idx = r + ui.scroll
-                  if r >= len(vis):
-                      out.append(wline(row, ""))
-                      continue
-                  provider, model_id = vis[r]
-                  active = is_active(provider, model_id)
-                  disp_model = model_id
-                  if len(disp_model) > model_w - 1:
-                      disp_model = disp_model[:model_w - 4] + '...'
+              if ui.level == 'providers':
+                  items = ui.providers
+                  for r in range(body_h):
+                      row = body_start + r
+                      idx = r + ui.scroll
+                      if idx >= len(items):
+                          out.append(wline(row, ""))
+                          continue
+                      provider = items[idx]
+                      model_count = len(ui.provider_models.get(provider, []))
+                      expanded = provider in ui.expanded
+                      icon = _provider_icon(provider)
+                      color = _provider_color(provider)
+                      caret = "▼" if expanded else "▶"
+                      line_text = f"  {caret} {icon} {provider}  ({model_count} models)"
 
-                  if idx == ui.sel:
-                      marker = " > " if not active else " >*"
-                      line_sel = f"{marker}{provider:<{prov_w}}{disp_model:<{model_w}}"
-                      out.append(wline(row, f"\033[7m{line_sel[:W].ljust(W)}\033[0m"))
-                  else:
-                      if _is_cli_provider(provider):
-                          prov_color = "\033[33m"
-                      elif provider in LOCAL_PROVIDERS:
-                          prov_color = "\033[36m"
+                      if idx == ui.sel:
+                          out.append(wline(row, f"\033[7m> {line_text[:W-2].ljust(W-2)}\033[0m"))
                       else:
-                          prov_color = "\033[35m"
-                      marker = "   " if not active else "  * "
-                      line_fmt = f"{marker}{prov_color}{provider:<{prov_w}}\033[0m{disp_model:<{model_w}}"
-                      out.append(wline(row, line_fmt))
+                          out.append(wline(row, f"  {color}{line_text[:W]}\033[0m"))
 
-              if not ui.models:
-                  out.append(wline(body_start, "  \033[90mNo models found. Press [d] to refresh.\033[0m"))
+                  if not items:
+                      out.append(wline(body_start, "  \033[90mNo providers found. Press [d] to refresh.\033[0m"))
+
+              else:  # models level
+                  models = ui.provider_models.get(ui.active_provider, [])
+                  for r in range(body_h):
+                      row = body_start + r
+                      idx = r + ui.scroll
+                      if idx >= len(models):
+                          out.append(wline(row, ""))
+                          continue
+                      model_id = models[idx]
+                      active = is_active(ui.active_provider, model_id)
+                      marker = " > " if active else "   "
+                      disp = model_id if len(model_id) <= W - 10 else model_id[:W-13] + '...'
+                      line_text = f"{marker}{disp}"
+                      if idx == ui.sel:
+                          out.append(wline(row, f"\033[7m{line_text[:W].ljust(W)}\033[0m"))
+                      else:
+                          prefix = "  * " if active else "    "
+                          out.append(wline(row, f"{prefix}{disp}"))
 
               # separator + footer
               out.append(wline(H - 2, f"\033[90m{'─' * W}\033[0m"))
@@ -198,7 +252,10 @@ steps:
                   out.append(wline(H - 1, " \033[90mNo active model set.\033[0m"))
 
               # controls
-              foot = " [j/k] Nav  [Enter] Set  [d] Refresh  [q] Quit"
+              if ui.level == 'providers':
+                  foot = " [j/k] Nav  [Enter/l] Expand  [q] Quit  [d] Refresh"
+              else:
+                  foot = " [j/k] Nav  [Enter] Set  [h/Esc] Back  [q] Quit"
               out.append(wline(H, f"\033[7m{foot[:W].ljust(W)}\033[0m"))
 
               sys.stdout.write(''.join(out))
@@ -210,11 +267,15 @@ steps:
               if c == 'q':
                   return False
               elif c == '\r' or c == '\n':
-                  set_selected()
+                  handle_enter()
               elif c == 'k':
                   nav_up()
               elif c == 'j':
                   nav_down()
+              elif c == 'h':
+                  go_back()
+              elif c == 'l':
+                  expand_or_enter()
               elif c == 'd':
                   detect_models()
                   load_active()
@@ -229,8 +290,11 @@ steps:
                           nav_up()
                       elif c3 == 'B':
                           nav_down()
+                  elif c2 == '\x7f':  # some terminals send ESC + DEL for backspace
+                      go_back()
               else:
-                  return False
+                  #裸 ESC = go back
+                  go_back()
               return True
 
           def nav_up():
@@ -242,25 +306,68 @@ steps:
           def nav_down():
               _, H = term_size()
               body_h = H - 7
-              mx = max(0, len(ui.models) - 1)
+              items = _current_items()
+              mx = max(0, len(items) - 1)
               ui.sel = min(mx, ui.sel + 1)
               if ui.sel >= ui.scroll + body_h:
                   ui.scroll = ui.sel - body_h + 1
               ui.status = ""
 
+          def _current_items():
+              if ui.level == 'providers':
+                  return ui.providers
+              return ui.provider_models.get(ui.active_provider, [])
+
+          def expand_or_enter():
+              if ui.level == 'providers':
+                  if not ui.providers or ui.sel >= len(ui.providers):
+                      return
+                  provider = ui.providers[ui.sel]
+                  models = ui.provider_models.get(provider, [])
+                  if not models:
+                      ui.status = f"{provider} has no models."
+                      return
+                  # toggle expand vs enter
+                  if provider in ui.expanded:
+                      # enter model selection
+                      ui.level = 'models'
+                      ui.active_provider = provider
+                      ui.sel = 0
+                      ui.scroll = 0
+                  else:
+                      ui.expanded.add(provider)
+
+          def handle_enter():
+              if ui.level == 'providers':
+                  expand_or_enter()
+              else:
+                  set_selected()
+
+          def go_back():
+              if ui.level == 'models':
+                  ui.level = 'providers'
+                  if ui.active_provider in ui.providers:
+                      ui.sel = ui.providers.index(ui.active_provider)
+                  else:
+                      ui.sel = 0
+                  ui.scroll = max(0, ui.sel - 5)
+              else:
+                  # at top level, ESC/Backspace = quit
+                  pass
+
           def set_selected():
-              if not ui.models:
-                  ui.status = "No models available."
+              if ui.level != 'models':
                   return
-              if ui.sel >= len(ui.models):
+              models = ui.provider_models.get(ui.active_provider, [])
+              if not models or ui.sel >= len(models):
                   ui.status = "No model selected."
                   return
-              provider, model_id = ui.models[ui.sel]
+              model_id = models[ui.sel]
+              provider = ui.active_provider
               set_npcsh_config_value('NPCSH_CHAT_MODEL', model_id)
               set_npcsh_config_value('NPCSH_CHAT_PROVIDER', provider)
               os.environ['NPCSH_CHAT_MODEL'] = model_id
               os.environ['NPCSH_CHAT_PROVIDER'] = provider
-              # Also update the running shell state and active NPC so it takes effect immediately
               try:
                   state.chat_model = model_id
                   state.chat_provider = provider
@@ -271,7 +378,7 @@ steps:
                   pass
               ui.chat_model = model_id
               ui.chat_provider = provider
-              ui.status = f"Chat model set to {model_id} / {provider}"
+              ui.status = f"Set to {model_id} / {provider}"
 
           # main loop
           load_active()
@@ -295,4 +402,4 @@ steps:
               sys.stdout.write('\033[?25h\033[2J\033[H')
               sys.stdout.flush()
 
-          context['output'] = f"Chat model: {ui.chat_model} / {ui.chat_provider}" if ui.chat_model else "Models TUI closed."
+          context['output'] = f"Chat model: {ui.chat_model} / {ui.chat_provider}" if ui.chat_model else "Model TUI closed."

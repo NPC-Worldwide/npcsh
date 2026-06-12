@@ -68,11 +68,11 @@ class CommandRouter:
             input_values = extract_jinx_inputs(args, jinx)
             
             # Build extra_globals for jinx execution
-            from npcpy.memory.command_history import CommandHistory, load_kg_from_db
-            from npcpy.memory.search import execute_rag_command, execute_brainblast_command
+            from npcsh.history import CommandHistory, load_kg_from_db
+            from npcpy.memory.search import execute_rag_command
             from npcpy.data.load import load_file_contents
             from npcpy.data.web import search_web
-            
+
             from npcsh.ui import ctx_editor, pause_bottom_bar, resume_bottom_bar
             from npcpy.llm_funcs import get_llm_response
             from npcpy.npc_sysenv import print_and_process_stream_with_markdown
@@ -81,7 +81,6 @@ class CommandRouter:
                 "CommandHistory": CommandHistory,
                 "load_kg_from_db": load_kg_from_db,
                 "execute_rag_command": execute_rag_command,
-                "execute_brainblast_command": execute_brainblast_command,
                 "load_file_contents": load_file_contents,
                 "search_web": search_web,
                 "ctx_editor": ctx_editor,

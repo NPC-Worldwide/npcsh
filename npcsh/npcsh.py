@@ -15,7 +15,7 @@ except:
     pass
 
 from npcpy.gen.response import get_model_context_window
-from npcpy.memory.command_history import (
+from npcsh.history import (
     CommandHistory,
     start_new_conversation,
     save_conversation_message,
@@ -529,6 +529,9 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                            command_history,
                            )
 
+            from npcsh.ui import print_conversation_usage
+            print_conversation_usage(state, active_bottom_bar=_bar)
+
         except KeyboardInterrupt:
             print(colored("\nInterrupted.", "yellow"))
             state.messages = sanitize_messages(state.messages)
@@ -573,6 +576,12 @@ def main(npc_name: str = None) -> None:
     )
     parser.add_argument(
          "-n", "--npc", type=str, help="Start with a specific NPC active."
+    )
+    parser.add_argument(
+         "-m", "--model", type=str, help="Override the chat model for this session."
+    )
+    parser.add_argument(
+         "-p", "--provider", type=str, help="Override the chat provider for this session."
     )
     parser.add_argument(
          "--refresh", action="store_true", help="Force refresh of NPCs and jinxes from package."
@@ -644,6 +653,16 @@ def main(npc_name: str = None) -> None:
             initial_state.npc = default_npc
     else:
         initial_state.npc = default_npc
+
+    # Apply CLI model/provider overrides to the active NPC and global state
+    if args.model:
+        initial_state.chat_model = args.model
+        if initial_state.npc and hasattr(initial_state.npc, 'model'):
+            initial_state.npc.model = args.model
+    if args.provider:
+        initial_state.chat_provider = args.provider
+        if initial_state.npc and hasattr(initial_state.npc, 'provider'):
+            initial_state.npc.provider = args.provider
 
     initial_state.team = team
     initial_state.command_history = command_history

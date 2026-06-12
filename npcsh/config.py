@@ -15,9 +15,10 @@ DEFAULT_NPC_TEAM_PATH = "~/.npcsh/npc_team"
 PROJECT_NPC_TEAM_PATH = "./npc_team"
 READLINE_HISTORY_FILE = os.path.expanduser("~/.npcsh_history")
 
-# Environment defaults
-NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "qwen3.5:2b")
-NPCSH_CHAT_PROVIDER = os.environ.get("NPCSH_CHAT_PROVIDER", "ollama")
+# Environment defaults — NO hardcoded model/provider fallbacks.
+# If unset, the user must configure them via /model, /setup, or ~/.npcshrc.
+NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "")
+NPCSH_CHAT_PROVIDER = os.environ.get("NPCSH_CHAT_PROVIDER", "")
 NPCSH_DB_PATH = os.path.expanduser(
     os.environ.get("NPCSH_DB_PATH", "~/npcsh_history.db")
 )
@@ -25,20 +26,16 @@ NPCSH_VECTOR_DB_PATH = os.path.expanduser(
     os.environ.get("NPCSH_VECTOR_DB_PATH", "~/npcsh_chroma.db")
 )
 NPCSH_DEFAULT_MODE = os.environ.get("NPCSH_DEFAULT_MODE", "agent")
-NPCSH_VISION_MODEL = os.environ.get("NPCSH_VISION_MODEL", "qwen3.5:2b")
-NPCSH_VISION_PROVIDER = os.environ.get("NPCSH_VISION_PROVIDER", "ollama")
-NPCSH_IMAGE_GEN_MODEL = os.environ.get(
-    "NPCSH_IMAGE_GEN_MODEL", "x/z-image-turbo"
-)
-NPCSH_IMAGE_GEN_PROVIDER = os.environ.get("NPCSH_IMAGE_GEN_PROVIDER", "ollama")
-NPCSH_VIDEO_GEN_MODEL = os.environ.get(
-    "NPCSH_VIDEO_GEN_MODEL", "damo-vilab/text-to-video-ms-1.7b"
-)
-NPCSH_VIDEO_GEN_PROVIDER = os.environ.get("NPCSH_VIDEO_GEN_PROVIDER", "diffusers")
-NPCSH_EMBEDDING_MODEL = os.environ.get("NPCSH_EMBEDDING_MODEL", "nomic-embed-text")
-NPCSH_EMBEDDING_PROVIDER = os.environ.get("NPCSH_EMBEDDING_PROVIDER", "ollama")
-NPCSH_REASONING_MODEL = os.environ.get("NPCSH_REASONING_MODEL", "deepseek-r1")
-NPCSH_REASONING_PROVIDER = os.environ.get("NPCSH_REASONING_PROVIDER", "ollama")
+NPCSH_VISION_MODEL = os.environ.get("NPCSH_VISION_MODEL", "")
+NPCSH_VISION_PROVIDER = os.environ.get("NPCSH_VISION_PROVIDER", "")
+NPCSH_IMAGE_GEN_MODEL = os.environ.get("NPCSH_IMAGE_GEN_MODEL", "")
+NPCSH_IMAGE_GEN_PROVIDER = os.environ.get("NPCSH_IMAGE_GEN_PROVIDER", "")
+NPCSH_VIDEO_GEN_MODEL = os.environ.get("NPCSH_VIDEO_GEN_MODEL", "")
+NPCSH_VIDEO_GEN_PROVIDER = os.environ.get("NPCSH_VIDEO_GEN_PROVIDER", "")
+NPCSH_EMBEDDING_MODEL = os.environ.get("NPCSH_EMBEDDING_MODEL", "")
+NPCSH_EMBEDDING_PROVIDER = os.environ.get("NPCSH_EMBEDDING_PROVIDER", "")
+NPCSH_REASONING_MODEL = os.environ.get("NPCSH_REASONING_MODEL", "")
+NPCSH_REASONING_PROVIDER = os.environ.get("NPCSH_REASONING_PROVIDER", "")
 NPCSH_STREAM_OUTPUT = os.environ.get("NPCSH_STREAM_OUTPUT", "0") == "1"
 NPCSH_API_URL = os.environ.get("NPCSH_API_URL", None)
 NPCSH_SEARCH_PROVIDER = os.environ.get("NPCSH_SEARCH_PROVIDER", "duckduckgo")

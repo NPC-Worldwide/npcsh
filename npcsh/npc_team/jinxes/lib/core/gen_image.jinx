@@ -8,6 +8,7 @@ inputs:
 - n_images: 1
 - width: null
 - height: null
+- attachments: null
 steps:
   - name: generate
     engine: python
@@ -36,48 +37,64 @@ steps:
       except Exception:
           pass
 
+      input_images = None
+      attachments = str(context.get('attachments', '') or '').strip()
+      if attachments:
+          input_images = [p.strip() for p in attachments.split(',')]
+
       if not image_prompt:
           context['output'] = "Error: prompt is required"
-          return context
+      else:
+          img_dir = os.path.expanduser("~/.npcsh/images/")
+          os.makedirs(img_dir, exist_ok=True)
 
-      img_dir = os.path.expanduser("~/.npcsh/images/")
-      os.makedirs(img_dir, exist_ok=True)
+          kwargs = {
+              'model': model,
+              'provider': provider,
+              'npc': npc if npc and not isinstance(npc, str) else None,
+              'n_images': n_images,
+          }
+          if width:
+              kwargs['width'] = width
+          if height:
+              kwargs['height'] = height
+          if input_images:
+              kwargs['input_images'] = input_images
 
-      kwargs = {
-          'model': model,
-          'provider': provider,
-          'npc': npc if npc and not isinstance(npc, str) else None,
-          'n_images': n_images,
-      }
-      if width:
-          kwargs['width'] = width
-      if height:
-          kwargs['height'] = height
+          images_list = None
+          try:
+              images_list = gen_image(image_prompt, **kwargs)
+          except Exception as e:
+              import traceback
+              traceback.print_exc()
+              context['output'] = f"Error generating image: {e}"
 
-      try:
-          images_list = gen_image(image_prompt, **kwargs)
-      except Exception as e:
-          import traceback
-          traceback.print_exc()
-          context['output'] = f"Error generating image: {e}"
-          return context
+          if images_list is not None:
+              if not isinstance(images_list, list):
+                  images_list = [images_list]
 
-      if not isinstance(images_list, list):
-          images_list = [images_list] if images_list is not None else []
+              saved_files = []
+              for i, image in enumerate(images_list):
+                  if image is None:
+                      continue
+                  if output_name:
+                      base = output_name.rsplit('.', 1)[0]
+                      current_output_file = f"{base}.png" if len(images_list) == 1 else f"{base}_{i}.png"
+                  else:
+                      ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                      current_output_file = os.path.join(img_dir, f"image_{ts}_{i}.png")
 
-      saved_files = []
-      for i, image in enumerate(images_list):
-          if image is None:
-              continue
-          if output_name:
-              base = output_name.rsplit('.', 1)[0]
-              current_output_file = f"{base}.png" if len(images_list) == 1 else f"{base}_{i}.png"
-          else:
-              ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-              current_output_file = os.path.join(img_dir, f"image_{ts}_{i}.png")
+                  image.save(current_output_file)
+                  saved_files.append(current_output_file)
 
-          image.save(current_output_file)
-          saved_files.append(current_output_file)
-
-      context['output'] = f"Generated: {', '.join(saved_files)}" if saved_files else "No images generated."
-      return context
+              if saved_files:
+                  for f in saved_files:
+                      try:
+                          subprocess.Popen(['xdg-open', f], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                      except Exception:
+                          pass
+                  context['output'] = f"Generated: {', '.join(saved_files)}"
+              else:
+                  context['output'] = "No images generated."
+          elif not context.get('output'):
+              context['output'] = "No images generated."

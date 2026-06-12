@@ -3,18 +3,17 @@
 fuse_and_eval.py
 
 Fuse a trained MLX LoRA adapter with its base model, then evaluate on benchmark tasks.
+Uses direct API calls — no subprocesses, no server management.
 
 Usage:
     python scripts/fuse_and_eval.py --adapter models/npcsh_qwen3_4b --tasks 20
 """
 
 import argparse
-import csv
 import json
 import os
-import subprocess
+import shutil
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -24,6 +23,7 @@ def fuse_adapter(adapter_path: str, output_path: str):
     print(f"Fusing {adapter_path} → {output_path}")
     try:
         from mlx_lm.lora import fuse
+
         fuse(adapter_path=adapter_path, save_path=output_path, dequantize=False)
         print(f"Fused model saved to {output_path}")
         return output_path
@@ -32,72 +32,62 @@ def fuse_adapter(adapter_path: str, output_path: str):
         return None
 
 
-def evaluate_model(model_path: str, num_tasks: int = 20, category: str = None):
-    """Run quick benchmark evaluation."""
-    task_file = Path(__file__).parent.parent / "npcsh" / "benchmark" / "tasks.csv"
-    tasks = []
-    with open(task_file) as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if category and row["category"] != category:
-                continue
-            tasks.append(row)
-            if len(tasks) >= num_tasks:
-                break
+def evaluate_model(
+    model_path: str,
+    num_tasks: int = 20,
+    category: str = None,
+    model: str = None,
+    provider: str = None,
+):
+    """Run quick benchmark evaluation via direct API."""
+    from npcsh.benchmark.local_runner import run_benchmark
 
-    passed = 0
-    times = []
-    for task in tasks:
-        work_dir = tempfile.mkdtemp(prefix=f"eval_{task['id']}_")
-        setup_cmd = task.get("setup_cmd", "") or ""
-        if setup_cmd:
-            subprocess.run(["bash", "-c", setup_cmd], capture_output=True, cwd=work_dir)
+    eval_model = model or os.environ.get("NPCSH_CHAT_MODEL", "mlx-community/Qwen3-4B-4bit")
+    eval_provider = provider or os.environ.get("NPCSH_CHAT_PROVIDER", "omlx")
 
-        env = os.environ.copy()
-        env["NPCSH_CHAT_MODEL"] = "mlx-community/Qwen3-4B-4bit"
-        env["NPCSH_CHAT_PROVIDER"] = "omlx"
-        env["NPCSH_STREAM_OUTPUT"] = "0"
+    print(f"\nEvaluating {model_path} ({eval_provider}) on up to {num_tasks} tasks...")
 
-        start = time.time()
-        try:
-            proc = subprocess.run(
-                ["npcsh", "-c", task["instruction"]],
-                capture_output=True,
-                text=True,
-                cwd=work_dir,
-                env=env,
-                timeout=90,
-            )
-            time.sleep(0.5)
-            verify = subprocess.run(
-                ["bash", "-c", task["verify_cmd"]],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                cwd=work_dir,
-            )
-            ok = verify.returncode == 0
-        except Exception:
-            ok = False
+    # If we have an adapter path, expose it so the provider can load it
+    if model_path != eval_model:
+        os.environ["NPCSH_MLX_ADAPTER_PATH"] = str(model_path)
 
-        duration = time.time() - start
-        times.append(duration)
-        if ok:
-            passed += 1
+    report = run_benchmark(
+        model=eval_model,
+        provider=eval_provider,
+        category=category,
+        timeout=90,
+    )
 
-        status = "PASS" if ok else "FAIL"
-        print(f"  {task['id']} ({task['category']}/{task['difficulty']}): {status} ({duration:.1f}s)")
-        subprocess.run(["rm", "-rf", work_dir], capture_output=True)
+    # Print per-task results
+    for r in report.results[:num_tasks]:
+        status = "PASS" if r.passed else "FAIL"
+        print(
+            f"  {r.task_id} ({r.category}/{r.difficulty}): {status} ({r.duration:.1f}s)"
+        )
 
-    avg_time = sum(times) / len(times) if times else 0
-    print(f"\nResult: {passed}/{len(tasks)} passed ({100*passed/len(tasks):.0f}%)  avg={avg_time:.1f}s")
-    return passed, len(tasks)
+    passed = sum(1 for r in report.results if r.passed)
+    total = len(report.results)
+    avg_time = sum(r.duration for r in report.results) / total if total else 0
+    print(
+        f"\nResult: {passed}/{total} passed ({100*passed/total:.0f}%)  avg={avg_time:.1f}s"
+    )
+    return passed, total
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter", required=True, help="Path to trained adapter")
     parser.add_argument("--fuse-out", default=None, help="Fused model output path")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Base model name for evaluation (defaults to NPCSH_CHAT_MODEL env)",
+    )
+    parser.add_argument(
+        "--provider",
+        default=None,
+        help="Provider for evaluation (defaults to NPCSH_CHAT_PROVIDER env)",
+    )
     parser.add_argument("--tasks", type=int, default=20)
     parser.add_argument("--category", default=None)
     parser.add_argument("--skip-fuse", action="store_true")
@@ -112,8 +102,9 @@ def main():
     else:
         model_path = args.adapter
 
-    print(f"\nEvaluating {model_path} on {args.tasks} tasks...")
-    evaluate_model(model_path, args.tasks, args.category)
+    evaluate_model(
+        model_path, args.tasks, args.category, args.model, args.provider
+    )
 
 
 if __name__ == "__main__":

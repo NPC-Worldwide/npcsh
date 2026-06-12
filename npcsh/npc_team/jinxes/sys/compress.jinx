@@ -1,8 +1,6 @@
 jinx_name: "compress"
 description: "Compact conversation context using breathe(). Summarizes the session into a plan and starts a new linked conversation."
-inputs:
-  - model: ""
-  - provider: ""
+inputs: []
 steps:
   - name: "compress_conversation"
     engine: "python"
@@ -15,11 +13,19 @@ steps:
       output_messages = context.get('messages', [])
       current_npc = context.get('npc')
       team_obj = context.get('team')
-      llm_model = context.get('model')
-      llm_provider = context.get('provider')
 
-      m = llm_model or (current_npc.model if current_npc and hasattr(current_npc, 'model') and current_npc.model else None)
-      p = llm_provider or (current_npc.provider if current_npc and hasattr(current_npc, 'provider') and current_npc.provider else None)
+      # Use the shell's current model/provider — NEVER let the LLM override these.
+      m = None
+      p = None
+      try:
+          m = state.chat_model
+          p = state.chat_provider
+      except Exception:
+          pass
+      if not m and current_npc and hasattr(current_npc, 'model') and current_npc.model:
+          m = current_npc.model
+      if not p and current_npc and hasattr(current_npc, 'provider') and current_npc.provider:
+          p = current_npc.provider
 
       try:
           result = breathe(messages=output_messages, model=m, provider=p, npc=current_npc)
