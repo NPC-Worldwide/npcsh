@@ -1,18 +1,9 @@
-"""Launcher that delegates to the Rust npcrs binary if available, falls back to Python npcsh."""
+"""Launcher that finds and execs the Rust npcrsh binary. Falls back to Python only if unavailable."""
 import os
 import sys
 import shutil
 import platform
-
-
-_MAGIC_ELF = b"\x7fELF"
-_MAGIC_MACHO = {
-    b"\xcf\xfa\xed\xfe",
-    b"\xce\xfa\xed\xfe",
-    b"\xfe\xed\xfa\xcf",
-    b"\xfe\xed\xfa\xce",
-}
-_MAGIC_PE = b"MZ"
+import subprocess
 
 
 def _host_binary_kind():
@@ -26,8 +17,17 @@ def _host_binary_kind():
     return None
 
 
+_MAGIC_ELF = b"\x7fELF"
+_MAGIC_MACHO = {
+    b"\xcf\xfa\xed\xfe",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xfe\xed\xfa\xce",
+}
+_MAGIC_PE = b"MZ"
+
+
 def _binary_matches_host(path: str) -> bool:
-    """Check the file's magic bytes match the host OS. Returns False for any mismatch."""
     kind = _host_binary_kind()
     if kind is None:
         return True
@@ -46,88 +46,88 @@ def _binary_matches_host(path: str) -> bool:
 
 
 def _find_rust_binary():
-    """Find a host-compatible npcrs binary. Skip any binary whose arch doesn't match."""
-    pkg_dir = os.path.dirname(os.path.abspath(__file__))
-    bin_dir = os.path.join(pkg_dir, "bin")
+    """Find a host-compatible npcrsh binary."""
+    # 1. PATH lookup
+    for name in ("npcrsh", "npcrs"):
+        found = shutil.which(name)
+        if found and _binary_matches_host(found):
+            return found
 
-    ext = ".exe" if platform.system() == "Windows" else ""
+    # 2. Package-local build artifact (dev workflow)
+    pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local_release = os.path.join(pkg_dir, "rust", "target", "release", "npcrsh")
+    if os.path.isfile(local_release) and _binary_matches_host(local_release):
+        return local_release
 
-    for name in (f"npcrs{ext}", f"npcsh{ext}"):
-        pkg_bin = os.path.join(bin_dir, name)
-        if os.path.isfile(pkg_bin) and os.access(pkg_bin, os.X_OK):
-            if _binary_matches_host(pkg_bin):
-                return pkg_bin
-            print(
-                f"Warning: {pkg_bin} exists but is not a {platform.system()} binary — skipping",
-                file=sys.stderr,
-            )
-
-    found = shutil.which("npcrsh") or shutil.which("npcrs")
-    if found and _binary_matches_host(found):
-        return found
+    local_debug = os.path.join(pkg_dir, "rust", "target", "debug", "npcrsh")
+    if os.path.isfile(local_debug) and _binary_matches_host(local_debug):
+        return local_debug
 
     return None
 
 
-def _load_npcshrc_engine():
-    """Read NPCSH_ENGINE from ~/.npcshrc if not already in env."""
-    if 'NPCSH_ENGINE' in os.environ:
-        return os.environ['NPCSH_ENGINE']
-    npcshrc = os.path.expanduser('~/.npcshrc')
-    if os.path.exists(npcshrc):
-        with open(npcshrc) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith('export NPCSH_ENGINE='):
-                    val = line.split('=', 1)[1].strip("'\"")
-                    os.environ['NPCSH_ENGINE'] = val
-                    return val
-    return None
-
-
-def _ask_engine():
-    """Ask the user which engine to use and save the choice to ~/.npcshrc."""
-    print("Which engine would you like to use?")
-    print("  [1] Python (stable)")
-    print("  [2] Rust   (experimental, requires npcrs binary)")
+def _try_build_rust():
+    """Try to build the Rust binary from source if cargo is available."""
+    pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    rust_dir = os.path.join(pkg_dir, "rust")
+    if not os.path.isdir(rust_dir):
+        return None
+    cargo = shutil.which("cargo")
+    if not cargo:
+        return None
     try:
-        choice = input("Enter 1 or 2 [default: 1]: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        choice = '1'
-    engine = 'rust' if choice == '2' else 'python'
-    npcshrc = os.path.expanduser('~/.npcshrc')
-    entry = f"export NPCSH_ENGINE='{engine}'\n"
-    if os.path.exists(npcshrc):
-        with open(npcshrc, 'a') as f:
-            f.write(entry)
-    else:
-        with open(npcshrc, 'w') as f:
-            f.write(entry)
-    os.environ['NPCSH_ENGINE'] = engine
-    return engine
+        print("Building Rust npcrsh binary...", file=sys.stderr)
+        subprocess.run(
+            [cargo, "build", "--release"],
+            cwd=rust_dir,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        binary = os.path.join(rust_dir, "target", "release", "npcrsh")
+        if os.path.isfile(binary):
+            return binary
+    except Exception:
+        pass
+    return None
 
 
 def _fallback_to_python():
+    print(
+        "WARNING: Rust npcrsh binary not found. Falling back to Python runner.\n"
+        "The Python runner is deprecated. Build the Rust binary with:\n"
+        "  cd npcsh/rust && cargo build --release",
+        file=sys.stderr,
+    )
     from npcsh.npcsh import main as python_main
     python_main()
 
 
 def main():
-    engine = _load_npcshrc_engine()
-    if engine is None:
-        engine = _ask_engine()
+    # Remove stale NPCSH_ENGINE lines from ~/.npcshrc so users don't get stuck
+    npcshrc = os.path.expanduser("~/.npcshrc")
+    if os.path.exists(npcshrc):
+        try:
+            with open(npcshrc, "r") as f:
+                lines = f.readlines()
+            filtered = [l for l in lines if "NPCSH_ENGINE" not in l]
+            if len(filtered) != len(lines):
+                with open(npcshrc, "w") as f:
+                    f.writelines(filtered)
+        except Exception:
+            pass
 
-    if engine == 'rust':
-        rust_bin = _find_rust_binary()
-        if rust_bin:
-            try:
-                os.execvp(rust_bin, [rust_bin] + sys.argv[1:])
-            except OSError as e:
-                print(
-                    f"Warning: failed to exec {rust_bin} ({e}) — falling back to Python",
-                    file=sys.stderr,
-                )
-        else:
-            print("Warning: Rust engine selected but no compatible npcrs binary found. Falling back to Python.", file=sys.stderr)
+    rust_bin = _find_rust_binary()
+    if rust_bin is None:
+        rust_bin = _try_build_rust()
+
+    if rust_bin:
+        try:
+            os.execvp(rust_bin, [rust_bin] + sys.argv[1:])
+        except OSError as e:
+            print(
+                f"Warning: failed to exec {rust_bin} ({e}) — falling back to Python",
+                file=sys.stderr,
+            )
 
     _fallback_to_python()

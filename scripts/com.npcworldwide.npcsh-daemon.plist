@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.npcworldwide.npcsh-daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/caug/.pyenv/shims/python3</string>
+        <string>-m</string>
+        <string>npcsh.daemon</string>
+        <string>--daemon</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/caug/.pyenv/shims:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PYENV_ROOT</key>
+        <string>/Users/caug/.pyenv</string>
+        <key>PYENV_VERSION</key>
+        <string>npc</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/npcsh-daemon.log</string>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/npcsh-daemon.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

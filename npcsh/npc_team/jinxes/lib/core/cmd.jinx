@@ -2,8 +2,6 @@ jinx_name: cmd
 description: Command mode - LLM generates and executes shell commands
 inputs:
 - query: null
-- model: null
-- provider: null
 - stream: true
 
 steps:
@@ -17,8 +15,18 @@ steps:
       query = context.get('query', '')
       stream = context.get('stream', True)
 
-      model = context.get('model') or (npc.model if npc else None)
-      provider = context.get('provider') or (npc.provider if npc else None)
+      # Use the shell's current model/provider — NEVER let the LLM override these.
+      model = None
+      provider = None
+      try:
+          model = state.chat_model
+          provider = state.chat_provider
+      except Exception:
+          pass
+      if not model and npc and hasattr(npc, 'model') and npc.model:
+          model = npc.model
+      if not provider and npc and hasattr(npc, 'provider') and npc.provider:
+          provider = npc.provider
 
       if not query:
           context['output'] = ''

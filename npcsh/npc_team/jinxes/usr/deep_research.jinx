@@ -4,8 +4,6 @@ npc: forenpc
 inputs:
   - query: null
   - num_npcs: 3
-  - model: null
-  - provider: null
   - max_steps: 10
   - num_cycles: 3
   - format: report
@@ -68,8 +66,18 @@ steps:
       num_cycles = int(context.get('num_cycles', 3))
       output_format = context.get('format', 'report')
 
-      model = context.get('model') or (npc.model if npc and hasattr(npc, 'model') else None)
-      provider = context.get('provider') or (npc.provider if npc and hasattr(npc, 'provider') else None)
+      # Use the shell's current model/provider — NEVER let the LLM override these.
+      model = None
+      provider = None
+      try:
+          model = state.chat_model
+          provider = state.chat_provider
+      except Exception:
+          pass
+      if not model and npc and hasattr(npc, 'model') and npc.model:
+          model = npc.model
+      if not provider and npc and hasattr(npc, 'provider') and npc.provider:
+          provider = npc.provider
       _alicanto_directive = (npc.primary_directive if npc and hasattr(npc, 'primary_directive') else "") or ""
 
       # ========== Utility ==========

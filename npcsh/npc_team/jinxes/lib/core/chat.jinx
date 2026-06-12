@@ -2,8 +2,6 @@ jinx_name: chat
 description: Simple chat mode - LLM conversation without tool execution
 inputs:
 - query: null
-- model: null
-- provider: null
 - stream: true
 
 steps:
@@ -15,8 +13,11 @@ steps:
       query = context.get('query', '')
       stream = context.get('stream', True)
 
-      model = context.get('model') or (npc.model if npc else None)
-      provider = context.get('provider') or (npc.provider if npc else None)
+      # Always use the current NPC's configured model/provider.
+      # The LLM must NOT be allowed to override these via tool parameters —
+      # it frequently hallucinates "gpt-4o" / "openai" when left to choose.
+      model = npc.model if npc else None
+      provider = npc.provider if npc else None
 
       # Filter to plain text messages only — strip tool calls/results
       # so the inner LLM doesn't mimic tool call JSON format

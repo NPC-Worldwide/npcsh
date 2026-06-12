@@ -696,7 +696,8 @@ def run_benchmark(
     import csv as csv_mod
     csv_mod.field_size_limit(10**7)
     report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
-    checkpoint_file = report_dir / f"{framework}_{provider}_{model}_running.csv"
+    safe_model = model.replace("/", "_")
+    checkpoint_file = report_dir / f"{framework}_{provider}_{safe_model}_running.csv"
     completed_ids = set()
     if resume and checkpoint_file.exists():
         with open(checkpoint_file) as f:
@@ -781,7 +782,8 @@ def run_benchmark(
         # Save after every task so we don't lose progress
         report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
         report_dir.mkdir(parents=True, exist_ok=True)
-        checkpoint_file = report_dir / f"{framework}_{provider}_{model}_running.csv"
+        safe_model = model.replace("/", "_")
+        checkpoint_file = report_dir / f"{framework}_{provider}_{safe_model}_running.csv"
         df = pd.DataFrame([
             {"task_id": r.task_id, "category": r.category, "difficulty": r.difficulty,
              "passed": r.passed, "attempts": r.attempts, "duration": round(r.duration, 1), "error": r.error or "",
@@ -822,7 +824,8 @@ def run_benchmark(
     df.to_csv(report_file, index=False)
 
     # Remove checkpoint file
-    checkpoint = report_dir / f"{framework}_{provider}_{model}_running.csv"
+    safe_model = model.replace("/", "_")
+    checkpoint = report_dir / f"{framework}_{provider}_{safe_model}_running.csv"
     if checkpoint.exists():
         checkpoint.unlink()
 

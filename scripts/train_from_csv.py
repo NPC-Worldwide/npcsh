@@ -28,8 +28,43 @@ def parse_trace(trace_str: str):
     if user_match:
         instruction = user_match.group(1).strip()
         instruction = re.sub(r"User Provided Context:.*", "", instruction, flags=re.DOTALL).strip()
+
+    # Extract assistant content
     assistant_match = re.search(r"\[assistant\] (.*?) (?:\[tool_call\]|\[user\]|\Z)", trace, re.DOTALL)
     response = assistant_match.group(1).strip() if assistant_match else ""
+
+    # Extract tool calls from [tool_call] markers and append in Qwen3 format.
+    # Actual trace format: [tool_call] name({"arg": "val", ...}) | [tool] result
+    import json
+    for m in re.finditer(r"\[tool_call\]\s+(\w+)\((\{.*?\})\)", trace):
+        fname = m.group(1)
+        args_raw = m.group(2)
+        try:
+            args = json.loads(args_raw)
+        except json.JSONDecodeError:
+            try:
+                import ast
+                args = ast.literal_eval(args_raw)
+            except (ValueError, SyntaxError):
+                args = {}
+
+        # Normalize tool names to match actual npcsh jinx registry.
+        # `sh` appears in traces but the real jinx is `shell`.
+        # `py` / `python` are not registered jinxes — map to `shell`.
+        if fname == "sh":
+            fname = "shell"
+        elif fname in ("py", "python"):
+            fname = "shell"
+            # Map python_code parameter to bash_command if present
+            if "python_code" in args:
+                args["bash_command"] = args.pop("python_code")
+        elif fname in ("Charlie", "Alice", "Bob", "Diana", "Eve", "Frank", "Alex", "chat"):
+            # Hallucinated / non-existent jinx names — skip
+            continue
+
+        tc = json.dumps({"name": fname, "arguments": args}, ensure_ascii=False)
+        response += f"\n<tool_call>\n{tc}\n</tool_call>"
+
     return {"instruction": instruction, "response": response}
 
 
@@ -165,7 +200,7 @@ def main():
     common.add_argument("--csv-dir", default="~/.npcsh/benchmarks/local")
     common.add_argument("--pattern", default="*.csv")
     common.add_argument("--model", required=True)
-    common.add_argument("--output", default="models/npcsh_trained")
+    common.add_argument("--output", default="adapters/npcsh_trained")
     common.add_argument("--device", default="mlx", choices=["mlx", "cuda", "cpu"])
     common.add_argument("--epochs", type=int, default=3)
     common.add_argument("--lr", type=float, default=2e-5)
@@ -189,7 +224,7 @@ def main():
     csv_dir = os.path.expanduser(args.csv_dir)
 
     if args.cmd == "sft":
-        from npcpy.ft.sft import run_sft, SFTConfig
+        from npcpy.ft import run_sft, SFTConfig
 
         X, y = build_sft_data(csv_dir, args.pattern, hard_only=args.hard_only)
         if len(X) < 5:
