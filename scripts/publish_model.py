@@ -160,7 +160,7 @@ def main():
     # 2. Merge full model
     merged_path = None
     if args.merge and args.adapter:
-        print(f"\n[2/4] Merging adapter into full model...")
+        print("\n[2/4] Merging adapter into full model...")
         merged_path = merge_and_save(
             args.adapter,
             base_model=base_model,
@@ -190,7 +190,7 @@ def main():
     # 4. MLX conversion
     mlx_path = None
     if args.mlx and args.adapter:
-        print(f"\n[4/4] Converting to MLX...")
+        print("\n[4/4] Converting to MLX...")
         mlx_path = convert_to_mlx(
             args.adapter,
             output_path=os.path.join(args.output_dir, f"{meta['name']}_mlx"),

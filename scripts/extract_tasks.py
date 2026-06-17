@@ -54,14 +54,16 @@ def fetch_recent_conversations(conn, since: str, limit: int):
 
     conversations = []
     for row in rows:
-        conversations.append({
-            "message_id": row[0],
-            "timestamp": row[1],
-            "role": row[2],
-            "content": row[3],
-            "model": row[4],
-            "npc": row[5],
-        })
+        conversations.append(
+            {
+                "message_id": row[0],
+                "timestamp": row[1],
+                "role": row[2],
+                "content": row[3],
+                "model": row[4],
+                "npc": row[5],
+            }
+        )
     return conversations
 
 
@@ -86,7 +88,7 @@ def fetch_jinx_executions(conn, since: str):
 
     cursor.execute(
         f"""
-        SELECT {', '.join(select_cols)}
+        SELECT {", ".join(select_cols)}
         FROM jinx_executions
         WHERE timestamp > ?
         ORDER BY timestamp DESC
@@ -124,10 +126,10 @@ def summarize_for_task_generation(conversations: list, executions: list) -> str:
 
     for i, session in enumerate(sessions[-10:]):
         user_msgs = [s for s in session if s["role"] == "user"]
-        assistant_msgs = [s for s in session if s["role"] == "assistant"]
+        [s for s in session if s["role"] == "assistant"]
         if user_msgs:
             first_user = user_msgs[0]["content"][:200]
-            lines.append(f"\nSession {i+1}: {first_user}")
+            lines.append(f"\nSession {i + 1}: {first_user}")
 
     if executions:
         lines.append("\nRecent tool usage:")
@@ -140,7 +142,9 @@ def summarize_for_task_generation(conversations: list, executions: list) -> str:
     return "\n".join(lines)
 
 
-def generate_tasks_with_llm(summary: str, num_tasks: int = 5, model: str = "qwen3.5:4b") -> list:
+def generate_tasks_with_llm(
+    summary: str, num_tasks: int = 5, model: str = "qwen3.5:4b"
+) -> list:
     """Use an LLM to generate benchmark tasks from the activity summary."""
     prompt = f"""You are a benchmark task designer for an AI agent shell toolkit called npcsh.
 
@@ -164,7 +168,10 @@ Generate exactly {num_tasks} tasks as a JSON array."""
 
     try:
         from npcpy.llm_funcs import get_llm_response
-        response = get_llm_response(prompt, model=model, provider="ollama", format="json")
+
+        response = get_llm_response(
+            prompt, model=model, provider="ollama", format="json"
+        )
         text = response.get("response", "")
         # Try to extract JSON array
         if "[" in text and "]" in text:
@@ -180,7 +187,14 @@ Generate exactly {num_tasks} tasks as a JSON array."""
 
 def validate_task(task: dict) -> bool:
     """Basic validation that a task has required fields."""
-    required = ["id", "category", "difficulty", "instruction", "verify_cmd", "description"]
+    required = [
+        "id",
+        "category",
+        "difficulty",
+        "instruction",
+        "verify_cmd",
+        "description",
+    ]
     for field in required:
         if field not in task or not task[field]:
             return False
@@ -188,15 +202,29 @@ def validate_task(task: dict) -> bool:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Extract benchmark tasks from npcsh conversations")
-    parser.add_argument("--db", default="~/.npcsh/npcsh_history.db", help="Path to npcsh history DB")
-    parser.add_argument("--since", default="7 days", help="How far back to look (e.g. '7 days', '24 hours')")
-    parser.add_argument("--limit", type=int, default=200, help="Max conversation turns to fetch")
-    parser.add_argument("--num-tasks", type=int, default=5, help="Number of new tasks to generate")
+    parser = argparse.ArgumentParser(
+        description="Extract benchmark tasks from npcsh conversations"
+    )
+    parser.add_argument(
+        "--db", default="~/.npcsh/npcsh_history.db", help="Path to npcsh history DB"
+    )
+    parser.add_argument(
+        "--since",
+        default="7 days",
+        help="How far back to look (e.g. '7 days', '24 hours')",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=200, help="Max conversation turns to fetch"
+    )
+    parser.add_argument(
+        "--num-tasks", type=int, default=5, help="Number of new tasks to generate"
+    )
     parser.add_argument("--model", default="qwen3.5:4b", help="LLM for task generation")
     parser.add_argument("--output", help="Output JSON file for new tasks")
     parser.add_argument("--append-csv", help="Append validated tasks to this CSV file")
-    parser.add_argument("--dry-run", action="store_true", help="Print tasks instead of saving")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print tasks instead of saving"
+    )
     args = parser.parse_args()
 
     db_path = os.path.expanduser(args.db)
@@ -210,7 +238,9 @@ def main():
     executions = fetch_jinx_executions(conn, args.since)
     conn.close()
 
-    print(f"Found {len(conversations)} conversation turns, {len(executions)} jinx executions")
+    print(
+        f"Found {len(conversations)} conversation turns, {len(executions)} jinx executions"
+    )
 
     if len(conversations) < 5:
         print("Not enough conversation data to generate meaningful tasks.")
@@ -234,8 +264,17 @@ def main():
 
     if args.append_csv:
         import csv as csv_mod
+
         csv_path = Path(args.append_csv)
-        fieldnames = ["id", "category", "difficulty", "setup_cmd", "instruction", "verify_cmd", "description"]
+        fieldnames = [
+            "id",
+            "category",
+            "difficulty",
+            "setup_cmd",
+            "instruction",
+            "verify_cmd",
+            "description",
+        ]
         exists = csv_path.exists()
         with open(csv_path, "a", newline="") as f:
             writer = csv_mod.DictWriter(f, fieldnames=fieldnames)

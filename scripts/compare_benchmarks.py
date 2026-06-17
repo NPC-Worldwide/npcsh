@@ -10,8 +10,6 @@ Usage:
 
 import argparse
 import csv
-import sys
-from pathlib import Path
 
 
 def load_results(path: str):

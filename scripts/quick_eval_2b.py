@@ -32,11 +32,11 @@ for test in tests:
     prompt = f'<|im_start|>user\n{test["q"]}\n<|im_end|>\n<|im_start|>assistant\n'
     print(f'\n=== {test["q"]} ===')
     
-    print(f'BASE:')
+    print('BASE:')
     resp_base = generate(model_base, tokenizer, prompt=prompt, max_tokens=50, verbose=False)
     print(resp_base[:100])
     
-    print(f'ADAPTER:')
+    print('ADAPTER:')
     resp_adapter = generate(model_adapter, tokenizer, prompt=prompt, max_tokens=50, verbose=False)
     print(resp_adapter[:100])
 

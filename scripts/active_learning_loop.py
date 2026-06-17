@@ -25,21 +25,18 @@ Usage:
 import argparse
 import csv
 import json
-import os
-import sys
 import tempfile
 import time
 from pathlib import Path
 
-# Import our trace parser
-try:
-    from train_from_csv import parse_trace, _compute_task_difficulty
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).parent))
-    from train_from_csv import parse_trace, _compute_task_difficulty
 
-
-def evaluate_model(model: str, provider: str, timeout: int = 60, max_tasks: int = None, category: str = None):
+def evaluate_model(
+    model: str,
+    provider: str,
+    timeout: int = 60,
+    max_tasks: int = None,
+    category: str = None,
+):
     """Run benchmark using the direct Python API (no subprocess)."""
     from npcsh.benchmark.local_runner import run_benchmark
 
@@ -65,7 +62,7 @@ def evaluate_model(model: str, provider: str, timeout: int = 60, max_tasks: int 
 
     passed = sum(1 for r in results.values() if r["passed"])
     total = len(results)
-    print(f"[EVAL] Score: {passed}/{total} ({100*passed/total:.0f}%)")
+    print(f"[EVAL] Score: {passed}/{total} ({100 * passed / total:.0f}%)")
     return results
 
 
@@ -82,7 +79,7 @@ def identify_weak_categories(results: dict, min_success_rate: float = 0.3):
     weak = []
     for cat, stats in sorted(cats.items()):
         rate = stats["passed"] / stats["total"] if stats["total"] > 0 else 0
-        print(f"  {cat}: {stats['passed']}/{stats['total']} ({100*rate:.0f}%)")
+        print(f"  {cat}: {stats['passed']}/{stats['total']} ({100 * rate:.0f}%)")
         if rate < min_success_rate:
             weak.append((cat, rate, stats["total"]))
 
@@ -90,7 +87,9 @@ def identify_weak_categories(results: dict, min_success_rate: float = 0.3):
     return weak
 
 
-def run_task_with_teacher(task: dict, teacher_model: str, teacher_provider: str, timeout: int = 60):
+def run_task_with_teacher(
+    task: dict, teacher_model: str, teacher_provider: str, timeout: int = 60
+):
     """Run a single task with teacher model using direct API, return trace if successful."""
     from npcsh.benchmark.local_runner import _setup_state, _run_attempt
     from npcsh._state import initial_state
@@ -101,9 +100,13 @@ def run_task_with_teacher(task: dict, teacher_model: str, teacher_provider: str,
     if setup_cmd:
         try:
             import subprocess
+
             subprocess.run(
                 ["bash", "-c", setup_cmd],
-                timeout=30, capture_output=True, text=True, cwd=work_dir,
+                timeout=30,
+                capture_output=True,
+                text=True,
+                cwd=work_dir,
             )
         except Exception:
             pass
@@ -132,10 +135,13 @@ def run_task_with_teacher(task: dict, teacher_model: str, teacher_provider: str,
     if verify_cmd:
         try:
             import subprocess
+
             verify = subprocess.run(
                 ["bash", "-c", verify_cmd],
-                capture_output=True, text=True,
-                timeout=15, cwd=work_dir,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                cwd=work_dir,
             )
             passed = verify.returncode == 0
         except Exception:
@@ -145,6 +151,7 @@ def run_task_with_teacher(task: dict, teacher_model: str, teacher_provider: str,
 
     # Cleanup
     import shutil
+
     shutil.rmtree(work_dir, ignore_errors=True)
 
     if not passed:
@@ -163,7 +170,13 @@ def run_task_with_teacher(task: dict, teacher_model: str, teacher_provider: str,
     return trace
 
 
-def collect_teacher_traces(weak_categories: list, results: dict, teacher_model: str, teacher_provider: str, max_per_cat: int = 10):
+def collect_teacher_traces(
+    weak_categories: list,
+    results: dict,
+    teacher_model: str,
+    teacher_provider: str,
+    max_per_cat: int = 10,
+):
     """Run failed tasks from weak categories with teacher model."""
     print(f"\n[TEACHER] Collecting traces with {teacher_model} ({teacher_provider})")
 
@@ -178,7 +191,9 @@ def collect_teacher_traces(weak_categories: list, results: dict, teacher_model: 
     new_traces = []
 
     for cat, rate, total in weak_categories:
-        cat_failed = [tid for tid in failed_tasks if results.get(tid, {}).get("category") == cat]
+        cat_failed = [
+            tid for tid in failed_tasks if results.get(tid, {}).get("category") == cat
+        ]
         cat_failed = cat_failed[:max_per_cat]
         print(f"  {cat}: {len(cat_failed)} failed tasks to retry")
 
@@ -204,7 +219,19 @@ def save_traces_to_csv(traces: list, csv_path: str):
     path = Path(csv_path)
     exists = path.exists()
     with open(path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["task_id", "category", "difficulty", "model", "provider", "passed", "attempts", "output"])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "task_id",
+                "category",
+                "difficulty",
+                "model",
+                "provider",
+                "passed",
+                "attempts",
+                "output",
+            ],
+        )
         if not exists:
             writer.writeheader()
         for t in traces:
@@ -212,7 +239,15 @@ def save_traces_to_csv(traces: list, csv_path: str):
     print(f"[SAVE] Appended {len(traces)} traces to {csv_path}")
 
 
-def train_sft(csv_path: str, model: str, output: str, epochs: int = 5, lora_r: int = 16, lr: float = 2e-5, device: str = "mlx"):
+def train_sft(
+    csv_path: str,
+    model: str,
+    output: str,
+    epochs: int = 5,
+    lora_r: int = 16,
+    lr: float = 2e-5,
+    device: str = "mlx",
+):
     """Run SFT training using direct Python API."""
     from train_from_csv import build_sft_data
     from npcpy.ft import run_sft, SFTConfig
@@ -259,20 +294,23 @@ def active_loop(args):
     history = []
 
     for iteration in range(1, args.iterations + 1):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"ACTIVE LEARNING ITERATION {iteration}/{args.iterations}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # 1. Evaluate current model
         if iteration == 1 and args.initial_adapter:
             current_adapter = args.initial_adapter
             print(f"[INIT] Using initial adapter: {current_adapter}")
         else:
-            current_adapter = args.sft_output + f"_iter{iteration-1}"
+            current_adapter = args.sft_output + f"_iter{iteration - 1}"
 
         results = evaluate_model(
-            args.model, args.provider,
-            timeout=args.timeout, max_tasks=args.max_tasks, category=args.category,
+            args.model,
+            args.provider,
+            timeout=args.timeout,
+            max_tasks=args.max_tasks,
+            category=args.category,
         )
         if not results:
             print("[ERROR] No results, skipping iteration")
@@ -281,9 +319,11 @@ def active_loop(args):
         passed = sum(1 for r in results.values() if r["passed"])
         total = len(results)
         score = passed / total if total > 0 else 0
-        print(f"[SCORE] Iteration {iteration}: {passed}/{total} ({100*score:.0f}%)")
+        print(f"[SCORE] Iteration {iteration}: {passed}/{total} ({100 * score:.0f}%)")
 
-        history.append({"iteration": iteration, "passed": passed, "total": total, "score": score})
+        history.append(
+            {"iteration": iteration, "passed": passed, "total": total, "score": score}
+        )
 
         # Save history
         hist_path = Path(args.sft_output + "_history.json")
@@ -310,8 +350,10 @@ def active_loop(args):
         # 3. Collect teacher traces for failed tasks
         if args.teacher_model and args.teacher_provider:
             teacher_traces = collect_teacher_traces(
-                weak, results,
-                args.teacher_model, args.teacher_provider,
+                weak,
+                results,
+                args.teacher_model,
+                args.teacher_provider,
                 max_per_cat=args.max_teacher_tasks,
             )
             if teacher_traces:
@@ -339,23 +381,31 @@ def active_loop(args):
             print("[SKIP] --skip-train set")
 
     # Final summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("ACTIVE LEARNING COMPLETE")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Iterations:    {len(history)}")
     print(f"Best score:    {best_score:.0%}")
     print(f"Best adapter:  {best_adapter}")
     for h in history:
-        print(f"  Iter {h['iteration']}: {h['passed']}/{h['total']} ({100*h['score']:.0f}%)")
+        print(
+            f"  Iter {h['iteration']}: {h['passed']}/{h['total']} ({100 * h['score']:.0f}%)"
+        )
 
     return best_adapter, best_score
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Active learning loop for npcsh model improvement")
+    parser = argparse.ArgumentParser(
+        description="Active learning loop for npcsh model improvement"
+    )
     parser.add_argument("--model", default="mlx-community/Qwen3-4B-4bit")
     parser.add_argument("--provider", default="omlx")
-    parser.add_argument("--teacher-model", default="gemma3:27b", help="Teacher model for trace collection")
+    parser.add_argument(
+        "--teacher-model",
+        default="gemma3:27b",
+        help="Teacher model for trace collection",
+    )
     parser.add_argument("--teacher-provider", default="ollama")
     parser.add_argument("--sft-output", default="adapters/npcsh_sft_active")
     parser.add_argument("--csv-dir", default="~/.npcsh/benchmarks/local")
@@ -366,12 +416,35 @@ def main():
     parser.add_argument("--device", default="mlx")
     parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument("--max-tasks", type=int, default=None)
-    parser.add_argument("--max-teacher-tasks", type=int, default=10, help="Max failed tasks per category to retry with teacher")
-    parser.add_argument("--min-success-rate", type=float, default=0.3, help="Categories below this rate get teacher attention")
-    parser.add_argument("--target-score", type=float, default=0.85, help="Stop when overall score reaches this")
-    parser.add_argument("--initial-adapter", default=None, help="Start from this adapter instead of base model")
-    parser.add_argument("--skip-train", action="store_true", help="Only evaluate, do not train")
-    parser.add_argument("--category", default=None, help="Limit benchmark to a specific category")
+    parser.add_argument(
+        "--max-teacher-tasks",
+        type=int,
+        default=10,
+        help="Max failed tasks per category to retry with teacher",
+    )
+    parser.add_argument(
+        "--min-success-rate",
+        type=float,
+        default=0.3,
+        help="Categories below this rate get teacher attention",
+    )
+    parser.add_argument(
+        "--target-score",
+        type=float,
+        default=0.85,
+        help="Stop when overall score reaches this",
+    )
+    parser.add_argument(
+        "--initial-adapter",
+        default=None,
+        help="Start from this adapter instead of base model",
+    )
+    parser.add_argument(
+        "--skip-train", action="store_true", help="Only evaluate, do not train"
+    )
+    parser.add_argument(
+        "--category", default=None, help="Limit benchmark to a specific category"
+    )
     args = parser.parse_args()
 
     active_loop(args)

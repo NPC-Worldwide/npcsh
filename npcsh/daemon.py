@@ -62,7 +62,7 @@ _old_stdout = sys.stdout
 sys.stdout = io.StringIO()
 
 try:
-    from npcsh._state import setup_shell, process_pipeline_command, ShellState
+    from npcsh._state import setup_shell
     from npcsh.routes import router
 
     # ── Setup (once at daemon startup) ──
@@ -423,7 +423,6 @@ def process_request(req, writer):
 
             # Import at call time to avoid circular import issues
             from npcpy.llm_funcs import get_llm_response
-            from npcpy.gen.response import get_model_context_window
 
             think_kwargs = {}
             if snap["think"] is not None:

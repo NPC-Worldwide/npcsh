@@ -1,32 +1,35 @@
 """
 Build functions for NPC team deployment artifacts.
 """
+
 import os
 import yaml
 from pathlib import Path
+
 
 def get_team_name(team_path):
     """Get team name from ctx file or folder name."""
     team_path = Path(team_path)
     for ctx_file in team_path.glob("*.ctx"):
         try:
-            with open(ctx_file, 'r') as f:
+            with open(ctx_file, "r") as f:
                 ctx = yaml.safe_load(f)
-            if ctx and ctx.get('name'):
-                return ctx['name']
+            if ctx and ctx.get("name"):
+                return ctx["name"]
         except Exception:
             pass
 
     name = team_path.name
-    if name == 'npc_team':
+    if name == "npc_team":
         name = team_path.parent.name
     return name
 
+
 def build_dockerfile(config, **kwargs):
     """Generate a Dockerfile for serving an NPC team."""
-    team_path = config.get('team_path', './npc_team')
-    port = config.get('port', 5337)
-    team_name = get_team_name(team_path)
+    team_path = config.get("team_path", "./npc_team")
+    port = config.get("port", 5337)
+    get_team_name(team_path)
 
     dockerfile = f'''FROM python:3.11-slim
 
@@ -52,24 +55,27 @@ CMD ["npc", "serve", "--port", "{port}"]
 '''
     return dockerfile
 
+
 def build_docker_compose(config, **kwargs):
     """Generate Docker Compose setup for NPC team deployment."""
-    team_path = config.get('team_path', './npc_team')
-    output_dir = config.get('output_dir', './build')
-    port = config.get('port', 5337)
-    cors_origins = config.get('cors_origins', None)
+    team_path = config.get("team_path", "./npc_team")
+    output_dir = config.get("output_dir", "./build")
+    port = config.get("port", 5337)
+    cors_origins = config.get("cors_origins", None)
 
     team_name = get_team_name(team_path)
-    safe_name = team_name.lower().replace(' ', '_').replace('-', '_')
+    safe_name = team_name.lower().replace(" ", "_").replace("-", "_")
 
     os.makedirs(output_dir, exist_ok=True)
 
     dockerfile_content = build_dockerfile(config)
-    dockerfile_path = os.path.join(output_dir, 'Dockerfile')
-    with open(dockerfile_path, 'w') as f:
+    dockerfile_path = os.path.join(output_dir, "Dockerfile")
+    with open(dockerfile_path, "w") as f:
         f.write(dockerfile_content)
 
-    cors_env = f'\n      - CORS_ORIGINS={",".join(cors_origins)}' if cors_origins else ''
+    cors_env = (
+        f"\n      - CORS_ORIGINS={','.join(cors_origins)}" if cors_origins else ""
+    )
 
     compose = f'''version: '3.8'
 
@@ -89,11 +95,11 @@ services:
     restart: unless-stopped
 '''
 
-    compose_path = os.path.join(output_dir, 'docker-compose.yml')
-    with open(compose_path, 'w') as f:
+    compose_path = os.path.join(output_dir, "docker-compose.yml")
+    with open(compose_path, "w") as f:
         f.write(compose)
 
-    env_example = '''# NPC Team Environment Variables
+    env_example = """# NPC Team Environment Variables
 # Set your model and provider (defaults to npcsh config if unset)
 NPCSH_CHAT_MODEL=
 NPCSH_CHAT_PROVIDER=
@@ -103,20 +109,21 @@ OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
 DEEPSEEK_API_KEY=
-'''
+"""
 
-    env_path = os.path.join(output_dir, '.env.example')
-    with open(env_path, 'w') as f:
+    env_path = os.path.join(output_dir, ".env.example")
+    with open(env_path, "w") as f:
         f.write(env_example)
 
     import shutil
+
     dest_team = os.path.join(output_dir, os.path.basename(team_path))
     if os.path.exists(dest_team):
         shutil.rmtree(dest_team)
     shutil.copytree(team_path, dest_team)
 
     return {
-        'output': f'''Docker deployment created in {output_dir}/
+        "output": f"""Docker deployment created in {output_dir}/
 
 Files generated:
   - Dockerfile
@@ -131,16 +138,17 @@ To deploy:
   docker-compose up -d
 
 API will be available at http://localhost:{port}
-''',
-        'messages': kwargs.get('messages', [])
+""",
+        "messages": kwargs.get("messages", []),
     }
+
 
 def build_flask_server(config, **kwargs):
     """Generate a standalone Flask server script."""
-    team_path = config.get('team_path', './npc_team')
-    output_dir = config.get('output_dir', './build')
-    port = config.get('port', 5337)
-    cors_origins = config.get('cors_origins', None)
+    team_path = config.get("team_path", "./npc_team")
+    output_dir = config.get("output_dir", "./build")
+    port = config.get("port", 5337)
+    cors_origins = config.get("cors_origins", None)
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -160,19 +168,20 @@ if __name__ == "__main__":
     )
 '''
 
-    script_path = os.path.join(output_dir, 'server.py')
-    with open(script_path, 'w') as f:
+    script_path = os.path.join(output_dir, "server.py")
+    with open(script_path, "w") as f:
         f.write(server_script)
     os.chmod(script_path, 0o755)
 
     import shutil
+
     dest_team = os.path.join(output_dir, os.path.basename(team_path))
     if os.path.exists(dest_team):
         shutil.rmtree(dest_team)
     shutil.copytree(team_path, dest_team)
 
     return {
-        'output': f'''Flask server created in {output_dir}/
+        "output": f"""Flask server created in {output_dir}/
 
 Files generated:
   - server.py
@@ -184,14 +193,15 @@ To run:
   python server.py
 
 API will be available at http://localhost:{port}
-''',
-        'messages': kwargs.get('messages', [])
+""",
+        "messages": kwargs.get("messages", []),
     }
+
 
 def build_cli_executable(config, **kwargs):
     """Generate CLI wrapper scripts for team NPCs."""
-    team_path = config.get('team_path', './npc_team')
-    output_dir = config.get('output_dir', './build')
+    team_path = config.get("team_path", "./npc_team")
+    output_dir = config.get("output_dir", "./build")
 
     team_path = Path(team_path)
     os.makedirs(output_dir, exist_ok=True)
@@ -209,26 +219,27 @@ sys.argv[0] = "{name}"
 main()
 '''
         script_path = os.path.join(output_dir, name)
-        with open(script_path, 'w') as f:
+        with open(script_path, "w") as f:
             f.write(script)
         os.chmod(script_path, 0o755)
         scripts.append(name)
 
     return {
-        'output': f'''CLI scripts created in {output_dir}/
+        "output": f"""CLI scripts created in {output_dir}/
 
 Scripts: {", ".join(scripts)}
 
 To use, add {output_dir} to your PATH or run directly:
   ./{scripts[0] if scripts else "npc_name"} "your prompt"
-''',
-        'messages': kwargs.get('messages', [])
+""",
+        "messages": kwargs.get("messages", []),
     }
+
 
 def build_static_site(config, **kwargs):
     """Generate static site documentation for the team."""
-    team_path = config.get('team_path', './npc_team')
-    output_dir = config.get('output_dir', './build')
+    team_path = config.get("team_path", "./npc_team")
+    output_dir = config.get("output_dir", "./build")
 
     team_path = Path(team_path)
     os.makedirs(output_dir, exist_ok=True)
@@ -237,19 +248,20 @@ def build_static_site(config, **kwargs):
 
     npcs = []
     for npc_file in team_path.glob("*.npc"):
-        with open(npc_file, 'r') as f:
+        with open(npc_file, "r") as f:
             npc_data = yaml.safe_load(f)
-        npcs.append({
-            'name': npc_file.stem,
-            'directive': npc_data.get('primary_directive', '')[:200] + '...'
-        })
+        npcs.append(
+            {
+                "name": npc_file.stem,
+                "directive": npc_data.get("primary_directive", "")[:200] + "...",
+            }
+        )
 
-    npc_list = '\n'.join([
-        f'<li><strong>{n["name"]}</strong>: {n["directive"]}</li>'
-        for n in npcs
-    ])
+    npc_list = "\n".join(
+        [f"<li><strong>{n['name']}</strong>: {n['directive']}</li>" for n in npcs]
+    )
 
-    html = f'''<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html>
 <head>
     <title>{team_name} - NPC Team</title>
@@ -265,13 +277,13 @@ def build_static_site(config, **kwargs):
     <ul>{npc_list}</ul>
 </body>
 </html>
-'''
+"""
 
-    html_path = os.path.join(output_dir, 'index.html')
-    with open(html_path, 'w') as f:
+    html_path = os.path.join(output_dir, "index.html")
+    with open(html_path, "w") as f:
         f.write(html)
 
     return {
-        'output': f'Static site created at {html_path}',
-        'messages': kwargs.get('messages', [])
+        "output": f"Static site created at {html_path}",
+        "messages": kwargs.get("messages", []),
     }

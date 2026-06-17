@@ -1,6 +1,5 @@
 import os
 import tempfile
-import pytest
 
 from npcsh._state import set_npcsh_config_value, CONFIG_KEY_MAP
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Manual benchmark: test base vs adapter on shell easy tasks."""
-import csv, subprocess, time, os, re
-from pathlib import Path
+import csv
+import subprocess
+import time
+import re
 
 # Load tasks
 tasks = []
@@ -99,7 +101,7 @@ for task in tasks:
 
 # Summary
 print(f"\n{'='*40}")
-print(f"SUMMARY")
+print("SUMMARY")
 print(f"{'='*40}")
 base_total = sum(1 for r in results if r['base'])
 adapt_total = sum(1 for r in results if r['adapter'])

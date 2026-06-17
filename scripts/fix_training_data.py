@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Fixed trace parser using regex-based marker splitting."""
-import csv, json, os, re
-from pathlib import Path
+import csv
+import json
+import re
 
 def parse_trace_fixed(trace_str):
     """Parse npcsh trace into (instruction, tool_call) pairs."""
@@ -69,7 +70,7 @@ def parse_trace_fixed(trace_str):
                         
                         response = f"<tool_call>\n{json.dumps({'name': fname, 'arguments': args}, ensure_ascii=False)}\n</tool_call>"
                         examples.append({"instruction": instruction, "response": response})
-                        print(f"    Added example")
+                        print("    Added example")
                     break
     
     return examples
