@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Benchmark fixed adapter through npcsh-style tool execution."""
-import csv, subprocess, time, os, re, json
-from pathlib import Path
+import csv
+import subprocess
+import time
+import re
+import json
 
 # Load tasks
 tasks = []

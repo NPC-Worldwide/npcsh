@@ -1,11 +1,5 @@
-import os
-import sys
-import json
-import tempfile
 import yaml
-import pytest
-from unittest.mock import patch, MagicMock, PropertyMock
-from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 
 # ── PR #131 + #133: Provider config injection in setup_shell ──────────────
@@ -713,7 +707,6 @@ class TestTeamRegistry:
     def test_load_team_switches_team(self, tmp_path, monkeypatch):
         """load_team updates state.team, state.npc, and state.current_team_name."""
         from npcsh._state import load_team, ShellState
-        from npcpy.npc_compiler import NPC, Team
 
         team_dir = tmp_path / "other_team"
         team_dir.mkdir()

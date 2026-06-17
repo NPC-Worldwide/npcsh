@@ -1,12 +1,9 @@
 import sys
 import os
-import tempfile
 import pytest
-from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from npcsh._state import ShellState
 
 
 class TestChatHistoryPreservation:

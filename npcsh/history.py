@@ -4,15 +4,14 @@ from datetime import datetime
 import uuid
 from typing import Optional, List, Dict, Any, Tuple, Union
 import pandas as pd
-import numpy as np
 
 try:
-    import sqlalchemy
-    from sqlalchemy import create_engine, text, MetaData, Table, Column, Integer, String, Text, DateTime, LargeBinary, ForeignKey, Boolean, func, UniqueConstraint
-    from sqlalchemy.engine import Engine, Connection as SQLAlchemyConnection
+    from sqlalchemy import (
+        create_engine, text, MetaData, Table, Column, Integer, String, Text,
+        DateTime, LargeBinary, ForeignKey, func, UniqueConstraint,
+    )
+    from sqlalchemy.engine import Engine
     from sqlalchemy.exc import SQLAlchemyError
-    from sqlalchemy.sql import select, insert, update, delete
-    from sqlalchemy.dialects import sqlite, postgresql
     _HAS_SQLALCHEMY = True
 except ImportError:
     _HAS_SQLALCHEMY = False
@@ -202,7 +201,7 @@ def init_kg_schema(engine: Engine):
         UniqueConstraint('name', 'team_name', 'npc_name', 'directory_path'),
         schema=None
     )
-    
+
     kg_links = Table('kg_links', metadata,
         Column('source', Text, nullable=False),
         Column('target', Text, nullable=False),
@@ -212,7 +211,7 @@ def init_kg_schema(engine: Engine):
         Column('type', String(100), nullable=False),
         schema=None
     )
-    
+
     kg_metadata = Table('kg_metadata', metadata,
         Column('key', String(255), nullable=False),
         Column('team_name', String(255), nullable=False),
@@ -232,6 +231,9 @@ def init_kg_schema(engine: Engine):
         Column('commit_message', Text),
         schema=None
     )
+
+    # silence ruff: tables defined above are registered by metadata.create_all below
+    _ = kg_facts, kg_fact_sources, kg_concepts, kg_links, kg_metadata, npc_versions
 
     metadata.create_all(engine, checkfirst=True)
 
@@ -568,8 +570,6 @@ def rollback_npc_to_version(engine: Engine, npc_name: str, team_path: str, versi
 def generate_message_id() -> str:
     return str(uuid.uuid4())
 
-from sqlalchemy import event, Table, Column, Integer, String, Text
-from sqlalchemy.orm import mapper
 
 class CommandHistory:
     def __init__(self, db: Union[str, Engine] = "~/npcsh_history.db"):
@@ -1312,6 +1312,7 @@ class CommandHistory:
         return self._fetch_all(stmt, {"message_id": message_id})
     def delete_message(self, conversation_id, message_id):
         """Delete a specific message from a conversation"""
+        import sqlite3
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Generate training data with fixed trace parser and train new adapter."""
-import csv, json, os, re
+import csv
+import json
+import os
+import re
 from pathlib import Path
 
 def parse_trace_fixed(trace_str):

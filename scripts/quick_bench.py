@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Quick benchmark: test adapter vs base on a few representative tasks."""
-import csv, json, os, subprocess, tempfile, time
-from pathlib import Path
+import csv
+import subprocess
+import time
 from mlx_lm import load as mlx_load, generate as mlx_generate
 from mlx_lm.lora import load_adapters
 from mlx_lm.generate import make_sampler
