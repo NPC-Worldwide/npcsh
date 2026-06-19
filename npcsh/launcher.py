@@ -110,7 +110,7 @@ def main():
         try:
             with open(npcshrc, "r") as f:
                 lines = f.readlines()
-            filtered = [l for l in lines if "NPCSH_ENGINE" not in l]
+            filtered = [line for line in lines if "NPCSH_ENGINE" not in line]
             if len(filtered) != len(lines):
                 with open(npcshrc, "w") as f:
                     f.writelines(filtered)

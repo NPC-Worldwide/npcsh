@@ -5,7 +5,9 @@
 
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
-use std::io::{self, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 // ── Colors ──
 const CYAN: &str = "\x1b[36m";
@@ -249,12 +251,18 @@ async fn main() -> Result<()> {
     // Print welcome
     print_welcome(&kernel);
 
-    // Spawn Python daemon in background
-    let daemon_team = team_dir.clone();
-    let daemon_db = db_path.clone();
-    let daemon_handle = tokio::spawn(async move {
-        npcrs::kernel::PythonDaemon::spawn(&daemon_team, &daemon_db).await
-    });
+    // Ensure a shared Python LLM daemon is running; ask to start one if absent.
+    ensure_daemon(&team_dir, &db_path).await?;
+    match npcrs::kernel::PythonDaemon::connect().await {
+        Ok(daemon) => {
+            kernel.python_daemon = Some(daemon);
+            eprintln!("{DIM}  connected to npcsh daemon{RESET}");
+        }
+        Err(e) => {
+            eprintln!("{RED}Failed to connect to daemon: {e}{RESET}");
+            std::process::exit(1);
+        }
+    }
 
     // Set up raw-mode input
     let npc_names: Vec<String> = kernel.ps().iter().map(|p| p.npc.name.clone()).collect();
@@ -281,28 +289,7 @@ async fn main() -> Result<()> {
     // TODO: re-enable once npcrs publishes CLI provider support.
     // let mut cli_sessions: std::collections::HashMap<(String, String), String> = std::collections::HashMap::new();
 
-    let daemon_handle = std::sync::Arc::new(tokio::sync::Mutex::new(Some(daemon_handle)));
-
     loop {
-        if kernel.python_daemon.is_none() {
-            let mut guard = daemon_handle.try_lock();
-            if let Ok(ref mut opt) = guard {
-                if let Some(handle) = opt.as_mut() {
-                    if handle.is_finished() {
-                        if let Some(h) = opt.take() {
-                            match h.await {
-                                Ok(Ok(daemon)) => {
-                                    kernel.python_daemon = Some(daemon);
-                                    eprintln!("{DIM}  python daemon ready{RESET}");
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Build prompt
         let npc_name = kernel
             .get_process(current_pid)
@@ -312,10 +299,23 @@ async fn main() -> Result<()> {
         let cwd = std::env::current_dir()
             .map(|p| {
                 let s = p.display().to_string();
-                // Shorten home dir
+                // Shorten home dir, then truncate very long paths to the last segments.
                 let home = shellexpand::tilde("~").to_string();
-                if let Some(rest) = s.strip_prefix(&home) {
+                let s = if let Some(rest) = s.strip_prefix(&home) {
                     format!("~{}", rest)
+                } else {
+                    s
+                };
+                const MAX_CWD: usize = 20;
+                if s.len() > MAX_CWD {
+                    // keep only the last path segment
+                    let sep = std::path::MAIN_SEPARATOR;
+                    let parts: Vec<&str> = s.split(sep).filter(|x| !x.is_empty()).collect();
+                    if let Some(last) = parts.last() {
+                        format!(".../{last}")
+                    } else {
+                        format!("...{}", &s[s.len().saturating_sub(MAX_CWD - 3)..])
+                    }
                 } else {
                     s
                 }
@@ -350,9 +350,15 @@ async fn main() -> Result<()> {
             String::new()
         };
 
-        let prompt = format!(
-            "{DIM}{cwd}{RESET} {CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET}{usage_hint}\n{PURPLE}>{RESET} "
-        );
+        let prompt = if usage_hint.is_empty() {
+            format!(
+                "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET} {PURPLE}>{RESET} "
+            )
+        } else {
+            format!(
+                "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET}\n{DIM}{usage_hint}{RESET}\n{PURPLE}>{RESET} "
+            )
+        };
 
         // Read input with raw mode (Ctrl-E/Ctrl-O work immediately)
         let input = match readline_raw(
@@ -363,12 +369,16 @@ async fn main() -> Result<()> {
             &mut kernel,
             current_pid,
         ) {
-            Ok(Some(line)) => {
+            Ok(ReadlineResult::Input(line)) => {
                 history.push(line.clone());
                 history_index = None;
                 line
             }
-            Ok(None) => continue,
+            Ok(ReadlineResult::Cancel) => continue,
+            Ok(ReadlineResult::Eof) => {
+                println!();
+                break;
+            }
             Err(e) => {
                 eprintln!("Error: {}", e);
                 break;
@@ -1005,6 +1015,138 @@ fn run_interactive(input: &str) {
         .status();
 }
 
+/// Ensure a shared Python LLM daemon is available; ask to start one if absent.
+async fn ensure_daemon(team_dir: &str, db_path: &str) -> Result<()> {
+    let socket_path = npcrs::kernel::PythonDaemon::socket_path();
+
+    if tokio::net::UnixStream::connect(&socket_path).await.is_ok() {
+        return Ok(());
+    }
+
+    let default_sock = socket_path.display().to_string();
+
+    if !io::stdin().is_terminal() {
+        eprintln!(
+            "{RED}No npcsh daemon at {}. Start it with: python3 npcsh/daemon.py --daemon{RESET}",
+            default_sock
+        );
+        std::process::exit(1);
+    }
+
+    let prompt = format!(
+        "No npcsh daemon at {}. Start shared daemon? [Y/n] ",
+        default_sock
+    );
+    print!("{}", prompt);
+    io::stdout().flush()?;
+
+    let stdin = io::stdin();
+    let mut reader = io::BufReader::new(stdin.lock());
+    let mut answer = String::new();
+    reader.read_line(&mut answer)?;
+    let answer = answer.trim().to_lowercase();
+    if !answer.is_empty() && !answer.starts_with('y') {
+        eprintln!("Daemon not started. Exiting.");
+        std::process::exit(1);
+    }
+
+    let daemon_script = find_daemon_script();
+    if daemon_script.is_none() {
+        eprintln!("{}Cannot find npcsh/daemon.py. Exiting.{}", RED, RESET);
+        std::process::exit(1);
+    }
+    let script = daemon_script.unwrap();
+
+    let log_dir = shellexpand::tilde("~/.npcsh").to_string();
+    std::fs::create_dir_all(&log_dir)?;
+    let log_path = format!("{}/daemon.log", log_dir);
+
+    let mut cmd = std::process::Command::new("python3");
+    cmd.arg(&script)
+        .arg("--daemon")
+        .env("NPCSH_DB_PATH", db_path)
+        .env("NPCSH_TEAM_DIR", team_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)?,
+        ))
+        .stderr(std::process::Stdio::from(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)?,
+        ));
+
+    #[cfg(unix)]
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+
+    let _child = cmd.spawn().map_err(|e| {
+        npcrs::error::NpcError::Other(format!(
+            "Failed to start daemon ({}): {}",
+            script.display(),
+            e
+        ))
+    })?;
+
+    // Wait for the socket to appear, up to ~30 seconds.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        if tokio::net::UnixStream::connect(&socket_path).await.is_ok() {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    Err(npcrs::error::NpcError::Other(
+        "Daemon process started but socket never became available".into(),
+    )
+    .into())
+}
+
+fn find_daemon_script() -> Option<std::path::PathBuf> {
+    let candidates = ["npcsh/daemon.py", "../npcsh/daemon.py"];
+    if let Ok(cwd) = std::env::current_dir() {
+        for c in &candidates {
+            let p = cwd.join(c);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let p = dir.join("npcsh/daemon.py");
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    if let Ok(output) = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import npcsh, os; print(os.path.dirname(os.path.abspath(npcsh.__file__)))",
+        ])
+        .output()
+    {
+        if output.status.success() {
+            let dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let p = std::path::PathBuf::from(dir).join("daemon.py");
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
 /// Find the team directory (project-local or global).
 fn find_team_dir() -> String {
     // CLI args
@@ -1300,6 +1442,12 @@ jinxes:\n\
 
 
 /// Raw-mode readline with immediate Ctrl-E/Ctrl-O handling.
+enum ReadlineResult {
+    Input(String),
+    Cancel,
+    Eof,
+}
+
 fn readline_raw(
     prompt: &str,
     history: &mut Vec<String>,
@@ -1307,7 +1455,7 @@ fn readline_raw(
     helper: &NpcHelper,
     kernel: &mut Kernel,
     current_pid: u32,
-) -> io::Result<Option<String>> {
+) -> io::Result<ReadlineResult> {
     use crossterm::event::{self, Event, KeyCode, KeyModifiers};
     use crossterm::terminal;
 
@@ -1331,11 +1479,11 @@ fn readline_raw(
                             match c {
                                 'c' => {
                                     print!("\r\n");
-                                    break Ok(None);
+                                    break Ok(ReadlineResult::Cancel);
                                 }
                                 'd' => {
                                     if buf.is_empty() {
-                                        break Ok(None);
+                                        break Ok(ReadlineResult::Eof);
                                     }
                                 }
                                 'a' => {
@@ -1428,7 +1576,7 @@ fn readline_raw(
                     }
                     KeyCode::Enter => {
                         print!("\r\n");
-                        break Ok(Some(buf));
+                        break Ok(ReadlineResult::Input(buf));
                     }
                     KeyCode::Left => {
                         if pos > 0 {
@@ -1533,8 +1681,15 @@ fn readline_raw(
 }
 
 fn redraw_prompt(prompt: &str, buf: &str, pos: usize) {
+    // Prompt may span multiple lines (e.g. context line + "> " line).
+    // Count visible newline-terminated lines and clear + redraw them all.
+    let prompt_lines = prompt.chars().filter(|c| *c == '\n').count() + 1;
+
+    // Clear current line, then move up and clear each prior prompt line.
     print!("\x1b[2K\x1b[G");
-    print!("\x1b[A\x1b[2K\x1b[G");
+    for _ in 1..prompt_lines {
+        print!("\x1b[A\x1b[2K\x1b[G");
+    }
     print!("{}", prompt);
     print!("{}", buf);
     if pos < buf.len() {

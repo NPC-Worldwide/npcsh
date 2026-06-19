@@ -8,10 +8,8 @@ Run from npc-core root: python -m npcsh.examples.test_kg_system
 
 import os
 from sqlalchemy import create_engine, text
-from npcpy.memory.command_history import CommandHistory, load_kg_from_db, save_kg_to_db
 from npcpy.memory.knowledge_graph import (
-    kg_search_facts, kg_list_concepts, kg_get_all_facts,
-    kg_link_search, kg_embedding_search, kg_hybrid_search,
+    kg_search_facts, kg_list_concepts, kg_link_search, kg_hybrid_search,
     kg_explore_concept, kg_backfill_from_memories, kg_get_stats
 )
 

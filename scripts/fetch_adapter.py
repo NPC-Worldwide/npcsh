@@ -45,9 +45,9 @@ def main():
         token=args.token,
     )
     print(f"Done. Adapter saved to: {os.path.abspath(output)}")
-    print(f"\nTo use it:")
-    print(f"  export NPCSH_CHAT_MODEL='mlx-community/Qwen3-4B-4bit'")
-    print(f"  export NPCSH_CHAT_PROVIDER='omlx'")
+    print("\nTo use it:")
+    print("  export NPCSH_CHAT_MODEL='mlx-community/Qwen3-4B-4bit'")
+    print("  export NPCSH_CHAT_PROVIDER='omlx'")
     print(f"  # Place adapter at ~/.npcsh/adapters/{args.name}/")
 
 

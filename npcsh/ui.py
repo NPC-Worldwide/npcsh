@@ -638,6 +638,8 @@ def print_conversation_usage(state, active_bottom_bar=None):
     except Exception:
         get_model_context_window = None
         calculate_cost = None
+    # silence ruff; calculate_cost is used conditionally below and may be unused in some branches
+    _ = calculate_cost
 
     # Determine active model/provider
     from npcpy.npc_compiler import NPC

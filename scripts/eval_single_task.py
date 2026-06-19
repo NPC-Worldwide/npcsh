@@ -1,7 +1,8 @@
 from mlx_lm import load as mlx_load, generate as mlx_generate
 from mlx_lm.lora import load_adapters
 from mlx_lm.generate import make_sampler
-import subprocess, os, re
+import subprocess
+import os
 
 model, tokenizer = mlx_load('mlx-community/Qwen3.5-2B-4bit')
 load_adapters(model, 'adapters/qwen3.5/2b/mlx/')
@@ -14,7 +15,7 @@ subprocess.run('mkdir -p /tmp/countme && for f in a b c d e f g; do echo "file $
 # Generate
 prompt = '<|im_start|>user\nCount the number of files in /tmp/countme and write just the number to /tmp/result.txt<|im_end|>\n<|im_start|>assistant\n'
 response = mlx_generate(model, tokenizer, prompt=prompt, max_tokens=100, sampler=sampler, verbose=False)
-print(f'RAW RESPONSE:')
+print('RAW RESPONSE:')
 print(repr(response))
 print()
 
