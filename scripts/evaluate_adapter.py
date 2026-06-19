@@ -12,11 +12,8 @@ Usage:
 """
 
 import argparse
-import csv
 import json
 import os
-import sys
-import time
 from pathlib import Path
 
 
@@ -50,7 +47,7 @@ def summarize(report) -> dict:
         if r.passed:
             diffs[d]["passed"] += 1
 
-    print(f"\nBy difficulty:")
+    print("\nBy difficulty:")
     for d in sorted(diffs.keys()):
         stats = diffs[d]
         rate = stats["passed"] / stats["total"] if stats["total"] > 0 else 0

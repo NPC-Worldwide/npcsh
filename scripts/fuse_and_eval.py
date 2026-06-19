@@ -10,12 +10,7 @@ Usage:
 """
 
 import argparse
-import json
 import os
-import shutil
-import sys
-import time
-from pathlib import Path
 
 
 def fuse_adapter(adapter_path: str, output_path: str):

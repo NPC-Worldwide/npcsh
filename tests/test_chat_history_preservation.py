@@ -1,11 +1,10 @@
 import sys
 import os
-from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from npcsh._state import ShellState, initial_state, execute_command
+from npcsh._state import initial_state, execute_command
 from npcsh.routes import router
 from npcpy.npc_compiler import NPC
 

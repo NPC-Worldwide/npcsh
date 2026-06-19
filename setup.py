@@ -2,7 +2,6 @@ from setuptools import setup, find_packages
 from setuptools.command.build_py import build_py
 import os
 import platform
-import subprocess
 import sys
 from pathlib import Path
 
