@@ -1019,96 +1019,107 @@ fn run_interactive(input: &str) {
 async fn ensure_daemon(team_dir: &str, db_path: &str) -> Result<()> {
     let socket_path = npcrs::kernel::PythonDaemon::socket_path();
 
-    if tokio::net::UnixStream::connect(&socket_path).await.is_ok() {
-        return Ok(());
-    }
-
-    let default_sock = socket_path.display().to_string();
-
-    if !io::stdin().is_terminal() {
-        eprintln!(
-            "{RED}No npcsh daemon at {}. Start it with: python3 npcsh/daemon.py --daemon{RESET}",
-            default_sock
-        );
-        std::process::exit(1);
-    }
-
-    let prompt = format!(
-        "No npcsh daemon at {}. Start shared daemon? [Y/n] ",
-        default_sock
-    );
-    print!("{}", prompt);
-    io::stdout().flush()?;
-
-    let stdin = io::stdin();
-    let mut reader = io::BufReader::new(stdin.lock());
-    let mut answer = String::new();
-    reader.read_line(&mut answer)?;
-    let answer = answer.trim().to_lowercase();
-    if !answer.is_empty() && !answer.starts_with('y') {
-        eprintln!("Daemon not started. Exiting.");
-        std::process::exit(1);
-    }
-
-    let daemon_script = find_daemon_script();
-    if daemon_script.is_none() {
-        eprintln!("{}Cannot find npcsh/daemon.py. Exiting.{}", RED, RESET);
-        std::process::exit(1);
-    }
-    let script = daemon_script.unwrap();
-
-    let log_dir = shellexpand::tilde("~/.npcsh").to_string();
-    std::fs::create_dir_all(&log_dir)?;
-    let log_path = format!("{}/daemon.log", log_dir);
-
-    let mut cmd = std::process::Command::new("python3");
-    cmd.arg(&script)
-        .arg("--daemon")
-        .env("NPCSH_DB_PATH", db_path)
-        .env("NPCSH_TEAM_DIR", team_dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::from(
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)?,
-        ))
-        .stderr(std::process::Stdio::from(
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)?,
-        ));
-
     #[cfg(unix)]
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
-    }
-
-    let _child = cmd.spawn().map_err(|e| {
-        npcrs::error::NpcError::Other(format!(
-            "Failed to start daemon ({}): {}",
-            script.display(),
-            e
-        ))
-    })?;
-
-    // Wait for the socket to appear, up to ~30 seconds.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while std::time::Instant::now() < deadline {
+    {
         if tokio::net::UnixStream::connect(&socket_path).await.is_ok() {
             return Ok(());
         }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let default_sock = socket_path.display().to_string();
+
+        if !io::stdin().is_terminal() {
+            eprintln!(
+                "{RED}No npcsh daemon at {}. Start it with: python3 npcsh/daemon.py --daemon{RESET}",
+                default_sock
+            );
+            std::process::exit(1);
+        }
+
+        let prompt = format!(
+            "No npcsh daemon at {}. Start shared daemon? [Y/n] ",
+            default_sock
+        );
+        print!("{}", prompt);
+        io::stdout().flush()?;
+
+        let stdin = io::stdin();
+        let mut reader = io::BufReader::new(stdin.lock());
+        let mut answer = String::new();
+        reader.read_line(&mut answer)?;
+        let answer = answer.trim().to_lowercase();
+        if !answer.is_empty() && !answer.starts_with('y') {
+            eprintln!("Daemon not started. Exiting.");
+            std::process::exit(1);
+        }
+
+        let daemon_script = find_daemon_script();
+        if daemon_script.is_none() {
+            eprintln!("{}Cannot find npcsh/daemon.py. Exiting.{}", RED, RESET);
+            std::process::exit(1);
+        }
+        let script = daemon_script.unwrap();
+
+        let log_dir = shellexpand::tilde("~/.npcsh").to_string();
+        std::fs::create_dir_all(&log_dir)?;
+        let log_path = format!("{}/daemon.log", log_dir);
+
+        let mut cmd = std::process::Command::new("python3");
+        cmd.arg(&script)
+            .arg("--daemon")
+            .env("NPCSH_DB_PATH", db_path)
+            .env("NPCSH_TEAM_DIR", team_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::from(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_path)?,
+            ))
+            .stderr(std::process::Stdio::from(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_path)?,
+            ));
+
+        #[cfg(unix)]
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+
+        let _child = cmd.spawn().map_err(|e| {
+            npcrs::error::NpcError::Other(format!(
+                "Failed to start daemon ({}): {}",
+                script.display(),
+                e
+            ))
+        })?;
+
+        // Wait for the socket to appear, up to ~30 seconds.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while std::time::Instant::now() < deadline {
+            if tokio::net::UnixStream::connect(&socket_path).await.is_ok() {
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+
+        return Err(npcrs::error::NpcError::Other(
+            "Daemon process started but socket never became available".into(),
+        )
+        .into());
     }
 
-    Err(npcrs::error::NpcError::Other(
-        "Daemon process started but socket never became available".into(),
-    )
-    .into())
+    #[cfg(not(unix))]
+    {
+        // Unix sockets are unavailable; rely on PythonDaemon::spawn for
+        // subprocess fallback. Nothing to ensure here.
+        let _ = (team_dir, db_path);
+        Ok(())
+    }
 }
 
 fn find_daemon_script() -> Option<std::path::PathBuf> {
