@@ -15,7 +15,7 @@ name = "npcrsh"
 path = "src/main.rs"
 
 [dependencies]
-npcrs = { version = "0.1.16", default-features = false, features = ["ffi"] }
+npcrs = { version = "0.1.17", default-features = false, features = ["ffi"] }
 
 # Shell-specific deps
 rustyline = { version = "15", features = ["with-file-history"] }
