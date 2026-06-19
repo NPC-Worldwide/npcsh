@@ -1461,6 +1461,11 @@ fn readline_raw(
 
     terminal::enable_raw_mode()?;
 
+    // Enable bracketed paste so the terminal wraps pasted text in a single
+    // crossterm Event::Paste instead of injecting raw key events.
+    print!("\x1b[?2004h");
+    io::stdout().flush()?;
+
     let mut buf = String::new();
     let mut pos: usize = 0;
 
@@ -1472,8 +1477,28 @@ fn readline_raw(
 
     let result = loop {
         if crossterm::event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
+            match event::read()? {
+                Event::Paste(text) => {
+                    tab_matches.clear();
+                    let text = text.replace('\r', "\n");
+                    if text.contains('\n') {
+                        // Multi-line paste: insert it and submit immediately.
+                        buf.insert_str(pos, &text);
+                        pos += text.len();
+                        redraw_prompt(prompt, &buf, pos);
+                        io::stdout().flush()?;
+                        print!("\r\n");
+                        break Ok(ReadlineResult::Input(buf));
+                    }
+                    // Single-line paste: insert at cursor.
+                    buf.insert_str(pos, &text);
+                    pos += text.len();
+                    redraw_prompt(prompt, &buf, pos);
+                    io::stdout().flush()?;
+                    continue;
+                }
+                Event::Key(key) => {
+                    match key.code {
                     KeyCode::Char(c) => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             match c {
@@ -1673,10 +1698,17 @@ fn readline_raw(
                     _ => {}
                 }
             }
+                _ => {}
+            }
         }
     };
 
     let _ = terminal::disable_raw_mode();
+
+    // Disable bracketed paste on exit.
+    print!("\x1b[?2004l");
+    let _ = io::stdout().flush();
+
     result
 }
 
