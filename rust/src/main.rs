@@ -241,9 +241,50 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Handle --refresh flag (reset and re-copy from package)
+    if args.iter().any(|a| a == "--refresh") {
+        let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+        let user_npc_team = shellexpand::tilde("~/.npcsh/npc_team").to_string();
+        let jinxes_dir = std::path::Path::new(&user_npc_team).join("jinxes");
+        if jinxes_dir.exists() {
+            let _ = std::fs::remove_dir_all(&jinxes_dir);
+            eprintln!("Cleared existing jinxes directory");
+        }
+        if let Ok(entries) = std::fs::read_dir(&user_npc_team) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.ends_with(".npc") {
+                        let _ = std::fs::remove_file(entry.path());
+                        eprintln!("Removed {}", name);
+                    }
+                }
+            }
+        }
+        run_python_initialization(&db_path);
+        eprintln!("Refresh complete!");
+        std::process::exit(0);
+    }
+
     // Find team directory
     let team_dir = find_team_dir();
     let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+
+    // Auto-initialize if the team directory is missing essential files
+    let team_path = std::path::Path::new(&team_dir);
+    let jinxes_dir = team_path.join("jinxes");
+    let has_npcs = match std::fs::read_dir(team_path) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                e.path()
+                    .extension()
+                    .map_or(false, |ext| ext == "npc")
+            }),
+        Err(_) => false,
+    };
+    if !jinxes_dir.exists() || !has_npcs {
+        run_python_initialization(&db_path);
+    }
 
     // Boot the kernel
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
@@ -1145,6 +1186,38 @@ fn find_daemon_script() -> Option<std::path::PathBuf> {
         }
     }
     None
+}
+
+fn run_python_initialization(db_path: &str) {
+    eprintln!("Re-initializing npc_team from package...");
+    let output = std::process::Command::new("python3")
+        .args([
+            "-c",
+            &format!(
+                "import os; os.environ['NPCSH_INITIALIZED'] = '0'; \
+                 from npcsh._state import initialize_base_npcs_if_needed; \
+                 initialize_base_npcs_if_needed('{db_path}')"
+            ),
+        ])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            eprintln!("Initialization complete.");
+        }
+        Ok(o) => {
+            eprintln!(
+                "Initialization output: {}",
+                String::from_utf8_lossy(&o.stdout)
+            );
+            eprintln!(
+                "Initialization errors: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+        }
+        Err(e) => {
+            eprintln!("Failed to run Python initialization: {}", e);
+        }
+    }
 }
 
 /// Find the team directory (project-local or global).
