@@ -14,10 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Patch version
+      - name: Patch version and deps
         run: |
           VERSION=$(cat VERSION | tr -d '[:space:]')
           sed -i "s/^version = \"0.0.0\"/version = \"$VERSION\"/" rust/Cargo.toml
+          sed -i 's|npcrs = { path = "../../npcrs".*}|npcrs = { version = "0.1", default-features = false, features = ["ffi"] }|' rust/Cargo.toml
       - name: Publish to crates.io
         working-directory: rust
         env:
@@ -58,6 +59,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Switch to published npcrs
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          p = Path("rust/Cargo.toml")
+          p.write_text(re.sub(
+              r'npcrs = \{ path = "\.\./\.\./npcrs".*\}',
+              'npcrs = { version = "0.1", default-features = false, features = ["ffi"] }',
+              p.read_text(),
+          ))
 
       - name: Build Rust binary
         working-directory: rust
