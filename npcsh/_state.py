@@ -4455,7 +4455,16 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     team_registry = load_team_registry()
     initial_state.teams = team_registry
 
-    if not is_npcsh_initialized():
+    # Always sync package files if the team directory is missing jinxes or NPCs
+    team_dir = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
+    jinxes_dir = os.path.join(team_dir, "jinxes")
+    has_npcs = any(
+        f.endswith(".npc")
+        for f in os.listdir(team_dir)
+        if os.path.isfile(os.path.join(team_dir, f))
+    ) if os.path.exists(team_dir) else False
+    needs_init = not os.path.exists(jinxes_dir) or not has_npcs or not is_npcsh_initialized()
+    if needs_init:
         print("Setting up npcsh for first use...")
         initialize_base_npcs_if_needed(db_path)
         print("Setup complete.")
