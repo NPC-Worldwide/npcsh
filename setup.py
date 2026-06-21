@@ -8,6 +8,44 @@ from pathlib import Path
 
 NPCRS_REPO = "NPC-Worldwide/npcsh"
 
+_MAGIC_ELF = b"\x7fELF"
+_MAGIC_MACHO = {
+    b"\xcf\xfa\xed\xfe",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xfe\xed\xfa\xce",
+}
+_MAGIC_PE = b"MZ"
+
+
+def _host_binary_kind():
+    system = platform.system()
+    if system == "Linux":
+        return "elf"
+    if system == "Darwin":
+        return "macho"
+    if system == "Windows":
+        return "pe"
+    return None
+
+
+def _binary_matches_host(path: str) -> bool:
+    kind = _host_binary_kind()
+    if kind is None:
+        return True
+    try:
+        with open(path, "rb") as f:
+            header = f.read(4)
+    except OSError:
+        return False
+    if kind == "elf":
+        return header.startswith(_MAGIC_ELF)
+    if kind == "macho":
+        return header in _MAGIC_MACHO
+    if kind == "pe":
+        return header.startswith(_MAGIC_PE)
+    return True
+
 _NPCRS_ARTIFACT = {
     ("Linux", "x86_64"): "npcsh-linux-x86_64",
     ("Darwin", "arm64"): "npcsh-macos-aarch64",
@@ -17,9 +55,11 @@ _NPCRS_ARTIFACT = {
 
 
 def _purge_stale_binaries(bin_dir: Path) -> None:
-    """Remove any pre-existing binary from bin_dir so we never ship a stale arch."""
+    """Remove stale binaries that don't match the host arch."""
     for p in bin_dir.iterdir():
         if p.name == ".gitkeep":
+            continue
+        if _binary_matches_host(str(p)):
             continue
         try:
             p.unlink()
@@ -28,7 +68,7 @@ def _purge_stale_binaries(bin_dir: Path) -> None:
 
 
 def _download_npcrs(bin_dir: Path) -> bool:
-    """Download the latest npcrs release binary into bin_dir. Returns True on success."""
+    """Download the latest npcrs release binary into bin_dir. Returns True on success or if valid binary already present."""
     import urllib.request
     import json
     import shutil
@@ -42,6 +82,10 @@ def _download_npcrs(bin_dir: Path) -> bool:
 
     ext = ".exe" if system == "Windows" else ""
     dst = bin_dir / f"npcrs{ext}"
+
+    if dst.exists() and _binary_matches_host(str(dst)):
+        print(f"Valid npcrs binary already present at {dst}")
+        return True
 
     try:
         api_url = f"https://api.github.com/repos/{NPCRS_REPO}/releases/latest"
@@ -77,9 +121,34 @@ class BuildWithRust(build_py):
 
         _purge_stale_binaries(bin_dir)
 
-        if not _download_npcrs(bin_dir):
-            print("Warning: npcrs binary unavailable — falling back to Python-only mode")
+        if _download_npcrs(bin_dir):
+            super().run()
+            return
 
+        cargo = shutil.which("cargo")
+        rust_dir = Path(__file__).parent / "rust"
+        if cargo and rust_dir.exists():
+            print("Downloading npcrs failed — building from source with cargo...")
+            try:
+                subprocess.run(
+                    [cargo, "build", "--release"],
+                    cwd=str(rust_dir),
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+                src = rust_dir / "target" / "release" / "npcrsh"
+                if src.exists():
+                    dst = bin_dir / "npcrs"
+                    shutil.copy2(str(src), str(dst))
+                    os.chmod(str(dst), 0o755)
+                    print(f"Built npcrs binary at {dst}")
+                    super().run()
+                    return
+            except Exception as e:
+                print(f"Warning: cargo build failed ({e})")
+
+        print("Warning: npcrs binary unavailable — falling back to Python-only mode")
         super().run()
 
 
