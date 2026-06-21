@@ -111,7 +111,6 @@ def run_task_with_teacher(
         except Exception:
             pass
 
-    # Set up state for teacher model
     command_history = _setup_state(
         model=teacher_model,
         provider=teacher_provider,
@@ -129,7 +128,6 @@ def run_task_with_teacher(
     except Exception as e:
         output_str = f"Exception: {e}"
 
-    # Verify
     verify_cmd = task.get("verify_cmd", "") or ""
     passed = False
     if verify_cmd:
@@ -149,7 +147,6 @@ def run_task_with_teacher(
     else:
         passed = output_str and "Exception" not in output_str
 
-    # Cleanup
     import shutil
 
     shutil.rmtree(work_dir, ignore_errors=True)
@@ -298,7 +295,6 @@ def active_loop(args):
         print(f"ACTIVE LEARNING ITERATION {iteration}/{args.iterations}")
         print(f"{'=' * 60}")
 
-        # 1. Evaluate current model
         if iteration == 1 and args.initial_adapter:
             current_adapter = args.initial_adapter
             print(f"[INIT] Using initial adapter: {current_adapter}")
@@ -325,7 +321,6 @@ def active_loop(args):
             {"iteration": iteration, "passed": passed, "total": total, "score": score}
         )
 
-        # Save history
         hist_path = Path(args.sft_output + "_history.json")
         hist_path.write_text(json.dumps(history, indent=2))
 
@@ -334,12 +329,10 @@ def active_loop(args):
             best_adapter = current_adapter
             print(f"[BEST] New best score! Adapter: {best_adapter}")
 
-        # Check if we should stop early
         if score >= args.target_score:
             print(f"[DONE] Target score {args.target_score} reached!")
             break
 
-        # 2. Identify weak categories
         weak = identify_weak_categories(results, min_success_rate=args.min_success_rate)
         if not weak:
             print("[DONE] No weak categories — all above threshold!")
@@ -347,7 +340,6 @@ def active_loop(args):
 
         print(f"\n[WEAK] Categories to improve: {', '.join(c for c, _, _ in weak)}")
 
-        # 3. Collect teacher traces for failed tasks
         if args.teacher_model and args.teacher_provider:
             teacher_traces = collect_teacher_traces(
                 weak,
@@ -362,7 +354,6 @@ def active_loop(args):
             print("[SKIP] No teacher model configured")
             teacher_traces = []
 
-        # 4. Retrain SFT on combined data
         if not args.skip_train:
             iter_output = args.sft_output + f"_iter{iteration}"
             success = train_sft(
@@ -380,7 +371,6 @@ def active_loop(args):
         else:
             print("[SKIP] --skip-train set")
 
-    # Final summary
     print(f"\n{'=' * 60}")
     print("ACTIVE LEARNING COMPLETE")
     print(f"{'=' * 60}")

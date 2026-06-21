@@ -77,8 +77,6 @@ def main():
     else:
         eval_model = args.model
 
-    # If we have an adapter and provider is omlx, we need to tell npcpy
-    # where the adapter lives.  The simplest way is via env var.
     env = os.environ.copy()
     env["NPCSH_CHAT_MODEL"] = eval_model
     env["NPCSH_CHAT_PROVIDER"] = args.provider
@@ -93,7 +91,6 @@ def main():
     print(f"  timeout: {args.timeout}s")
     print("")
 
-    # Run benchmark directly via the API
     from npcsh.benchmark.local_runner import run_benchmark
 
     report = run_benchmark(

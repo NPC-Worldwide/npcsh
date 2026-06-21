@@ -33,19 +33,15 @@ def compactify_jsonl(input_path: str, output_path: str, system_template_path: st
     if not examples:
         return None, None
 
-    # Extract system prompt (it's identical across all)
     first_prompt = examples[0]["prompt"]
-    system_match = re.search(r"<\|im_start\|>system\n(.*?)(?:<\|im_end\|>|\\n<\|im_start\|>user)", first_prompt, re.DOTALL)
+    system_match = re.search(r"<\|im_start\|>system\n(.*?)(?:<\|im_end\|>|\n<\|im_start\|>user)", first_prompt, re.DOTALL)
     system_prompt = system_match.group(1).strip() if system_match else ""
 
-    # Extract just the user instruction from each prompt
     compact = []
     for ex in examples:
         prompt = ex["prompt"]
-        # Find user content
         user_match = re.search(r"<\|im_start\|>user\n(.*?)<\|im_end\|>", prompt, re.DOTALL)
         instruction = user_match.group(1).strip() if user_match else ""
-        # Remove "User Provided Context" boilerplate
         instruction = re.sub(r"User Provided Context:.*", "", instruction, flags=re.DOTALL).strip()
 
         if not instruction or not ex["completion"]:
@@ -58,13 +54,11 @@ def compactify_jsonl(input_path: str, output_path: str, system_template_path: st
 
     print(f"Compact: {len(compact)} examples (removed {len(examples) - len(compact)} empty)")
 
-    # Save compact JSONL
     with open(output_path, "w") as f:
         for c in compact:
             f.write(json.dumps(c) + "\n")
     print(f"Saved compact data to {output_path}")
 
-    # Save system template
     if system_template_path and system_prompt:
         Path(system_template_path).write_text(system_prompt)
         print(f"Saved system template ({len(system_prompt)} chars) to {system_template_path}")
@@ -87,8 +81,8 @@ def build_xy(compact_data: list, system_prompt: str, format_style: str = "qwen3"
             prompt_text = f"<|im_start|>user\n{instruction}\n<|im_start|>assistant\n"
             output_text = f"{completion}\n"
         elif format_style == "gemma":
-            prompt_text = f"<start_of_turn>user\n{instruction}<end_of_turn>\n<start_of_turn>model\n"
-            output_text = f"{completion}<end_of_turn>"
+            prompt_text = f"<start_of_turn>user\n{instruction}</end_of_turn>\n<start_of_turn>model\n"
+            output_text = f"{completion}</end_of_turn>"
         else:
             prompt_text = f"Input: {instruction}\nOutput: "
             output_text = completion
@@ -122,8 +116,6 @@ def evaluate_on_benchmark(model_path: str, provider: str, category: str = None, 
 
     print(f"\nEvaluating {model_path} ({provider}) on {num_tasks} tasks...")
 
-    # run_benchmark accepts category, task_id, timeout. We want a subset of tasks.
-    # It does not support max_tasks directly, but we can filter after.
     report = run_benchmark(
         model=model_path,
         provider=provider,
@@ -131,7 +123,6 @@ def evaluate_on_benchmark(model_path: str, provider: str, category: str = None, 
         timeout=60,
     )
 
-    # Limit to num_tasks for a quick check
     results = report.results[:num_tasks]
     passed = sum(1 for r in results if r.passed)
     total = len(results)
@@ -164,13 +155,11 @@ def main():
     compact_path = os.path.expanduser(args.compact_out)
     template_path = os.path.expanduser(args.system_template)
 
-    # 1. Compactify
     compact_data, system_prompt = compactify_jsonl(input_path, compact_path, template_path)
     if not compact_data:
         print("No data to train on.")
         sys.exit(1)
 
-    # 2. Build X/y
     print("\nBuilding training examples...")
     X, y = build_xy(compact_data, system_prompt, format_style="qwen3")
     print(f"Built {len(X)} examples (avg prompt len: {sum(len(x) for x in X)//len(X)}, avg completion len: {sum(len(yi) for yi in y)//len(y)})")
@@ -179,7 +168,6 @@ def main():
         print("\nSkipping SFT (--skip-sft)")
         adapter_path = args.output
     else:
-        # 3. Train SFT
         print(f"\nTraining SFT: {args.model} → {args.output}")
         print(f"  epochs={args.epochs}, lr={args.lr}, lora_r={args.lora_r}, max_length={args.max_length}")
 
@@ -213,12 +201,10 @@ def main():
         }
         (Path(args.output) / "training_metadata.json").write_text(json.dumps(meta, indent=2))
 
-    # 4. Optionally fuse adapter
     fused_path = None
     if args.fuse and not args.skip_sft:
         fused_path = fuse_adapter(adapter_path, args.output + "_fused")
 
-    # 5. Evaluate
     if not args.skip_eval:
         print("\n--- Baseline Evaluation ---")
         baseline_pass, baseline_total = evaluate_on_benchmark(args.model, args.provider, num_tasks=10)

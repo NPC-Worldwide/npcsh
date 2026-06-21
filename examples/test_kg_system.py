@@ -43,7 +43,6 @@ def test_database_state(engine):
     print_header("Database State")
 
     with engine.connect() as conn:
-        # Memory stats
         print("\nMemory Lifecycle:")
         result = conn.execute(text('''
             SELECT status, COUNT(*) as cnt
@@ -54,7 +53,6 @@ def test_database_state(engine):
         for row in result:
             print(f"  {row.status}: {row.cnt}")
 
-        # KG stats
         print("\nKnowledge Graph:")
         facts = conn.execute(text('SELECT COUNT(*) FROM kg_facts')).scalar() or 0
         concepts = conn.execute(text('SELECT COUNT(*) FROM kg_concepts')).scalar() or 0
@@ -63,7 +61,6 @@ def test_database_state(engine):
         print(f"  Concepts: {concepts}")
         print(f"  Links: {links}")
 
-        # By scope
         print("\nFacts by Scope:")
         result = conn.execute(text('''
             SELECT npc_name, team_name, COUNT(*) as cnt
@@ -91,13 +88,11 @@ def test_concept_operations(engine):
     """Test concept listing and exploration."""
     print_header("Concept Operations")
 
-    # List all concepts
     concepts = kg_list_concepts(engine)
     print(f"\nAll concepts ({len(concepts)}):")
     for c in concepts:
         print(f"  - {c}")
 
-    # Explore a concept if any exist
     if concepts:
         concept_name = concepts[0]
         print(f"\nExploring concept: {concept_name}")
@@ -148,7 +143,6 @@ def test_kg_stats(engine):
     """Test KG stats function."""
     print_header("KG Stats")
 
-    # This tests scope-specific stats
     stats = kg_get_stats(engine)
     print_result("Stats for current scope", stats)
 

@@ -11,18 +11,11 @@ Handles:
     - MLX conversions → convert + upload
 
 Usage:
-    # Upload an adapter
     python scripts/publish_model.py --adapter adapters/npcsh_sft_qwen3 --repo-id myuser/npcsh-qwen3-sft
-
-    # Merge, export GGUF, and upload both
     python scripts/publish_model.py --adapter adapters/npcsh_sft_qwen3 --repo-id myuser/npcsh-qwen3 \
         --merge --gguf --quantization Q4_K_M
-
-    # Full pipeline: merge → GGUF → MLX → upload everything
     python scripts/publish_model.py --adapter adapters/npcsh_sft_qwen3 --repo-id myuser/npcsh-qwen3 \
         --merge --gguf --mlx --quantization Q4_K_M
-
-    # Upload existing merged model directly
     python scripts/publish_model.py --model models/npcsh_sft_qwen3_merged --repo-id myuser/npcsh-qwen3-full
 """
 
@@ -36,7 +29,6 @@ from pathlib import Path
 def _infer_name_from_path(path: str) -> str:
     """Derive a clean name from a path like adapters/npcsh_sft_qwen3."""
     name = Path(path).name
-    # Strip one common suffix, most specific first
     for suffix in ["_merged", "_gguf", "_mlx", "_sft", "_dpo", "_grpo", "_ppo"]:
         if name.endswith(suffix):
             return name[: -len(suffix)]
@@ -54,11 +46,11 @@ tags:
   - {meta.get('base_model', 'unknown')}
 ---
 
-# {meta.get('name', 'npcsh Model')}
+{meta.get('name', 'npcsh Model')}
 
 This is a fine-tuned model for [npcsh](https://github.com/npcsh/npcsh) — the NPC shell for LLM-powered command execution.
 
-## Details
+Details
 
 | Attribute | Value |
 |-----------|-------|
@@ -71,22 +63,22 @@ This is a fine-tuned model for [npcsh](https://github.com/npcsh/npcsh) — the N
 | Epochs | `{meta.get('epochs', 'unknown')}` |
 | LR | `{meta.get('lr', 'unknown')}` |
 
-## Usage
+Usage
 
-### With npcsh (MLX)
+With npcsh (MLX)
 
 ```bash
 export NPCSH_CHAT_MODEL="{meta.get('repo_id', '')}"
 export NPCSH_CHAT_PROVIDER="huggingface"
 ```
 
-### With Ollama (GGUF)
+With Ollama (GGUF)
 
 ```bash
 ollama create npcsh -f {meta.get('gguf_file', 'model.gguf')}
 ```
 
-### With transformers (Python)
+With transformers (Python)
 
 ```python
 from peft import PeftModel
@@ -96,7 +88,7 @@ base = AutoModelForCausalLM.from_pretrained("{meta.get('base_model', '')}")
 model = PeftModel.from_pretrained(base, "{meta.get('repo_id', '')}")
 ```
 
-## Training Data
+Training Data
 
 Trained on npcsh benchmark traces collected from local task execution.
 """
@@ -130,9 +122,8 @@ def main():
 
     source_path = args.adapter or args.model
     base_model = args.base_model
-    artifacts = []  # list of (local_path, repo_subfolder, description)
+    artifacts = []
 
-    # Load metadata from adapter if available
     meta = {}
     adapter_config_path = Path(source_path) / "adapter_config.json"
     if adapter_config_path.exists():
@@ -152,12 +143,10 @@ def main():
     meta["name"] = _infer_name_from_path(source_path)
     meta["repo_id"] = args.repo_id
 
-    # 1. Adapter upload
     if args.adapter:
         print(f"\n[1/4] Adapter: {args.adapter}")
         artifacts.append((args.adapter, "adapter", "LoRA adapter"))
 
-    # 2. Merge full model
     merged_path = None
     if args.merge and args.adapter:
         print("\n[2/4] Merging adapter into full model...")
@@ -171,7 +160,6 @@ def main():
         artifacts.append((merged_path, "full", "Merged full model"))
         meta["merged_path"] = merged_path
 
-    # 3. GGUF export
     gguf_path = None
     if args.gguf and (args.adapter or merged_path):
         print(f"\n[3/4] Exporting GGUF ({args.quantization})...")
@@ -187,7 +175,6 @@ def main():
         meta["gguf_file"] = Path(gguf_path).name
         artifacts.append((gguf_path, "gguf", f"GGUF {args.quantization}"))
 
-    # 4. MLX conversion
     mlx_path = None
     if args.mlx and args.adapter:
         print("\n[4/4] Converting to MLX...")
@@ -199,7 +186,6 @@ def main():
         _write_model_card(mlx_path, {**meta, "format": "mlx"})
         artifacts.append((mlx_path, "mlx", "MLX adapter"))
 
-    # Upload all artifacts
     if args.skip_upload:
         print("\n[skip-upload] Prepared artifacts:")
         for path, subfolder, desc in artifacts:

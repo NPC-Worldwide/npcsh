@@ -42,7 +42,6 @@ def evaluate_model(
 
     print(f"\nEvaluating {model_path} ({eval_provider}) on up to {num_tasks} tasks...")
 
-    # If we have an adapter path, expose it so the provider can load it
     if model_path != eval_model:
         os.environ["NPCSH_MLX_ADAPTER_PATH"] = str(model_path)
 
@@ -53,7 +52,6 @@ def evaluate_model(
         timeout=90,
     )
 
-    # Print per-task results
     for r in report.results[:num_tasks]:
         status = "PASS" if r.passed else "FAIL"
         print(

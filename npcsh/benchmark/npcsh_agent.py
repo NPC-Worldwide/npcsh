@@ -29,9 +29,8 @@ class NpcshAgent(BaseInstalledAgent):
             -m anthropic/claude-sonnet-4-20250514 -n 4
     """
 
-    SUPPORTS_ATIF = True  # Agent Trajectory Interchange Format
+    SUPPORTS_ATIF = True
 
-    # Root of the npcsh source tree (two levels up from this file)
     _NPCSH_SRC = Path(__file__).resolve().parent.parent.parent
 
     def __init__(self, logs_dir: Path = None, model_name: str = None, logger=None, **kwargs):
@@ -54,10 +53,8 @@ class NpcshAgent(BaseInstalledAgent):
         npcsh_src = self._NPCSH_SRC
         npcpy_src = npcsh_src.parent / "npcpy"
 
-        # Create /src in container
         await environment.exec(command="mkdir -p /src")
 
-        # Copy source to temp dir excluding .git and caches
         def _copy_clean(src, name):
             tmp = Path(tempfile.mkdtemp()) / name
             shutil.copytree(
@@ -88,7 +85,6 @@ class NpcshAgent(BaseInstalledAgent):
         """Run instruction through npcsh -c, which handles everything."""
         escaped_instruction = shlex.quote(instruction)
 
-        # Forward env vars into the container — npcsh reads these directly
         env_vars = []
         for key in [
             "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
@@ -99,7 +95,6 @@ class NpcshAgent(BaseInstalledAgent):
             if val:
                 env_vars.append(f'{key}="{val}"')
 
-        # Model/provider from Harbor's model_name (e.g. "ollama/phi4")
         model_name = self.model_name or ""
         if "/" in model_name:
             provider, model = model_name.split("/", 1)
@@ -115,7 +110,6 @@ class NpcshAgent(BaseInstalledAgent):
         if provider == "ollama":
             if "OLLAMA_HOST" not in os.environ:
                 env_vars.append('OLLAMA_HOST="http://host.docker.internal:11434"')
-            # Use 16k context for ollama models to avoid losing instructions
             env_vars.append('NPCSH_OLLAMA_NUM_CTX=16384')
 
         env_prefix = " ".join(env_vars)

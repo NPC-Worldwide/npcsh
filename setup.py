@@ -198,16 +198,13 @@ def conflicts_with_system(name):
 
 
 
-# Auto-discover NPCs and bin jinxes for console_scripts entry points
 npc_team_dir = Path(__file__).parent / "npcsh" / "npc_team"
 npc_entries = [f.stem for f in npc_team_dir.glob("*.npc")] if npc_team_dir.exists() else []
 jinx_bin_dir = npc_team_dir / "jinxes" / "bin"
 jinx_entries = [f.stem for f in jinx_bin_dir.glob("*.jinx")] if jinx_bin_dir.exists() else []
 
-# Filter out jinx names that would shadow system executables
 jinx_entries = [name for name in jinx_entries if not conflicts_with_system(name)]
 
-# NPC entries use npcsh:main, bin jinx entries use npc:jinx_main
 npc_dynamic = [f"{name}=npcsh.npcsh:main" for name in npc_entries]
 jinx_dynamic = [f"{name}=npcsh.npc:jinx_main" for name in jinx_entries]
 dynamic_entries = npc_dynamic + jinx_dynamic
@@ -249,16 +246,14 @@ base_requirements = [
     "mcp"
 ]
 
-# API integration requirements
 api_requirements = [
     "anthropic",
     "openai",
-    "ollama", 
+    "ollama",
     "google-generativeai",
     "google-genai",
 ]
 
-# Local ML/AI requirements
 local_requirements = [
     "sentence_transformers",
     "opencv-python",
@@ -271,7 +266,6 @@ local_requirements = [
     "darts",
 ]
 
-# Voice/Audio requirements
 voice_requirements = [
     "pyaudio",
     "gtts",
@@ -281,7 +275,6 @@ voice_requirements = [
     "pyttsx3",
 ]
 
-# Benchmark requirements (Terminal-Bench integration)
 benchmark_requirements = [
     "harbor",
     "terminal-bench",
@@ -289,7 +282,6 @@ benchmark_requirements = [
 
 extra_files = package_files("npcsh/npc_team/")
 
-# Build package_data dict for npc_team files
 def get_package_data_patterns():
     """Get patterns for all files in npc_team directory."""
     patterns = []
@@ -307,7 +299,7 @@ setup(
     name="npcsh",
     version=_version,
     packages=find_packages(exclude=["tests*"]),
-    install_requires=base_requirements,  # Only install base requirements by default
+    install_requires=base_requirements,
     extras_require={
         "lite": api_requirements,
         "local": local_requirements,
@@ -317,13 +309,10 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            # Main entry points
             "npcsh=npcsh.launcher:main",
             "npc=npcsh.npc:main",
-            # Benchmark runner
             "npcsh-bench=npcsh.benchmark.runner:main",
             "npcsh-job=npcsh.job_runner:main",
-            # Dynamic entry points from data files (NPCs and bin/ jinxes)
         ] + dynamic_entries,
     },
     author="Christopher Agostino",

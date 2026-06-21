@@ -14,7 +14,6 @@ def parse_command_safely(cmd: str) -> List[str]:
     try:
         return shlex.split(cmd)
     except ValueError:
-        # Handle unmatched quotes, etc
         return cmd.split()
 
 
@@ -59,19 +58,16 @@ def parse_generic_command_flags(parts: List[str]) -> tuple:
 
 def _try_convert_type(value: str):
     """Try to convert string value to appropriate Python type"""
-    # Try int
     try:
         return int(value)
     except ValueError:
         pass
 
-    # Try float
     try:
         return float(value)
     except ValueError:
         pass
 
-    # Try bool
     if value.lower() in ('true', 'yes', '1'):
         return True
     if value.lower() in ('false', 'no', '0'):

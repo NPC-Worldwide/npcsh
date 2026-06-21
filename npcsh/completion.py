@@ -69,7 +69,6 @@ def get_file_completions(text: str) -> List[str]:
     else:
         search_path = text
 
-    # Get directory to search
     if os.path.isdir(search_path):
         dir_path = search_path
         name_prefix = ""
@@ -101,18 +100,15 @@ def get_slash_commands(state: Any, router: Any) -> List[str]:
     """
     commands = set()
 
-    # Built-in commands and modes
     commands.update([
         '/help', '/set', '/agent', '/chat', '/cmd',
         '/sq', '/quit', '/exit', '/clear',
     ])
 
-    # Team jinxes
     if state.team and hasattr(state.team, 'jinxes_dict'):
         for name in state.team.jinxes_dict:
             commands.add(f'/{name}')
 
-    # Router jinxes - use get_slash_commands() if available, fallback to jinx_routes
     if router and hasattr(router, 'get_slash_commands'):
         commands.update(router.get_slash_commands())
     elif router and hasattr(router, 'jinx_routes'):
@@ -125,15 +121,13 @@ def get_slash_commands(state: Any, router: Any) -> List[str]:
 def get_jinx_commands(state: Any, router: Any) -> List[str]:
     """Get list of jinx commands WITHOUT leading slash (first-class shell commands)."""
     commands = set()
-    
-    # Team jinxes
+
     if state.team and hasattr(state.team, 'jinxes_dict'):
         commands.update(state.team.jinxes_dict.keys())
-    
-    # Router jinxes
+
     if router and hasattr(router, 'jinx_routes'):
         commands.update(router.jinx_routes.keys())
-    
+
     return sorted(commands)
 
 
@@ -141,16 +135,13 @@ def get_npc_mentions(state: Any) -> List[str]:
     """Get list of available @npc mentions"""
     npcs = set()
 
-    # Team NPCs
     if state.team and hasattr(state.team, 'npcs'):
         for name in state.team.npcs:
             npcs.add(f'@{name}')
 
-    # Also add forenpc if available
     if state.team and hasattr(state.team, 'forenpc') and state.team.forenpc:
         npcs.add(f'@{state.team.forenpc.name}')
 
-    # Default NPCs if team not loaded yet
     if not npcs:
         npcs.update(['@sibiji', '@guac', '@corca', '@kadiefa', '@plonk', '@forenpc'])
 
@@ -159,7 +150,6 @@ def get_npc_mentions(state: Any) -> List[str]:
 
 def is_command_position(buffer: str, begidx: int) -> bool:
     """Check if we're completing a command (vs argument)"""
-    # If we're at the start or after a pipe, it's command position
     before = buffer[:begidx].strip()
     return not before or before.endswith('|')
 
@@ -177,34 +167,26 @@ def make_completer(shell_state: Any, router: Any):
             buffer = readline.get_line_buffer()
             begidx = readline.get_begidx()
 
-            # Build completion options
             options = []
 
-            # Refresh slash commands and NPC mentions each time (they may change)
             slash_commands = get_slash_commands(shell_state, router)
             jinx_commands = get_jinx_commands(shell_state, router)
             npc_mentions = get_npc_mentions(shell_state)
 
             if text.startswith('/'):
-                # Slash command completion - show slash-prefixed commands
                 options = [c for c in slash_commands if c.startswith(text)]
 
             elif text.startswith('@'):
-                # @npc mention completion
                 options = [n for n in npc_mentions if n.startswith(text)]
 
             elif text.startswith('~') or '/' in text or text.startswith('.'):
-                # File path completion
                 options = get_file_completions(text)
 
             elif is_command_position(buffer, begidx):
-                # Command completion - include both executables AND jinx commands (first-class)
                 options = [e for e in executables if e.startswith(text)]
-                # Add jinx commands without slash (they can be run directly)
                 options.extend([j for j in jinx_commands if j.startswith(text)])
 
             else:
-                # Default to file completion
                 options = get_file_completions(text)
 
             if state < len(options):
@@ -221,5 +203,4 @@ def readline_safe_prompt(prompt: str) -> str:
     """Make prompt safe for readline (escape ANSI codes)"""
     if readline is None:
         return prompt
-    # Wrap non-printing characters
     return prompt.replace('\x1b[', '\x01\x1b[').replace('m', 'm\x02')

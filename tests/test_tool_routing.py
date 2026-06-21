@@ -10,7 +10,6 @@ def stub_available_models(monkeypatch):
 
 
 def test_model_supports_tool_calls_uses_heuristics(monkeypatch):
-    # Mock ollama module with a fake show() that returns capabilities per model.
     import types
 
     def fake_show(model):
@@ -28,7 +27,6 @@ def test_react_flow_used_for_non_tool_models(tmp_path, monkeypatch):
 
     def fake_check_llm_command(*args, **kwargs):
         calls["check"] += 1
-        # Simulate the real check_llm_command which appends user message
         msgs = list(kwargs.get("messages", []))
         command = args[0] if args else kwargs.get("command", "")
         if command:
@@ -45,12 +43,10 @@ def test_react_flow_used_for_non_tool_models(tmp_path, monkeypatch):
     )
 
     assert calls["check"] == 1
-    # Output can be a string or dict with 'output' key
     if isinstance(output, dict):
         assert output.get("output") == "react-path"
     else:
         assert output == "react-path"
-    # user message should be appended
     assert updated_state.messages and updated_state.messages[0]["role"] == "user"
 
 
@@ -93,7 +89,6 @@ def test_tool_call_flow_for_tool_capable_models(tmp_path, monkeypatch):
 
     assert calls["llm"] == 1
     assert calls["check"] == 0
-    # Output can be a string or dict with 'output' key
     if isinstance(output, dict):
         assert output.get("output") == "tool-route"
     else:

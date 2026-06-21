@@ -74,7 +74,6 @@ def fetch_jinx_executions(db_path: str, since: str):
 
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    # Discover actual columns since schema varies across installs
     cursor.execute("PRAGMA table_info(jinx_executions)")
     cols = {c[1] for c in cursor.fetchall()}
     if "jinx_name" not in cols:
@@ -102,7 +101,6 @@ def fetch_jinx_executions(db_path: str, since: str):
 
 def summarize_conversations(conversations: list, executions: list) -> str:
     """Build a compact summary for the LLM."""
-    # Group by session
     sessions = []
     current = []
     for c in sorted(conversations, key=lambda x: x["timestamp"]):
@@ -115,7 +113,6 @@ def summarize_conversations(conversations: list, executions: list) -> str:
 
     lines = [f"Analyzed {len(conversations)} conversation turns across {len(sessions)} sessions."]
 
-    # Tool usage summary
     tool_stats = {}
     for e in executions:
         name = e.get("jinx_name", "unknown")
@@ -128,7 +125,6 @@ def summarize_conversations(conversations: list, executions: list) -> str:
         for name, stats in sorted(tool_stats.items(), key=lambda x: -x[1]["total"])[:10]:
             lines.append(f"  {name}: {stats['total']} calls")
 
-    # Sample user intents
     user_msgs = [c for c in conversations if c["role"] == "user"]
     lines.append(f"\nSample user requests ({min(10, len(user_msgs))} shown):")
     for m in user_msgs[:10]:
@@ -159,7 +155,6 @@ Return ONLY valid JSON."""
         from npcpy.llm_funcs import get_llm_response
         response = get_llm_response(prompt, model=model, provider="ollama", format="json")
         text = response.get("response", "")
-        # Extract JSON block
         if "{" in text and "}" in text:
             start = text.index("{")
             end = text.rindex("}") + 1
