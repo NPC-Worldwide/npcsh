@@ -53,8 +53,14 @@ def _find_rust_binary():
         if found and _binary_matches_host(found):
             return found
 
-    # 2. Package-local build artifact (dev workflow)
+    # 2. Installed package binary (wheel / pip install)
     pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ext = ".exe" if platform.system() == "Windows" else ""
+    installed = os.path.join(pkg_dir, "bin", f"npcrs{ext}")
+    if os.path.isfile(installed) and _binary_matches_host(installed):
+        return installed
+
+    # 3. Package-local build artifact (dev workflow)
     local_release = os.path.join(pkg_dir, "rust", "target", "release", "npcrsh")
     if os.path.isfile(local_release) and _binary_matches_host(local_release):
         return local_release
