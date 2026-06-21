@@ -44,7 +44,6 @@ def load_toolcall_records(csv_dir: str, hard_only: bool = False):
                 trace = parse_trace(row.get("output", ""))
                 if not trace:
                     continue
-                # Use task instruction if trace instruction is missing
                 instruction = trace["instruction"]
                 if not instruction and tid in task_instructions:
                     instruction = task_instructions[tid]

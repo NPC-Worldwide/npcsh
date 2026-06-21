@@ -22,14 +22,12 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # Setup shell to get team and default NPC
     command_history, team, default_npc = setup_shell()
 
     if not team or "computer_use" not in team.jinxes_dict:
         print("Error: plonk jinx not found. Ensure npc_team/jinxes/modes/plonk.jinx exists.")
         sys.exit(1)
 
-    # Build context for jinx execution
     context = {
         "npc": default_npc,
         "team": team,
@@ -41,7 +39,6 @@ def main():
         "debug": not args.no_debug,
     }
 
-    # Execute the jinx
     plonk_jinx = team.jinxes_dict["computer_use"]
     result = plonk_jinx.execute(context=context, npc=default_npc)
 

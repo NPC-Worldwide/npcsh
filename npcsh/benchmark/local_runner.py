@@ -38,9 +38,6 @@ SUPPORTED_FRAMEWORKS = (
     "npc-claude", "npc-codex", "npc-gemini", "npc-opencode",
 )
 
-# Categories that exercise npcsh-specific primitives. Their verify_cmds only
-# check artifacts, so running them on other frameworks just measures script
-# writing — not what they claim to measure.
 NPCSH_SPECIFIC_CATEGORIES = frozenset({
     "delegation", "tool-chain", "image-gen", "audio-gen", "web-search",
 })
@@ -129,13 +126,9 @@ def setup_bench_env():
     except ImportError:
         pass
 
-    # Redirect stdin to /dev/null so input() calls in python jinx get EOF
-    # instead of blocking forever.
     import sys
     sys.stdin = open(os.devnull, 'r')
 
-    # Set a hard timeout on the ollama HTTP client so requests can't block forever.
-    # ollama.chat() is bound to a module-level Client whose httpx timeout is None (infinite).
     try:
         import ollama as _ollama
         import httpx
@@ -164,20 +157,16 @@ def clean_task_artifacts(task: dict = None):
     if task:
         for field in ("verify_cmd", "instruction"):
             text = task.get(field, "")
-            # Match /tmp/something up to whitespace or quotes
             for m in re.findall(r'/tmp/[\w.*/-]+', text):
-                # Strip trailing punctuation that leaks from shell syntax
                 clean = m.rstrip(")'\"`;,")
                 paths.add(clean)
 
-    # Always clean common dirs that tasks create
     for d in ["/tmp/mydir", "/tmp/myrepo", "/tmp/project", "/tmp/rentest",
               "/tmp/webapp", "/tmp/mathpkg"]:
         shutil.rmtree(d, ignore_errors=True)
 
     for p in paths:
         if "*" in p:
-            # Glob patterns like /tmp/rentest/*.md
             import glob
             for f in glob.glob(p):
                 try:
@@ -194,7 +183,6 @@ def clean_task_artifacts(task: dict = None):
                 pass
 
 
-# Jinxes that require an interactive user — drop for non-interactive bench runs.
 _BENCH_DROP_JINXES = {"ask_form"}
 
 
@@ -244,7 +232,6 @@ def _kill_child_processes():
                 child.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
-        # Reap zombies so they don't accumulate
         for child in current.children(recursive=True):
             try:
                 if child.status() == psutil.STATUS_ZOMBIE:
@@ -254,7 +241,6 @@ def _kill_child_processes():
                 pass
     except ImportError:
         pass
-    # Also reap at OS level
     try:
         while True:
             pid, _ = os.waitpid(-1, os.WNOHANG)
@@ -280,14 +266,11 @@ def _reset_ollama_client():
         import inspect
 
         old = _ollama.chat.__self__
-        # Close old httpx pool — aborts any in-flight TCP stream
         try:
             old._client.close()
         except Exception:
             pass
-        # Create a fresh Client (makes its own httpx client internally)
         new = _ollama.Client(timeout=httpx.Timeout(90.0))
-        # Rebind every module-level function that was bound to the old client
         for name, obj in inspect.getmembers(_ollama):
             if hasattr(obj, '__self__') and obj.__self__ is old:
                 setattr(_ollama, name, getattr(new, name))
@@ -446,24 +429,18 @@ def _run_attempt(instruction: str, state, command_history,
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
-    # Poll so we can kill the spinner the instant the deadline hits —
-    # a single blocking join leaves the spinner running the whole time.
     deadline_at = time.time() + attempt_timeout
     while t.is_alive() and time.time() < deadline_at:
         t.join(timeout=1)
 
     if t.is_alive():
         print(f"  TIMEOUT after {attempt_timeout:.0f}s — killing", flush=True)
-        # Kill spinner FIRST so it stops writing to stdout immediately
         spinner = _ui._current_spinner
         if spinner is not None:
             spinner._stop = True
             _ui._current_spinner = None
         _kill_child_processes()
         _kill_child_processes()
-        # Abort the stale ollama HTTP request by closing and recreating the
-        # httpx connection pool.  Without this, the in-flight request blocks
-        # ollama's inference queue and every subsequent task hangs behind it.
         _reset_ollama_client()
         state.messages = state.messages[:msg_count_before]
         final_state = state
@@ -493,7 +470,6 @@ def _run_attempt(instruction: str, state, command_history,
         output_str = str(output)
         print(output_str)
 
-    # Capture full conversation trace
     new_msgs = final_state.messages[msg_count_before:]
     trace_parts = []
     for msg in new_msgs:
@@ -536,7 +512,6 @@ def run_task(task: dict,
     all_outputs: list = []
     last_output = ""
 
-    # Every task gets its own temp dir — no cross-task pollution possible.
     task_dir = tempfile.mkdtemp(prefix=f"npcsh_bench_{task_id}_")
     os.chdir(task_dir)
 
@@ -556,7 +531,6 @@ def run_task(task: dict,
         attempt += 1
         clean_task_artifacts(task)
 
-        # Run setup_cmd — bounded by remaining time, pinned to task_dir
         if setup_cmd:
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -630,14 +604,12 @@ Try a different approach. Do not search the web about this."""
         if remaining <= 0:
             break
 
-        # Filesystem sync — only if we have time
         time.sleep(min(2, remaining))
 
         remaining = deadline - time.time()
         if remaining <= 0:
             break
 
-        # Verify — bounded by remaining time, pinned to task_dir
         try:
             verify = subprocess.run(
                 ["bash", "-c", verify_cmd],
@@ -660,7 +632,6 @@ Try a different approach. Do not search the web about this."""
 
     duration = time.time() - start
 
-    # Clean up the task's temp directory
     import shutil
     shutil.rmtree(task_dir, ignore_errors=True)
 
@@ -692,7 +663,6 @@ def run_benchmark(
                        framework=framework)
     report = BenchmarkReport(model=model, provider=provider, total=len(tasks))
 
-    # Resume: load completed tasks from checkpoint CSV
     import csv as csv_mod
     csv_mod.field_size_limit(10**7)
     report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
@@ -763,7 +733,6 @@ def run_benchmark(
 
         report.duration += result.duration
 
-        # Track by category
         cat = task["category"]
         if cat not in report.by_category:
             report.by_category[cat] = {"total": 0, "passed": 0}
@@ -771,7 +740,6 @@ def run_benchmark(
         if result.passed:
             report.by_category[cat]["passed"] += 1
 
-        # Track by difficulty
         diff = task["difficulty"]
         if diff not in report.by_difficulty:
             report.by_difficulty[diff] = {"total": 0, "passed": 0}
@@ -779,7 +747,6 @@ def run_benchmark(
         if result.passed:
             report.by_difficulty[diff]["passed"] += 1
 
-        # Save after every task so we don't lose progress
         report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
         report_dir.mkdir(parents=True, exist_ok=True)
         safe_model = model.replace("/", "_")
@@ -792,7 +759,6 @@ def run_benchmark(
         ])
         df.to_csv(checkpoint_file, index=False)
 
-    # Summary
     print("\n" + "=" * 60)
     print("RESULTS")
     print("=" * 60)
@@ -809,7 +775,6 @@ def run_benchmark(
     for diff, stats in sorted(report.by_difficulty.items()):
         print(f"  {diff:<10} {stats['passed']}/{stats['total']}")
 
-    # Save final report as CSV
     report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
     report_dir.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -823,7 +788,6 @@ def run_benchmark(
     ])
     df.to_csv(report_file, index=False)
 
-    # Remove checkpoint file
     safe_model = model.replace("/", "_")
     checkpoint = report_dir / f"{framework}_{provider}_{safe_model}_running.csv"
     if checkpoint.exists():
@@ -860,7 +824,6 @@ def compare_models(
         )
         all_results[key] = report
 
-    # Comparison table
     print(f"\n{'='*60}", flush=True)
     print("MODEL COMPARISON", flush=True)
     print(f"{'='*60}", flush=True)
@@ -880,7 +843,6 @@ def compare_models(
             flush=True,
         )
 
-    # Category breakdown per model
     all_cats = set()
     for r in all_results.values():
         all_cats.update(r.by_category.keys())
@@ -930,7 +892,6 @@ def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
     all_tasks = load_tasks(framework=framework)
     task_lookup = {t["id"]: t for t in all_tasks}
 
-    # Build index: task_id -> row index
     row_index = {}
     for i, r in enumerate(rows):
         row_index[r["task_id"]] = i
@@ -955,14 +916,12 @@ def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
         else:
             print(f"    FAIL ({result.duration:.1f}s)", flush=True)
 
-        # Overwrite the row
         idx = row_index[tid]
         rows[idx]["passed"] = str(result.passed)
         rows[idx]["duration"] = str(round(result.duration, 1))
         rows[idx]["error"] = result.error or ""
         rows[idx]["output"] = result.npcsh_output
 
-        # Save after each task
         df = pd.DataFrame(rows)
         df.to_csv(csv_path, index=False)
 
@@ -997,7 +956,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Parse --think: "true"->True, "false"->False, None->None (model default)
     think_val = None
     if args.think is not None:
         if args.think.lower() in ("true", "1", "yes"):
@@ -1005,7 +963,7 @@ def main():
         elif args.think.lower() in ("false", "0", "no"):
             think_val = False
         else:
-            think_val = args.think  # pass through strings like "low"/"medium"/"high"
+            think_val = args.think
 
     if args.rerun_failed:
         rerun_failed(

@@ -29,12 +29,9 @@ def parse_trace(trace_str: str):
         instruction = user_match.group(1).strip()
         instruction = re.sub(r"User Provided Context:.*", "", instruction, flags=re.DOTALL).strip()
 
-    # Extract assistant content
     assistant_match = re.search(r"\[assistant\] (.*?) (?:\[tool_call\]|\[user\]|\Z)", trace, re.DOTALL)
     response = assistant_match.group(1).strip() if assistant_match else ""
 
-    # Extract tool calls from [tool_call] markers and append in Qwen3 format.
-    # Actual trace format: [tool_call] name({"arg": "val", ...}) | [tool] result
     import json
     for m in re.finditer(r"\[tool_call\]\s+(\w+)\((\{.*?\})\)", trace):
         fname = m.group(1)
@@ -48,18 +45,13 @@ def parse_trace(trace_str: str):
             except (ValueError, SyntaxError):
                 args = {}
 
-        # Normalize tool names to match actual npcsh jinx registry.
-        # `sh` appears in traces but the real jinx is `shell`.
-        # `py` / `python` are not registered jinxes — map to `shell`.
         if fname == "sh":
             fname = "shell"
         elif fname in ("py", "python"):
             fname = "shell"
-            # Map python_code parameter to bash_command if present
             if "python_code" in args:
                 args["bash_command"] = args.pop("python_code")
         elif fname in ("Charlie", "Alice", "Bob", "Diana", "Eve", "Frank", "Alex", "chat"):
-            # Hallucinated / non-existent jinx names — skip
             continue
 
         tc = json.dumps({"name": fname, "arguments": args}, ensure_ascii=False)
@@ -154,7 +146,6 @@ def build_grpo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = Fals
         base_rate = task_rates.get(tid, 0.5)
         if hard_only and base_rate >= 0.5:
             continue
-        # Difficulty weight: harder tasks get higher reward magnitude
         difficulty_weight = 1.0 / (base_rate + 0.1)
         reward = (1.0 if rec["passed"] else -0.5) * difficulty_weight
         if rec["passed"]:

@@ -35,22 +35,17 @@ def build_dockerfile(config, **kwargs):
 
 WORKDIR /app
 
-# Install npcsh
 RUN pip install --no-cache-dir npcsh
 
-# Copy the NPC team
 COPY {os.path.basename(team_path)} /app/npc_team
 
-# Expose the port
 EXPOSE {port}
 
-# Set environment variables
 ENV NPCSH_CHAT_MODEL=
 ENV NPCSH_CHAT_PROVIDER=
 ENV OPENAI_API_KEY=""
 ENV ANTHROPIC_API_KEY=""
 
-# Run the serve command
 CMD ["npc", "serve", "--port", "{port}"]
 '''
     return dockerfile
@@ -99,12 +94,8 @@ services:
     with open(compose_path, "w") as f:
         f.write(compose)
 
-    env_example = """# NPC Team Environment Variables
-# Set your model and provider (defaults to npcsh config if unset)
-NPCSH_CHAT_MODEL=
+    env_example = """NPCSH_CHAT_MODEL=
 NPCSH_CHAT_PROVIDER=
-
-# API Keys (set at least one based on your provider)
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
@@ -134,7 +125,6 @@ Files generated:
 To deploy:
   cd {output_dir}
   cp .env.example .env
-  # Edit .env with your API keys
   docker-compose up -d
 
 API will be available at http://localhost:{port}

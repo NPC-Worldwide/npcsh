@@ -16,7 +16,6 @@ def test_jinx_yaml_valid(jinx_file):
     with open(jinx_file) as f:
         content = f.read()
 
-    # Skip files with Jinja control flow - they're processed before YAML parsing
     if '{%' in content:
         pytest.skip("Jinx contains Jinja templates - requires preprocessing")
 
@@ -32,7 +31,6 @@ def test_jinx_has_required_fields(jinx_file):
     with open(jinx_file) as f:
         content = f.read()
 
-    # Skip files with Jinja control flow
     if '{%' in content:
         pytest.skip("Jinx contains Jinja templates - requires preprocessing")
 

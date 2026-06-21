@@ -31,7 +31,6 @@ from pathlib import Path
 from typing import List, Optional
 
 
-# Categories that don't require npcsh-specific jinxes
 FRAMEWORK_AGNOSTIC_CATEGORIES = {
     "shell", "file-ops", "python", "data", "system",
     "text", "debug", "git", "multi-step", "scripting",
@@ -64,20 +63,16 @@ def clean_task_artifacts():
     """Remove /tmp files created by tasks so runs don't bleed into each other."""
     import shutil
     patterns = [
-        # shell
         "/tmp/result.txt", "/tmp/pyfiles.txt", "/tmp/uname.txt", "/tmp/nums.txt",
         "/tmp/dirs.txt", "/tmp/comment_count.txt", "/tmp/largest.txt",
         "/tmp/now.txt", "/tmp/ext_count.txt", "/tmp/big_etc.txt",
-        # file-ops
         "/tmp/hello.txt", "/tmp/person.json", "/tmp/config.ini", "/tmp/env.sh",
         "/tmp/colors.txt", "/tmp/requirements.txt", "/tmp/docker-compose.yml",
         "/tmp/Makefile",
-        # python
         "/tmp/fib.py", "/tmp/rev.py", "/tmp/calc.py", "/tmp/wordcount.py",
         "/tmp/sample.txt", "/tmp/wc_result.json", "/tmp/fizzbuzz.py",
         "/tmp/even.py", "/tmp/palindrome.py", "/tmp/stats.py",
         "/tmp/matrix.py", "/tmp/tree.py",
-        # data
         "/tmp/data.csv", "/tmp/analyze.py", "/tmp/stats.json",
         "/tmp/scores.csv", "/tmp/inventory.json", "/tmp/total.py",
         "/tmp/books.json", "/tmp/temps.csv", "/tmp/convert.py", "/tmp/temps_f.csv",
@@ -86,12 +81,10 @@ def clean_task_artifacts():
         "/tmp/users_a.json", "/tmp/users_b.json", "/tmp/merge.py",
         "/tmp/merged_users.json", "/tmp/weather.csv", "/tmp/weather_report.py",
         "/tmp/weather_report.txt",
-        # system
         "/tmp/sysinfo.txt", "/tmp/env_info.txt", "/tmp/path_vars.txt",
         "/tmp/proc_count.txt", "/tmp/disk_free.txt", "/tmp/usernames.txt",
         "/tmp/uptime.txt", "/tmp/top_mem.txt", "/tmp/home_var.txt",
         "/tmp/sys_summary.txt",
-        # text
         "/tmp/log.txt", "/tmp/errors.txt", "/tmp/fruits.txt", "/tmp/sorted_fruits.txt",
         "/tmp/words.txt", "/tmp/unique_counts.txt",
         "/tmp/mixed_case.txt", "/tmp/lower.txt",
@@ -101,15 +94,12 @@ def clean_task_artifacts():
         "/tmp/numbers.txt", "/tmp/even_numbers.txt",
         "/tmp/csv_raw.txt", "/tmp/table.txt",
         "/tmp/paragraph.txt", "/tmp/word_stats.txt",
-        # debug
         "/tmp/broken.py", "/tmp/buggy.py",
         "/tmp/fix_indent.py", "/tmp/fix_loop.py", "/tmp/fix_dict.py",
         "/tmp/fix_recursion.py", "/tmp/fix_sort.py", "/tmp/fix_import.py",
         "/tmp/fix_class.py", "/tmp/fix_file.py", "/tmp/debug_test.txt",
-        # git
         "/tmp/git_history.txt", "/tmp/my_diff.txt", "/tmp/status_output.txt",
         "/tmp/stash_list.txt",
-        # multi-step
         "/tmp/report.txt", "/tmp/users.json",
         "/tmp/backup.sh", "/tmp/backup.tar.gz",
         "/tmp/todo.py", "/tmp/todos.txt",
@@ -119,29 +109,23 @@ def clean_task_artifacts():
         "/tmp/grades.csv", "/tmp/averages.py", "/tmp/averages.csv",
         "/tmp/test_mathpkg.py",
         "/tmp/log_analyzer.py", "/tmp/app.log", "/tmp/log_summary.json",
-        # scripting
         "/tmp/greet.sh", "/tmp/countdown.sh", "/tmp/fileinfo.sh",
         "/tmp/extension_count.sh", "/tmp/rename_ext.sh",
         "/tmp/even_odd.sh", "/tmp/monitor.sh", "/tmp/monitor_log.txt",
         "/tmp/largest_files.sh", "/tmp/csv2json.sh", "/tmp/test_convert.csv",
         "/tmp/converted.json", "/tmp/semver.sh",
-        # npcsh-specific: image-gen
         "/tmp/sunset.png", "/tmp/cat.png", "/tmp/generated.png",
         "/tmp/robot.png", "/tmp/city.png",
-        # npcsh-specific: audio-gen
         "/tmp/welcome.wav", "/tmp/welcome.mp3",
         "/tmp/pangram.wav", "/tmp/pangram.mp3",
         "/tmp/speech.wav", "/tmp/speech.mp3",
         "/tmp/haiku.wav", "/tmp/haiku.mp3",
         "/tmp/test_audio.wav", "/tmp/test_audio.mp3",
-        # npcsh-specific: web-search
         "/tmp/search_results.txt", "/tmp/linux_creator.txt",
         "/tmp/japan_pop.txt", "/tmp/python_year.txt", "/tmp/js_frameworks.txt",
-        # npcsh-specific: delegation
         "/tmp/primes.py", "/tmp/fib_research.py",
         "/tmp/sysreport.sh", "/tmp/sysreport.txt",
         "/tmp/sorter.py", "/tmp/validators.py",
-        # npcsh-specific: tool-chain
         "/tmp/languages.txt", "/tmp/rank.py", "/tmp/forest.png",
         "/tmp/img_info.py", "/tmp/capital.txt", "/tmp/capital_audio.wav",
         "/tmp/fetch_parse.py", "/tmp/sample_api.json", "/tmp/cheapest.txt",
@@ -188,7 +172,6 @@ def build_command(framework: str, instruction: str, model: str) -> tuple:
         env["ANTHROPIC_BASE_URL"] = "http://localhost:11434"
         env["DISABLE_AUTOUPDATER"] = "1"
         env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
-        # Remove nesting detection so we can launch from inside claude code
         env.pop("CLAUDECODE", None)
         env.pop("CLAUDE_CODE_ENTRYPOINT", None)
         return [
@@ -207,7 +190,6 @@ def kill_process_tree(pid):
         os.killpg(os.getpgid(pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
-    # Also try killing children via pkill
     try:
         subprocess.run(["pkill", "-9", "-P", str(pid)],
                        capture_output=True, timeout=5)
@@ -220,7 +202,7 @@ def run_task(task: dict, framework: str, model: str, timeout: int = 120) -> dict
     task_id = task["id"]
     instruction = task["instruction"]
     verify_cmd = task["verify_cmd"]
-    task_timeout = min(max(task.get("timeout", timeout), timeout), 300)  # cap at 5 min
+    task_timeout = min(max(task.get("timeout", timeout), timeout), 300)
     verify_timeout = task.get("verify_timeout", 30)
 
     clean_task_artifacts()
@@ -263,7 +245,6 @@ def run_task(task: dict, framework: str, model: str, timeout: int = 120) -> dict
 
     duration = time.time() - start
 
-    # Verify if no error
     if not error:
         time.sleep(0.5)
         try:
@@ -275,14 +256,12 @@ def run_task(task: dict, framework: str, model: str, timeout: int = 120) -> dict
         except Exception as e:
             error = f"verify error: {e}"
 
-    # Classify what the model did
     action_type = "none"
     if error:
         action_type = error
     elif passed:
         action_type = "executed"
     else:
-        # Check if model gave advice instead of acting
         lower_out = output.lower()
         if any(phrase in lower_out for phrase in [
             "i'm unable to", "i cannot", "i can't",
@@ -297,7 +276,6 @@ def run_task(task: dict, framework: str, model: str, timeout: int = 120) -> dict
         else:
             action_type = "attempted_but_failed"
 
-    # Truncate output for CSV readability
     output_short = output.strip().replace("\n", " | ")[:500]
 
     return {
@@ -323,7 +301,6 @@ def run_comparison(
 ) -> str:
     tasks = load_tasks(category=category, difficulty=difficulty, task_id=task_id)
 
-    # CSV output path
     report_dir = Path.home() / ".npcsh" / "benchmarks" / "cross_framework"
     report_dir.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -367,7 +344,6 @@ def run_comparison(
             pct = 100 * fw_pass / fw_total if fw_total else 0
             print(f"\n  {fw}: {fw_pass}/{fw_total} ({pct:.0f}%)", flush=True)
 
-    # Print summary comparison
     print(f"\n{'='*70}", flush=True)
     print(f"SUMMARY | model: {model} via ollama", flush=True)
     print(f"{'='*70}", flush=True)
@@ -388,7 +364,6 @@ def run_comparison(
         print(f"    crashed: {crashed}", flush=True)
         print(f"    timed out: {timeout_count}", flush=True)
 
-    # Per-task comparison table
     print(f"\n{'Task':<25}", end="", flush=True)
     for fw in frameworks:
         print(f" {fw:>12}", end="", flush=True)

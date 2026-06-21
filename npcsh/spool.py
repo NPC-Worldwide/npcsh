@@ -17,14 +17,12 @@ def main():
     parser.add_argument("--no-stream", action="store_true", help="Disable streaming")
     args = parser.parse_args()
 
-    # Setup shell to get team and default NPC
     command_history, team, default_npc = setup_shell()
 
     if not team or "spool" not in team.jinxes_dict:
         print("Error: spool jinx not found. Ensure npc_team/jinxes/modes/spool.jinx exists.")
         sys.exit(1)
 
-    # Build context for jinx execution
     context = {
         "npc": default_npc,
         "team": team,
@@ -35,7 +33,6 @@ def main():
         "stream": not args.no_stream,
     }
 
-    # Execute the jinx
     spool_jinx = team.jinxes_dict["spool"]
     result = spool_jinx.execute(context=context, npc=default_npc)
 

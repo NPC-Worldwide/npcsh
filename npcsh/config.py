@@ -4,19 +4,16 @@ npcsh configuration management
 import os
 import importlib.metadata
 
-# Version
+VERSION = ""
 try:
     VERSION = importlib.metadata.version("npcsh")
 except importlib.metadata.PackageNotFoundError:
     VERSION = "unknown"
 
-# Default paths
 DEFAULT_NPC_TEAM_PATH = "~/.npcsh/npc_team"
 PROJECT_NPC_TEAM_PATH = "./npc_team"
 READLINE_HISTORY_FILE = os.path.expanduser("~/.npcsh_history")
 
-# Environment defaults — NO hardcoded model/provider fallbacks.
-# If unset, the user must configure them via /model, /setup, or ~/.npcshrc.
 NPCSH_CHAT_MODEL = os.environ.get("NPCSH_CHAT_MODEL", "")
 NPCSH_CHAT_PROVIDER = os.environ.get("NPCSH_CHAT_PROVIDER", "")
 NPCSH_DB_PATH = os.path.expanduser(
@@ -40,11 +37,10 @@ NPCSH_STREAM_OUTPUT = os.environ.get("NPCSH_STREAM_OUTPUT", "0") == "1"
 NPCSH_API_URL = os.environ.get("NPCSH_API_URL", None)
 NPCSH_SEARCH_PROVIDER = os.environ.get("NPCSH_SEARCH_PROVIDER", "duckduckgo")
 NPCSH_BUILD_KG = os.environ.get("NPCSH_BUILD_KG", "1") != "0"
-NPCSH_EDIT_APPROVAL = os.environ.get("NPCSH_EDIT_APPROVAL", "off")  # off, interactive, auto
+NPCSH_EDIT_APPROVAL = os.environ.get("NPCSH_EDIT_APPROVAL", "off")
 NPCSH_TTS_ENGINE = os.environ.get("NPCSH_TTS_ENGINE", "")
 NPCSH_TTS_VOICE = os.environ.get("NPCSH_TTS_VOICE", "")
 NPCSH_YAP_SETUP_DONE = os.environ.get("NPCSH_YAP_SETUP_DONE", "0") == "1"
-# Engine selection: "python" (stable) or "rust" (experimental)
 NPCSH_ENGINE = os.environ.get("NPCSH_ENGINE", "python")
 
 
@@ -148,7 +144,6 @@ def set_npcsh_config_value(key: str, value: str) -> None:
     with open(npcshrc_path, 'w') as f:
         f.writelines(lines)
 
-    # Also set in current environment
     os.environ[key] = value
 
 

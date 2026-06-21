@@ -1,4 +1,3 @@
-# Standard library imports
 import atexit
 import base64
 import os
@@ -43,21 +42,18 @@ def _yaml_block_dumper():
     return _Dumper
 
 
-# Setup logging - INFO by default, DEBUG if NPCSH_DEBUG=1
 def _setup_logging():
     level = logging.DEBUG if os.environ.get("NPCSH_DEBUG", "0") == "1" else logging.INFO
     logging.basicConfig(
         level=level,
-        format='%(message)s',  # Simple format - just the message
+        format='%(message)s',
         datefmt='%H:%M:%S'
     )
-    # Always show tool calls from llm_funcs at INFO level
     logging.getLogger("npcpy.llm_funcs").setLevel(level)
     logging.getLogger("npcsh.state").setLevel(level)
 
 _setup_logging()
 
-# Platform-specific imports
 try:
     import pty
     import tty
@@ -69,10 +65,8 @@ except ImportError:
     tty = None
     termios = None
 
-# Optional dependencies
 try:
     import chromadb
-    # Suppress noisy posthog telemetry errors from chromadb
     import logging as _logging
     _logging.getLogger("chromadb.telemetry.product.posthog").setLevel(_logging.CRITICAL)
 except ImportError:
@@ -83,14 +77,12 @@ try:
 except ImportError:
     ollama = None
 
-# Third-party imports
 from colorama import Style
 from litellm import RateLimitError
 from litellm.exceptions import ContextWindowExceededError
 import numpy as np
 from termcolor import colored
 
-# npcpy imports
 from npcpy.data.load import load_file_contents
 from npcpy.data.web import search_web
 
@@ -117,7 +109,6 @@ from npcpy.npc_sysenv import (
 from npcpy.tools import auto_tools
 from npcpy.gen.embeddings import get_embeddings
 
-# Local module imports
 from .config import (
     DEFAULT_NPC_TEAM_PATH,
     PROJECT_NPC_TEAM_PATH,
@@ -180,11 +171,6 @@ from .execution import (
 from .completion import setup_readline, save_readline_history, make_completer, get_slash_commands
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Permission system helpers — hierarchical prefix matching like incognide
-# domain matching (e.g., "sh:git" matches "sh:git commit -m ...")
-# ─────────────────────────────────────────────────────────────────────────────
-
 _SAFE_TOOLS = frozenset([
     "chat", "help", "stop", "screenshot", "ask_form", "config", "switches",
     "verbose", "shh", "usage", "lookback", "reload", "init",
@@ -200,22 +186,17 @@ def _build_command_key(tool_name: str, arguments: dict) -> str:
     """
     cmd_key = tool_name
 
-    # For shell commands, extract the actual command being run
     if tool_name == "sh" and arguments.get("bash_command"):
         parts = arguments["bash_command"].strip().split()
         if parts:
-            # First word is the command (e.g., "git")
             cmd_key = f"sh:{parts[0]}"
-            # If there's a subcommand, add it (e.g., "sh:git commit")
             if len(parts) > 1 and not parts[1].startswith("-"):
                 cmd_key = f"sh:{parts[0]} {parts[1]}"
 
     elif tool_name == "python" and arguments.get("code"):
-        # Python code is harder to parse - just use the tool name
         cmd_key = "python"
 
     elif tool_name == "edit_file" and arguments.get("filepath"):
-        # Include the file extension or basename for specificity
         fp = arguments["filepath"]
         basename = os.path.basename(fp)
         cmd_key = f"edit_file:{basename}"
@@ -243,15 +224,11 @@ def _match_permission(cmd_key: str, rules: Dict[str, str]) -> Optional[str]:
     if cmd_key in rules:
         return rules[cmd_key]
 
-    # Find the longest matching prefix
     best_match = None
     best_len = 0
 
     for rule_key in rules:
-        # Check if cmd_key starts with rule_key (rule_key is a prefix)
-        # Must be exact prefix: "sh:git" matches "sh:git commit" but not "sh:gitstatus"
         if cmd_key.startswith(rule_key):
-            # Ensure we're at a boundary (colon, space, or end)
             next_char = cmd_key[len(rule_key):len(rule_key)+1]
             if next_char in ("", ":", " "):
                 if len(rule_key) > best_len:
@@ -268,7 +245,6 @@ def _load_permission_file(path: str) -> Dict[str, str]:
     try:
         with open(path, "r") as f:
             data = yaml.safe_load(f) or {}
-        # Support both flat and nested "rules" structure
         rules = data.get("rules", data) if isinstance(data, dict) else {}
         return {k: str(v) for k, v in rules.items()}
     except Exception:
@@ -279,7 +255,7 @@ def _load_permission_file(path: str) -> Dict[str, str]:
 class ShellState:
     npc: Optional[Union[NPC, str]] = None
     team: Optional[Team] = None
-    teams: Dict[str, str] = field(default_factory=dict)  # name -> path registry
+    teams: Dict[str, str] = field(default_factory=dict)
     current_team_name: str = ""
     messages: List[Dict[str, Any]] = field(default_factory=list)
     mcp_client: Optional[Any] = None
@@ -299,47 +275,30 @@ class ShellState:
     video_gen_provider: str = NPCSH_VIDEO_GEN_PROVIDER
     current_mode: str = NPCSH_DEFAULT_MODE
     build_kg: bool = NPCSH_BUILD_KG
-    kg_link_facts: bool = False      # Link facts to concepts (requires LLM calls)
-    kg_link_concepts: bool = False   # Link concepts to concepts (requires LLM calls)
-    kg_link_facts_facts: bool = False  # Link facts to facts (requires LLM calls)
+    kg_link_facts: bool = False
+    kg_link_concepts: bool = False
+    kg_link_facts_facts: bool = False
     api_key: Optional[str] = None
     api_url: Optional[str] = NPCSH_API_URL
     current_path: str = field(default_factory=os.getcwd)
     stream_output: bool = NPCSH_STREAM_OUTPUT
     attachments: Optional[List[Any]] = None
     turn_count: int = 0
-    # Token usage tracking
     session_input_tokens: int = 0
     session_output_tokens: int = 0
     session_cost_usd: float = 0.0
-    # Session timing
     session_start_time: float = field(default_factory=lambda: __import__('time').time())
-    # Logging level: "silent", "normal", "verbose"
     log_level: str = "normal"
-    # Edit approval mode: "off", "interactive", "auto"
     edit_approval: str = NPCSH_EDIT_APPROVAL
-    # Pending file edits for approval
     pending_edits: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    # Command history for jinx execution logging
     command_history: Optional[Any] = None
-    # Thinking mode: None = model default, False = disabled, True = enabled
-    # For ollama qwen3/deepseek: True/False; for gpt-oss: "low"/"medium"/"high"
     think: Optional[Any] = None
-    # Permission system — hierarchical prefix matching like incognide domain matching.
-    # Keys: "tool_name" or "tool_name:subcommand" (e.g. "sh:git commit")
-    # Values: "auto"|"ask"|"deny"|"session"
-    # Scoped: session > workspace (./npc_team/) > global (~/.npcsh/npc_team/) > default
     _permission_rules: Dict[str, str] = field(default_factory=dict)
     _session_grants: Dict[str, str] = field(default_factory=dict)
     _permissions_loaded: bool = False
-    # Active plan the agent is executing
     _active_plan: Optional[Dict[str, Any]] = None
-    # Job variables for .nsh script execution
     variables: Dict[str, Any] = field(default_factory=dict)
-    # CLI session IDs keyed by (provider, npc_name) for session continuity
     cli_sessions: Dict[tuple, str] = field(default_factory=dict)
-
-    # ── permission helpers ──────────────────────────────────────────────
 
     def _workspace_team_dir(self) -> Optional[str]:
         """Return the workspace team directory if a project team is loaded, else None."""
@@ -354,10 +313,8 @@ class ShellState:
         if self._permissions_loaded:
             return
         self._permissions_loaded = True
-        # Global defaults
         global_path = os.path.expanduser("~/.npcsh/npc_team/permissions.yaml")
         self._permission_rules = _load_permission_file(global_path)
-        # Workspace overrides (only from actual project team, not phantom cwd dir)
         team_dir = self._workspace_team_dir()
         if team_dir:
             workspace_path = os.path.join(team_dir, "permissions.yaml")
@@ -374,8 +331,6 @@ class ShellState:
             if team_dir:
                 dir_path = team_dir
             else:
-                # No project team loaded — fall back to global so we don't
-                # create phantom ./npc_team dirs in arbitrary directories.
                 dir_path = os.path.expanduser("~/.npcsh/npc_team")
         os.makedirs(dir_path, exist_ok=True)
         perm_path = os.path.join(dir_path, "permissions.yaml")
@@ -383,7 +338,6 @@ class ShellState:
         existing[key] = level
         with open(perm_path, "w") as f:
             yaml.dump({"rules": existing}, f, default_flow_style=False)
-        # Update in-memory
         self._permission_rules[key] = level
 
     def check_tool_permission(self, tool_name: str, arguments: dict) -> str:
@@ -396,15 +350,12 @@ class ShellState:
         """
         self._load_permissions()
         cmd_key = _build_command_key(tool_name, arguments)
-        # 1) Session grants — most specific match
         decision = _match_permission(cmd_key, self._session_grants)
         if decision:
             return "allow" if decision in ("auto", "session") else decision
-        # 2) Persistent rules (workspace over global, already merged)
         decision = _match_permission(cmd_key, self._permission_rules)
         if decision:
             return "allow" if decision == "auto" else decision
-        # 3) Default: safe tools auto, everything else ask
         if tool_name in _SAFE_TOOLS:
             return "allow"
         return "ask"
@@ -445,7 +396,6 @@ class ShellState:
 
         self.log_level = level
 
-        # Map to Python logging levels
         level_map = {
             "silent": logging.WARNING,
             "normal": logging.INFO,
@@ -453,12 +403,10 @@ class ShellState:
         }
         log_level = level_map[level]
 
-        # Configure npcpy loggers
         for logger_name in ["npcpy", "npcpy.gen", "npcpy.gen.response", "npcsh"]:
             logger = logging.getLogger(logger_name)
             logger.setLevel(log_level)
 
-        # Also set root logger for npcpy
         logging.getLogger("npcpy").setLevel(log_level)
 
         return f"Log level set to: {level}"
@@ -560,7 +508,6 @@ def set_npcsh_config_value(key: str, value: str):
     if env_key in field_map:
         setattr(ShellState, field_map[env_key], parsed_val)
 
-    # Persist to ~/.npcshrc
     npcshrc_path = os.path.expanduser("~/.npcshrc")
     try:
         existing_lines = []
@@ -568,7 +515,6 @@ def set_npcsh_config_value(key: str, value: str):
             with open(npcshrc_path, 'r') as f:
                 existing_lines = f.readlines()
 
-        # Update or add the export line
         export_line = f"export {env_key}=\"{value}\"\n"
         found = False
         for i, line in enumerate(existing_lines):
@@ -639,7 +585,6 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Create table
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS compiled_npcs (
@@ -650,11 +595,9 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
         """
     )
 
-    # Package directories - use helper that handles PyInstaller bundles
     package_dir = get_package_dir()
     package_npc_team_dir = os.path.join(package_dir, "npc_team")
 
-    # Debug logging for package path resolution
     if os.environ.get("NPCSH_DEBUG", "0") == "1":
         print(f"[DEBUG] Package dir: {package_dir}")
         print(f"[DEBUG] Package npc_team dir: {package_npc_team_dir}")
@@ -664,7 +607,6 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
 
     if not os.path.exists(package_npc_team_dir):
         print(f"Warning: Package npc_team directory not found at {package_npc_team_dir}")
-        # For bundled executables, try to find it
         if getattr(sys, 'frozen', False):
             print(f"Running as frozen executable, _MEIPASS: {getattr(sys, '_MEIPASS', 'N/A')}")
             if hasattr(sys, '_MEIPASS'):
@@ -673,12 +615,10 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
 
     user_npc_team_dir = os.path.expanduser("~/.npcsh/npc_team")
 
-    # Migrate old jinxs -> jinxes directory if user has one from a prior install
     old_jinxs_dir = os.path.join(user_npc_team_dir, "jinxs")
     user_jinxes_dir = os.path.join(user_npc_team_dir, "jinxes")
     if os.path.exists(old_jinxs_dir):
         if os.path.exists(user_jinxes_dir):
-            # Merge: copy any user-created jinxes from old dir that don't exist in new
             for root, dirs, files in os.walk(old_jinxs_dir):
                 rel = os.path.relpath(root, old_jinxs_dir)
                 dest_dir = user_jinxes_dir if rel == '.' else os.path.join(user_jinxes_dir, rel)
@@ -688,9 +628,7 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                     if not os.path.exists(dest_file):
                         shutil.copy2(os.path.join(root, f), dest_file)
         else:
-            # Simple rename
             shutil.move(old_jinxs_dir, user_jinxes_dir)
-        # Clean up old directory if it still exists after merge
         if os.path.exists(old_jinxs_dir):
             shutil.rmtree(old_jinxs_dir)
         print("Migrated ~/.npcsh/npc_team/jinxs -> jinxes")
@@ -699,7 +637,6 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     os.makedirs(user_jinxes_dir, exist_ok=True)
     os.makedirs(user_templates_dir, exist_ok=True)
 
-    # Copy .npc and .ctx files
     for filename in os.listdir(package_npc_team_dir):
         if filename.endswith(".npc"):
             source_path = os.path.join(package_npc_team_dir, filename)
@@ -708,7 +645,6 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                 source_path, destination_path
             ):
                 shutil.copy2(source_path, destination_path)
-                # Add shebang if missing and make executable
                 with open(destination_path, 'r') as f:
                     content = f.read()
                 if not content.startswith('#!'):
@@ -725,12 +661,9 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                 shutil.copy2(source_path, destination_path)
                 print(f"Copied ctx {filename} to {destination_path}")
 
-    # Copy jinxes directory RECURSIVELY with manifest tracking
-    # This ensures we only sync package jinxes and can clean up old ones
     package_jinxes_dir = os.path.join(package_npc_team_dir, "jinxes")
     manifest_path = os.path.join(user_jinxes_dir, ".package_manifest.json")
 
-    # Load existing manifest of package-synced jinxes
     old_package_jinxes = set()
     if os.path.exists(manifest_path):
         try:
@@ -740,22 +673,18 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
         except Exception:
             pass
 
-    # Track current package jinxes
     current_package_jinxes = set()
 
     if os.path.exists(package_jinxes_dir):
         for root, dirs, files in os.walk(package_jinxes_dir):
-            # Calculate relative path from package_jinxes_dir
             rel_path = os.path.relpath(root, package_jinxes_dir)
 
-            # Create corresponding directory in user jinxes
             if rel_path == '.':
                 dest_dir = user_jinxes_dir
             else:
                 dest_dir = os.path.join(user_jinxes_dir, rel_path)
             os.makedirs(dest_dir, exist_ok=True)
 
-            # Copy all .jinx files in this directory
             for filename in files:
                 if filename.endswith(".jinx"):
                     source_jinx_path = os.path.join(root, filename)
@@ -767,7 +696,6 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                         source_jinx_path, destination_jinx_path
                     ):
                         shutil.copy2(source_jinx_path, destination_jinx_path)
-                        # Add shebang if missing and make executable
                         with open(destination_jinx_path, 'r') as f:
                             content = f.read()
                         if not content.startswith('#!'):
@@ -776,8 +704,6 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
                         os.chmod(destination_jinx_path, os.stat(destination_jinx_path).st_mode | 0o111)
                         print(f"Copied jinx {jinx_rel_path} to {destination_jinx_path}")
 
-    # Clean up old package jinxes that are no longer in the package
-    # (but preserve user-created jinxes that were never in the manifest)
     stale_jinxes = old_package_jinxes - current_package_jinxes
     for stale_jinx in stale_jinxes:
         stale_path = os.path.join(user_jinxes_dir, stale_jinx)
@@ -785,7 +711,6 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
             try:
                 os.remove(stale_path)
                 print(f"Removed stale package jinx: {stale_jinx}")
-                # Remove empty parent directories
                 parent_dir = os.path.dirname(stale_path)
                 while parent_dir != user_jinxes_dir:
                     if os.path.isdir(parent_dir) and not os.listdir(parent_dir):
@@ -795,7 +720,6 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
             except Exception as e:
                 print(f"Could not remove stale jinx {stale_jinx}: {e}")
 
-    # Save updated manifest
     try:
         
         with open(manifest_path, 'w') as f:
@@ -803,7 +727,6 @@ def initialize_base_npcs_if_needed(db_path: str) -> None:
     except Exception as e:
         print(f"Could not save jinx manifest: {e}")
 
-    # Copy templates directory
     templates = os.path.join(package_npc_team_dir, "templates")
     if os.path.exists(templates):
         for folder in os.listdir(templates):
@@ -985,8 +908,6 @@ def ensure_npcshrc_exists() -> str:
             npcshrc.write("export NPCSH_INITIALIZED=0\n")
             npcshrc.write("export NPCSH_DEFAULT_MODE='agent'\n")
             npcshrc.write("export NPCSH_BUILD_KG=1\n")
-            # Model / provider lines are intentionally left empty.
-            # Run /model or /setup inside npcsh to select your defaults.
             npcshrc.write("export NPCSH_CHAT_PROVIDER=''\n")
             npcshrc.write("export NPCSH_CHAT_MODEL=''\n")
             npcshrc.write("export NPCSH_REASONING_PROVIDER=''\n")
@@ -1017,7 +938,6 @@ def load_npcshrc_env() -> None:
         for line in f:
             line = line.strip()
             if line.startswith("export ") and "=" in line:
-                # export KEY='value' or export KEY=value
                 kv = line[len("export "):]
                 key, _, val = kv.partition("=")
                 val = val.strip("'\"")
@@ -1271,9 +1191,6 @@ BASH_COMMANDS = [
 ]
 
 
-# interactive_commands imported from .execution
-
-
 def start_interactive_session(command: str) -> int:
     """
     Starts an interactive session. Only works on Unix. On Windows, print a message and return 1.
@@ -1353,17 +1270,14 @@ def validate_bash_command(command_parts: list) -> bool:
 
     base_command = command_parts[0]
 
-    # Commands that are always considered valid for direct execution (case-insensitive)
     ALWAYS_VALID_COMMANDS = BASH_COMMANDS + list(interactive_commands.keys()) + TERMINAL_EDITORS
 
     if base_command in ALWAYS_VALID_COMMANDS:
         return True
 
-    # Specific checks for commands that might be misinterpreted or need special handling
     if base_command == 'which':
         return True
 
-    # If it's not in our explicit list, it's not a bash command we want to validate strictly
     return False
 
 def is_npcsh_initialized() -> bool:
@@ -1471,21 +1385,15 @@ def get_package_dir() -> str:
     For normal Python: returns os.path.dirname(__file__)
     For PyInstaller: returns the bundled data directory (sys._MEIPASS/npcsh)
     """
-    # Check if running as a PyInstaller bundle
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        # Running as PyInstaller bundle - look for npcsh folder in _MEIPASS
         meipass = sys._MEIPASS
-        # The package data should be at _MEIPASS/npcsh (based on PyInstaller config)
         bundled_path = os.path.join(meipass, 'npcsh')
         if os.path.exists(bundled_path):
             return bundled_path
-        # Fallback: check if npc_team is directly in _MEIPASS
         if os.path.exists(os.path.join(meipass, 'npc_team')):
             return meipass
-        # Last resort: return meipass and let caller handle
         return meipass
     else:
-        # Normal Python execution
         return os.path.dirname(__file__)
 
 
@@ -1647,7 +1555,6 @@ def save_readline_history():
 
 
 
-# ChromaDB client (lazy init)
 EMBEDDINGS_DB_PATH = NPCSH_VECTOR_DB_PATH
 
 chroma_client = None
@@ -1699,11 +1606,9 @@ def make_completer(shell_state: ShellState, router: Any):
             buffer = readline.get_line_buffer()
             begidx = readline.get_begidx()
             endidx = readline.get_endidx()
-            
-            # The word currently being completed (e.g., "lor" in "ls lor")
-            word_under_cursor = buffer[begidx:endidx] 
 
-            # The very first word/token in the entire buffer (e.g., "ls" in "ls lor")
+            word_under_cursor = buffer[begidx:endidx]
+
             first_token_of_buffer = ""
             if buffer.strip():
                 match = re.match(r'^(\S+)', buffer.strip())
@@ -1712,25 +1617,19 @@ def make_completer(shell_state: ShellState, router: Any):
 
             matches = []
 
-            # Determine if we are in a "slash command context"
-            # This is true if the *entire buffer starts with a slash* AND
-            # the current completion is for that initial slash command (begidx == 0).
-
             is_slash_command_context = (begidx <=1 and first_token_of_buffer.startswith('/'))
 
             if is_slash_command_context:
                 slash_commands = get_slash_commands(shell_state, router)
-                
-                if first_token_of_buffer == '/': # If just '/' is typed
+
+                if first_token_of_buffer == '/':
                     matches = [cmd[1:] for cmd in slash_commands]
-                else: # If '/ag' is typed
+                else:
                     matching_commands = [cmd for cmd in slash_commands if cmd.startswith(first_token_of_buffer)]
                     matches = [cmd[1:] for cmd in matching_commands]
-                
-                # Only print hints if this is the first completion attempt (state_index == 0)
-                # and the hints haven't been printed for this specific input yet.
+
                 if matches and state_index == 0:
-                    key = (buffer, first_token_of_buffer) # Use full buffer for cache key
+                    key = (buffer, first_token_of_buffer)
                     if slash_hint_cache["last_key"] != key:
                         print("\nAvailable slash commands: " + ", ".join(slash_commands))
                         try:
@@ -1738,33 +1637,30 @@ def make_completer(shell_state: ShellState, router: Any):
                         except Exception:
                             pass
                         slash_hint_cache["last_key"] = key
-            
-            # If not a slash command context, then it's either a regular command or an argument.
-            elif begidx == 0: # Completing a regular command (e.g., "ls", "pyt")
+
+            elif begidx == 0:
                 bash_matches = [cmd for cmd in BASH_COMMANDS if cmd.startswith(word_under_cursor)]
                 matches.extend(bash_matches)
-                
+
                 interactive_matches = [cmd for cmd in interactive_commands.keys() if cmd.startswith(word_under_cursor)]
                 matches.extend(interactive_matches)
-                
+
                 if len(word_under_cursor) >= 1:
                     path_executables = get_path_executables()
                     exec_matches = [cmd for cmd in path_executables if cmd.startswith(word_under_cursor)]
                     matches.extend(exec_matches[:20])
-            
-            else: # Completing a file or directory path (e.g., "ls doc/my_f")
+
+            else:
                 matches = get_file_completions(word_under_cursor)
-            
+
             matches = sorted(list(set(matches)))
-            
+
             if state_index < len(matches):
                 return matches[state_index]
             else:
-                return None # readline expects None when no more completions
-            
+                return None
+
         except Exception:
-            # Using completion_logger for internal debugging, not printing to stdout for user.
-            # completion_logger.error(f"Exception in completion: {e}", exc_info=True) 
             return None
     
     return complete
@@ -1801,39 +1697,33 @@ def get_slash_commands(state: ShellState, router: Any) -> List[str]:
 def get_file_completions(text: str) -> List[str]:
     """Get file/directory completions, including for subfolders."""
     try:
-        # Determine the base directory and the prefix to match
         if '/' in text:
             basedir = os.path.dirname(text)
             prefix = os.path.basename(text)
         else:
             basedir = '.'
             prefix = text
-        
-        # If basedir is empty (e.g., text is "folder/"), it should be current dir
+
         if not basedir:
             basedir = '.'
 
-        # Handle absolute paths
         if text.startswith('/'):
-            # Ensure absolute path starts with / and handle cases like "/something"
             if basedir.startswith('/'):
-                pass # already absolute
+                pass
             else:
-                basedir = '/' + basedir.lstrip('/') 
-            if basedir == '/': # If text was just "/something", basedir is "/"
+                basedir = '/' + basedir.lstrip('/')
+            if basedir == '/':
                 prefix = os.path.basename(text)
 
-        # Resolve the actual path to list
         if basedir == '.':
             current_path_to_list = os.getcwd()
         else:
-            # If basedir is relative, join it with current working directory
             if not os.path.isabs(basedir):
                 current_path_to_list = os.path.join(os.getcwd(), basedir)
             else:
                 current_path_to_list = basedir
 
-            if not os.path.isdir(current_path_to_list): # If the base path doesn't exist yet, no completions
+            if not os.path.isdir(current_path_to_list):
                 return []
 
         matches = []
@@ -1841,13 +1731,10 @@ def get_file_completions(text: str) -> List[str]:
             for item in os.listdir(current_path_to_list):
                 if item.startswith(prefix):
                     full_item_path = os.path.join(current_path_to_list, item)
-                    
-                    # Construct the completion string relative to the input 'text'
-                    # This ensures that if the input was 'folder/s', the completion is 'folder/subfolder/'
+
                     if basedir == '.':
                         completion = item
                     else:
-                        # Reconstruct the path fragment before the prefix
                         path_fragment_before_prefix = text[:len(text) - len(prefix)]
                         completion = os.path.join(path_fragment_before_prefix, item)
 
@@ -1857,7 +1744,7 @@ def get_file_completions(text: str) -> List[str]:
                         matches.append(completion)
         except (PermissionError, OSError):
             pass
-        
+
         return sorted(matches)
     except Exception as e:
         completion_logger.error(f"Error in get_file_completions for text '{text}': {e}", exc_info=True)
@@ -1929,7 +1816,6 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
     if not sys.stdin.isatty():
         return input(prompt)
 
-    # Get history from readline
     if readline is not None:
         hist_len = readline.get_current_history_length()
         history = [readline.get_history_item(i) for i in range(1, hist_len + 1)]
@@ -1942,9 +1828,8 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
     old_settings = termios.tcgetattr(fd)
 
     buf = ""
-    pos = 0  # cursor position in buf
+    pos = 0
 
-    # Calculate visible prompt length (strip ANSI codes)
     import re
     prompt_visible_len = len(re.sub(r'\x1b\[[0-9;]*m|\x01|\x02', '', prompt))
 
@@ -1957,19 +1842,15 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
             return h if h else token_hint
         return token_hint
 
-    # Get terminal width
     try:
         import shutil
         term_width = shutil.get_terminal_size().columns
     except Exception:
         term_width = 80
-
-    # Track geometry from previous draw so we can reach top of input reliably
     _prev_num_lines = 1
     _prev_hint_lines = 1
     _prev_cursor_line = 0
 
-    # Tab completion state
     _tab_matches = []
     _tab_index = -1
     _tab_prefix = ""
@@ -1982,20 +1863,15 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         cursor_line = cursor_total // term_width
         cursor_col = cursor_total % term_width
 
-        # Go to start of first input line from wherever the cursor currently is.
-        # The cursor is on _prev_cursor_line within the old input block, so go
-        # up that many lines to reach the top.  Then clear to end-of-screen.
         sys.stdout.write('\r')
         for _ in range(_prev_cursor_line):
             sys.stdout.write('\033[A')
         _prev_num_lines = num_lines
         _prev_cursor_line = cursor_line
 
-        # Clear to end of screen and redraw prompt+buf
         sys.stdout.write('\033[J')
         sys.stdout.write(prompt + buf)
 
-        # Draw hint line below input
         hint = current_hint()
         if hint:
             hint_lines = hint.split('\n')
@@ -2004,7 +1880,6 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         else:
             _prev_hint_lines = 0
 
-        # Move cursor back to correct position in input
         lines_below = (num_lines - 1 - cursor_line) + _prev_hint_lines
         for _ in range(lines_below):
             sys.stdout.write('\033[A')
@@ -2014,35 +1889,26 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
 
         sys.stdout.flush()
 
-    # Enable bracketed paste mode
     sys.stdout.write('\033[?2004h')
-    # Print prompt with initial hint below
     sys.stdout.write(prompt)
     if token_hint:
         sys.stdout.write('\n' + token_hint)
-        sys.stdout.write('\033[A')  # Move back up to prompt line
-        # Position cursor after prompt
+        sys.stdout.write('\033[A')
         sys.stdout.write('\r')
         if prompt_visible_len > 0:
             sys.stdout.write('\033[' + str(prompt_visible_len) + 'C')
         _prev_hint_lines = len(token_hint.split('\n'))
     sys.stdout.flush()
 
-    # Store pasted content separately
     pasted_content = None
     in_paste = False
     paste_buffer = ""
 
-    # Track Ctrl+C for double-press exit
     import time
     last_ctrl_c_time = 0
 
     try:
         tty.setcbreak(fd)
-        # setcbreak keeps ISIG enabled, which means Ctrl+C still generates
-        # SIGINT and is never passed through as the \x03 byte we read below.
-        # Disable ISIG so we can handle Ctrl+C ourselves (clear line on first
-        # press, exit only on double-press with an empty buffer).
         _cbreak_settings = termios.tcgetattr(fd)
         _cbreak_settings[3] &= ~termios.ISIG
         termios.tcsetattr(fd, termios.TCSADRAIN, _cbreak_settings)
@@ -2050,13 +1916,12 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
         while True:
             c = sys.stdin.read(1)
 
-            if not c:  # EOF/stdin closed
-                sys.stdout.write('\033[?2004l')  # Disable bracketed paste
+            if not c:
+                sys.stdout.write('\033[?2004l')
                 sys.stdout.write('\n\033[K')
                 sys.stdout.flush()
                 raise EOFError
 
-            # Check for bracketed paste start: ESC [ 2 0 0 ~
             if c == '\x1b':
                 c2 = sys.stdin.read(1)
                 if c2 == '[':
@@ -2068,44 +1933,35 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                             if c5 == '0':
                                 c6 = sys.stdin.read(1)
                                 if c6 == '~':
-                                    # Start of bracketed paste
                                     in_paste = True
                                     paste_buffer = ""
                                     continue
                             elif c5 == '1':
                                 c6 = sys.stdin.read(1)
                                 if c6 == '~':
-                                    # End of bracketed paste ESC [ 2 0 1 ~
                                     in_paste = False
                                     if paste_buffer:
-                                        # Check if this looks like binary/image data
-                                        # Image signatures: PNG (\x89PNG), JPEG (\xff\xd8\xff), GIF (GIF8), BMP (BM)
-                                        # Also check for high ratio of non-printable chars
                                         is_binary = False
                                         if len(paste_buffer) > 4:
-                                            # Check for common image magic bytes
                                             if paste_buffer[:4] == '\x89PNG' or paste_buffer[:8] == '\x89PNG\r\n\x1a\n':
                                                 is_binary = True
-                                            elif paste_buffer[:2] == '\xff\xd8':  # JPEG
+                                            elif paste_buffer[:2] == '\xff\xd8':
                                                 is_binary = True
-                                            elif paste_buffer[:4] == 'GIF8':  # GIF
+                                            elif paste_buffer[:4] == 'GIF8':
                                                 is_binary = True
-                                            elif paste_buffer[:2] == 'BM':  # BMP
+                                            elif paste_buffer[:2] == 'BM':
                                                 is_binary = True
-                                            elif paste_buffer.startswith('data:image/'):  # Base64 data URL
+                                            elif paste_buffer.startswith('data:image/'):
                                                 is_binary = True
                                             else:
-                                                # Check for high ratio of non-printable characters
                                                 non_printable = sum(1 for c in paste_buffer[:100] if ord(c) < 32 and c not in '\n\r\t')
-                                                if non_printable > 10:  # More than 10% non-printable in first 100 chars
+                                                if non_printable > 10:
                                                     is_binary = True
 
                                         if is_binary:
-                                            # Save image data to temp file
 
                                             
                                             try:
-                                                # Determine extension from magic bytes
                                                 ext = '.bin'
                                                 if '\x89PNG' in paste_buffer[:8]:
                                                     ext = '.png'
@@ -2114,7 +1970,6 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                                 elif paste_buffer[:4] == 'GIF8':
                                                     ext = '.gif'
                                                 elif paste_buffer.startswith('data:image/'):
-                                                    # Extract from data URL
                                                     if 'png' in paste_buffer[:30]:
                                                         ext = '.png'
                                                     elif 'jpeg' in paste_buffer[:30] or 'jpg' in paste_buffer[:30]:
@@ -2125,13 +1980,11 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                                 fd, temp_path = tempfile.mkstemp(suffix=ext, prefix='npcsh_paste_')
                                                 with os.fdopen(fd, 'wb') as f:
                                                     if paste_buffer.startswith('data:image/'):
-                                                        # Decode base64 data URL
-
                                                         _, data = paste_buffer.split(',', 1)
                                                         f.write(base64.b64decode(data))
                                                     else:
                                                         f.write(paste_buffer.encode('latin-1'))
-                                                pasted_content = temp_path  # Store path to image
+                                                pasted_content = temp_path
                                                 placeholder = f"[pasted image: {temp_path}]"
                                             except Exception:
                                                 pasted_content = None
@@ -2143,18 +1996,16 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                                             if line_count > 1:
                                                 placeholder = f"[pasted: {line_count} lines, {char_count} chars]"
                                             else:
-                                                # Single line paste - just insert it directly
                                                 buf = buf[:pos] + pasted_content + buf[pos:]
                                                 pos += len(pasted_content)
-                                                pasted_content = None  # Clear so we don't replace on submit
+                                                pasted_content = None
                                                 draw()
                                                 continue
                                         buf = buf[:pos] + placeholder + buf[pos:]
                                         pos += len(placeholder)
                                         draw()
                                     continue
-                    # Handle arrow keys and other escape sequences
-                    if c3 == 'A':  # Up
+                    if c3 == 'A':
                         if history_idx > 0:
                             if history_idx == len(history):
                                 saved_line = buf
@@ -2163,68 +2014,61 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                             pos = len(buf)
                             draw()
                         continue
-                    elif c3 == 'B':  # Down
+                    elif c3 == 'B':
                         if history_idx < len(history):
                             history_idx += 1
                             buf = saved_line if history_idx == len(history) else (history[history_idx] or '')
                             pos = len(buf)
                             draw()
                         continue
-                    elif c3 == 'C':  # Right
+                    elif c3 == 'C':
                         if pos < len(buf):
                             pos += 1
                             draw()
                         continue
-                    elif c3 == 'D':  # Left
+                    elif c3 == 'D':
                         if pos > 0:
                             pos -= 1
                             draw()
                         continue
-                    elif c3 == '3':  # Del
-                        sys.stdin.read(1)  # ~
+                    elif c3 == '3':
+                        sys.stdin.read(1)
                         if pos < len(buf):
                             buf = buf[:pos] + buf[pos+1:]
                             draw()
                         continue
-                    elif c3 == 'H':  # Home
+                    elif c3 == 'H':
                         pos = 0
                         draw()
                         continue
-                    elif c3 == 'F':  # End
+                    elif c3 == 'F':
                         pos = len(buf)
                         draw()
                         continue
-                elif c2 == '\x1b':  # Double ESC
-                    sys.stdout.write('\033[?2004l')  # Disable bracketed paste
+                elif c2 == '\x1b':
+                    sys.stdout.write('\033[?2004l')
                     sys.stdout.write('\n\033[K')
                     sys.stdout.flush()
                     return '\x1b'
                 continue
 
-            # If we're in a paste, accumulate to paste buffer
             if in_paste:
                 paste_buffer += c
                 continue
 
             if c in ('\n', '\r'):
-                # Clear hint and newline
-                sys.stdout.write('\033[?2004l')  # Disable bracketed paste
+                sys.stdout.write('\033[?2004l')
                 sys.stdout.write('\n\033[K')
                 sys.stdout.flush()
-                # If we have pasted content, replace placeholder with actual content
                 if pasted_content is not None:
                     import re
-                    # Escape pipe characters in pasted content so they aren't parsed as pipeline operators
                     escaped_content = pasted_content.replace('|', '\\|')
-                    # If pasted content is at the start of command, escape @ and / to prevent
-                    # them being interpreted as delegation or slash commands
                     placeholder_pattern = r'\[pasted: \d+ lines?, \d+ chars?\]'
                     if re.match(placeholder_pattern, buf.lstrip()):
                         if escaped_content.startswith('@'):
                             escaped_content = '\\@' + escaped_content[1:]
                         elif escaped_content.startswith('/'):
                             escaped_content = '\\/' + escaped_content[1:]
-                    # Use lambda to avoid backreference issues in replacement string
                     result = re.sub(placeholder_pattern, lambda m: escaped_content, buf)
                     if result.strip():
                         readline.add_history(result)
@@ -2233,7 +2077,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                     readline.add_history(buf)
                 return buf
 
-            elif c == '\x7f' or c == '\x08':  # Backspace
+            elif c == '\x7f' or c == '\x08':
                 if pos > 0:
                     buf = buf[:pos-1] + buf[pos:]
                     pos -= 1
@@ -2242,54 +2086,47 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                     _tab_prefix = ""
                     draw()
 
-            elif c == '\x03':  # Ctrl-C
+            elif c == '\x03':
                 current_time = time.time()
-                # Double Ctrl+C exits ONLY when the buffer was already empty
-                # (i.e., user pressed Ctrl+C twice on an empty prompt).
-                # Ctrl+C with text in the buffer always just clears the line.
                 if not buf and current_time - last_ctrl_c_time < 1.0:
-                    # Empty buffer, second Ctrl+C within 1 second = exit
-                    sys.stdout.write('\033[?2004l')  # Disable bracketed paste
+                    sys.stdout.write('\033[?2004l')
                     sys.stdout.write('\n\033[K')
                     sys.stdout.flush()
                     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
                     raise KeyboardInterrupt
                 else:
-                    # Clear the line.  Only start the exit-timer when buf was empty.
                     if not buf:
                         last_ctrl_c_time = current_time
                     else:
-                        last_ctrl_c_time = 0  # Reset so next Ctrl+C on empty line starts fresh
+                        last_ctrl_c_time = 0
                     buf = ""
                     pos = 0
                     pasted_content = None
                     _tab_matches = []
                     _tab_index = -1
                     _tab_prefix = ""
-                    # Clear all previous hint lines + current input
                     sys.stdout.write('\r')
                     for _ in range(_prev_hint_lines):
                         sys.stdout.write('\033[B')
-                    sys.stdout.write('\033[J')  # Clear from cursor to end
+                    sys.stdout.write('\033[J')
                     for _ in range(_prev_hint_lines):
                         sys.stdout.write('\033[A')
                     sys.stdout.write('\r\033[K')
                     sys.stdout.write('^C\n')
-                    # Redraw prompt cleanly
                     sys.stdout.write(prompt)
                     sys.stdout.flush()
 
-            elif c == '\x04':  # Ctrl-D
+            elif c == '\x04':
                 if not buf:
                     sys.stdout.write('\n\033[K')
                     sys.stdout.flush()
                     raise EOFError
 
-            elif c == '\x01':  # Ctrl-A
+            elif c == '\x01':
                 pos = 0
                 draw()
 
-            elif c == '\x05':  # Ctrl-E - show last thinking / reasoning content
+            elif c == '\x05':
                 try:
                     import builtins
                     from termcolor import colored
@@ -2321,16 +2158,16 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                 except Exception:
                     pass
 
-            elif c == '\x15':  # Ctrl-U
+            elif c == '\x15':
                 buf = buf[pos:]
                 pos = 0
                 draw()
 
-            elif c == '\x0b':  # Ctrl-K
+            elif c == '\x0b':
                 buf = buf[:pos]
                 draw()
 
-            elif c == '\x0c':  # Ctrl-L - reprint recent messages
+            elif c == '\x0c':
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
                 sys.stdout.write('\033[?2004l')
                 print()
@@ -2357,7 +2194,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                 termios.tcsetattr(fd, termios.TCSADRAIN, _cbreak_settings)
                 draw()
 
-            elif c == '\x17':  # Ctrl-W - delete word back
+            elif c == '\x17':
                 while pos > 0 and buf[pos-1] == ' ':
                     buf = buf[:pos-1] + buf[pos:]
                     pos -= 1
@@ -2366,16 +2203,14 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                     pos -= 1
                 draw()
 
-            elif c == '\t':  # Tab - inline completion
+            elif c == '\t':
                 try:
                     if _tab_matches and _tab_prefix == buf:
-                        # Subsequent Tab: cycle through matches
                         _tab_index = (_tab_index + 1) % len(_tab_matches)
                         buf = _tab_matches[_tab_index]
                         pos = len(buf)
                         draw()
                     else:
-                        # First Tab: compute matches
                         matches = []
                         if buf.startswith('/'):
                             cmds = _get_slash_commands_set(state, router, buf)
@@ -2384,13 +2219,11 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                             npcs = _get_npc_names_set(state, buf)
                             matches = ['@' + n for n in sorted(npcs)]
                         else:
-                            # File path completion for non-prefix input
                             import glob as _glob
                             pattern = buf + '*'
                             matches = sorted(_glob.glob(pattern))
 
                         if len(matches) == 1:
-                            # Exact single match - autocomplete with trailing space
                             buf = matches[0] + ' '
                             pos = len(buf)
                             _tab_matches = []
@@ -2398,16 +2231,13 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                             _tab_prefix = ""
                             draw()
                         elif len(matches) > 1:
-                            # Find longest common prefix
                             common = matches[0]
                             for m in matches[1:]:
                                 while not m.startswith(common):
                                     common = common[:-1]
                             if len(common) > len(buf):
-                                # Complete common prefix
                                 buf = common
                                 pos = len(buf)
-                            # Set up cycling state
                             _tab_matches = matches
                             _tab_index = -1
                             _tab_prefix = buf
@@ -2416,12 +2246,11 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                     pass
                 continue
 
-            elif c == '\x0f':  # Ctrl-O - show last 5 tool calls
+            elif c == '\x0f':
                 try:
                     import builtins
                     from termcolor import colored
                     recent = getattr(builtins, '_npcsh_recent_tool_calls', None) or []
-                    # Also grab the single last call for backward compat
                     last_call = getattr(builtins, '_npcsh_last_tool_call', None)
                     if not recent and last_call:
                         recent = [last_call]
@@ -2459,7 +2288,7 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                 except Exception:
                     pass
 
-            elif c and ord(c) >= 32:  # Printable
+            elif c and ord(c) >= 32:
                 buf = buf[:pos] + c + buf[pos:]
                 pos += 1
                 _tab_matches = []
@@ -2468,14 +2297,13 @@ def _input_with_hint_below(prompt: str, state=None, router=None, token_hint: str
                 draw()
 
     finally:
-        sys.stdout.write('\033[?2004l')  # Disable bracketed paste mode
+        sys.stdout.write('\033[?2004l')
         sys.stdout.flush()
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 def _get_slash_commands_set(state, router, prefix='/') -> set:
     """Return the set of matching slash command names (without /)."""
-    # Computer-use commands hidden from hints/tab-complete (still callable)
     _HIDDEN_CMDS = {
         'browser_action', 'browser_screenshot', 'click', 'close_browser',
         'key_press', 'launch_app', 'open_browser', 'screenshot',
@@ -2499,9 +2327,9 @@ def _layout_hints_multirow(items, term_width, style_fn) -> str:
         return ""
     rows = []
     current_row = []
-    current_len = 2  # leading spaces
+    current_len = 2
     for item in items:
-        needed = len(item) + 2  # item + spacing
+        needed = len(item) + 2
         if current_len + needed > term_width - 2 and current_row:
             rows.append(current_row)
             current_row = [item]
@@ -2661,7 +2489,6 @@ def store_command_embeddings(command: str, output: Any, state: ShellState):
         if not command and not output_str:
             return
 
-        # Build parallel lists, skipping empty strings that produce empty embeddings
         texts_to_embed = []
         meta_types = []
         if command.strip():
@@ -2847,11 +2674,8 @@ def sanitize_messages(messages: List[Dict]) -> List[Dict]:
     if not messages:
         return messages
 
-    # Walk backwards to find the last assistant message that has tool_calls.
-    # If it's not fully satisfied, drop it and everything after it.
     clean = list(messages)
     while clean:
-        # Collect the tool_call_ids that the last assistant-with-tool_calls expects.
         last_assistant_idx = None
         for i in range(len(clean) - 1, -1, -1):
             msg = clean[i]
@@ -2860,9 +2684,8 @@ def sanitize_messages(messages: List[Dict]) -> List[Dict]:
                 break
 
         if last_assistant_idx is None:
-            break  # No assistant-with-tool_calls found - list is clean.
+            break
 
-        # Extract expected IDs from both dict and object tool_calls
         expected_ids = set()
         for tc in clean[last_assistant_idx]["tool_calls"]:
             if isinstance(tc, dict):
@@ -2872,7 +2695,6 @@ def sanitize_messages(messages: List[Dict]) -> List[Dict]:
             if tc_id:
                 expected_ids.add(tc_id)
 
-        # Collect tool_call_ids actually present in subsequent tool messages.
         fulfilled_ids = set()
         for msg in clean[last_assistant_idx + 1:]:
             if msg.get("role") == "tool":
@@ -2881,15 +2703,13 @@ def sanitize_messages(messages: List[Dict]) -> List[Dict]:
         has_tool_calls = bool(clean[last_assistant_idx].get("tool_calls"))
         if expected_ids:
             if not expected_ids.issubset(fulfilled_ids):
-                # Orphaned: drop the assistant message and everything after it.
                 clean = clean[:last_assistant_idx]
             else:
-                break  # The sequence is complete.
+                break
         elif has_tool_calls and not fulfilled_ids:
-            # Can't verify IDs (non-dict objects) and no tool results follow — strip it.
             clean = clean[:last_assistant_idx]
         else:
-            break  # Has following tool results or empty tool_calls, assume OK.
+            break
 
     return clean
 
@@ -2901,12 +2721,9 @@ def model_supports_tool_calls(model: Optional[str], provider: Optional[str]) -> 
 
     provider = (provider or "").lower()
 
-    # Ollama: use the capabilities field from the model metadata
     if provider == "ollama":
-        # Cloud-routed models via ollama have tool support
         if "cloud" in model.lower():
             return True
-        # Models that advertise tool support but don't actually work
         broken_tool_models = {"lfm2"}
         base = model.split(":")[0].lower()
         if base in broken_tool_models:
@@ -2918,11 +2735,9 @@ def model_supports_tool_calls(model: Optional[str], provider: Optional[str]) -> 
         except Exception:
             pass
 
-    # API providers: always support tools
     if provider in ("anthropic", "openai", "gemini", "google", "deepseek", "groq", "openrouter"):
         return True
 
-    # Unknown provider: assume yes
     return True
 
 
@@ -2937,15 +2752,12 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
     def wrapped(**kwargs):
         log_level = getattr(state, 'log_level', 'normal')
 
-        # Display tool call (skip in silent mode, skip chat which streams its own output)
         if log_level != "silent" and tool_name != "chat":
             try:
                 args_display = ""
-                # Always show a preview of args for key tools
                 if kwargs:
-                    # For sh/python/sql, show the code/command being run
                     if tool_name in ('sh', 'python', 'sql', 'cmd') and 'code' in kwargs:
-                        code_preview = str(kwargs['code']).strip().split('\n')[0]  # First line
+                        code_preview = str(kwargs['code']).strip().split('\n')[0]
                         if len(code_preview) > 80:
                             code_preview = code_preview[:80] + "…"
                         args_display = code_preview
@@ -2990,10 +2802,8 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
             except Exception:
                 pass
 
-        # Execute tool
         try:
             result = tool_func(**kwargs)
-            # Track in recent tool calls (keep last 5)
             try:
                 import builtins
                 recent = getattr(builtins, '_npcsh_recent_tool_calls', None)
@@ -3008,7 +2818,6 @@ def wrap_tool_with_display(tool_name: str, tool_func: Callable, state: ShellStat
             if log_level != "silent" and tool_name != "chat":
                 try:
                     print(colored(" ✓", "green"), flush=True)
-                    # Show preview of result only in verbose mode
                     if log_level == "verbose":
                         result_preview = str(result)
                         if len(result_preview) > 200:
@@ -3036,7 +2845,6 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
     tools: List[Dict[str, Any]] = []
     tool_map: Dict[str, Callable] = {}
 
-    # NPC-defined Python tools
     npc_obj = state.npc if isinstance(state.npc, NPC) else None
     if npc_obj and getattr(npc_obj, "tools", None):
         if isinstance(npc_obj.tools, list) and npc_obj.tools and callable(npc_obj.tools[0]):
@@ -3050,8 +2858,6 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
     elif npc_obj and getattr(npc_obj, "tool_map", None):
         tool_map.update(npc_obj.tool_map)
 
-    # Jinx tools from NPC only (NPC.jinxes_dict is already filtered by jinxes_spec
-    # during initialize_jinxes - don't add the full team catalog which overwhelms small models)
     aggregated_jinxes: Dict[str, Any] = {}
     if npc_obj and getattr(npc_obj, "jinxes_dict", None):
         aggregated_jinxes.update(npc_obj.jinxes_dict)
@@ -3099,9 +2905,8 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
                 return runner
             tool_map[name] = _make_runner()
 
-    # MCP tools via npcsh.corca client
     try:
-        from npcsh.corca import MCPClientNPC, _resolve_and_copy_mcp_server_path  # type: ignore
+        from npcsh.corca import MCPClientNPC, _resolve_and_copy_mcp_server_path
 
         team_ctx_mcp_servers = None
         if state.team and isinstance(state.team, Team) and hasattr(state.team, "team_ctx"):
@@ -3136,16 +2941,14 @@ def collect_llm_tools(state: ShellState) -> Tuple[List[Dict[str, Any]], Dict[str
                         tools.append(tool_def)
                 tool_map.update(getattr(mcp_client, "tool_map", {}) or {})
     except Exception:
-        pass  # MCP is optional; ignore failures
+        pass
 
-    # Deduplicate tools by name to avoid confusing the LLM
     deduped = {}
     for tool_def in tools:
         name = tool_def.get("function", {}).get("name")
         if name:
             deduped[name] = tool_def
 
-    # Wrap all tools with display feedback for npcsh
     wrapped_tool_map = {name: wrap_tool_with_display(name, func, state) for name, func in tool_map.items()}
 
     return list(deduped.values()), wrapped_tool_map
@@ -3183,7 +2986,6 @@ def execute_slash_command(command: str,
         all_command_parts = command.split()
     command_name = all_command_parts[0].lstrip('/')
 
-    # --- THINKING TOGGLE ---
     if command_name == 'think':
         state.think = True
         return state, {"output": colored("Thinking enabled for next LLM call.", "green"), "messages": state.messages}
@@ -3191,13 +2993,11 @@ def execute_slash_command(command: str,
         state.think = False
         return state, {"output": colored("Thinking disabled for next LLM call.", "green"), "messages": state.messages}
 
-    # --- QUIT/EXIT HANDLING ---
     if command_name in ['quit', 'exit', 'q']:
-    
+
         print("Goodbye!")
         sys.exit(0)
 
-    # --- NPC SWITCHING LOGIC ---
     if command_name in ['n', 'npc']:
         npc_to_switch_to = all_command_parts[1] if len(all_command_parts) > 1 else None
         if npc_to_switch_to and state.team and npc_to_switch_to in state.team.npcs:
@@ -3206,8 +3006,7 @@ def execute_slash_command(command: str,
         else:
             available_npcs = list(state.team.npcs.keys()) if state.team else []
             return state, {"output": colored(f"NPC '{npc_to_switch_to}' not found. Available NPCs: {', '.join(available_npcs)}", "red"), "messages": state.messages}
-    
-    # --- ROUTER LOGIC ---
+
     handler = router.get_route(command_name)
     if handler:
         handler_kwargs = {
@@ -3237,7 +3036,6 @@ def execute_slash_command(command: str,
 
         _duration_ms = int((_time.monotonic() - _start) * 1000)
 
-        # Log jinx execution to jinx_execution_log
         if hasattr(state, 'command_history') and state.command_history is not None and hasattr(state.command_history, 'save_jinx_execution'):
             try:
                 _npc_name = state.npc.name if isinstance(state.npc, NPC) else "npcsh"
@@ -3256,11 +3054,10 @@ def execute_slash_command(command: str,
                     duration_ms=_duration_ms,
                 )
             except Exception:
-                pass  # Don't fail command execution due to logging error
+                pass
 
         return state, result
-    
-    # Fallback for switching NPC by name
+
     if state.team and command_name in state.team.npcs:
         state.npc = state.team.npcs[command_name]
         return state, {"output": f"Switched to NPC: {state.npc.name}", "messages": state.messages}
@@ -3280,7 +3077,6 @@ def process_pipeline_command(
     if not cmd_segment:
         return state, stdin_input
 
-    # Skip the expensive local-model probe when the active NPC is a CLI agent.
     if isinstance(state.npc, CLIAgent):
         available_models_all = {}
     else:
@@ -3297,26 +3093,23 @@ def process_pipeline_command(
          return state, stdin_input
 
     npc_model = (
-        state.npc.model 
-        if isinstance(state.npc, NPC) and state.npc.model 
+        state.npc.model
+        if isinstance(state.npc, NPC) and state.npc.model
         else None
     )
     npc_provider = (
-        state.npc.provider 
-        if isinstance(state.npc, NPC) and state.npc.provider 
+        state.npc.provider
+        if isinstance(state.npc, NPC) and state.npc.provider
         else None
     )
 
     exec_model = model_override or npc_model or state.chat_model
     exec_provider = provider_override or npc_provider or state.chat_provider
 
-    # Check if this is a slash command OR a jinx command (which can run without /)
     is_slash_cmd = cmd_to_process.startswith("/")
     is_jinx_cmd = router and router.is_jinx_command(cmd_to_process.split()[0] if cmd_to_process else "")
-    
+
     if is_slash_cmd or is_jinx_cmd:
-        # Normalize: always pass to execute_slash_command which handles both /cmd and cmd
-        # The router's get_route normalizes commands by stripping /
         result = execute_slash_command(
             cmd_to_process,
             stdin_input,
@@ -3345,7 +3138,7 @@ def process_pipeline_command(
 
     if validate_bash_command(cmd_parts):
         with SpinnerContext(f"Executing {command_name}", style="line"):
-            try: # Added try-except for KeyboardInterrupt here
+            try:
                 success, result = handle_bash_command(
                     cmd_parts, 
                     cmd_to_process, 
@@ -3366,7 +3159,6 @@ def process_pipeline_command(
         path_cmd = 'The current working directory is: ' + state.current_path
         if os.path.exists(state.current_path):
             all_files = os.listdir(state.current_path)
-            # Limit to first 100 files to avoid token explosion
             limited_files = all_files[:100]
             file_list = "\n".join([
                 os.path.join(state.current_path, f)
@@ -3380,7 +3172,6 @@ def process_pipeline_command(
         platform_info = f"Platform: {platform.system()} {platform.release()} ({platform.machine()})"
         info = path_cmd + '\n' + ls_files + '\n' + platform_info + '\n'
 
-        # ── Inject active plan into context ───────────────────────────────────
         if state._active_plan:
             plan = state._active_plan
             current_step = plan.get('current_step', 0)
@@ -3400,9 +3191,6 @@ def process_pipeline_command(
             plan_header += "Use /plan action=revise to change the plan if needed.\n"
             info += plan_header
 
-        # Note: Don't append user message here - get_llm_response/check_llm_command handle it
-
-        # CLI agent short-circuit — bypass litellm/tool loop entirely.
         if isinstance(state.npc, CLIAgent):
             session_ctx = get_cli_session_context(state.command_history, state.conversation_id, state.npc.name)
             session_key = (state.npc.cli_provider, state.npc.name)
@@ -3431,7 +3219,6 @@ def process_pipeline_command(
             if not tools_for_llm:
                 tool_capable = False
             else:
-                # Add tool guidance so model knows to use function calls
                 tool_names = [t['function']['name'] for t in tools_for_llm if 'function' in t]
                 tool_list = ', '.join(tool_names)
                 info += f"""
@@ -3442,12 +3229,11 @@ Do not call stop without first calling chat to deliver a response to the user.
 The user can see tool outputs directly. Do not re-write or repeat them in your chat response — just reference the relevant parts."""
 
         npc_name = (
-            state.npc.name 
-            if isinstance(state.npc, NPC) 
+            state.npc.name
+            if isinstance(state.npc, NPC)
             else "Assistant"
         )
-        
-        # Build extra_globals for jinx execution (outside spinner)
+
         application_globals_for_jinx = {
             "CommandHistory": CommandHistory,
             "load_kg_from_db": load_kg_from_db,
@@ -3473,10 +3259,8 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                 while iteration < max_iterations and not state._stop_requested:
                     iteration += 1
 
-                    # Guard against orphaned tool calls from a prior interrupt
                     state.messages = sanitize_messages(state.messages)
 
-                    # ── DEBUG: dump full message state to file ──
                     try:
                         with open("/tmp/npcsh_tool_loop.log", "a") as _df:
                             _df.write(f"\n=== iter {iteration} BEFORE get_llm_response ===\n")
@@ -3506,9 +3290,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                     _df.write(f"      tool_result: id={_mm['tool_call_id']} content={rc!r}\n")
                     except Exception:
                         pass
-                    # ────────────────────────────────────────────
 
-                    # Log what the model will see
                     msg_roles = [m.get("role", "?") for m in state.messages[-6:]]
                     iter_prompt = full_llm_cmd if iteration == 1 else "Continue. Call stop when done."
                     print(colored(f"  [iter {iteration}] {len(state.messages)} msgs, last roles: {msg_roles}", "white", attrs=["dark"]))
@@ -3535,13 +3317,11 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 tool_choice="auto",
                                 **think_kwargs,
                             )
-                        # Extract thinking / reasoning from raw response
                         try:
                             import builtins
                             raw = llm_result.get("raw_response") if isinstance(llm_result, dict) else None
                             thinking_text = reasoning_text = None
                             if raw:
-                                # Anthropic reasoning blocks
                                 if hasattr(raw, 'content') and isinstance(getattr(raw, 'content', None), list):
                                     for block in raw.content:
                                         if getattr(block, 'type', None) == 'thinking':
@@ -3591,13 +3371,11 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 tool_choice="auto",
                                 **think_kwargs,
                             )
-                        # Extract thinking / reasoning from raw response
                         try:
                             import builtins
                             raw = llm_result.get("raw_response") if isinstance(llm_result, dict) else None
                             thinking_text = reasoning_text = None
                             if raw:
-                                # Anthropic reasoning blocks
                                 if hasattr(raw, 'content') and isinstance(getattr(raw, 'content', None), list):
                                     for block in raw.content:
                                         if getattr(block, 'type', None) == 'thinking':
@@ -3622,18 +3400,15 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                         except Exception:
                             pass
 
-                    # Accumulate usage
                     if isinstance(llm_result, dict) and llm_result.get('usage'):
                         total_usage["input_tokens"] += llm_result['usage'].get('input_tokens', 0)
                         total_usage["output_tokens"] += llm_result['usage'].get('output_tokens', 0)
 
                     if isinstance(llm_result, dict):
-                        # Ensure system message is present in our canonical history
                         if not state.messages or state.messages[0].get("role") != "system":
                             system_msg = get_system_message(state.npc, state.team, tool_capable=bool(tools_for_llm))
                             state.messages.insert(0, {"role": "system", "content": system_msg})
 
-                        # Record the prompt the same way get_llm_response does internally
                         prompt_to_record = iter_prompt
                         if iteration == 1 and info:
                             prompt_to_record = f"{iter_prompt}\n\n\nUser Provided Context: {info}"
@@ -3643,7 +3418,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                         else:
                             state.messages.append({"role": "user", "content": prompt_to_record})
 
-                        # Append assistant response from llm_result instead of replacing history
                         response_text = llm_result.get("response", "")
                         raw_tool_calls = llm_result.get("tool_calls")
                         assistant_msg = {"role": "assistant", "content": response_text or ""}
@@ -3664,7 +3438,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                             assistant_msg["tool_calls"] = tc_dicts
                         state.messages.append(assistant_msg)
 
-                        # ── DEBUG: log message state ──
                         try:
                             with open("/tmp/npcsh_tool_loop.log", "a") as _df:
                                 _df.write(f"=== iter {iteration} AFTER get_llm_response ===\n")
@@ -3693,7 +3466,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                         _df.write(f"      tool_result: id={_mm['tool_call_id']} content={rc!r}\n")
                         except Exception:
                             pass
-                        # ──────────────────────────────
 
                     raw_tool_calls = llm_result.get("tool_calls") if isinstance(llm_result, dict) else None
                     response_text = llm_result.get("response", "") if isinstance(llm_result, dict) else ""
@@ -3713,7 +3485,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 called_names.append(getattr(tc.function, "name", "?"))
                         print(colored(f"  [iter {iteration}] tools called: {', '.join(called_names)}", "white", attrs=["dark"]))
 
-                        # Pre-scan to count how many tool calls need a permission prompt
                         _ask_total = 0
                         for _tc in raw_tool_calls:
                             if isinstance(_tc, dict):
@@ -3747,18 +3518,14 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 arguments = {}
 
                             if tool_name and tool_name in tool_exec_map:
-                                # ── Permission check ─────────────────────────────
                                 perm_result = state.check_tool_permission(tool_name, arguments)
                                 if perm_result == "deny":
                                     tool_result_str = f"EPERM: Tool '{tool_name}' is denied by permission settings."
                                 elif perm_result == "ask":
-                                    # Ask user via ask_form jinx
                                     _ask_index += 1
                                     cmd_key = _build_command_key(tool_name, arguments)
-                                    # Show cmd_key in title so user sees actual command
                                     perm_title = f"Permission Required ({_ask_index} of {_ask_total}): {cmd_key}" if _ask_total > 1 else f"Permission Required: {cmd_key}"
                                     label_text = "Command: " + cmd_key
-                                    # Pause BottomBar so it doesn't interfere with form input
                                     from npcsh.ui import pause_bottom_bar, resume_bottom_bar
                                     pause_bottom_bar()
                                     try:
@@ -3772,8 +3539,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                     except KeyboardInterrupt:
                                         ask_result = {"cancelled": True}
                                     finally:
-                                        # Drain any pending input before resuming BottomBar
-                                        # (prevents arrow key sequences from triggering SIGINT)
                                         try:
                                             import select as _sel
                                             fd = sys.stdin.fileno()
@@ -3790,7 +3555,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
 
                                     if isinstance(ask_result, dict):
                                         if "error" in ask_result or ask_result.get("cancelled") or "_parse_error" in ask_result:
-                                            # Form could not be shown or was cancelled — allow for this session
                                             state.grant_session(cmd_key)
                                             decision = "Yes (conversation)"
                                         else:
@@ -3811,7 +3575,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                     else:
                                         tool_result_str = f"EPERM: User cancelled permission prompt for '{tool_name}'"
                                 else:
-                                    # Allow execution
                                     try:
                                         tool_result = tool_exec_map[tool_name](**arguments)
                                     except Exception as exc:
@@ -3820,11 +3583,9 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                     tool_result_str = json.dumps(tool_result, default=str) if not isinstance(tool_result, str) else tool_result
                                 else:
                                     tool_result_str = tool_result_str if 'tool_result_str' in locals() else f"No result from '{tool_name}'"
-                                # ─────────────────────────────────────────────────
                             else:
                                 tool_result_str = f"Tool '{tool_name}' not found in available tools."
 
-                            # Log tool args and result
                             args_preview = str(arguments)[:5000]
                             result_preview = tool_result_str[:10000] if tool_result_str else "(empty)"
                             print(colored(f"  [iter {iteration}] {tool_name} args: {args_preview}", "white", attrs=["dark"]))
@@ -3836,7 +3597,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                 "name": tool_name or "unknown",
                                 "content": tool_result_str,
                             })
-                            # ── DEBUG: log tool result append ──
                             try:
                                 with open("/tmp/npcsh_tool_loop.log", "a") as _df:
                                     _df.write(f"=== iter {iteration} AFTER tool append ===\n")
@@ -3844,10 +3604,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                                     _df.write(f"messages count now: {len(state.messages)}\n")
                             except Exception:
                                 pass
-                            # ──────────────────────────────────
 
-                            # Display tool result content (spinner is stopped here)
-                            # Skip if tool already streamed its own output
                             already_streamed = getattr(state, '_tool_output_streamed', False)
                             state._tool_output_streamed = False
                             if tool_result_str and tool_result_str.strip() and not already_streamed:
@@ -3917,7 +3674,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                             extra_globals=application_globals_for_jinx,
                             tool_capable=tool_capable,
                         )
-                # Convert jinx_calls to tool_calls format on state.messages
                 if isinstance(llm_result, dict):
                     jinx_calls = llm_result.get("jinx_calls", [])
                     for jc in jinx_calls:
@@ -3950,17 +3706,12 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
             state.messages = sanitize_messages(state.messages)
             raise
 
-        # Extract output and messages from llm_result
-        # get_llm_response uses 'response', check_llm_command uses 'output'
         if isinstance(llm_result, dict):
             new_messages = llm_result.get("messages", state.messages)
             logging.getLogger("npcsh.state").debug(f"[process_pipeline_command] After LLM call: received {len(new_messages)} messages (was {len(state.messages)})")
             state.messages = new_messages
             output_text = llm_result.get("output") or llm_result.get("response")
 
-            # Forenpc auto-delegation: scan for @npc-name mentions in the
-            # response and chain-delegate to specialists. Only applies on the
-            # litellm/non-CLI path here; the CLI path scans before returning.
             if (
                 _is_forenpc(state)
                 and isinstance(output_text, str)
@@ -3971,7 +3722,6 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                     delegation_depth=0, response_already_streamed=False,
                 )
 
-            # Preserve usage info for process_result to accumulate
             output = {
                 'output': output_text,
                 'usage': llm_result.get('usage'),
@@ -4101,9 +3851,6 @@ def _scan_and_apply_delegations(
             delegation_match.group(1).strip() if delegation_match else ""
         )
 
-        # CLI providers can't invoke the `delegate` jinx as a tool call, so the
-        # forenpc just text-mentions @npc. Pass the full forenpc response as
-        # context so the sub-NPC sees the spec, not just the line of the mention.
         sub_request = (
             f"You were delegated to by @{originating_npc_name}. "
             f"Their full message below is your spec/context.\n\n"
@@ -4126,7 +3873,6 @@ def _scan_and_apply_delegations(
 
         header = f"\n\n--- Response from {mentioned_npc} ---\n"
         if response_already_streamed:
-            # Original response already on screen; print sub-response inline.
             print(header)
             try:
                 render_markdown(sub_text)
@@ -4199,7 +3945,6 @@ def _delegate_to_npc(state: ShellState, npc_name: str, command: str, delegation_
         else:
             output = str(result)
 
-        # Only first-level delegations have their @mentions chained.
         if delegation_depth == 0:
             state, output = _scan_and_apply_delegations(
                 state, npc_name, output, delegation_depth=delegation_depth,
@@ -4231,34 +3976,26 @@ def execute_command(
     if not command.strip():
         return state, ""
 
-    # Unescape @ and / at start of command that were escaped to prevent misinterpretation
-    # (e.g., from pasted content that starts with @ or /)
     if command.startswith('\\@') or command.startswith('\\/'):
-        command = command[1:]  # Remove the escape backslash
+        command = command[1:]
 
-    # Check for mode switch commands
     mode_change, state = check_mode_switch(command, state)
     if mode_change:
         print(colored(f"⚡ Switched to {state.current_mode} mode", "green"))
         return state, 'Mode changed.'
 
-    # Check for @npc delegation syntax: @sibiji do something
     if command.startswith('@') and ' ' in command:
-        npc_name = command.split()[0][1:]  # Remove @ prefix
-        delegated_command = command[len(npc_name) + 2:]  # Rest of command
+        npc_name = command.split()[0][1:]
+        delegated_command = command[len(npc_name) + 2:]
 
-        # Check if NPC exists in team
         if state.team and hasattr(state.team, 'npcs') and npc_name in state.team.npcs:
             state, output = _delegate_to_npc(state, npc_name, delegated_command)
             return state, output
         else:
             print(colored(f"⚠ NPC '{npc_name}' not found in team", "yellow"))
-            # Fall through to normal processing
 
     original_command_for_embedding = command
 
-    # Agent mode processes commands directly
-    # Other modes route to their respective jinxes
     if state.current_mode == 'agent':
         try:
             state, output = process_pipeline_command(
@@ -4270,9 +4007,6 @@ def execute_command(
                 router=router
             )
 
-            # Extract response text from dict outputs (process_pipeline_command
-            # returns a dict with 'output' or 'response'); legacy str outputs
-            # remain supported.
             _embed_text = None
             if isinstance(output, str):
                 _embed_text = output
@@ -4291,10 +4025,8 @@ def execute_command(
             return state, colored("Command interrupted.", "red")
         except RateLimitError:
             print(colored('Rate Limit Exceeded', 'yellow'))
-            # Truncate messages to system + last few, then sanitize to remove
-            # any orphaned tool call sequences introduced by the slice.
             if len(state.messages) > 4:
-                truncated = state.messages[0:1]  # system message
+                truncated = state.messages[0:1]
                 truncated += state.messages[-3:]
                 state.messages = sanitize_messages(truncated)
             import time
@@ -4310,15 +4042,12 @@ def execute_command(
             return state, error_msg
 
     else:
-        # For non-agent modes (chat, cmd, or any custom mode), route through the jinx
         mode_jinx_name = state.current_mode
 
-        # Check if mode jinx exists in team or router
         mode_jinx = None
         if state.team and hasattr(state.team, 'jinxes_dict') and mode_jinx_name in state.team.jinxes_dict:
             mode_jinx = state.team.jinxes_dict[mode_jinx_name]
         elif router and mode_jinx_name in router.jinx_routes:
-            # Execute via router
             try:
                 result = router.execute(f"/{mode_jinx_name} {command}",
                                         state=state, npc=state.npc, messages=state.messages)
@@ -4331,7 +4060,6 @@ def execute_command(
                 return state, colored("Interrupted.", "red")
 
         if mode_jinx:
-            # Execute the mode jinx directly
             try:
                 result = mode_jinx.execute(
                     input_values={'query': command, 'stream': state.stream_output},
@@ -4347,7 +4075,6 @@ def execute_command(
                 print(colored(f"\n{mode_jinx_name} interrupted.", "yellow"))
                 return state, colored("Interrupted.", "red")
 
-        # Fallback: if mode jinx not found, use basic LLM response
         npc_model = state.npc.model if isinstance(state.npc, NPC) and state.npc.model else None
         npc_provider = state.npc.provider if isinstance(state.npc, NPC) and state.npc.provider else None
         active_model = npc_model or state.chat_model
@@ -4441,7 +4168,6 @@ def load_team(team_name: str, state: ShellState) -> bool:
 def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     setup_npcsh_config()
 
-    # Warn if no chat model is configured
     if not NPCSH_CHAT_MODEL or not NPCSH_CHAT_PROVIDER:
         print("⚠️  No default chat model configured.")
         print("   Run /model inside npcsh to select one, or set NPCSH_CHAT_MODEL + NPCSH_CHAT_PROVIDER in ~/.npcshrc")
@@ -4451,11 +4177,9 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     command_history = CommandHistory(db_path)
 
-    # Load team registry
     team_registry = load_team_registry()
     initial_state.teams = team_registry
 
-    # Always sync package files if the team directory is missing jinxes or NPCs
     team_dir = os.path.expanduser(DEFAULT_NPC_TEAM_PATH)
     jinxes_dir = os.path.join(team_dir, "jinxes")
     has_npcs = any(
@@ -4485,15 +4209,13 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
         team_dir = project_team_path
         default_forenpc_name = "forenpc"
     else:
-        # No project team in this directory - use global team.
-        # To create a project team, use /init from within npcsh or `npc init`.
         team_dir = global_team_path
         default_forenpc_name = "sibiji"
 
     if not os.path.exists(team_dir):
         print(f"Creating team directory: {team_dir}")
         os.makedirs(team_dir, exist_ok=True)
-        
+
     team_ctx = {}
     team_ctx_path = get_team_ctx_path(team_dir)
     if team_ctx_path:
@@ -4502,16 +4224,12 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                 team_ctx = yaml.safe_load(f) or {}
         except Exception as e:
             print(f"Warning: Could not load context file {os.path.basename(team_ctx_path)}: {e}")
-    
-    # Parse providers field from team.ctx
-    # providers: list of named provider configs with model, api_url, api_key, provider_type
-    # NPCs can reference these by name and override individual fields
+
     _providers = team_ctx.get('providers', [])
     providers_dict = {}
     if isinstance(_providers, list):
         for prov in _providers:
             if isinstance(prov, dict) and 'name' in prov:
-                # Expand environment variables in provider configs
                 expanded_prov = prov.copy()
                 for key in ['api_url', 'api_key', 'model']:
                     if key in expanded_prov and isinstance(expanded_prov[key], str):
@@ -4546,8 +4264,6 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
             print("Please check your .npc files and jinx references.")
             raise
     for npc_name, npc_obj in team.npcs.items():
-        # Resolve named provider references FIRST so NPC inherits model/provider
-        # before falling back to global defaults.
         if hasattr(npc_obj, 'provider') and npc_obj.provider in providers_dict:
             prov_config = providers_dict[npc_obj.provider]
             if not getattr(npc_obj, 'api_url', None) and 'api_url' in prov_config:
@@ -4558,17 +4274,14 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                 npc_obj.provider = prov_config['provider_type']
             if not getattr(npc_obj, 'model', None) and 'model' in prov_config:
                 npc_obj.model = prov_config['model']
-        # Fall back to global defaults for anything still missing
         if not npc_obj.model:
             npc_obj.model = initial_state.chat_model
         if not npc_obj.provider:
             npc_obj.provider = initial_state.chat_provider
-        # Inject NPCSH_API_URL for openai-like provider if not explicitly set (fallback)
         if not getattr(npc_obj, 'api_url', None) and npc_obj.provider == 'openai-like':
             npc_obj.api_url = os.environ.get("NPCSH_API_URL")
 
     if team.forenpc and isinstance(team.forenpc, NPC):
-        # Resolve named provider references FIRST for forenpc as well
         if hasattr(team.forenpc, 'provider') and team.forenpc.provider in providers_dict:
             prov_config = providers_dict[team.forenpc.provider]
             if not getattr(team.forenpc, 'api_url', None) and 'api_url' in prov_config:
@@ -4579,15 +4292,13 @@ def setup_shell() -> Tuple[CommandHistory, Team, Optional[NPC]]:
                 team.forenpc.provider = prov_config['provider_type']
             if not getattr(team.forenpc, 'model', None) and 'model' in prov_config:
                 team.forenpc.model = prov_config['model']
-        # Fall back to global defaults
         if not team.forenpc.model:
             team.forenpc.model = initial_state.chat_model
         if not team.forenpc.provider:
             team.forenpc.provider = initial_state.chat_provider
-        # Inject NPCSH_API_URL for openai-like provider if not explicitly set (fallback)
         if not getattr(team.forenpc, 'api_url', None) and team.forenpc.provider == 'openai-like':
             team.forenpc.api_url = os.environ.get("NPCSH_API_URL")
-    
+
     team_name_from_ctx = team_ctx.get("name")
     if team_name_from_ctx:
         team.name = team_name_from_ctx
@@ -4701,12 +4412,10 @@ def process_result(
 
     final_output_str = None
 
-    # FIX: Handle dict output properly
     msg_input_tokens = None
     msg_output_tokens = None
     msg_cost = None
 
-    # Fast path for bash output — skip markdown rendering, embeddings, and LLM message append
     if isinstance(output, dict) and output.get('_bash'):
         bash_out = output.get('output', '')
         if bash_out:
@@ -4730,19 +4439,16 @@ def process_result(
     )
 
     if isinstance(output, dict):
-        # Use None-safe check to not skip empty strings
         output_content = output.get('output') if 'output' in output else output.get('response')
         model_for_stream = output.get('model', active_npc.model)
         provider_for_stream = output.get('provider', active_npc.provider)
 
-        # Accumulate token usage if available
         if 'usage' in output:
             usage = output['usage']
             msg_input_tokens = usage.get('input_tokens', 0)
             msg_output_tokens = usage.get('output_tokens', 0)
             result_state.session_input_tokens += msg_input_tokens
             result_state.session_output_tokens += msg_output_tokens
-            # Calculate cost
             from npcpy.gen.response import calculate_cost
             msg_cost = calculate_cost(
                 model_for_stream,
@@ -4751,11 +4457,9 @@ def process_result(
             )
             result_state.session_cost_usd += msg_cost
 
-        # If output_content is still a dict, convert to string
         if isinstance(output_content, dict):
             output_content = str(output_content)
         elif output_content is None or output_content == '':
-            # No output from the agent - this is fine, don't show annoying message
             output_content = None
     else:
         output_content = output
@@ -4764,12 +4468,8 @@ def process_result(
 
     print('\n')
     if output_content is None:
-        # No output to display - tool results already shown during execution
         pass
     elif response_already_streamed:
-        # CLI provider already streamed the response to stdout — don't
-        # re-render it, but record final_output_str so the message is
-        # appended to history below.
         final_output_str = output_content if isinstance(output_content, str) else str(output_content)
     elif user_input == '/help':
         if isinstance(output_content, str):
@@ -4777,7 +4477,6 @@ def process_result(
         else:
             render_markdown(str(output_content))
     elif result_state.stream_output:
-        # FIX: Only stream if output_content is a generator, not a string
         if isinstance(output_content, str):
             final_output_str = output_content
             render_markdown(final_output_str)
@@ -4791,9 +4490,7 @@ def process_result(
     else:
         final_output_str = str(output_content)
         render_markdown(final_output_str)
-        
 
-    # Log message state after processing
     logger = logging.getLogger("npcsh.state")
     logger.debug(f"[process_result] Before final append: {len(result_state.messages)} messages, final_output_str={'set' if final_output_str else 'None'}")
 
@@ -4822,9 +4519,6 @@ def process_result(
         )
 
         result_state.turn_count += 1
-
-        # Memory extraction, KG evolution, and context compression
-        # are handled by scheduled jinxes via cron — not inline here.
 
 initial_state = ShellState(
     conversation_id=start_new_conversation(),

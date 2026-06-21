@@ -54,7 +54,7 @@ def build_flask_server(config, **kwargs):
     
     readme = output_dir / 'README.md'
     readme.write_text(textwrap.dedent(f'''
-    # NPC Team Server
+    NPC Team Server
     
     Run: python npc_server.py
     
@@ -225,7 +225,7 @@ def build_static_site(config, **kwargs):
                 max-width: 800px; 
                 margin: 50px auto; 
             }}
-            #output {{ 
+            [id="output"] {{ 
                 white-space: pre-wrap; 
                 background: #f5f5f5; 
                 padding: 20px; 

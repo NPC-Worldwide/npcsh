@@ -173,9 +173,6 @@ def init_kg_schema(engine: Engine):
         Column('type', String(100)),
         Column('generation', Integer),
         Column('origin', String(100)),
-        # FK to memory_lifecycle(id). Facts produced directly from an approved memory
-        # carry the memory's id so consumers can trace back to the source memory and its
-        # approval history. Nullable — facts synthesized without a source memory leave it NULL.
         Column('memory_id', Integer),
         UniqueConstraint('statement', 'team_name', 'npc_name', 'directory_path'),
     )
@@ -232,19 +229,16 @@ def init_kg_schema(engine: Engine):
         schema=None
     )
 
-    # silence ruff: tables defined above are registered by metadata.create_all below
     _ = kg_facts, kg_fact_sources, kg_concepts, kg_links, kg_metadata, npc_versions
 
     metadata.create_all(engine, checkfirst=True)
 
-    # Idempotent column add for DBs that predate memory_id on kg_facts.
     try:
         with engine.begin() as conn:
             cols = [r[1] for r in conn.execute(text("PRAGMA table_info(kg_facts)")).fetchall()]
             if 'memory_id' not in cols:
                 conn.execute(text("ALTER TABLE kg_facts ADD COLUMN memory_id INTEGER"))
     except Exception:
-        # Non-SQLite engines use create_all's DDL directly; migration not required there.
         pass
 
 def load_kg_from_db(engine: Engine, team_name: str, npc_name: str, directory_path: str) -> Dict[str, Any]:
@@ -372,7 +366,6 @@ def save_kg_to_db(engine: Engine, kg_data: Dict[str, Any], team_name: str, npc_n
                 for fact in facts_to_save:
                     conn.execute(stmt, fact)
 
-                # Record which conversation/message produced each fact
                 if conversation_id and message_id:
                     src_stmt = text("""
                         INSERT OR IGNORE INTO kg_fact_sources

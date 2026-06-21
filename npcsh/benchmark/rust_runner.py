@@ -92,17 +92,14 @@ def run_task(task, model, provider, timeout=120):
     verify_cmd = task["verify_cmd"]
     setup_cmd = task.get("setup_cmd", "") or ""
 
-    # Clean artifacts
     clean_task_artifacts(task)
 
-    # Run setup
     if setup_cmd and isinstance(setup_cmd, str) and setup_cmd.strip():
         try:
             subprocess.run(["bash", "-c", setup_cmd], timeout=15, capture_output=True)
         except Exception as e:
             print(f"  setup failed: {e}")
 
-    # Run via Rust npcsh
     start = time.time()
     env = os.environ.copy()
     env["NPCSH_CHAT_MODEL"] = model
@@ -122,7 +119,6 @@ def run_task(task, model, provider, timeout=120):
 
     duration = time.time() - start
 
-    # Verify
     try:
         verify = subprocess.run(
             ["bash", "-c", verify_cmd],
@@ -165,12 +161,10 @@ def run_benchmark(model, provider, tasks, timeout=120):
         if result.passed:
             passed += 1
 
-    # Summary
     print(f"\n{'='*60}")
     print(f"  Results: {passed}/{total} ({100*passed/total:.0f}%)")
     print(f"{'='*60}")
 
-    # By category
     by_cat = {}
     for r in results:
         if r.category not in by_cat:
@@ -199,7 +193,6 @@ def main():
     parser.add_argument("--binary", default=NPCSH_BIN, help="Path to npcsh binary")
     args = parser.parse_args()
 
-    # Allow overriding binary path
     _set_binary(args.binary)
 
     if not os.path.exists(NPCSH_BIN):

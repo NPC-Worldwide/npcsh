@@ -9,18 +9,14 @@ import os
 import signal
 from termcolor import colored
 
-# Global reference to current active spinner for sub-agent updates
 _current_spinner = None
 
 def get_current_spinner():
     """Get the currently active spinner, if any."""
     return _current_spinner
 
-# Lock that all threads must hold before writing to stdout so that spinner
-# updates and BottomBar redraws never interleave.
 _stdout_lock = threading.Lock()
 
-# Set to the active BottomBar instance while a processing phase is running.
 _active_bottom_bar = None
 
 
@@ -53,8 +49,6 @@ class BottomBar:
         self._thread = None
         self._buf = ""
 
-    # ── public API ──────────────────────────────────────────────────────────
-
     def start(self):
         self._stop.clear()
         self._pause_req.clear()
@@ -79,8 +73,6 @@ class BottomBar:
         self._pause_ack.clear()
         self._pause_req.clear()
 
-    # ── internal ────────────────────────────────────────────────────────────
-
     def _run(self):
         try:
             import termios
@@ -93,7 +85,7 @@ class BottomBar:
             def _enter_cbreak():
                 tty.setcbreak(fd)
                 s = termios.tcgetattr(fd)
-                s[3] &= ~termios.ISIG        # Ctrl-C → \x03, not SIGINT
+                s[3] &= ~termios.ISIG
                 termios.tcsetattr(fd, termios.TCSADRAIN, s)
 
             try:
@@ -120,17 +112,15 @@ class BottomBar:
                     if c in ('\r', '\n'):
                         if self._buf.strip():
                             self.queue.append(self._buf.strip())
-                            # Update spinner to show queued count
                             spinner = get_current_spinner()
                             if spinner:
                                 spinner.set_status(f"[{len(self.queue)} queued]")
                         self._buf = ""
-                    elif c == '\x03':     # Ctrl-C → interrupt
+                    elif c == '\x03':
                         self._stop.set()
                         os.kill(os.getpid(), signal.SIGINT)
                         break
-                    elif c == '\x1b':     # ESC - always ignore to prevent arrow key interruption
-                        # Drain any following characters and ignore
+                    elif c == '\x1b':
                         try:
                             while _sel.select([fd], [], [], 0.1)[0]:
                                 os.read(fd, 1)
@@ -172,7 +162,7 @@ class BottomBar:
                         self._stop.set()
                         os.kill(os.getpid(), signal.SIGINT)
                         break
-                    elif c in ('\x7f', '\x08'):     # Backspace
+                    elif c in ('\x7f', '\x08'):
                         if self._buf:
                             self._buf = self._buf[:-1]
                             spinner = get_current_spinner()
@@ -182,9 +172,8 @@ class BottomBar:
                                     spinner.set_status(f"typing: {preview}")
                                 else:
                                     spinner.set_status("")
-                    elif ord(c) >= 32:              # Printable character
+                    elif ord(c) >= 32:
                         self._buf += c
-                        # Show typing in spinner status
                         spinner = get_current_spinner()
                         if spinner:
                             preview = self._buf[-40:] if len(self._buf) > 40 else self._buf
@@ -249,8 +238,6 @@ class SpinnerContext:
             return self
         self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
-        # Only start the ESC listener when BottomBar is not managing stdin.
-        # (BottomBar forwards Ctrl-C/ESC as SIGINT itself.)
         if _active_bottom_bar is None:
             self._key_thread = threading.Thread(target=self._listen_for_esc, daemon=True)
             self._key_thread.start()
@@ -262,13 +249,10 @@ class SpinnerContext:
         self._stop = True
         if self._thread:
             self._thread.join(timeout=0.5)
-        # Wait for key listener to fully stop and release stdin before continuing
         if self._key_thread:
             self._key_thread.join(timeout=2.0)
-        # Clear spinner line
         sys.stdout.write('\r' + ' ' * (len(self.message) + 60) + '\r')
         sys.stdout.flush()
-        # Check if we were interrupted by ESC
         if self._interrupted:
             raise KeyboardInterrupt("ESC pressed")
 
@@ -286,19 +270,16 @@ class SpinnerContext:
             try:
                 tty.setcbreak(fd)
                 while not self._stop:
-                    # Check if input is available (non-blocking)
                     if select.select([sys.stdin], [], [], 0.1)[0]:
                         ch = sys.stdin.read(1)
-                        if ch == '\x1b':  # ESC key
+                        if ch == '\x1b':
                             self._interrupted = True
                             self._stop = True
-                            # Send SIGINT to main thread to interrupt blocking calls
                             os.kill(os.getpid(), signal.SIGINT)
                             break
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, self._old_settings)
         except Exception:
-            # If we can't set up terminal raw mode (e.g., not a tty), just skip ESC detection
             pass
 
     def _spin(self):
@@ -306,17 +287,14 @@ class SpinnerContext:
         while not self._stop:
             char = self.spinner[idx % len(self.spinner)]
 
-            # Build status line with timer
             elapsed = time.time() - self._start_time if self._start_time else 0
             mins, secs = divmod(int(elapsed), 60)
             timer_str = f"{mins}:{secs:02d}" if mins else f"{secs}s"
 
-            # Token info if available
             token_str = ""
             if self._tokens_in or self._tokens_out:
                 token_str = colored(f" [{self._tokens_in}→{self._tokens_out} tok]", "cyan")
 
-            # Additional status
             status_str = ""
             if self._status_msg:
                 status_str = colored(f" {self._status_msg}", "yellow")
@@ -328,7 +306,6 @@ class SpinnerContext:
             timer_display = colored(f" [{timer_str}]", "blue")
 
             line = f'\r{char} {self.message}...{timer_display}{token_str}{status_str}{hint}'
-            # Clear rest of line; hold the lock so BottomBar redraws don't interleave.
             with _stdout_lock:
                 sys.stdout.write(line + ' ' * 10)
                 sys.stdout.flush()
@@ -343,7 +320,6 @@ def show_thinking_animation(message="Thinking", duration=None):
         if duration:
             time.sleep(duration)
         else:
-            # Run until interrupted
             try:
                 while True:
                     time.sleep(0.1)
@@ -392,7 +368,6 @@ def format_file_listing(output: str) -> str:
             formatted.append(line)
             continue
 
-        # Try to color the file part
         parts = line.rsplit('/', 1)
         if len(parts) == 2:
             path, filename = parts
@@ -638,10 +613,8 @@ def print_conversation_usage(state, active_bottom_bar=None):
     except Exception:
         get_model_context_window = None
         calculate_cost = None
-    # silence ruff; calculate_cost is used conditionally below and may be unused in some branches
     _ = calculate_cost
 
-    # Determine active model/provider
     from npcpy.npc_compiler import NPC
     if isinstance(state.npc, NPC) and state.npc.model:
         active_model = state.npc.model
@@ -650,14 +623,12 @@ def print_conversation_usage(state, active_bottom_bar=None):
         active_model = state.chat_model
         active_provider = state.chat_provider
 
-    # Is it a local provider (no cost)?
     is_local = active_provider and active_provider.lower() in ('ollama', 'transformers', 'local')
 
     inp = state.session_input_tokens
     out = state.session_output_tokens
     cost = state.session_cost_usd
 
-    # Context window percentage
     ctx_window = get_model_context_window(active_model, active_provider) if get_model_context_window else 0
     if ctx_window > 0:
         ctx_pct = min((inp * 100) // ctx_window, 100)
@@ -665,7 +636,6 @@ def print_conversation_usage(state, active_bottom_bar=None):
     else:
         ctx_str = "? ctx"
 
-    # Format tokens
     def _tok_fmt(n):
         if n >= 1_000_000:
             return f"{n / 1_000_000:.1f}M"
@@ -676,7 +646,6 @@ def print_conversation_usage(state, active_bottom_bar=None):
     tok_in_str = _tok_fmt(inp)
     tok_out_str = _tok_fmt(out)
 
-    # Format cost
     if is_local or cost == 0:
         cost_str = "$0.00"
     elif cost < 0.01:
@@ -684,7 +653,6 @@ def print_conversation_usage(state, active_bottom_bar=None):
     else:
         cost_str = f"${cost:.2f}"
 
-    # Build line
     line = (
         colored(f"Tokens: {tok_in_str}", "cyan") + colored(" in / ", "white", attrs=["dark"]) +
         colored(f"{tok_out_str}", "magenta") + colored(" out  |  ", "white", attrs=["dark"]) +
@@ -692,8 +660,6 @@ def print_conversation_usage(state, active_bottom_bar=None):
         colored(f"Cost: {cost_str}", "green")
     )
 
-    # Print below the output. If BottomBar is active, pause it briefly
-    # to avoid the line being overwritten.
     if active_bottom_bar is not None:
         active_bottom_bar.pause()
     try:

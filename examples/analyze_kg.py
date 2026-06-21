@@ -9,7 +9,6 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-# Set better matplotlib defaults
 plt.rcParams["figure.facecolor"] = "white"
 plt.rcParams["axes.facecolor"] = "white"
 plt.rcParams["font.size"] = 11

@@ -9,13 +9,10 @@ Active RL training loop for npcsh.
 3. Trains with DPO, GRPO, or PPO via npcpy.ft.rl
 
 Usage:
-    # Collect fresh traces and train DPO
     python scripts/train_npcsh_rl.py dpo --model mlx-community/Qwen3-4B-4bit --provider omlx
 
-    # Use existing benchmark CSVs, train GRPO on hard tasks only
     python scripts/train_npcsh_rl.py grpo --model mlx-community/Qwen3-4B-4bit --csv-dir ~/.npcsh/benchmarks/local --hard-only
 
-    # Active loop: evaluate current adapter, collect traces, RL train, repeat
     python scripts/train_npcsh_rl.py grpo --model mlx-community/Qwen3-4B-4bit --active-loop --iterations 3
 """
 
@@ -57,9 +54,7 @@ def run_npcsh_task(task: dict, model: str, provider: str, work_dir: str) -> dict
 
     if setup_cmd:
         import shutil
-        # Run setup directly without subprocess
         try:
-            # Use npcsh's own execution path
             from npcsh._state import execute_command
             from npcsh.routes import router
             os.chdir(work_dir)
@@ -94,11 +89,9 @@ def run_npcsh_task(task: dict, model: str, provider: str, work_dir: str) -> dict
     except Exception:
         passed = False
 
-    # Extract clean instruction/response from full output
     parsed = parse_trace(output) or {}
     clean_instruction = parsed.get("instruction", instruction)
     clean_response = parsed.get("response", "")
-    # Fallback: if parse_trace couldn't extract, use raw output as response
     if not clean_response:
         clean_response = output
 
@@ -140,7 +133,6 @@ def collect_traces(tasks: list, model: str, provider: str, attempts: int = 3, ke
             print(f"  attempt {attempt + 1}: {status} reward={reward:.2f} ({trace['duration']:.1f}s)")
 
             task_traces.append(trace)
-            # Clean up
             import shutil
             shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -212,7 +204,6 @@ def train_dpo(traces: list, args):
 def train_grpo(traces: list, args):
     from npcpy.ft.rl import RLConfig, train_with_grpo
 
-    # Group traces by task_id for GRPO
     by_task = {}
     for t in traces:
         by_task.setdefault(t["task_id"], []).append(t)
@@ -319,13 +310,11 @@ def active_loop(args):
         passed = sum(1 for t in traces if t["passed"])
         print(f"Baseline: {passed}/{len(traces)} traces passed")
 
-        # Merge with any existing CSV traces
         if args.csv_dir:
             csv_traces = load_csv_traces(os.path.expanduser(args.csv_dir), hard_only=args.hard_only)
             traces.extend(csv_traces)
             print(f"Merged {len(csv_traces)} CSV traces. Total: {len(traces)}")
 
-        # Save traces
         ts = time.strftime("%Y%m%d_%H%M%S")
         trace_file = Path(args.output) / f"rl_traces_{ts}_iter{iteration}.json"
         trace_file.parent.mkdir(parents=True, exist_ok=True)
@@ -333,13 +322,11 @@ def active_loop(args):
             json.dump(traces, f, indent=2)
         print(f"Traces saved to {trace_file}")
 
-        # Train
         adapter = run_training(traces, args)
         if not adapter:
             print("Training failed, stopping loop.")
             break
 
-        # Evaluate: run a quick benchmark subset
         if args.eval_on_loop:
             print("\nEvaluating on first 10 tasks...")
             eval_tasks = tasks[:10]
@@ -398,13 +385,11 @@ def main():
         active_loop(args)
         return
 
-    # One-shot training
     traces = []
     if args.csv_dir:
         traces.extend(load_csv_traces(os.path.expanduser(args.csv_dir), hard_only=args.hard_only))
 
     if not args.task_id and not args.category and not args.difficulty and traces:
-        # CSV-only mode
         print(f"Training from {len(traces)} CSV traces")
     else:
         tasks = load_tasks(category=args.category, difficulty=args.difficulty, task_id=args.task_id)

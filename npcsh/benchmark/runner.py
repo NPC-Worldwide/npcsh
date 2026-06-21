@@ -21,12 +21,12 @@ class BenchmarkConfig:
     model: str = "claude-sonnet-4-20250514"
     provider: str = "anthropic"
     dataset: str = "terminal-bench"
-    dataset_version: Optional[str] = None  # If None, use latest
+    dataset_version: Optional[str] = None
     n_concurrent: int = 4
     task_ids: Optional[List[str]] = None
     output_dir: Optional[str] = None
-    npc_name: Optional[str] = None  # Use specific NPC
-    timeout: int = 600  # Per-task timeout in seconds
+    npc_name: Optional[str] = None
+    timeout: int = 600
     extra_args: List[str] = field(default_factory=list)
 
 
@@ -52,14 +52,8 @@ class BenchmarkRunner:
 
     Example usage:
         runner = BenchmarkRunner()
-
-        # Run with default settings (Claude Sonnet)
         result = runner.run()
-
-        # Run with specific model
         result = runner.run(model="gpt-4o", provider="openai")
-
-        # Compare multiple models
         results = runner.compare_models([
             ("claude-sonnet-4-20250514", "anthropic"),
             ("gpt-4o", "openai"),
@@ -92,14 +86,10 @@ class BenchmarkRunner:
             "docker": False,
         }
 
-        # Find binaries in the same Python environment as current interpreter
-        # Use sys.prefix to get the virtualenv/pyenv directory (don't resolve symlinks)
         bin_dir = Path(sys.prefix) / "bin"
         if not bin_dir.exists():
-            # Fallback: use executable's directory without resolving
             bin_dir = Path(sys.executable).parent
 
-        # Check harbor - first in current Python's bin dir, then PATH
         harbor_bin = bin_dir / "harbor"
         if not harbor_bin.exists():
             harbor_bin = shutil.which("harbor")
@@ -115,7 +105,6 @@ class BenchmarkRunner:
             except (FileNotFoundError, OSError):
                 pass
 
-        # Check terminal-bench (tb CLI) - first in current Python's bin dir, then PATH
         tb_bin = bin_dir / "tb"
         if not tb_bin.exists():
             tb_bin = shutil.which("tb")
@@ -131,7 +120,6 @@ class BenchmarkRunner:
             except (FileNotFoundError, OSError):
                 pass
 
-        # Check docker
         try:
             result = subprocess.run(
                 ["docker", "--version"],
@@ -149,7 +137,6 @@ class BenchmarkRunner:
         print("Installing Terminal-Bench dependencies...")
 
         try:
-            # Install harbor and terminal-bench via pip/uv
             subprocess.run(
                 [sys.executable, "-m", "pip", "install", "harbor", "terminal-bench"],
                 check=True
@@ -189,7 +176,6 @@ class BenchmarkRunner:
         Returns:
             BenchmarkResult with evaluation metrics
         """
-        # Check dependencies
         deps = self.check_dependencies()
         if not deps["harbor"]:
             print("Harbor not installed. Installing...")
@@ -199,23 +185,18 @@ class BenchmarkRunner:
                     error="Failed to install dependencies"
                 )
 
-        # Create output directory for this run
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name = f"{provider}_{model}_{timestamp}".replace("/", "_")
         output_dir = self.output_base_dir / run_name
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build the harbor command
         full_model = f"{provider}/{model}"
 
-        # Choose agent based on whether NPC is specified
         if npc_name:
             agent_path = "npcsh.benchmark:NpcshAgentWithNpc"
         else:
             agent_path = "npcsh.benchmark:NpcshAgent"
 
-        # Find harbor in the same Python environment as current interpreter
-        # Use sys.prefix to get the virtualenv/pyenv directory (don't resolve symlinks)
         import shutil
         bin_dir = Path(sys.prefix) / "bin"
         if not bin_dir.exists():
@@ -224,7 +205,6 @@ class BenchmarkRunner:
         if not Path(harbor_bin).exists():
             harbor_bin = shutil.which("harbor") or "harbor"
 
-        # Build dataset string (with optional version)
         dataset_str = f"{dataset}@{dataset_version}" if dataset_version else dataset
 
         cmd = [
@@ -257,24 +237,21 @@ class BenchmarkRunner:
         start_time = datetime.now()
 
         try:
-            # Run the benchmark
             process = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout * n_concurrent * 2  # Overall timeout
+                timeout=timeout * n_concurrent * 2
             )
 
             duration = (datetime.now() - start_time).total_seconds()
 
-            # Parse results
             result = self._parse_results(output_dir, duration)
             result.output_dir = str(output_dir)
 
             if process.returncode != 0:
                 result.error = process.stderr
 
-            # Save run metadata
             self._save_run_metadata(output_dir, {
                 "model": full_model,
                 "provider": provider,
@@ -313,7 +290,6 @@ class BenchmarkRunner:
             duration_seconds=duration
         )
 
-        # Look for results file
         results_file = output_dir / "results.json"
         if results_file.exists():
             try:
@@ -329,7 +305,6 @@ class BenchmarkRunner:
 
                 result.task_results = data.get("tasks", [])
 
-                # Aggregate token usage
                 for task in result.task_results:
                     result.total_tokens += task.get("tokens", 0)
                     result.total_cost_usd += task.get("cost_usd", 0.0)
@@ -398,7 +373,6 @@ class BenchmarkRunner:
             print(f"  Tasks: {result.passed_tasks}/{result.total_tasks}")
             print(f"  Duration: {result.duration_seconds:.1f}s")
 
-        # Print comparison summary
         self._print_comparison_summary(results)
 
         return results
@@ -457,12 +431,8 @@ def run_benchmark(
 
     Example:
         from npcsh.benchmark import run_benchmark
-
-        # Run with Claude
         result = run_benchmark("claude-sonnet-4-20250514", "anthropic")
         print(f"Accuracy: {result.accuracy:.1%}")
-
-        # Run with GPT-4
         result = run_benchmark("gpt-4o", "openai")
     """
     runner = BenchmarkRunner()
@@ -480,9 +450,6 @@ def quick_test(
     This runs only a few tasks to quickly verify that everything is working.
     """
     runner = BenchmarkRunner()
-
-    # Use -l flag to limit number of tasks instead of specifying task names
-    # This avoids issues with task names changing in the dataset
     return runner.run(
         model=model,
         provider=provider,
@@ -500,19 +467,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Check dependencies
   npcsh-bench --check
-
-  # Quick test with Claude
   npcsh-bench --quick -m claude-sonnet-4-20250514 -p anthropic
-
-  # Full benchmark run
   npcsh-bench -m gpt-4o -p openai -n 8
-
-  # List past runs
   npcsh-bench --list-runs
-
-  # Compare models (requires manual setup)
   npcsh-bench --compare
         """
     )

@@ -18,14 +18,12 @@ def main():
     parser.add_argument("--reasoning-model", type=str, help="Model for reasoning (may differ from chat)")
     args = parser.parse_args()
 
-    # Setup shell to get team and default NPC
     command_history, team, default_npc = setup_shell()
 
     if not team or "pti" not in team.jinxes_dict:
         print("Error: pti jinx not found. Ensure npc_team/jinxes/modes/pti.jinx exists.")
         sys.exit(1)
 
-    # Build context for jinx execution
     context = {
         "npc": default_npc,
         "team": team,
@@ -36,12 +34,10 @@ def main():
         "reasoning_model": args.reasoning_model,
     }
 
-    # If initial prompt provided, add it
     if args.prompt:
         initial = " ".join(args.prompt)
         context["messages"] = [{"role": "user", "content": initial}]
 
-    # Execute the jinx
     pti_jinx = team.jinxes_dict["pti"]
     result = pti_jinx.execute(context=context, npc=default_npc)
 
