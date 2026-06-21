@@ -141,7 +141,6 @@ def build_verify_cmd(text: str, category: str):
 def build_setup_cmd(text: str, category: str):
     t = text.lower()
     if "buggy" in t:
-        # Extract code block after "buggy code" or similar
         return ""
     return ""
 
@@ -158,9 +157,7 @@ def generate_tasks(candidates, existing_instructions, max_tasks: int = 15):
     tasks = []
     cat_counts = defaultdict(int)
 
-    # Count existing tasks per category to determine next IDs
     for instr in existing_instructions:
-        # We just need the count, not the actual IDs
         pass
 
     for text in candidates:
@@ -178,7 +175,7 @@ def generate_tasks(candidates, existing_instructions, max_tasks: int = 15):
 
         cat = categorize(text)
         cat_counts[cat] += 1
-        task_id = f"{cat}-{cat_counts[cat] + 100:02d}"  # Start at high numbers to avoid collision
+        task_id = f"{cat}-{cat_counts[cat] + 100:02d}"
 
         task = {
             "id": task_id,

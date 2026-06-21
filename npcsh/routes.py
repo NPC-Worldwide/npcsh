@@ -12,7 +12,7 @@ class CommandRouter:
         self.routes = {}
         self.help_info = {}
         self.jinx_routes = {}
-        self.jinx_objects = {}  # command_name -> Jinx object
+        self.jinx_objects = {}
 
     def route(self, command: str, help_text: str = "") -> Callable:
         def wrapper(func):
@@ -30,7 +30,7 @@ class CommandRouter:
         if not os.path.exists(jinxes_dir):
             print(f"Jinxes directory not found: {jinxes_dir}")
             return
-        
+
         for root, dirs, files in os.walk(jinxes_dir):
             for filename in files:
                 if filename.endswith('.jinx'):
@@ -40,7 +40,7 @@ class CommandRouter:
                         self.register_jinx(jinx)
                     except Exception as e:
                         print(f"Error loading jinx {filename}: {e}")
-    
+
     def register_jinx(self, jinx: Jinx):
         command_name = jinx.jinx_name
 
@@ -54,20 +54,18 @@ class CommandRouter:
     def _execute_jinx(self, jinx: Jinx, command: str, **kwargs):
         messages = kwargs.get("messages", [])
         npc = kwargs.get('npc')
-        
+
         try:
             import shlex
-            
+
             try:
                 parts = shlex.split(command)
             except ValueError:
                 parts = command.split()
             args = parts[1:] if len(parts) > 1 else []
-            
-            # Use extract_jinx_inputs
+
             input_values = extract_jinx_inputs(args, jinx)
-            
-            # Build extra_globals for jinx execution
+
             from npcsh.history import CommandHistory, load_kg_from_db
             from npcpy.memory.search import execute_rag_command
             from npcpy.data.load import load_file_contents
@@ -90,17 +88,14 @@ class CommandRouter:
                 "print_and_process_stream_with_markdown": print_and_process_stream_with_markdown,
                 'state': kwargs.get('state')
             }
-            
-            # Add functions from _state module if available
+
             try:
                 from npcsh import _state
                 for name, func in inspect.getmembers(_state, inspect.isfunction):
                     application_globals_for_jinx[name] = func
             except:
                 pass
-            
-            # Pause BottomBar for ALL jinx execution so TUI jinxes
-            # get exclusive stdin access without needing individual calls.
+
             pause_bottom_bar()
             try:
                 jinx_output = jinx.execute(
@@ -111,7 +106,7 @@ class CommandRouter:
                 )
             finally:
                 resume_bottom_bar()
-            
+
             if isinstance(jinx_output, dict):
                 return {
                     "output": jinx_output.get('output', str(jinx_output)),
@@ -119,7 +114,7 @@ class CommandRouter:
                 }
             else:
                 return {"output": str(jinx_output), "messages": messages}
-                
+
         except Exception as e:
             traceback.print_exc()
             return {
@@ -128,7 +123,6 @@ class CommandRouter:
             }
 
     def get_route(self, command: str) -> Optional[Callable]:
-        # Normalize command - strip leading slash if present
         command = command.lstrip('/')
         if command in self.routes:
             return self.routes[command]
@@ -152,7 +146,6 @@ class CommandRouter:
         return None
 
     def get_commands(self) -> List[str]:
-        # Return commands without leading slash (first-class shell commands)
         all_commands = list(self.routes.keys()) + list(self.jinx_routes.keys())
         return sorted(set(all_commands))
 
@@ -161,7 +154,6 @@ class CommandRouter:
         return [f"/{cmd}" for cmd in self.get_commands()]
 
     def get_help(self, command: str = None) -> Dict[str, str]:
-        # Normalize command - strip leading slash if present
         command = command.lstrip('/') if command else None
         if command:
             if command in self.help_info:

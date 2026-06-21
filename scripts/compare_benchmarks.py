@@ -112,7 +112,6 @@ def main():
             print(f"  {cat}: {', '.join(tasks)}")
         print()
 
-    # Duration comparison for common passed tasks
     common_pass = [tid for tid in baseline if tid in new and baseline[tid]["passed"] and new[tid]["passed"]]
     if common_pass:
         base_dur = sum(baseline[tid]["duration"] for tid in common_pass) / len(common_pass)

@@ -9,10 +9,8 @@ from typing import List, Tuple, Any, Optional
 from termcolor import colored
 
 
-# Commands that require interactive terminal handling
 TERMINAL_EDITORS = ['vim', 'nvim', 'nano', 'vi', 'emacs', 'less', 'more', 'man']
 
-# Interactive commands that need special handling (command -> args)
 INTERACTIVE_COMMANDS = {
     'ipython': ['ipython'],
     'python': ['python', '-i'],
@@ -47,7 +45,6 @@ def validate_bash_command(command_parts: List[str]) -> bool:
 
     cmd = command_parts[0]
 
-    # Check shell builtins
     builtins = {'cd', 'pwd', 'echo', 'export', 'source', 'alias', 'unalias',
                 'history', 'set', 'unset', 'read', 'eval', 'exec', 'exit',
                 'return', 'shift', 'trap', 'wait', 'jobs', 'fg', 'bg',
@@ -56,7 +53,6 @@ def validate_bash_command(command_parts: List[str]) -> bool:
     if cmd in builtins:
         return True
 
-    # Check if command exists in PATH
     return shutil.which(cmd) is not None
 
 

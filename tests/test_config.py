@@ -14,7 +14,6 @@ def test_config_key_map_has_common_keys():
 
 def test_set_npcsh_config_value_sets_env(monkeypatch):
     """Test that set_npcsh_config_value sets environment variable."""
-    # Use a temp file for npcshrc to avoid modifying user's config
     with tempfile.NamedTemporaryFile(mode='w', suffix='.npcshrc', delete=False) as f:
         temp_npcshrc = f.name
 
@@ -24,7 +23,6 @@ def test_set_npcsh_config_value_sets_env(monkeypatch):
 
     assert os.environ.get("NPCSH_CHAT_MODEL") == "test-model"
 
-    # Clean up
     os.unlink(temp_npcshrc)
 
 
@@ -43,5 +41,4 @@ def test_set_npcsh_config_value_persists_to_file(monkeypatch):
 
     assert 'export NPCSH_CHAT_PROVIDER="test-provider"' in content
 
-    # Clean up
     os.unlink(temp_npcshrc)

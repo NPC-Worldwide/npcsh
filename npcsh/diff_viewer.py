@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 from enum import Enum
 
-# Platform-specific imports
 try:
     import tty
     import termios
@@ -46,7 +45,7 @@ class DiffViewerState:
     decisions: Dict[int, HunkDecision] = field(default_factory=dict)
     selected_hunk: int = 0
     scroll_offset: int = 0
-    mode: str = "normal"  # normal, help
+    mode: str = "normal"
 
 
 def compute_diff_hunks(original: str, modified: str) -> List[DiffHunk]:
@@ -68,9 +67,8 @@ def compute_diff_hunks(original: str, modified: str) -> List[DiffHunk]:
     start_mod = 0
     count_mod = 0
 
-    for line in diff[2:]:  # Skip the --- and +++ headers
+    for line in diff[2:]:
         if line.startswith('@@'):
-            # Save previous hunk if exists
             if current_hunk_lines:
                 hunks.append(DiffHunk(
                     start_original=start_orig,
@@ -81,15 +79,13 @@ def compute_diff_hunks(original: str, modified: str) -> List[DiffHunk]:
                     header=current_header
                 ))
 
-            # Parse new hunk header
             current_header = line.strip()
             current_hunk_lines = []
 
-            # Parse @@ -start,count +start,count @@
             try:
                 parts = line.split('@@')[1].strip().split()
-                orig_part = parts[0]  # -start,count
-                mod_part = parts[1]   # +start,count
+                orig_part = parts[0]
+                mod_part = parts[1]
 
                 if ',' in orig_part:
                     start_orig, count_orig = map(int, orig_part[1:].split(','))
@@ -107,7 +103,6 @@ def compute_diff_hunks(original: str, modified: str) -> List[DiffHunk]:
         else:
             current_hunk_lines.append(line)
 
-    # Save last hunk
     if current_hunk_lines:
         hunks.append(DiffHunk(
             start_original=start_orig,
@@ -141,7 +136,6 @@ class DiffViewer:
         )
         self.state.hunks = compute_diff_hunks(original, modified)
 
-        # Initialize all hunks as pending
         for i in range(len(self.state.hunks)):
             self.state.decisions[i] = HunkDecision.PENDING
 
@@ -150,35 +144,29 @@ class DiffViewer:
         width, height = get_terminal_size()
         out = []
 
-        # Clear screen and move to top
         out.append("\033[2J\033[H")
 
-        # Header
         header = f" File Edit: {self.state.file_path} "
         if len(header) > width - 4:
             header = f" ...{self.state.file_path[-width+15:]} "
         out.append(f"\033[1;1H\033[44;37;1m{'=' * width}\033[0m")
         out.append(f"\033[1;2H\033[44;37;1m{header}\033[0m")
 
-        # Stats line
         approved = sum(1 for d in self.state.decisions.values() if d == HunkDecision.APPROVED)
         rejected = sum(1 for d in self.state.decisions.values() if d == HunkDecision.REJECTED)
         pending = sum(1 for d in self.state.decisions.values() if d == HunkDecision.PENDING)
         stats = f"Hunks: {len(self.state.hunks)} | Approved: {approved} | Rejected: {rejected} | Pending: {pending}"
         out.append(f"\033[2;1H\033[90m{stats.center(width)}\033[0m")
 
-        # Diff content area
         content_start = 4
         content_height = height - 6
 
         if not self.state.hunks:
             out.append(f"\033[{content_start};2H\033[33mNo differences found.\033[0m")
         else:
-            # Render current hunk
             hunk = self.state.hunks[self.state.selected_hunk]
             decision = self.state.decisions[self.state.selected_hunk]
 
-            # Hunk header with decision indicator
             decision_indicator = {
                 HunkDecision.PENDING: "\033[33m[?]\033[0m",
                 HunkDecision.APPROVED: "\033[32m[+]\033[0m",
@@ -189,7 +177,6 @@ class DiffViewer:
             out.append(f"\033[3;1H\033[90m{'-' * width}\033[0m")
             out.append(f"\033[3;2H{hunk_header[:width-4]}")
 
-            # Render diff lines
             visible_lines = hunk.lines[self.state.scroll_offset:self.state.scroll_offset + content_height]
 
             for i, line in enumerate(visible_lines):
@@ -197,25 +184,21 @@ class DiffViewer:
                 if row >= height - 2:
                     break
 
-                # Color based on line type
                 if line.startswith('+'):
-                    color = "\033[32m"  # Green for additions
+                    color = "\033[32m"
                 elif line.startswith('-'):
-                    color = "\033[31m"  # Red for deletions
+                    color = "\033[31m"
                 else:
-                    color = "\033[0m"   # Default for context
+                    color = "\033[0m"
 
-                # Truncate long lines
                 display_line = line.rstrip()[:width-2]
                 out.append(f"\033[{row};1H{color}{display_line}\033[0m")
 
-            # Scroll indicator
             if len(hunk.lines) > content_height:
                 scroll_pct = (self.state.scroll_offset / (len(hunk.lines) - content_height)) * 100
                 scroll_info = f"[{int(scroll_pct)}%]"
                 out.append(f"\033[{content_start};{width-len(scroll_info)-1}H\033[90m{scroll_info}\033[0m")
 
-        # Footer with keybindings
         footer_y = height - 1
         out.append(f"\033[{footer_y};1H\033[90m{'-' * width}\033[0m")
 
@@ -230,38 +213,37 @@ class DiffViewer:
         if c == 'q':
             return False
 
-        elif c == 'a':  # Approve current hunk
+        elif c == 'a':
             self.state.decisions[self.state.selected_hunk] = HunkDecision.APPROVED
             if self.state.selected_hunk < len(self.state.hunks) - 1:
                 self.state.selected_hunk += 1
                 self.state.scroll_offset = 0
 
-        elif c == 'r':  # Reject current hunk
+        elif c == 'r':
             self.state.decisions[self.state.selected_hunk] = HunkDecision.REJECTED
             if self.state.selected_hunk < len(self.state.hunks) - 1:
                 self.state.selected_hunk += 1
                 self.state.scroll_offset = 0
 
-        elif c == 'A':  # Approve all
+        elif c == 'A':
             for i in range(len(self.state.hunks)):
                 self.state.decisions[i] = HunkDecision.APPROVED
 
-        elif c == 'R':  # Reject all
+        elif c == 'R':
             for i in range(len(self.state.hunks)):
                 self.state.decisions[i] = HunkDecision.REJECTED
 
-        elif c == 'j' or c == '\x1b':  # Down/next hunk (or escape sequence)
+        elif c == 'j' or c == '\x1b':
             if c == '\x1b':
-                # Handle escape sequences
                 if HAS_TTY and select.select([sys.stdin], [], [], 0.05)[0]:
                     c2 = sys.stdin.read(1)
                     if c2 == '[':
                         c3 = sys.stdin.read(1)
-                        if c3 == 'B':  # Down arrow
+                        if c3 == 'B':
                             if self.state.selected_hunk < len(self.state.hunks) - 1:
                                 self.state.selected_hunk += 1
                                 self.state.scroll_offset = 0
-                        elif c3 == 'A':  # Up arrow
+                        elif c3 == 'A':
                             if self.state.selected_hunk > 0:
                                 self.state.selected_hunk -= 1
                                 self.state.scroll_offset = 0
@@ -270,22 +252,22 @@ class DiffViewer:
                     self.state.selected_hunk += 1
                     self.state.scroll_offset = 0
 
-        elif c == 'k':  # Up/previous hunk
+        elif c == 'k':
             if self.state.selected_hunk > 0:
                 self.state.selected_hunk -= 1
                 self.state.scroll_offset = 0
 
-        elif c == 'n':  # Next hunk (same as j)
+        elif c == 'n':
             if self.state.selected_hunk < len(self.state.hunks) - 1:
                 self.state.selected_hunk += 1
                 self.state.scroll_offset = 0
 
-        elif c == 'p':  # Previous hunk (same as k)
+        elif c == 'p':
             if self.state.selected_hunk > 0:
                 self.state.selected_hunk -= 1
                 self.state.scroll_offset = 0
 
-        elif c == ' ':  # Scroll down within hunk
+        elif c == ' ':
             if self.state.hunks:
                 hunk = self.state.hunks[self.state.selected_hunk]
                 _, height = get_terminal_size()
@@ -293,7 +275,7 @@ class DiffViewer:
                 max_scroll = max(0, len(hunk.lines) - content_height)
                 self.state.scroll_offset = min(self.state.scroll_offset + 5, max_scroll)
 
-        elif c == 'b':  # Scroll up within hunk
+        elif c == 'b':
             self.state.scroll_offset = max(0, self.state.scroll_offset - 5)
 
         return True
@@ -303,40 +285,29 @@ class DiffViewer:
         if not self.state.hunks:
             return self.state.modified
 
-        # If all hunks approved, return modified
         if all(d == HunkDecision.APPROVED for d in self.state.decisions.values()):
             return self.state.modified
 
-        # If all hunks rejected, return original
         if all(d == HunkDecision.REJECTED for d in self.state.decisions.values()):
             return self.state.original
 
-        # Partial application - reconstruct from decisions
-        # This is complex - for now, we'll use a simple approach:
-        # If any hunk is rejected, we need to carefully reconstruct
-
         result_lines = self.state.original.splitlines(keepends=True)
-        offset = 0  # Track line number offset from applied changes
+        offset = 0
 
         for i, hunk in enumerate(self.state.hunks):
             if self.state.decisions[i] == HunkDecision.APPROVED:
-                # Apply this hunk
                 start = hunk.start_original - 1 + offset
 
-                # Count removals and additions in this hunk
                 removals = [ln[1:] for ln in hunk.lines if ln.startswith('-')]
                 additions = [ln[1:] for ln in hunk.lines if ln.startswith('+')]
 
-                # Remove old lines
                 del result_lines[start:start + len(removals)]
 
-                # Insert new lines
                 for j, line in enumerate(additions):
                     if not line.endswith('\n'):
                         line += '\n'
                     result_lines.insert(start + j, line)
 
-                # Update offset
                 offset += len(additions) - len(removals)
 
         return ''.join(result_lines)
@@ -363,7 +334,7 @@ class DiffViewer:
 
         try:
             tty.setcbreak(fd)
-            sys.stdout.write('\033[?25l')  # Hide cursor
+            sys.stdout.write('\033[?25l')
 
             self.render_screen()
 
@@ -375,11 +346,10 @@ class DiffViewer:
 
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-            sys.stdout.write('\033[?25h')  # Show cursor
-            sys.stdout.write('\033[2J\033[H')  # Clear screen
+            sys.stdout.write('\033[?25h')
+            sys.stdout.write('\033[2J\033[H')
             sys.stdout.flush()
 
-        # Determine if approved
         all_approved = all(d == HunkDecision.APPROVED for d in self.state.decisions.values())
         any_approved = any(d == HunkDecision.APPROVED for d in self.state.decisions.values())
 

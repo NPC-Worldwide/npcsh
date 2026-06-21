@@ -17,14 +17,12 @@ def main():
     parser.add_argument("--mcp-server", type=str, help="Path to MCP server script")
     args = parser.parse_args()
 
-    # Setup shell to get team and default NPC
     command_history, team, default_npc = setup_shell()
 
     if not team or "mcp_shell" not in team.jinxes_dict:
         print("Error: corca jinx not found. Ensure npc_team/jinxes/modes/corca.jinx exists.")
         sys.exit(1)
 
-    # Build context for jinx execution
     initial_command = " ".join(args.command) if args.command else None
 
     context = {
@@ -37,7 +35,6 @@ def main():
         "initial_command": initial_command,
     }
 
-    # Execute the jinx
     corca_jinx = team.jinxes_dict["mcp_shell"]
     result = corca_jinx.execute(context=context, npc=default_npc)
 

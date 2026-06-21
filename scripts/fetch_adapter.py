@@ -5,14 +5,11 @@ fetch_adapter.py
 Download a published adapter from HuggingFace Hub.
 
 Usage:
-    # Download latest adapter from enpisi-coder repo
     python scripts/fetch_adapter.py --repo npc-worldwide/enpisi-coder --name npcsh-sft-toolcalls-all
 
-    # Download to specific directory
     python scripts/fetch_adapter.py --repo npc-worldwide/enpisi-coder --name npcsh-sft \
         --output adapters/my-npcsh-sft
 
-    # Download a full model subfolder
     python scripts/fetch_adapter.py --repo npc-worldwide/enpisi-coder --name full-model \
         --subfolder full
 """
@@ -48,7 +45,7 @@ def main():
     print("\nTo use it:")
     print("  export NPCSH_CHAT_MODEL='mlx-community/Qwen3-4B-4bit'")
     print("  export NPCSH_CHAT_PROVIDER='omlx'")
-    print(f"  # Place adapter at ~/.npcsh/adapters/{args.name}/")
+    print(f"  Place adapter at ~/.npcsh/adapters/{args.name}/")
 
 
 if __name__ == "__main__":

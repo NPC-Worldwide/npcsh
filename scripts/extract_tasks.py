@@ -26,7 +26,6 @@ def get_db_connection(db_path: str):
 
 def fetch_recent_conversations(conn, since: str, limit: int):
     """Fetch recent conversation turns from the database."""
-    # Parse since into a timestamp
     now = datetime.now()
     if since.endswith(" days") or since.endswith(" day"):
         num = int(since.split()[0])
@@ -79,7 +78,6 @@ def fetch_jinx_executions(conn, since: str):
     cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
 
     cursor = conn.cursor()
-    # Discover actual columns since schema varies across installs
     cursor.execute("PRAGMA table_info(jinx_executions)")
     cols = {c[1] for c in cursor.fetchall()}
     select_cols = [c for c in ["jinx_name", "input", "timestamp", "npc"] if c in cols]
@@ -110,7 +108,6 @@ def summarize_for_task_generation(conversations: list, executions: list) -> str:
     """Build a prompt-friendly summary of recent activity."""
     lines = ["Recent npcsh activity summary:"]
 
-    # Group by approximate session (every 10 min gap)
     sessions = []
     current = []
     last_ts = None
@@ -173,7 +170,6 @@ Generate exactly {num_tasks} tasks as a JSON array."""
             prompt, model=model, provider="ollama", format="json"
         )
         text = response.get("response", "")
-        # Try to extract JSON array
         if "[" in text and "]" in text:
             start = text.index("[")
             end = text.rindex("]") + 1

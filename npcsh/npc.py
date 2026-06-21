@@ -67,7 +67,6 @@ def _exec_jinx_file(jinx_path: str, args: list):
     """Execute a .jinx file directly (shebang: #!/usr/bin/env npc)."""
     from npcpy.npc_compiler import Jinx
 
-    # Parse args as key=value or positional
     jinx = Jinx(jinx_path=jinx_path)
     input_values = {}
     positional_idx = 0
@@ -83,7 +82,6 @@ def _exec_jinx_file(jinx_path: str, args: list):
                 input_values[name] = arg
                 positional_idx += 1
 
-    # Set up NPC team so jinx steps have access to npc object
     forenpc_obj = None
     try:
         _, team, forenpc_obj = setup_shell()
@@ -108,7 +106,6 @@ def _exec_npc_file(npc_path: str, args: list):
     prompt = ' '.join(args) if args else None
 
     if prompt:
-        # One-shot mode
         result = npc.run(prompt)
         if isinstance(result, dict):
             output = result.get('response', result.get('output', ''))
@@ -117,7 +114,6 @@ def _exec_npc_file(npc_path: str, args: list):
         if output:
             print(output)
     else:
-        # Interactive mode — launch npcsh with this NPC
         from npcsh.npcsh import main as npcsh_main
         npcsh_main(npc_name=npc.name)
 
@@ -125,7 +121,6 @@ def _exec_npc_file(npc_path: str, args: list):
 def main():
     from npcsh.routes import router
 
-    # Shebang support: if first arg is a .npc or .jinx file, execute it directly
     if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
         first_arg = sys.argv[1]
         if first_arg.endswith('.jinx') and os.path.isfile(first_arg):
@@ -138,24 +133,24 @@ def main():
         usage="npc <command> [command_args...] | <prompt> [--npc NAME] [--model MODEL] [--provider PROV]",
     )
     parser.add_argument(
-        "--model", 
-        "-m", 
-        help="LLM model to use (overrides NPC/defaults)", 
-        type=str, 
+        "--model",
+        "-m",
+        help="LLM model to use (overrides NPC/defaults)",
+        type=str,
         default=None
     )
     parser.add_argument(
-        "--provider", 
-        "-pr", 
-        help="LLM provider to use (overrides NPC/defaults)", 
-        type=str, 
+        "--provider",
+        "-pr",
+        help="LLM provider to use (overrides NPC/defaults)",
+        type=str,
         default=None
     )
     parser.add_argument(
-        "-n", 
-        "--npc", 
-        help="Name of the NPC to use (default: sibiji)", 
-        type=str, 
+        "-n",
+        "--npc",
+        help="Name of the NPC to use (default: sibiji)",
+        type=str,
         default="sibiji"
     )
 
@@ -163,10 +158,8 @@ def main():
     global_model = args.model
     global_provider = args.provider
 
-    # Load team early so we can check for jinxes
     try:
         command_history, team, forenpc_obj = setup_shell()
-        # Load jinxes into router so they're recognized as commands
         from npcsh._state import initialize_router_with_jinxes
         initialize_router_with_jinxes(team, router)
     except Exception as e:
@@ -202,7 +195,6 @@ def main():
     if args.provider is None:
         args.provider = global_provider
 
-    # Team already loaded above, just set up NPC
     if not forenpc_obj:
         forenpc_obj = load_npc_by_name(args.npc, NPCSH_DB_PATH)
 
@@ -303,7 +295,6 @@ def main():
                 f"Processing prompt: '{prompt}' with NPC: '{args.npc}'..."
             )
 
-            # Use NPCSH_DEFAULT_MODE environment variable, default to 'agent' for tool execution
             shell_state.current_mode = os.environ.get('NPCSH_DEFAULT_MODE', 'agent')
             updated_state, result = execute_command(
                 prompt, 
@@ -360,10 +351,8 @@ def jinx_main():
     """
     import os
 
-    # Get jinx name from command name
     jinx_name = os.path.basename(sys.argv[0])
 
-    # Parse remaining args as key=value pairs
     args = sys.argv[1:]
     jinx_args = []
 
@@ -378,7 +367,6 @@ def jinx_main():
             sys.exit(0)
         jinx_args.append(arg)
 
-    # Build command string
     if jinx_args:
         command = f"/{jinx_name} " + " ".join(jinx_args)
     else:
@@ -390,7 +378,6 @@ def jinx_main():
         from npcsh._state import initialize_router_with_jinxes
         initialize_router_with_jinxes(team, router)
 
-        # Update the global initial_state with team/npc context
         initial_state.team = team
         initial_state.npc = forenpc_obj
         if forenpc_obj:

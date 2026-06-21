@@ -7,7 +7,6 @@ import time
 import re
 import json
 
-# Load tasks
 tasks = []
 with open("/Users/caug/npcww/npc-core/npcsh/npcsh/benchmark/tasks.csv", "r") as f:
     reader = csv.DictReader(f)
@@ -21,14 +20,13 @@ from mlx_lm import load as mlx_load, generate as mlx_generate
 from mlx_lm.lora import load_adapters
 from mlx_lm.generate import make_sampler
 
-# Load models
 print("Loading models...")
 base, tokenizer = mlx_load("mlx-community/Qwen3.5-2B-4bit")
 adapter, _ = mlx_load("mlx-community/Qwen3.5-2B-4bit")
 load_adapters(adapter, "adapters/qwen3.5/2b/mlx/")
 sampler = make_sampler(temp=0.0)
 
-SYSTEM_MSG = 'You are npcsh, a shell assistant. When asked to do something, use the shell tool by outputting: <tool_call>\\n{"name":"shell","arguments":{"bash_command":"YOUR_COMMAND"}}\\n</tool_call>'
+SYSTEM_MSG = 'You are npcsh, a shell assistant. When asked to do something, use the shell tool by outputting: <tool_call>\n{"name":"shell","arguments":{"bash_command":"YOUR_COMMAND"}}\n</tool_call>'
 
 
 def ask(model, instruction):
@@ -40,7 +38,6 @@ def ask(model, instruction):
 
 def extract_tool_call(response):
     """Parse npcsh-style tool calls from response."""
-    # Pattern: <tool_call>\n{"name":"shell","arguments":{"bash_command":"..."}}\n</tool_call>
     m = re.search(r"<tool_call>\s*(\{.+?\})\s*</tool_call>", response, re.DOTALL)
     if m:
         try:
@@ -51,12 +48,10 @@ def extract_tool_call(response):
         except:
             pass
 
-    # Fallback: look for ```bash blocks
     m = re.search(r"```(?:bash|sh|shell)?\n(.+?)```", response, re.DOTALL)
     if m:
         return m.group(1).strip().split("\n")[0].strip()
 
-    # Fallback 2: first line that looks like a command
     for line in response.split("\n"):
         line = line.strip()
         if line and any(
@@ -81,7 +76,6 @@ def extract_tool_call(response):
 
 
 def run_task(task, model, model_name):
-    # Cleanup /tmp
     for prefix in [
         "/tmp/countme",
         "/tmp/result",
@@ -132,7 +126,6 @@ def run_task(task, model, model_name):
     return passed
 
 
-# Run
 print(f"{'=' * 60}")
 print("Testing with npcsh-style tool call prompt")
 print(f"{'=' * 60}\n")

@@ -5,13 +5,12 @@ import argparse
 import importlib.metadata
 import warnings
 
-# Suppress pydantic serialization warnings from litellm
 warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
 
 import platform
 try:
     from termcolor import colored
-except: 
+except:
     pass
 
 from npcpy.gen.response import get_model_context_window
@@ -97,7 +96,6 @@ def print_welcome_art(npc=None):
     """Print welcome art - from NPC if available, otherwise default npcsh art."""
     RESET = "\033[0m"
 
-    # If NPC has ascii_art, display it with gradient colors
     if npc and hasattr(npc, 'ascii_art') and npc.ascii_art:
         art = npc.ascii_art
         colors = getattr(npc, 'colors', {}) or {}
@@ -122,7 +120,6 @@ def print_welcome_art(npc=None):
         print()
         return
 
-    # Default npcsh art
     BLUE = "\033[1;94m"
     RUST = "\033[1;38;5;202m"
 
@@ -143,16 +140,13 @@ def print_welcome_art(npc=None):
 def run_repl(command_history: CommandHistory, initial_state: ShellState, router, launched_agent: str = None, launched_jinx: str = None):
     state = initial_state
 
-    # Print welcome art - NPC art if launched with an agent, otherwise default
     if launched_agent or not launched_jinx:
         print_welcome_art(state.npc if launched_agent else None)
 
-    # If launched with a jinx mode, auto-execute that jinx
     if launched_jinx:
         state, output = execute_command(f"/{launched_jinx}", state, router=router, command_history=command_history)
         process_result(f"/{launched_jinx}", state, output, command_history)
 
-    # Print startup info panel
     BLUE = "\033[1;94m"
     RUST = "\033[1;38;5;202m"
     DIM = "\033[2m"
@@ -177,13 +171,10 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
     if not launched_jinx:
         print(f"  {DIM}npcsh {VERSION}{RESET}  {DIM}│{RESET}  {DIM}mode:{RESET} {BOLD}{state.current_mode}{RESET}  {DIM}│{RESET}  {DIM}switch:{RESET} /agent  /cmd  /chat")
 
-    # NPCs with @ prefix
     npc_names = [f"@{n}" for n in state.team.npcs.keys()]
     print(f"  {DIM}npcs:{RESET} {BLUE}{('  ').join(npc_names)}{RESET}")
 
-    # Jinxes - organized by group/subgroup with sub-directory lines
     hidden_folders = {'computer_use', 'browser'}
-    # jinxes_tree[(group, subgroup)][subdir] = [jinx_names]
     jinxes_tree = {}
     if hasattr(state.team, 'jinxes_dict'):
         for jinx_name, jinx_obj in state.team.jinxes_dict.items():
@@ -233,11 +224,9 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
             last_group = group
 
             subdirs = jinxes_tree[(group, subgroup)]
-            # Top-level names (no subdir)
             if None in subdirs:
                 top_names = sorted(subdirs[None])
                 print(_wrap_names([f"/{n}" for n in top_names]))
-            # Sub-directory groups as "subdir: /name  /name" lines
             for sd in sorted(k for k in subdirs if k is not None):
                 sd_names = sorted(subdirs[sd])
                 prefixed = "  ".join(f"/{n}" for n in sd_names)
@@ -246,7 +235,6 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
         print(f"\n  {DIM}/jinxes for full list{RESET}")
     print()
 
-    # Async version check — prints banner if newer version available
     if VersionCheck is not None:
         def _show_update(info):
             print(f"\n  \033[33mUpdate available: {info['current']} → {info['latest']}\033[0m")
@@ -262,34 +250,22 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
         pass
     session_scopes = set()
 
-    # Queue of messages the user typed while a command was processing.
-    # Populated by the BottomBar thread (on non-Windows ttys).
     import collections
     _input_queue = collections.deque()
 
     def exit_shell(current_state: ShellState):
         print("\nGoodbye!")
-        # Auto KG archival on exit disabled —
-        # memory/KG processing is now controlled via scheduled jobs / cron instead
         sys.exit(0)
 
     while True:
-        # ── INPUT PHASE ──────────────────────────────────────────────────────
-        # KeyboardInterrupt here means double Ctrl+C from _input_with_hint_below
-        # (the first Ctrl+C just clears the line inside that function).
-        # EOFError means Ctrl+D on an empty line.
         try:
             if state.messages is not None:
-                # ── Context-percentage-based compression ──
-                # Trigger at 50%, 75%, 90% of context window instead of fixed message counts.
                 active_model = state.npc.model if hasattr(state, 'npc') and hasattr(state.npc, 'model') and state.npc.model else state.chat_model
                 active_provider = state.npc.provider if hasattr(state, 'npc') and hasattr(state.npc, 'provider') and state.npc.provider else state.chat_provider
                 tok_in = state.session_input_tokens
                 ctx_window = get_model_context_window(active_model, active_provider)
                 ctx_pct = (tok_in * 100 // ctx_window) if ctx_window > 0 else 0
 
-                # Thresholds: 50%, 75%, 90%. Track which ones we've already prompted for.
-                # Check from highest to lowest so we immediately alert at the highest crossed threshold.
                 compress_thresholds = [50, 75, 90]
                 last_prompted_pct = getattr(state, '_last_compress_prompted_pct', 0)
                 next_threshold = None
@@ -299,7 +275,6 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                         break
 
                 if next_threshold is not None:
-                    # Display usage before compacting
                     display_usage(state)
 
                     msg_count = len(state.messages)
@@ -331,13 +306,11 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                         choice = ""
 
                     if choice == 's':
-                        # Skip — mark this threshold as prompted so we don't ask again until next tier
                         state._last_compress_prompted_pct = next_threshold
                         next_tier = [t for t in compress_thresholds if t > next_threshold]
                         tier_msg = f"Will prompt again at {next_tier[0]}%." if next_tier else "No more prompts (at 90%+)."
                         print(colored(f"  Skipped. {tier_msg}", "yellow"))
                     elif choice.startswith('f'):
-                        # Flush N messages
                         flush_part = choice[1:].strip() if len(choice) > 1 else ""
                         if not flush_part:
                             try:
@@ -365,17 +338,14 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                             choice = ""
 
                     if choice not in ('s',) and not choice.startswith('f'):
-                        # Default: compress — start a new conversation linked to the old one
                         try:
                             compressed_state = state.npc.compress_planning_state(state.messages)
                         except Exception:
                             compressed_state = None
 
-                        # Get last message_id from old conversation for linking
                         old_conversation_id = state.conversation_id
                         last_msg_id = command_history.get_last_message_id(old_conversation_id)
 
-                        # Start new conversation
                         state.conversation_id = start_new_conversation()
 
                         recent = state.messages[-6:]
@@ -386,7 +356,6 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                         else:
                             state.messages = recent
 
-                        # Save the summary as first message of new conversation, linked to old
                         if compressed_state:
                             save_conversation_message(
                                 command_history,
@@ -401,7 +370,6 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                                 parent_message_id=last_msg_id,
                             )
 
-                        # Reset compression tracking since we started a fresh context
                         state._last_compress_prompted_pct = 0
                         state.session_input_tokens = 0
                         state.session_output_tokens = 0
@@ -422,18 +390,15 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
             npc_name = state.npc.name if isinstance(state.npc, NPC) else "npcsh"
             team_name = state.team.name if state.team else ""
 
-            # Check if model is local (ollama) or remote (has cost)
             provider = state.chat_provider
             if isinstance(state.npc, NPC) and state.npc.provider:
                 provider = state.npc.provider
             is_local = provider and provider.lower() in ['ollama', 'transformers', 'local']
 
-            # Build token/cost string for hint line
             if state.session_input_tokens > 0 or state.session_output_tokens > 0:
                 usage_str = f"📊 {state.session_input_tokens:,} in / {state.session_output_tokens:,} out"
                 if not is_local and state.session_cost_usd > 0:
                     usage_str += f" | ${state.session_cost_usd:.4f}"
-                # Add elapsed time
                 import time
                 elapsed = time.time() - state.session_start_time
                 if elapsed >= 3600:
@@ -459,11 +424,9 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                 print(status)
                 prompt = "> "
             else:
-                # Line 1: cwd (full path)
                 cwd_line = colored("📁 ", "blue") + colored(state.current_path, "blue")
                 print(cwd_line)
 
-                # Line 2: npc | team | model
                 npc_colored = orange(npc_name) if isinstance(state.npc, NPC) else colored("npcsh", "cyan")
                 parts = [colored("🤖 ", "yellow") + npc_colored]
                 if team_name:
@@ -473,8 +436,6 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
 
                 prompt = colored("> ", "green")
 
-            # If the user typed something while the last command was processing,
-            # use it directly instead of showing the prompt again.
             if _input_queue:
                 user_input = _input_queue.popleft().strip()
                 queued_count = len(_input_queue)
@@ -498,14 +459,10 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
                     exit_shell(state)
 
         except KeyboardInterrupt:
-            # Double Ctrl+C during input = intentional exit
             exit_shell(state)
         except EOFError:
             exit_shell(state)
 
-        # ── PROCESSING PHASE ─────────────────────────────────────────────────
-        # Ctrl+C / ESC just interrupt the current command and return to prompt.
-        # BottomBar lets the user queue their next message while processing.
         _bar = None
         if not is_windows and sys.stdout.isatty():
             _bar = BottomBar()
@@ -546,7 +503,6 @@ def run_repl(command_history: CommandHistory, initial_state: ShellState, router,
             if _bar is not None:
                 _bar.stop()
                 _ui_module._active_bottom_bar = None
-                # Transfer any queued messages to the main input queue.
                 while _bar.queue:
                     _input_queue.append(_bar.queue.popleft())
         
@@ -561,7 +517,6 @@ def main(npc_name: str = None) -> None:
     """
     from npcsh.routes import router
 
-    # If no npc_name provided, check how we were invoked
     if npc_name is None:
         invoked_as = os.path.basename(sys.argv[0])
         if invoked_as not in ('npcsh', 'npc'):
@@ -591,7 +546,6 @@ def main(npc_name: str = None) -> None:
     )
     args = parser.parse_args()
 
-    # Handle refresh flag - reset initialization and re-copy files
     if args.refresh:
         from npcsh._state import initialize_base_npcs_if_needed
         import shutil
@@ -606,7 +560,6 @@ def main(npc_name: str = None) -> None:
 
         os.environ["NPCSH_INITIALIZED"] = "0"
 
-        # Remove existing jinxes and NPCs to force fresh copy
         user_npc_team = os.path.expanduser("~/.npcsh/npc_team")
         jinxes_dir = os.path.join(user_npc_team, "jinxes")
         if os.path.exists(jinxes_dir):
@@ -630,10 +583,7 @@ def main(npc_name: str = None) -> None:
         for jinx_name, jinx_obj in team.jinxes_dict.items():
             router.register_jinx(jinx_obj)
 
-    # Determine which NPC to start with
-    # Pure jinx modes (no dedicated NPC)
     jinx_modes = {"yap", "spool", "wander", "guac"}
-    # NPC-to-mode mapping: launching an NPC also auto-starts its mode
     npc_mode_map = {
         "corca": "mcp_shell",
         "alicanto": "deep_research",
@@ -642,7 +592,6 @@ def main(npc_name: str = None) -> None:
     target_npc_name = npc_name or args.npc
 
     if target_npc_name and target_npc_name.lower() in jinx_modes:
-        # It's a jinx mode, use default NPC
         initial_state.npc = default_npc
     elif target_npc_name and team:
         target_npc = team.npcs.get(target_npc_name)
@@ -654,7 +603,6 @@ def main(npc_name: str = None) -> None:
     else:
         initial_state.npc = default_npc
 
-    # Apply CLI model/provider overrides to the active NPC and global state
     if args.model:
         initial_state.chat_model = args.model
         if initial_state.npc and hasattr(initial_state.npc, 'model'):
@@ -668,7 +616,6 @@ def main(npc_name: str = None) -> None:
     initial_state.command_history = command_history
 
     if args.script:
-        # Execute .nsh script file
         script_path = os.path.expanduser(args.script)
         if not os.path.exists(script_path):
             print(f"Error: Script not found: {script_path}")
@@ -682,7 +629,6 @@ def main(npc_name: str = None) -> None:
         last_output = ""
 
         for i, line in enumerate(lines):
-            # Variable assignment: $var = value
             var_assign = None
             import re
             assign_match = re.match(r'^\s*\$(\w+)\s*=\s*(.+)$', line)
@@ -690,17 +636,14 @@ def main(npc_name: str = None) -> None:
                 var_assign = assign_match.group(1)
                 line = assign_match.group(2).strip()
 
-            # Substitute variables
             def _repl(m):
                 var = m.group(1) or m.group(2)
                 val = state.variables.get(var, '')
                 return str(val) if val is not None else ''
             substituted = re.sub(r'\$\{(\w+)\}|\$(\w+)', _repl, line)
 
-            # Substitute $_ (last result)
             substituted = substituted.replace('$_', str(last_output))
 
-            # Strip leading ! for bash commands
             if substituted.startswith('!'):
                 cmd = substituted[1:].strip()
             else:
@@ -726,7 +669,6 @@ def main(npc_name: str = None) -> None:
                 if getattr(state, '_stop_requested', False):
                     break
 
-                # Reset conversation history between script lines so each command starts fresh
                 state.messages = []
 
             except Exception as e:
@@ -739,7 +681,6 @@ def main(npc_name: str = None) -> None:
          state = initial_state
          state.current_path = os.getcwd()
          final_state, output = execute_command(args.command, state, router=router, command_history=command_history)
-         # Handle output - check if it's a dict (from jinx) or a stream
          if isinstance(output, dict):
               display_output = output.get('output') or output.get('response') or str(output)
               print(display_output)
@@ -750,7 +691,6 @@ def main(npc_name: str = None) -> None:
          elif output is not None:
               print(output)
     else:
-        # Determine if launching an NPC, a jinx mode, or NPC+mode
         if target_npc_name and target_npc_name.lower() in jinx_modes:
             run_repl(command_history, initial_state, router, launched_jinx=target_npc_name.lower())
         elif target_npc_name and target_npc_name.lower() in npc_mode_map:
@@ -763,5 +703,5 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print()  # Clean exit on Ctrl+C without "KeyboardInterrupt" message
+        print()
         sys.exit(0)

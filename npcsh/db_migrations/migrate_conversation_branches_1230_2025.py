@@ -24,7 +24,6 @@ def migrate(db_path=None):
     cursor = conn.cursor()
 
     try:
-        # Check if branch_id column already exists
         cursor.execute("PRAGMA table_info(conversation_history)")
         columns = [col[1] for col in cursor.fetchall()]
 
@@ -42,7 +41,6 @@ def migrate(db_path=None):
         else:
             print("parent_message_id column already exists")
 
-        # Create conversation_branches table if it doesn't exist
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS conversation_branches (
                 id TEXT PRIMARY KEY,
@@ -57,7 +55,6 @@ def migrate(db_path=None):
         """)
         print("Created/verified conversation_branches table")
 
-        # Create index for faster branch lookups
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_conversation_history_branch
             ON conversation_history(conversation_id, branch_id)

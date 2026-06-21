@@ -29,14 +29,12 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # Setup shell to get team and default NPC
     _, team, default_npc = setup_shell()
 
     if not team or "deep_research" not in team.jinxes_dict:
         print("Error: alicanto jinx not found. Ensure npc_team/jinxes/modes/alicanto.jinx exists.")
         sys.exit(1)
 
-    # Build context for jinx execution
     context = {
         "npc": default_npc,
         "team": team,
@@ -53,7 +51,6 @@ def main():
         "skip_research": not args.with_research,
     }
 
-    # Execute the jinx
     alicanto_jinx = team.jinxes_dict["deep_research"]
     result = alicanto_jinx.execute(context=context, npc=default_npc)
 

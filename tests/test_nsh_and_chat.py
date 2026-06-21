@@ -19,7 +19,6 @@ class TestChatHistoryPreservation:
             {"role": "assistant", "content": "The date is 2026-05-18."}
         ]
 
-        # Simulate chat.jinx filtering logic
         clean_msgs = []
         for m in messages:
             role = m.get('role', '')
@@ -30,19 +29,15 @@ class TestChatHistoryPreservation:
             if isinstance(m.get('content'), str):
                 clean_msgs.append({'role': role, 'content': m['content']})
 
-        # Verify clean_msgs strips tools
-        assert len(clean_msgs) == 3  # system, user, assistant (no tool_calls)
+        assert len(clean_msgs) == 3
         assert all(m['role'] != 'tool' for m in clean_msgs)
 
-        # Simulate the FIXED logic: append new response to original messages
         new_response = {"role": "assistant", "content": "Hello from chat!"}
         new_msgs = clean_msgs + [new_response]
 
-        # The fix: only append new response to original messages
         if new_msgs and len(new_msgs) > len(clean_msgs):
             messages.append(new_msgs[-1])
 
-        # Verify original history preserved
         tool_msgs = [m for m in messages if m['role'] == 'tool']
         assert len(tool_msgs) == 1, "Tool message lost"
 
@@ -100,10 +95,8 @@ class TestNshScriptExecution:
 
     def test_nsh_file_parsing(self):
         """.nsh files should have comments stripped and empty lines ignored."""
-        content = """# This is a comment
-$var = !echo test
+        content = """$var = !echo test
 
-# Another comment
 !echo $var
 """
         lines = [line.strip() for line in content.split('\n') if line.strip() and not line.strip().startswith('#')]
@@ -129,7 +122,6 @@ $val = !echo 42
             script_path = f.name
 
         try:
-            # Read and parse the script
             with open(script_path, 'r') as f:
                 lines = [line.strip() for line in f.readlines() if line.strip() and not line.startswith('#')]
 
@@ -139,7 +131,6 @@ $val = !echo 42
 
             import re
             for line in lines:
-                # Variable assignment
                 match = re.match(r'^\s*\$(\w+)\s*=\s*(.+)$', line)
                 if match:
                     var_name = match.group(1)
@@ -148,7 +139,6 @@ $val = !echo 42
                     var_name = None
                     expr = line
 
-                # Substitute variables
                 def repl(m):
                     var = m.group(1) or m.group(2)
                     val = variables.get(var, '')
@@ -156,10 +146,8 @@ $val = !echo 42
                 substituted = re.sub(r'\$\{(\w+)\}|\$(\w+)', repl, expr)
                 substituted = substituted.replace('$_', str(last_output))
 
-                # Strip !
                 cmd = substituted[1:].strip() if substituted.startswith('!') else substituted
 
-                # Simulate execution
                 if cmd.startswith('echo '):
                     output = cmd[5:]
                 else:

@@ -55,7 +55,6 @@ def parse_trace(trace_str):
     return {"instruction": instruction, "response": response}
 
 
-# Load and format data as chat messages
 records = []
 csv.field_size_limit(10**7)
 for csv_file in sorted(
@@ -82,7 +81,6 @@ for csv_file in sorted(
 
 print(f"SFT: {len(records)} passed traces", flush=True)
 
-# Save as JSONL for mlx_lm
 data_dir = Path("/tmp/qwen35_data")
 data_dir.mkdir(exist_ok=True)
 with open(data_dir / "train.jsonl", "w") as f:
@@ -90,7 +88,6 @@ with open(data_dir / "train.jsonl", "w") as f:
         f.write(json.dumps(rec) + "\n")
 print(f"Data saved to {data_dir}/train.jsonl", flush=True)
 
-# Setup args using CONFIG_DEFAULTS as base
 output_dir = Path("adapters/qwen3.5/0.8b/mlx/")
 output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -103,7 +100,7 @@ args.data = str(data_dir)
 args.fine_tune_type = "lora"
 args.num_layers = 16
 args.batch_size = 1
-args.iters = 3516  # 1172 * 3 epochs
+args.iters = 3516
 args.val_batches = 0
 args.learning_rate = 2e-5
 args.steps_per_report = 100
@@ -127,7 +124,6 @@ from mlx_lm.lora import run
 
 run(args)
 
-# Save adapter config
 adapter_config = {
     "model": args.model,
     "fine_tune_type": "lora",

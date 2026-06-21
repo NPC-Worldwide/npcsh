@@ -11,7 +11,7 @@ from urllib.error import URLError, HTTPError
 from npcsh.npcsh import VERSION
 
 _CACHE_PATH = Path.home() / ".npcsh" / ".version_check"
-_CACHE_TTL_SECONDS = 86400  # Check once per day
+_CACHE_TTL_SECONDS = 86400
 
 
 class VersionCheck:
@@ -27,7 +27,6 @@ class VersionCheck:
         try:
             import npcsh
             pkg_dir = os.path.dirname(os.path.abspath(npcsh.__file__))
-            # If inside site-packages or dist-packages → pip
             if "site-packages" in pkg_dir or "dist-packages" in pkg_dir:
                 return "pip"
         except Exception:
@@ -35,10 +34,6 @@ class VersionCheck:
 
         binary = shutil.which("npcrs") or shutil.which("npcsh")
 
-        # Check Homebrew before Cargo: a binary under a Homebrew prefix was
-        # installed via brew, not cargo install.  The original code returned
-        # "cargo" unconditionally whenever any binary was found, making the
-        # Homebrew branch unreachable dead code.
         brew_paths = [
             "/opt/homebrew",
             "/usr/local",
@@ -50,7 +45,7 @@ class VersionCheck:
                     return "brew"
             return "cargo"
 
-        return "pip"  # Default assumption
+        return "pip"
 
     def _cached_result(self):
         """Return cached (source, latest, checked_at) if still fresh."""
@@ -102,7 +97,6 @@ class VersionCheck:
     def _brew_latest(self):
         """Fetch latest version from Homebrew formula."""
         try:
-            # Try brew info first (fastest if installed via brew)
             result = subprocess.run(
                 ["brew", "info", "npcsh"],
                 capture_output=True,
@@ -111,7 +105,6 @@ class VersionCheck:
             )
             if result.returncode == 0:
                 first_line = result.stdout.splitlines()[0]
-                # Line looks like: "npcsh: stable 1.2.11"
                 if "stable" in first_line:
                     parts = first_line.split()
                     for i, p in enumerate(parts):
@@ -120,7 +113,6 @@ class VersionCheck:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 
-        # Fallback: read formula from GitHub tap
         req = Request(
             "https://raw.githubusercontent.com/NPC-Worldwide/homebrew-npcsh/main/Formula/npcsh.rb",
             headers={"User-Agent": "npcsh-version-check"},
@@ -130,7 +122,6 @@ class VersionCheck:
                 text = resp.read().decode()
                 for line in text.splitlines():
                     if "version" in line and '"' in line:
-                        # Extract quoted version string
                         start = line.find('"') + 1
                         end = line.find('"', start)
                         if end > start:

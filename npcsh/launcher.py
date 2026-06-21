@@ -47,20 +47,19 @@ def _binary_matches_host(path: str) -> bool:
 
 def _find_rust_binary():
     """Find a host-compatible npcrsh binary."""
-    pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    here = os.path.dirname(os.path.abspath(__file__))
     ext = ".exe" if platform.system() == "Windows" else ""
 
-    # 1. Installed package binary (wheel / pip install)
-    installed = os.path.join(pkg_dir, "bin", f"npcrs{ext}")
+    installed = os.path.join(here, "bin", f"npcrs{ext}")
     if os.path.isfile(installed) and _binary_matches_host(installed):
         return installed
 
-    # 2. Package-local build artifact (dev workflow)
-    local_release = os.path.join(pkg_dir, "rust", "target", "release", "npcrsh")
+    repo_dir = os.path.dirname(here)
+    local_release = os.path.join(repo_dir, "rust", "target", "release", "npcrsh")
     if os.path.isfile(local_release) and _binary_matches_host(local_release):
         return local_release
 
-    local_debug = os.path.join(pkg_dir, "rust", "target", "debug", "npcrsh")
+    local_debug = os.path.join(repo_dir, "rust", "target", "debug", "npcrsh")
     if os.path.isfile(local_debug) and _binary_matches_host(local_debug):
         return local_debug
 
@@ -68,9 +67,8 @@ def _find_rust_binary():
 
 
 def _try_build_rust():
-    """Try to build the Rust binary from source if cargo is available."""
-    pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    rust_dir = os.path.join(pkg_dir, "rust")
+    repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    rust_dir = os.path.join(repo_dir, "rust")
     if not os.path.isdir(rust_dir):
         return None
     cargo = shutil.which("cargo")
@@ -105,7 +103,6 @@ def _fallback_to_python():
 
 
 def main():
-    # Remove stale NPCSH_ENGINE lines from ~/.npcshrc so users don't get stuck
     npcshrc = os.path.expanduser("~/.npcshrc")
     if os.path.exists(npcshrc):
         try:
