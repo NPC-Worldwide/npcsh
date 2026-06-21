@@ -1032,8 +1032,7 @@ async fn ensure_daemon(team_dir: &str, db_path: &str) -> Result<()> {
         std::fs::create_dir_all(&log_dir)?;
         let log_path = format!("{}/daemon.log", log_dir);
 
-        let python = std::env::var("NPCSH_PYTHON").unwrap_or_else(|_| "python3".to_string());
-        let mut cmd = std::process::Command::new(&python);
+        let mut cmd = std::process::Command::new("python3");
         cmd.arg(&script)
             .arg("--daemon")
             .env("NPCSH_DB_PATH", db_path)
