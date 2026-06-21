@@ -55,7 +55,6 @@ _NPCRS_ARTIFACT = {
 
 
 def _purge_stale_binaries(bin_dir: Path) -> None:
-    """Remove stale binaries that don't match the host arch."""
     for p in bin_dir.iterdir():
         if p.name == ".gitkeep":
             continue
@@ -65,6 +64,27 @@ def _purge_stale_binaries(bin_dir: Path) -> None:
             p.unlink()
         except OSError:
             pass
+
+
+def _remove_old_binaries() -> None:
+    env_bin = os.path.dirname(os.path.realpath(sys.executable))
+    for dir_path in os.environ.get("PATH", "").split(os.pathsep):
+        if not dir_path:
+            continue
+        try:
+            resolved = os.path.realpath(dir_path)
+        except (OSError, ValueError):
+            continue
+        if resolved == env_bin:
+            continue
+        for name in ("npcrsh",):
+            p = Path(dir_path) / name
+            if p.exists():
+                try:
+                    p.unlink()
+                    print(f"Removed old binary: {p}")
+                except OSError:
+                    pass
 
 
 def _download_npcrs(bin_dir: Path) -> bool:
@@ -113,12 +133,11 @@ def _download_npcrs(bin_dir: Path) -> bool:
 
 
 class BuildWithRust(build_py):
-    """Download the pre-built npcrs binary matching the host arch before packaging."""
-
     def run(self):
         bin_dir = Path(__file__).parent / "npcsh" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
 
+        _remove_old_binaries()
         _purge_stale_binaries(bin_dir)
 
         if _download_npcrs(bin_dir):
