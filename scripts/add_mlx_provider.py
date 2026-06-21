@@ -2,11 +2,9 @@
 """Add native MLX provider support to npcsh."""
 import sys
 
-# Read the current response.py
 with open('/Users/caug/npcww/npc-core/npcpy/npcpy/gen/response.py', 'r') as f:
     content = f.read()
 
-# Insert get_mlx_response after get_lora_response
 mlx_func = '''
 
 def get_mlx_response(
@@ -24,7 +22,7 @@ def get_mlx_response(
     **kwargs,
 ) -> Dict[str, Any]:
     """Generate response using mlx_lm directly (no server required).
-    
+
     Supports both base models and LoRA adapters.
     - If model is a directory with adapter_config.json, loads as adapter
     - Otherwise treats model as mlx-community model ID
@@ -53,7 +51,6 @@ def get_mlx_response(
         else:
             result['messages'].append({"role": "user", "content": prompt})
 
-    # Determine if adapter or base model
     adapter_path = None
     base_model = model
     expanded = os.path.expanduser(model)
@@ -71,18 +68,17 @@ def get_mlx_response(
         if adapter_path:
             load_adapters(mlx_model, adapter_path)
 
-        # Build prompt from messages using Qwen3.5 chat template
         chat_text = ""
         for msg in result["messages"]:
             role = msg.get("role", "")
             content = msg.get("content", "")
             if role == "system":
-                chat_text += f"<|im_start|>system\\n{content}<|im_end|>\\n"
+                chat_text += f"<|im_start|>system\n{content}<|im_end|>\n"
             elif role == "user":
-                chat_text += f"<|im_start|>user\\n{content}<|im_end|>\\n"
+                chat_text += f"<|im_start|>user\n{content}<|im_end|>\n"
             elif role == "assistant":
-                chat_text += f"<|im_start|>assistant\\n{content}<|im_end|>\\n"
-        chat_text += "<|im_start|>assistant\\n"
+                chat_text += f"<|im_start|>assistant\n{content}<|im_end|>\n"
+        chat_text += "<|im_start|>assistant\n"
 
         max_tokens = kwargs.get("max_tokens", 512)
         temperature = kwargs.get("temperature", 0.7)
@@ -109,7 +105,6 @@ def get_mlx_response(
     return result
 '''
 
-# Insert after get_lora_response function (ends at line 925)
 insert_point = content.find("def get_llamacpp_response(")
 if insert_point == -1:
     print("ERROR: Could not find insert point")
@@ -117,7 +112,6 @@ if insert_point == -1:
 
 content = content[:insert_point] + mlx_func + "\n" + content[insert_point:]
 
-# Add 'mlx' provider dispatch before 'omlx'
 dispatch_code = """    elif provider == 'mlx':
         return get_mlx_response(
             prompt=prompt,

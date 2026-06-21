@@ -54,7 +54,6 @@ def parse_trace(trace_str):
     return {"instruction": instruction, "response": response}
 
 
-# Load and format data as chat messages
 records = []
 csv.field_size_limit(10**7)
 for csv_file in sorted(
@@ -81,7 +80,6 @@ for csv_file in sorted(
 
 print(f"SFT: {len(records)} passed traces", flush=True)
 
-# Save as JSONL for mlx_lm
 data_dir = Path("/tmp/qwen35_data")
 data_dir.mkdir(exist_ok=True)
 with open(data_dir / "train.jsonl", "w") as f:
@@ -89,7 +87,6 @@ with open(data_dir / "train.jsonl", "w") as f:
         f.write(json.dumps(rec) + "\n")
 print(f"Data saved to {data_dir}/train.jsonl", flush=True)
 
-# Now train using mlx_lm.lora.run directly
 from mlx_lm.lora import linear_to_lora_layers
 from mlx_lm import load as mlx_load
 
@@ -100,18 +97,16 @@ output_dir.mkdir(parents=True, exist_ok=True)
 print(f"Loading model: {model_name}", flush=True)
 model, tokenizer = mlx_load(model_name)
 
-# Apply LoRA
+num_layers = 16
 lora_config = {
     "rank": 8,
     "alpha": 16,
     "dropout": 0.05,
     "scale": 2.0,
 }
-num_layers = 16  # r=8 -> 16 layers
 linear_to_lora_layers(model, num_layers, lora_config)
 print(f"LoRA applied: r=8, alpha=16, layers={num_layers}", flush=True)
 
-# Load dataset
 from mlx_lm.tuner.datasets import load_local_dataset
 
 
@@ -126,16 +121,15 @@ class FakeConfig:
 train_ds, val_ds, test_ds = load_local_dataset(data_dir, tokenizer, FakeConfig())
 print(f"Dataset: {len(train_ds)} train, {len(val_ds)} val", flush=True)
 
-# Training args
 from mlx_lm.tuner.trainer import TrainingArgs
 
 args = TrainingArgs(
     batch_size=1,
-    iters=3516,  # 1172 * 3 epochs
+    iters=3516,
     val_batches=0,
     steps_per_report=100,
     steps_per_eval=0,
-    steps_per_save=99999,  # no mid-training saves
+    steps_per_save=99999,
     max_seq_length=512,
     adapter_file=str(output_dir / "adapters.safetensors"),
     grad_checkpoint=False,
@@ -143,7 +137,6 @@ args = TrainingArgs(
     learning_rate=2e-5,
 )
 
-# Run training
 import mlx.optimizers as mlx_opt
 
 optimizer = mlx_opt.AdamW(learning_rate=2e-5)
@@ -158,7 +151,6 @@ train_model(
     valid_set=None,
 )
 
-# Save adapter config
 adapter_config = {
     "model": model_name,
     "fine_tune_type": "lora",

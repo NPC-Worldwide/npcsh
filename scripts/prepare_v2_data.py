@@ -50,7 +50,6 @@ def parse_trace_fixed(trace_str):
                     break
     return examples
 
-# Load all traces
 X, y = [], []
 csv.field_size_limit(10**7)
 for csv_file in sorted(Path(os.path.expanduser("~/.npcsh/benchmarks/local")).glob("*.csv")):
@@ -64,7 +63,6 @@ for csv_file in sorted(Path(os.path.expanduser("~/.npcsh/benchmarks/local")).glo
 
 print(f"Total examples: {len(X)}")
 
-# Save as JSONL for mlx_lm
 output_dir = Path("/tmp/qwen35_v2_data")
 output_dir.mkdir(exist_ok=True)
 with open(output_dir / "train.jsonl", "w") as f:

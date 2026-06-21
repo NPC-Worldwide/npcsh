@@ -55,7 +55,6 @@ def parse_trace(trace_str):
     return {"instruction": instruction, "response": response}
 
 
-# Load data
 X, y = [], []
 csv.field_size_limit(10**7)
 for csv_file in sorted(
@@ -78,12 +77,10 @@ for csv_file in sorted(
 
 print(f"SFT: {len(X)} passed traces", flush=True)
 
-# Imports
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import LoraConfig, get_peft_model
 
-# Load base model
 base_model = "Qwen/Qwen3.5-0.8B"
 output_path = "adapters/qwen3.5/0.8b/hf/"
 os.makedirs(output_path, exist_ok=True)
@@ -98,7 +95,6 @@ model = AutoModelForCausalLM.from_pretrained(
 tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
 print("Model loaded", flush=True)
 
-# Apply LoRA
 lora_config = LoraConfig(
     r=8,
     lora_alpha=16,
@@ -110,7 +106,6 @@ lora_config = LoraConfig(
 model = get_peft_model(model, lora_config)
 model.print_trainable_parameters()
 
-# Tokenize
 max_length = 512
 inputs_list = []
 for inp, out in zip(X, y):
@@ -122,7 +117,6 @@ for inp, out in zip(X, y):
         padding="max_length",
         return_tensors="pt",
     )
-    # Create labels: mask input part
     input_len = len(tokenizer(inp, add_special_tokens=False)["input_ids"])
     labels = tokens["input_ids"].clone()
     labels[0, :input_len] = -100
@@ -134,7 +128,6 @@ for inp, out in zip(X, y):
         }
     )
 
-# Simple training loop
 optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
 model.train()
 
@@ -171,7 +164,6 @@ for epoch in range(epochs):
     avg_loss = total_loss / num_batches
     print(f"Epoch {epoch + 1} complete. Avg loss: {avg_loss:.4f}", flush=True)
 
-# Save
 print(f"Saving to {output_path}...", flush=True)
 model.save_pretrained(output_path)
 tokenizer.save_pretrained(output_path)

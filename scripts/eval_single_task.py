@@ -8,19 +8,15 @@ model, tokenizer = mlx_load('mlx-community/Qwen3.5-2B-4bit')
 load_adapters(model, 'adapters/qwen3.5/2b/mlx/')
 sampler = make_sampler(temp=0.0)
 
-# Setup
 subprocess.run('rm -rf /tmp/countme /tmp/result.txt', shell=True)
 subprocess.run('mkdir -p /tmp/countme && for f in a b c d e f g; do echo "file $f" > /tmp/countme/${f}.txt; done', shell=True)
 
-# Generate
 prompt = '<|im_start|>user\nCount the number of files in /tmp/countme and write just the number to /tmp/result.txt<|im_end|>\n<|im_start|>assistant\n'
 response = mlx_generate(model, tokenizer, prompt=prompt, max_tokens=100, sampler=sampler, verbose=False)
 print('RAW RESPONSE:')
 print(repr(response))
 print()
 
-# Extract command
-# Try to find a shell-looking command in the text
 candidates = []
 for line in response.split('\n'):
     line = line.strip()
@@ -29,7 +25,7 @@ for line in response.split('\n'):
             candidates.append(line)
 
 if candidates:
-    cmd = candidates[-1]  # usually the last one is the actual command
+    cmd = candidates[-1]
     print(f'EXTRACTED CMD: {cmd}')
     subprocess.run(cmd, shell=True)
     if os.path.exists('/tmp/result.txt'):

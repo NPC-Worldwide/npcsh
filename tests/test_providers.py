@@ -2,7 +2,6 @@ import yaml
 from unittest.mock import patch, MagicMock
 
 
-# ── PR #131 + #133: Provider config injection in setup_shell ──────────────
 
 
 class TestProvidersFieldConfig:
@@ -46,7 +45,6 @@ class TestProvidersFieldConfig:
         }
         team_dir = self._make_team_dir(tmp_path, team_ctx, npc_specs)
 
-        # Point setup_shell at our temp dir
         monkeypatch.setenv("NPCSH_DB_PATH", str(tmp_path / "test.db"))
         monkeypatch.setattr(
             "npcsh._state.PROJECT_NPC_TEAM_PATH", str(tmp_path / "nonexistent")
@@ -160,8 +158,8 @@ class TestProvidersFieldConfig:
             _, team, _ = setup_shell()
 
         npc = team.npcs["coder"]
-        assert npc.model == "codellama"          # overridden
-        assert npc.provider == "openai-like"      # from provider
+        assert npc.model == "codellama"
+        assert npc.provider == "openai-like"
         assert getattr(npc, "api_url", None) == "https://ollama.example.com/v1"
         assert getattr(npc, "api_key", None) == "sk-test"
 
@@ -469,11 +467,9 @@ class TestOpenaiLikeApiUrlInjection:
         ):
             _, team, forenpc = setup_shell()
 
-        # Provider URL wins; env URL is fallback only
         assert getattr(forenpc, "api_url", None) == "https://provider.example.com/v1"
 
 
-# ── PR #129: CLI providers, delegation, session continuity ───────────────
 
 
 class TestCLIProviderRouting:
@@ -577,7 +573,6 @@ class TestCLIProviderRouting:
                 "hello", None, state, stream_final=False, router=None
             )
 
-        # Should NOT have called CLI short-circuit, should have hit litellm path
         assert isinstance(output, dict)
 
 
@@ -667,7 +662,6 @@ class TestForenpcDelegation:
         assert augmented == response
 
 
-# ── Team registry ──────────────────────────────────────────────────────────
 
 
 class TestTeamRegistry:
@@ -741,7 +735,6 @@ class TestTeamRegistry:
         assert "not found" in mock_print.call_args[0][0]
 
 
-# ── Combined: providers + CLI in one team.ctx ─────────────────────────────
 
 
 class TestCombinedProviderScenarios:
@@ -811,7 +804,6 @@ class TestCombinedProviderScenarios:
                 "name": "misc",
                 "primary_directive": "misc",
                 "provider": "openai-like",
-                # No named provider — should get NPCSH_API_URL fallback
             },
         }
         team_dir = self._make_team_dir(tmp_path, team_ctx, npc_specs)
@@ -833,22 +825,18 @@ class TestCombinedProviderScenarios:
         ):
             _, team, forenpc = setup_shell()
 
-        # forenpc → anthropic_cloud
         assert forenpc.provider == "anthropic"
         assert forenpc.model == "claude-sonnet-4-6"
 
-        # researcher → ollama_cloud (has explicit api_url)
         researcher = team.npcs["researcher"]
         assert researcher.provider == "openai-like"
         assert researcher.model == "llama3.2"
         assert getattr(researcher, "api_url", None) == "https://ollama.example.com/v1"
 
-        # coder → opencode_local
         coder = team.npcs["coder"]
         assert coder.provider == "opencode"
         assert coder.model == "opencode-default"
 
-        # misc → openai-like without named provider; gets NPCSH_API_URL
         misc = team.npcs["misc"]
         assert misc.provider == "openai-like"
         assert getattr(misc, "api_url", None) == "https://fallback.example.com/v1"
