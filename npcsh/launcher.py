@@ -1,9 +1,15 @@
 """Launcher that finds and execs the Rust npcrsh binary. Falls back to Python only if unavailable."""
 import os
+import socket
 import sys
 import shutil
 import platform
 import subprocess
+import time
+
+
+SOCKET_PATH = os.path.expanduser("~/.npcsh/daemon.sock")
+LOG_PATH = os.path.expanduser("~/.npcsh/daemon.log")
 
 
 def _host_binary_kind():
@@ -91,6 +97,63 @@ def _try_build_rust():
     return None
 
 
+def _find_daemon_script():
+    """Find npcsh/daemon.py relative to this package."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(here, "daemon.py"),
+        os.path.join(os.path.dirname(here), "npcsh", "daemon.py"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def _daemon_alive():
+    """Return True if the Unix socket is connectable."""
+    if not os.path.exists(SOCKET_PATH):
+        return False
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        s.connect(SOCKET_PATH)
+        s.close()
+        return True
+    except Exception:
+        try:
+            os.unlink(SOCKET_PATH)
+        except OSError:
+            pass
+        return False
+
+
+def _ensure_daemon():
+    """Start the Python LLM daemon if not already running, using this interpreter."""
+    if _daemon_alive():
+        return True
+
+    daemon_script = _find_daemon_script()
+    if not daemon_script:
+        return False
+
+    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+    with open(LOG_PATH, "a") as log_file:
+        subprocess.Popen(
+            [sys.executable, daemon_script, "--daemon"],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    for _ in range(150):
+        if _daemon_alive():
+            return True
+        time.sleep(0.1)
+
+    return False
+
+
 def _fallback_to_python():
     print(
         "WARNING: Rust npcrsh binary not found. Falling back to Python runner.\n"
@@ -120,8 +183,9 @@ def main():
         rust_bin = _try_build_rust()
 
     if rust_bin:
+        if not _daemon_alive():
+            _ensure_daemon()
         try:
-            os.environ.setdefault("NPCSH_PYTHON", sys.executable)
             os.execvp(rust_bin, [rust_bin] + sys.argv[1:])
         except OSError as e:
             print(
