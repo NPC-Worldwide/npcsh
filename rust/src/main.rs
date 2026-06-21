@@ -175,7 +175,13 @@ impl std::fmt::Display for Mode {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Init logging
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--version" || a == "-v") {
+        println!("npcsh {}", env!("NPCSH_VERSION"));
+        return Ok(());
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -185,19 +191,14 @@ async fn main() -> Result<()> {
         .without_time()
         .init();
 
-    // Load .env and .npcshrc
     let _ = dotenvy::dotenv();
     load_npcshrc();
 
-    // Check if invoked as `npc` or `npc-jinx` (shebang mode)
     let invoked_as = std::env::args()
         .next()
         .and_then(|a| std::path::Path::new(&a).file_name().map(|f| f.to_string_lossy().to_string()))
         .unwrap_or_default();
 
-    let args: Vec<String> = std::env::args().collect();
-
-    // npc <file.npc|file.jinx|init> [args...] — detect by extension or subcommand
     if invoked_as == "npc" {
         if let Some(file) = args.get(1) {
             if file == "init" {
@@ -209,18 +210,15 @@ async fn main() -> Result<()> {
             } else if file.ends_with(".npc") {
                 return exec_npc_file(file, args.get(2).map(|s| s.as_str())).await;
             }
-            // Not a file — fall through to REPL with --npc flag handling below
         }
     }
 
-    // npcsh script.nsh — execute .nsh file
     if let Some(file) = args.get(1) {
         if file.ends_with(".nsh") && !file.starts_with('-') {
             return exec_nsh_file(file).await;
         }
     }
 
-    // Check for -c flag (single command execution, like npcsh -c "command")
     if let Some(pos) = args.iter().position(|a| a == "-c" || a == "--command") {
         if let Some(command) = args.get(pos + 1) {
             let team_dir = find_team_dir();

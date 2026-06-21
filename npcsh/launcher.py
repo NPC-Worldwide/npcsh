@@ -47,20 +47,15 @@ def _binary_matches_host(path: str) -> bool:
 
 def _find_rust_binary():
     """Find a host-compatible npcrsh binary."""
-    # 1. PATH lookup
-    for name in ("npcrsh", "npcrs"):
-        found = shutil.which(name)
-        if found and _binary_matches_host(found):
-            return found
-
-    # 2. Installed package binary (wheel / pip install)
     pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     ext = ".exe" if platform.system() == "Windows" else ""
+
+    # 1. Installed package binary (wheel / pip install)
     installed = os.path.join(pkg_dir, "bin", f"npcrs{ext}")
     if os.path.isfile(installed) and _binary_matches_host(installed):
         return installed
 
-    # 3. Package-local build artifact (dev workflow)
+    # 2. Package-local build artifact (dev workflow)
     local_release = os.path.join(pkg_dir, "rust", "target", "release", "npcrsh")
     if os.path.isfile(local_release) and _binary_matches_host(local_release):
         return local_release
