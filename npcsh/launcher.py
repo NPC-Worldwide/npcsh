@@ -121,6 +121,7 @@ def main():
 
     if rust_bin:
         try:
+            os.environ.setdefault("NPCSH_PYTHON", sys.executable)
             os.execvp(rust_bin, [rust_bin] + sys.argv[1:])
         except OSError as e:
             print(
