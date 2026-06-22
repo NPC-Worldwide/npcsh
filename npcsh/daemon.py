@@ -54,31 +54,37 @@ _pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _pkg_dir not in sys.path:
     sys.path.insert(0, _pkg_dir)
 
-import io
-_old_stdout = sys.stdout
-sys.stdout = io.StringIO()
-
-try:
-    from npcsh._state import setup_shell
-    from npcsh.routes import router
-
-    command_history, team, npc = setup_shell()
-    from npcsh._state import initialize_router_with_jinxes
-    initialize_router_with_jinxes(team, router)
-
-    initial_state = __import__("npcsh._state", fromlist=["initial_state"]).initial_state
-    state = initial_state
-    state.team = team
-    state.npc = npc
-    state.command_history = command_history
-finally:
-    _setup_output = sys.stdout.getvalue()
-    sys.stdout = _old_stdout
-    if _setup_output:
-        pass
-
-
+state = None
+team = None
+npc = None
+command_history = None
 _state_lock = threading.Lock()
+
+
+def _lazy_setup():
+    global state, team, npc, command_history
+    if state is not None:
+        return
+    with _state_lock:
+        if state is not None:
+            return
+        import io
+        buf = io.StringIO()
+        old = sys.stdout
+        sys.stdout = buf
+        try:
+            from npcsh._state import setup_shell
+            from npcsh.routes import router
+            command_history, team, npc = setup_shell()
+            from npcsh._state import initialize_router_with_jinxes
+            initialize_router_with_jinxes(team, router)
+            initial_state = __import__("npcsh._state", fromlist=["initial_state"]).initial_state
+            state = initial_state
+            state.team = team
+            state.npc = npc
+            state.command_history = command_history
+        finally:
+            sys.stdout = old
 
 
 def _get_state_snapshot(req):
@@ -367,6 +373,7 @@ def process_request(req, writer):
     final JSON.  In socket mode it is the socket's makefile object for
     everything.
     """
+    _lazy_setup()
     req_type = req.get("type", "llm")
 
     buf = io.StringIO()

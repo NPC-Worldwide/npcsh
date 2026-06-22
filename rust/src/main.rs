@@ -1,9 +1,7 @@
 
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
-use std::io::{self, BufRead, IsTerminal, Write};
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
+use std::io::{self, Write};
 
 const CYAN: &str = "\x1b[36m";
 const PURPLE: &str = "\x1b[35m";
@@ -124,29 +122,6 @@ impl NpcHelper {
         (word_start, matches)
     }
 
-    fn hint(&self, line: &str, pos: usize) -> Option<String> {
-        if pos != line.len() {
-            return None;
-        }
-        let word_start = line.rfind(' ').map(|i| i + 1).unwrap_or(0);
-        let word = &line[word_start..];
-
-        if word.starts_with('/') && word.len() > 1 {
-            for cmd in &self.commands {
-                if cmd.starts_with(word) && cmd.len() > word.len() {
-                    return Some(cmd[word.len()..].to_string());
-                }
-            }
-        } else if word.starts_with('@') && word.len() > 1 {
-            let prefix = &word[1..];
-            for name in &self.npc_names {
-                if name.starts_with(prefix) && name.len() > prefix.len() {
-                    return Some(name[prefix.len()..].to_string());
-                }
-            }
-        }
-        None
-    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -792,7 +767,6 @@ fn print_welcome(kernel: &Kernel) {
     const BLUE: &str = "\x1b[1;94m";
     const RUST: &str = "\x1b[1;38;5;202m";
 
-    const SHAD: &str = "\x1b[38;5;238m";
     eprintln!();
     eprintln!("  {BLUE}                         {RESET}{RUST}     ██╗     {RESET}");
     eprintln!("  {BLUE}                         {RESET}{RUST}     ██║     {RESET}");
@@ -985,7 +959,7 @@ fn run_interactive(input: &str) {
         .status();
 }
 
-async fn ensure_daemon(team_dir: &str, db_path: &str) -> Result<()> {
+async fn ensure_daemon(_team_dir: &str, _db_path: &str) -> Result<()> {
     let socket_path = npcrs::kernel::PythonDaemon::socket_path();
 
     #[cfg(unix)]
@@ -996,89 +970,8 @@ async fn ensure_daemon(team_dir: &str, db_path: &str) -> Result<()> {
 
         let default_sock = socket_path.display().to_string();
 
-        if !io::stdin().is_terminal() {
-            eprintln!(
-                "{RED}No npcsh daemon at {}. Start it with: python3 npcsh/daemon.py --daemon{RESET}",
-                default_sock
-            );
-            std::process::exit(1);
-        }
-
-        let prompt = format!(
-            "No npcsh daemon at {}. Start shared daemon? [Y/n] ",
-            default_sock
-        );
-        print!("{}", prompt);
-        io::stdout().flush()?;
-
-        let stdin = io::stdin();
-        let mut reader = io::BufReader::new(stdin.lock());
-        let mut answer = String::new();
-        reader.read_line(&mut answer)?;
-        let answer = answer.trim().to_lowercase();
-        if !answer.is_empty() && !answer.starts_with('y') {
-            eprintln!("Daemon not started. Exiting.");
-            std::process::exit(1);
-        }
-
-        let daemon_script = find_daemon_script();
-        if daemon_script.is_none() {
-            eprintln!("{}Cannot find npcsh/daemon.py. Exiting.{}", RED, RESET);
-            std::process::exit(1);
-        }
-        let script = daemon_script.unwrap();
-
-        let log_dir = shellexpand::tilde("~/.npcsh").to_string();
-        std::fs::create_dir_all(&log_dir)?;
-        let log_path = format!("{}/daemon.log", log_dir);
-
-        let mut cmd = std::process::Command::new("python3");
-        cmd.arg(&script)
-            .arg("--daemon")
-            .env("NPCSH_DB_PATH", db_path)
-            .env("NPCSH_TEAM_DIR", team_dir)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::from(
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&log_path)?,
-            ))
-            .stderr(std::process::Stdio::from(
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&log_path)?,
-            ));
-
-        #[cfg(unix)]
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-
-        let _child = cmd.spawn().map_err(|e| {
-            npcrs::error::NpcError::Other(format!(
-                "Failed to start daemon ({}): {}",
-                script.display(),
-                e
-            ))
-        })?;
-
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while std::time::Instant::now() < deadline {
-            if tokio::net::UnixStream::connect(&socket_path).await.is_ok() {
-                return Ok(());
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        }
-
-        return Err(npcrs::error::NpcError::Other(
-            "Daemon process started but socket never became available".into(),
-        )
-        .into());
+        eprintln!("{RED}No npcsh daemon at {}{RESET}", default_sock);
+        std::process::exit(1);
     }
 
     #[cfg(not(unix))]
@@ -1086,42 +979,6 @@ async fn ensure_daemon(team_dir: &str, db_path: &str) -> Result<()> {
         let _ = (team_dir, db_path);
         Ok(())
     }
-}
-
-fn find_daemon_script() -> Option<std::path::PathBuf> {
-    let candidates = ["npcsh/daemon.py", "../npcsh/daemon.py"];
-    if let Ok(cwd) = std::env::current_dir() {
-        for c in &candidates {
-            let p = cwd.join(c);
-            if p.exists() {
-                return Some(p);
-            }
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let p = dir.join("npcsh/daemon.py");
-            if p.exists() {
-                return Some(p);
-            }
-        }
-    }
-    if let Ok(output) = std::process::Command::new("python3")
-        .args([
-            "-c",
-            "import npcsh, os; print(os.path.dirname(os.path.abspath(npcsh.__file__)))",
-        ])
-        .output()
-    {
-        if output.status.success() {
-            let dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let p = std::path::PathBuf::from(dir).join("daemon.py");
-            if p.exists() {
-                return Some(p);
-            }
-        }
-    }
-    None
 }
 
 fn run_python_initialization(db_path: &str) {
