@@ -253,17 +253,11 @@ async fn main() -> Result<()> {
 
     print_welcome(&kernel);
 
-    ensure_daemon(&team_dir, &db_path).await?;
-    match npcrs::kernel::PythonDaemon::connect().await {
-        Ok(daemon) => {
-            kernel.python_daemon = Some(daemon);
-            eprintln!("{DIM}  connected to npcsh daemon{RESET}");
-        }
-        Err(e) => {
-            eprintln!("{RED}Failed to connect to daemon: {e}{RESET}");
-            std::process::exit(1);
-        }
-    }
+    let server_url = std::env::var("NPCPY_SERVER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:5337".to_string());
+    let daemon = npcrs::kernel::PythonDaemon::connect_http(server_url);
+    kernel.python_daemon = Some(daemon);
+    eprintln!("{DIM}  connected to npcpy server{RESET}");
 
     let npc_names: Vec<String> = kernel.ps().iter().map(|p| p.npc.name.clone()).collect();
     let jinx_names: Vec<String> = kernel.jinx_names().into_iter().map(String::from).collect();
@@ -957,28 +951,6 @@ fn run_interactive(input: &str) {
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .status();
-}
-
-async fn ensure_daemon(_team_dir: &str, _db_path: &str) -> Result<()> {
-    let socket_path = npcrs::kernel::PythonDaemon::socket_path();
-
-    #[cfg(unix)]
-    {
-        if tokio::net::UnixStream::connect(&socket_path).await.is_ok() {
-            return Ok(());
-        }
-
-        let default_sock = socket_path.display().to_string();
-
-        eprintln!("{RED}No npcsh daemon at {}{RESET}", default_sock);
-        std::process::exit(1);
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = (team_dir, db_path);
-        Ok(())
-    }
 }
 
 fn run_python_initialization(db_path: &str) {
