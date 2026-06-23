@@ -1,15 +1,25 @@
-"""Launcher that finds and execs the Rust npcrsh binary. Falls back to Python only if unavailable."""
+"""Launcher that finds and execs the Rust npcrsh binary.
+
+The Rust shell is a thin HTTP/SSE client of a running npcpy server. This
+launcher starts the npcpy server using its own CLI, waits for its /health
+endpoint, then execs the Rust binary.
+"""
 import os
-import socket
-import sys
 import shutil
 import platform
 import subprocess
+import sys
 import time
+import urllib.request
+from typing import Optional
 
 
-SOCKET_PATH = os.path.expanduser("~/.npcsh/daemon.sock")
-LOG_PATH = os.path.expanduser("~/.npcsh/daemon.log")
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 5337
+DEFAULT_SERVER_URL = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
+SERVER_LOG_PATH = os.path.expanduser("~/.npcsh/server.log")
+NPCSH_TEAM_PATH = os.path.expanduser("~/.npcsh/npc_team")
+NPCSH_TEAMS_YAML = os.path.expanduser("~/.npcsh/teams.yaml")
 
 
 def _host_binary_kind():
@@ -97,61 +107,76 @@ def _try_build_rust():
     return None
 
 
-def _find_daemon_script():
-    """Find npcsh/daemon.py relative to this package."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        os.path.join(here, "daemon.py"),
-        os.path.join(os.path.dirname(here), "npcsh", "daemon.py"),
-    ]
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
-    return None
-
-
-def _daemon_alive():
-    """Return True if the Unix socket is connectable."""
-    if not os.path.exists(SOCKET_PATH):
-        return False
+def _server_alive(url: str) -> bool:
+    """Return True if the npcpy server /health endpoint responds."""
     try:
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(0.5)
-        s.connect(SOCKET_PATH)
-        s.close()
-        return True
+        with urllib.request.urlopen(f"{url}/health", timeout=0.5) as resp:
+            return resp.status == 200
     except Exception:
-        try:
-            os.unlink(SOCKET_PATH)
-        except OSError:
-            pass
         return False
 
 
-def _ensure_daemon():
-    """Start the Python LLM daemon if not already running, using this interpreter."""
-    if _daemon_alive():
+def _start_server(host: str, port: int, teams_yaml: Optional[str] = None) -> bool:
+    """Start the npcpy server via its own CLI and wait for /health."""
+    url = f"http://{host}:{port}"
+    if _server_alive(url):
+        print(f"Using existing npcpy server at {url}", file=sys.stderr)
         return True
 
-    daemon_script = _find_daemon_script()
-    if not daemon_script:
-        return False
+    log_dir = os.path.dirname(SERVER_LOG_PATH)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+    log_file = open(SERVER_LOG_PATH, "a")
 
-    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-    with open(LOG_PATH, "a") as log_file:
-        subprocess.Popen(
-            [sys.executable, daemon_script, "--daemon"],
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+    cmd = [
+        sys.executable,
+        "-m",
+        "npcpy.serve",
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+    if teams_yaml:
+        cmd.extend(["--teams-yaml", teams_yaml])
 
-    for _ in range(150):
-        if _daemon_alive():
+    print(f"Starting npcpy server on {host}:{port}...", file=sys.stderr)
+    subprocess.Popen(
+        cmd,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    log_file.close()
+
+    for _ in range(600):
+        if _server_alive(url):
+            print(f"npcpy server ready at {url}.", file=sys.stderr)
             return True
         time.sleep(0.1)
 
+    print(
+        f"ERROR: npcpy server at {url} did not become healthy within 60 seconds. "
+        f"See log: {SERVER_LOG_PATH}",
+        file=sys.stderr,
+    )
     return False
+
+
+def _ensure_teams_yaml() -> Optional[str]:
+    """Ensure a teams.yaml exists pointing to the default npcsh team."""
+    if not os.path.isdir(NPCSH_TEAM_PATH):
+        return None
+    if os.path.isfile(NPCSH_TEAMS_YAML):
+        return NPCSH_TEAMS_YAML
+    try:
+        os.makedirs(os.path.dirname(NPCSH_TEAMS_YAML), exist_ok=True)
+        with open(NPCSH_TEAMS_YAML, "w") as f:
+            f.write(f"teams:\n  npcsh: {NPCSH_TEAM_PATH}\n")
+        return NPCSH_TEAMS_YAML
+    except Exception as e:
+        print(f"Warning: could not write {NPCSH_TEAMS_YAML}: {e}", file=sys.stderr)
+        return None
 
 
 def _fallback_to_python():
@@ -166,27 +191,23 @@ def _fallback_to_python():
 
 
 def main():
-    npcshrc = os.path.expanduser("~/.npcshrc")
-    if os.path.exists(npcshrc):
-        try:
-            with open(npcshrc, "r") as f:
-                lines = f.readlines()
-            filtered = [line for line in lines if "NPCSH_ENGINE" not in line]
-            if len(filtered) != len(lines):
-                with open(npcshrc, "w") as f:
-                    f.writelines(filtered)
-        except Exception:
-            pass
-
     rust_bin = _find_rust_binary()
     if rust_bin is None:
         rust_bin = _try_build_rust()
 
     if rust_bin:
-        if not _daemon_alive():
-            _ensure_daemon()
+        teams_yaml = _ensure_teams_yaml()
+        if not _start_server(DEFAULT_HOST, DEFAULT_PORT, teams_yaml=teams_yaml):
+            print(
+                "ERROR: Could not start the npcpy server; the Rust shell requires it. "
+                "Start it manually with: python3 -m npcpy.serve",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        env = os.environ.copy()
+        env["NPCPY_SERVER_URL"] = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
         try:
-            os.execvp(rust_bin, [rust_bin] + sys.argv[1:])
+            os.execvpe(rust_bin, [rust_bin] + sys.argv[1:], env)
         except OSError as e:
             print(
                 f"Warning: failed to exec {rust_bin} ({e}) — falling back to Python",
