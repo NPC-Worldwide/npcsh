@@ -254,7 +254,7 @@ async fn main() -> Result<()> {
     print_welcome(&kernel);
 
     let server_url = std::env::var("NPCPY_SERVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:5337".to_string());
+        .unwrap_or_else(|_| "http://127.0.0.1:5237".to_string());
     let daemon = npcrs::kernel::PythonDaemon::connect_http(server_url);
     kernel.python_daemon = Some(daemon);
     eprintln!("{DIM}  connected to npcpy server{RESET}");
