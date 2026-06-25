@@ -1,0 +1,55 @@
+jinx_name: weak-writing-generator
+skill_name: weak-writing-generator
+engine: skill
+description: "Generate paired weak/strong technical writing examples for training and preference optimization. Stores examples for reuse in GRPO/DPO fine-tuning."
+
+sections:
+  transform_rules: |
+    Given a STRONG sentence, produce a WEAK version that preserves the core claim but degrades the writing quality according to these exact rules:
+
+    1. PASSIVE VOICE: Replace active subjects with passive constructions. "We find" becomes "It was found that" or "The results show that."
+    2. NOMINALIZATIONS: Turn verbs into noun phrases. "AGN have weak lines" becomes "the weakness of AGN emission lines."
+    3. HEDGING: Add "likely," "may," "suggests that," "indicates that," "is believed to."
+    4. VAGUE QUANTIFIERS: Replace exact numbers with "a number of," "some," "various," "a fraction."
+    5. EMPTY CONNECTORS: Insert "Furthermore," "In addition," "Moreover," "It is interesting to note that."
+    6. REMOVE AGENT: Delete "we," "the authors," "the team." The sentence should have no human actor.
+    7. ABSTRACT SUBJECTS: Replace concrete nouns with abstract ones. "Galaxies" becomes "the population." "AGN lines" becomes "the emission characteristics."
+    8. BURY THE CLAIM: Put the actual finding at the end of a long sentence after multiple clauses.
+
+    Return ONLY the weak sentence. No explanations.
+
+  instruction_generator: |
+    Given a STRONG sentence, write a short instruction prompt that a generic writer could follow to produce either the strong or weak version. The instruction should describe the topic without prescribing the writing quality.
+
+    Example:
+    Strong: "Taking X-ray detectability into account, we find the average fraction of X-ray AGN in the BPT star-forming branch is 2%."
+    Instruction: "Write a sentence about the fraction of X-ray AGN that appear in the star-forming branch of the BPT diagram, considering X-ray detectability limits."
+
+    Return ONLY the instruction. No explanations.
+
+  grpo_format: |
+    Each stored example must follow this exact schema:
+    {
+      "instruction": "The prompt that generates the sentence",
+      "chosen": "The strong, precise, active-voice sentence",
+      "rejected": "The weak, passive, hedged sentence",
+      "source": "paper_name or context",
+      "section": "section_title if from a paper",
+      "date_generated": "ISO timestamp",
+      "generator_model": "model name used to generate rejected"
+    }
+
+  revision_rules: |
+    To revise a weak sentence back to strong:
+    1. Identify the concrete claim buried in the sentence.
+    2. Add an active subject ("we find," "the model achieves," "the function returns").
+    3. Replace vague quantifiers with exact values, thresholds, and units.
+    4. Remove hedging words ("likely," "may," "suggests").
+    5. Replace nominalizations with verbs.
+    6. Delete empty connectors and filler phrases.
+    7. Split into subject-verb-object order.
+
+  storage_schema: |
+    Examples are stored in a JSON lines file (.jsonl) with one GRPO-format object per line.
+    The file accumulates over time. Duplicate detection uses a hash of the instruction + chosen pair.
+    On each generation, the system checks existing examples to avoid near-duplicates.
