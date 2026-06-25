@@ -15,7 +15,7 @@ from typing import Optional
 
 
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 5337
+DEFAULT_PORT = 5237
 DEFAULT_SERVER_URL = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
 SERVER_LOG_PATH = os.path.expanduser("~/.npcsh/server.log")
 NPCSH_TEAM_PATH = os.path.expanduser("~/.npcsh/npc_team")
