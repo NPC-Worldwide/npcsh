@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use npcrs::{Message, ToolCall, ToolCallFunction, ToolDef, Usage};
+use npcrs::r#gen::{Message, ToolCall, ToolCallFunction, ToolDef, Usage};
 use serde_json::Value;
 
 pub struct StreamRequest {
