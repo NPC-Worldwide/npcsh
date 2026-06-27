@@ -221,10 +221,42 @@ fn apply_sse_event(
                     append_tool_call_json(tc, tool_calls, saw_output);
                 }
             }
-            "tool_start" | "tool_result" | "tool_error" => {
-                // The npcpy server may emit these for visibility, but the
-                // shell executes tools locally via the kernel.  Ignore the
-                // server-side events to avoid double-printing tool output.
+            "tool_start" => {
+                let name = json
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tool");
+                eprintln!("\x1b[36m⚡ {}:\x1b[0m", name);
+                *saw_output = true;
+            }
+            "tool_result" => {
+                let name = json
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tool");
+                let result = json
+                    .get("result")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let preview = if result.len() > 500 {
+                    format!("{}...\n[{} chars total]", &result[..500], result.len())
+                } else {
+                    result.to_string()
+                };
+                eprintln!("\x1b[36m  {} result:\x1b[0m\n{}", name, preview);
+                *saw_output = true;
+            }
+            "tool_error" => {
+                let name = json
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tool");
+                let err = json
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown error");
+                eprintln!("\x1b[31m  {} error: {}\x1b[0m", name, err);
+                *saw_output = true;
             }
             _ => {}
         }
