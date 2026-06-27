@@ -1,12 +1,11 @@
 use futures::StreamExt;
-use npcrs::r#gen::{Message, ToolCall, ToolCallFunction, ToolDef, Usage};
+use npcrs::r#gen::{Message, ToolCall, ToolCallFunction, Usage};
 use serde_json::Value;
 
 pub struct StreamRequest {
     pub model: String,
     pub provider: String,
     pub messages: Vec<Message>,
-    pub tools: Option<Vec<ToolDef>>,
     pub commandstr: String,
     pub npc: Option<String>,
     pub registered_teams: Option<Vec<String>>,
@@ -31,7 +30,6 @@ pub async fn call_stream(
         "model": request.model,
         "provider": request.provider,
         "messages": request.messages,
-        "tools": request.tools,
         "commandstr": request.commandstr,
         "npc": request.npc,
         "registered_teams": request.registered_teams,
@@ -234,16 +232,31 @@ fn apply_sse_event(
                     .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("tool");
-                let result = json
-                    .get("result")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let preview = if result.len() > 500 {
-                    format!("{}...\n[{} chars total]", &result[..500], result.len())
+                let result_text = json.get("result").map(|v| {
+                    if let Some(s) = v.as_str() {
+                        s.to_string()
+                    } else {
+                        serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())
+                    }
+                }).unwrap_or_default();
+                let content_text = json.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                let display = if !result_text.is_empty() {
+                    result_text
+                } else if !content_text.is_empty() {
+                    content_text.to_string()
                 } else {
-                    result.to_string()
+                    String::new()
                 };
-                eprintln!("\x1b[36m  {} result:\x1b[0m\n{}", name, preview);
+                let preview = if display.len() > 500 {
+                    format!("{}...\n[{} chars total]", &display[..500], display.len())
+                } else {
+                    display
+                };
+                if !preview.is_empty() {
+                    eprintln!("\x1b[36m  {} result:\x1b[0m\n{}", name, preview);
+                } else {
+                    eprintln!("\x1b[36m  {} result: (empty)\x1b[0m", name);
+                }
                 *saw_output = true;
             }
             "tool_error" => {
