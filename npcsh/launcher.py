@@ -110,7 +110,7 @@ def _try_build_rust():
 def _server_alive(url: str) -> bool:
     """Return True if the npcpy server /health endpoint responds."""
     try:
-        with urllib.request.urlopen(f"{url}/health", timeout=0.5) as resp:
+        with urllib.request.urlopen(f"{url}/api/health", timeout=0.5) as resp:
             return resp.status == 200
     except Exception:
         return False
