@@ -708,8 +708,8 @@ async fn main() -> Result<()> {
                         .get_process(current_pid)
                         .map(|p| p.last_streamed)
                         .unwrap_or(false);
-                    if !streamed && !output.is_empty() {
-                        println!("\n{}", output);
+                    if !streamed && !output.trim().is_empty() {
+                        println!("\n{}", output.trim());
                     }
 
                     let p = kernel.get_process(current_pid);
@@ -789,30 +789,16 @@ async fn run_stream_turn(
         process.new_turn();
     }
 
-    let (
-        model,
-        provider,
-        system,
-        npc_name,
-        tool_defs,
-        conv_id,
-    ) = {
+    let (model, provider, system, npc_name, conv_id) = {
         let process = kernel.get_process(current_pid).ok_or_else(|| {
             npcrs::NpcError::Other(format!("No process with pid {}", current_pid))
         })?;
-        let (td, _ex) = process.npc.resolve_tools(&kernel.jinxes);
         let model = process.npc.resolved_model();
         let provider = process.npc.resolved_provider();
         let system = process.npc.system_prompt(kernel.team.context.as_deref());
         let npc_name = process.npc.name.clone();
         let conv_id = process.conversation_id.clone();
-        (model, provider, system, npc_name, td, conv_id)
-    };
-
-    let tools = if tool_defs.is_empty() || mode == Mode::Chat {
-        None
-    } else {
-        Some(tool_defs.clone())
+        (model, provider, system, npc_name, conv_id)
     };
 
     let cwd = std::env::current_dir()
@@ -845,20 +831,7 @@ async fn run_stream_turn(
     );
     let context_info = format!("{}\n{}\n{}", path_cmd, ls_files, platform_info);
 
-    let tool_guidance = if tools.is_some() {
-        let tool_names: Vec<&str> =
-            tool_defs.iter().map(|t| t.function.name.as_str()).collect();
-        format!(
-            "\nYou have access to these tools: {}. Call tools via the function calling interface.\n\n\
-Use tools when you need to take action (run commands, search, edit files, etc.). Use chat to respond to the user.\n\
-IMPORTANT: After at most 3-5 tool calls, you MUST call stop to finish. Do not keep reading files or running commands indefinitely — gather what you need, respond, and stop.\n\
-Do not call stop without first calling chat to deliver a response to the user.\n\
-The user can see tool outputs directly. Do not re-write or repeat them in your chat response — just reference the relevant parts.",
-            tool_names.join(", ")
-        )
-    } else {
-        String::new()
-    };
+    let tool_guidance = String::new();
 
     let registered_teams = kernel
         .team
@@ -872,10 +845,11 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
                 .map(|d| vec![d])
         });
 
-    {
-        let process = kernel.get_process_mut(current_pid).unwrap();
-        process.messages.push(Message::user(input));
-    }
+    let execution_mode = if mode == Mode::Chat {
+        "chat".to_string()
+    } else {
+        "tool_agent".to_string()
+    };
 
     let request = stream_client::StreamRequest {
         model,
@@ -890,17 +864,12 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
             )));
             msgs
         },
-        tools,
         commandstr: format!("{}\n{}{}", input, context_info, tool_guidance),
         npc: Some(npc_name.clone()),
         registered_teams,
         conversation_id: Some(conv_id.clone()),
         current_path: Some(cwd.clone()),
-        execution_mode: if tool_defs.is_empty() || mode == Mode::Chat {
-            "chat".to_string()
-        } else {
-            "tool_agent".to_string()
-        },
+        execution_mode,
     };
 
     let response = stream_client::call_stream(client, server_url, &request)
@@ -915,7 +884,7 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
 
     {
         let process = kernel.get_process_mut(current_pid).unwrap();
-        process.last_streamed = response.streamed;
+        process.last_streamed = response.streamed || response.message.content.is_some();
         process.last_thinking = response.message.thinking.clone();
         process.messages.push(Message::user(input));
         process.messages.push(response.message.clone());
@@ -1230,7 +1199,6 @@ async fn exec_npc_file(
                 npcrs::Message::system(npc.system_prompt(None)),
                 npcrs::Message::user(cmd),
             ],
-            tools: None,
             commandstr: cmd.to_string(),
             npc: Some(npc.name.clone()),
             registered_teams: None,
