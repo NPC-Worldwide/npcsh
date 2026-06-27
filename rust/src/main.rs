@@ -882,8 +882,8 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
     }
 
     let max_iterations = 12;
-    let mut total_input_tokens: u64 = 0;
-    let mut total_output_tokens: u64 = 0;
+    let mut _total_input_tokens: u64 = 0;
+    let mut _total_output_tokens: u64 = 0;
     let mut final_output = String::new();
     let mut tool_calls_count = 0;
     let mut stop_requested = false;
@@ -932,8 +932,8 @@ The user can see tool outputs directly. Do not re-write or repeat them in your c
             .map_err(|e| npcrs::NpcError::Other(e))?;
 
         if let Some(ref usage) = response.usage {
-            total_input_tokens += usage.prompt_tokens;
-            total_output_tokens += usage.completion_tokens;
+            _total_input_tokens += usage.prompt_tokens;
+            _total_output_tokens += usage.completion_tokens;
             let cost = calculate_cost(&model, usage.prompt_tokens, usage.completion_tokens);
             let process = kernel.get_process_mut(current_pid).unwrap();
             process.record_usage(usage.prompt_tokens, usage.completion_tokens, cost);
