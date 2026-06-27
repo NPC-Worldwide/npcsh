@@ -62,16 +62,12 @@ pub async fn call_stream(
 
     let mut stream = resp.bytes_stream();
     let mut pending = String::new();
-    let mut stream_ended = false;
 
-    while !stream_ended {
+    loop {
         let chunk = match stream.next().await {
             Some(Ok(bytes)) => bytes,
             Some(Err(e)) => return Err(format!("HTTP stream chunk: {}", e)),
-            None => {
-                stream_ended = true;
-                break;
-            }
+            None => break,
         };
         pending.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -89,7 +85,6 @@ pub async fn call_stream(
                 None => continue,
             };
             if data.trim() == "[DONE]" {
-                stream_ended = true;
                 break;
             }
 
