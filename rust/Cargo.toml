@@ -15,7 +15,7 @@ name = "npcrsh"
 path = "src/main.rs"
 
 [dependencies]
-npcrs = { version = "0.1.22", default-features = false, features = ["ffi"] }
+npcrs = { version = "0.1.23", default-features = false, features = ["ffi"] }
 
 # HTTP/SSE client for the npcpy server
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
