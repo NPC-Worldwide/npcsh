@@ -17,6 +17,10 @@ path = "src/main.rs"
 [dependencies]
 npcrs = { version = "0.1.22", default-features = false, features = ["ffi"] }
 
+# HTTP/SSE client for the npcpy server
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+futures = "0.3"
+
 # Shell-specific deps
 rustyline = { version = "15", features = ["with-file-history"] }
 serde_yaml = "0.9"
