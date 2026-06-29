@@ -62,20 +62,16 @@ def _binary_matches_host(path: str) -> bool:
 
 
 def _find_rust_binary():
-    """Find a host-compatible npcrsh binary."""
+    """Find a host-compatible npcrsh binary in the local repo build tree."""
     here = os.path.dirname(os.path.abspath(__file__))
     ext = ".exe" if platform.system() == "Windows" else ""
-
-    installed = os.path.join(here, "bin", f"npcrs{ext}")
-    if os.path.isfile(installed) and _binary_matches_host(installed):
-        return installed
-
     repo_dir = os.path.dirname(here)
-    local_release = os.path.join(repo_dir, "rust", "target", "release", "npcrsh")
+
+    local_release = os.path.join(repo_dir, "rust", "target", "release", f"npcrsh{ext}")
     if os.path.isfile(local_release) and _binary_matches_host(local_release):
         return local_release
 
-    local_debug = os.path.join(repo_dir, "rust", "target", "debug", "npcrsh")
+    local_debug = os.path.join(repo_dir, "rust", "target", "debug", f"npcrsh{ext}")
     if os.path.isfile(local_debug) and _binary_matches_host(local_debug):
         return local_debug
 
@@ -110,7 +106,7 @@ def _try_build_rust():
 def _server_alive(url: str) -> bool:
     """Return True if the npcpy server /health endpoint responds."""
     try:
-        with urllib.request.urlopen(f"{url}/health", timeout=0.5) as resp:
+        with urllib.request.urlopen(f"{url}/api/health", timeout=0.5) as resp:
             return resp.status == 200
     except Exception:
         return False
