@@ -359,15 +359,9 @@ async fn main() -> Result<()> {
             String::new()
         };
 
-        let prompt = if usage_hint.is_empty() {
-            format!(
-                "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET} {PURPLE}>{RESET} "
-            )
-        } else {
-            format!(
-                "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET}\n{DIM}{usage_hint}{RESET}\n{PURPLE}>{RESET} "
-            )
-        };
+        let prompt = format!(
+            "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET}{usage_hint} {PURPLE}>{RESET} "
+        );
 
         let input = match readline_raw(
             &prompt,
@@ -743,15 +737,6 @@ async fn main() -> Result<()> {
             session_input_tokens = p.usage.total_input_tokens;
             session_output_tokens = p.usage.total_output_tokens;
             session_cost = p.usage.total_cost_usd;
-            if p.usage.total_turns > 0 {
-                eprintln!(
-                    "{DIM}[tokens:{}/{} | turn:{} | cost:${:.4}]{RESET}",
-                    p.usage.total_input_tokens,
-                    p.usage.total_output_tokens,
-                    p.usage.total_turns,
-                    p.usage.total_cost_usd,
-                );
-            }
         }
     }
 
