@@ -1,7 +1,11 @@
 
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
+use npcrs::process::ProcessState;
+use npcrs::{calculate_cost, Message};
 use std::io::{self, Write};
+
+mod stream_client;
 
 const CYAN: &str = "\x1b[36m";
 const PURPLE: &str = "\x1b[35m";
@@ -162,6 +166,10 @@ async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
     load_npcshrc();
 
+    let server_url = std::env::var("NPCPY_SERVER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:5237".to_string());
+    let http_client = reqwest::Client::new();
+
     let invoked_as = std::env::args()
         .next()
         .and_then(|a| std::path::Path::new(&a).file_name().map(|f| f.to_string_lossy().to_string()))
@@ -176,14 +184,20 @@ async fn main() -> Result<()> {
                 let jinx_args: Vec<&str> = args[2..].iter().map(|s| s.as_str()).collect();
                 return exec_jinx_file(file, &jinx_args).await;
             } else if file.ends_with(".npc") {
-                return exec_npc_file(file, args.get(2).map(|s| s.as_str())).await;
+                return exec_npc_file(
+                    file,
+                    args.get(2).map(|s| s.as_str()),
+                    &http_client,
+                    &server_url,
+                )
+                .await;
             }
         }
     }
 
     if let Some(file) = args.get(1) {
         if file.ends_with(".nsh") && !file.starts_with('-') {
-            return exec_nsh_file(file).await;
+            return exec_nsh_file(file, &http_client, &server_url).await;
         }
     }
 
@@ -192,9 +206,22 @@ async fn main() -> Result<()> {
             let team_dir = find_team_dir();
             let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
             let mut kernel = Kernel::boot(&team_dir, &db_path)?;
-            match kernel.exec(0, command).await {
+            match run_stream_turn(
+                &mut kernel,
+                0,
+                command,
+                Mode::Agent,
+                &http_client,
+                &server_url,
+            )
+            .await
+            {
                 Ok(output) => {
-                    if !output.is_empty() {
+                    let streamed = kernel
+                        .get_process(0)
+                        .map(|p| p.last_streamed)
+                        .unwrap_or(false);
+                    if !streamed && !output.is_empty() {
                         println!("{}", output);
                     }
                 }
@@ -253,10 +280,6 @@ async fn main() -> Result<()> {
 
     print_welcome(&kernel);
 
-    let server_url = std::env::var("NPCPY_SERVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:5237".to_string());
-    let daemon = npcrs::kernel::PythonDaemon::connect_http(server_url);
-    kernel.python_daemon = Some(daemon);
     eprintln!("{DIM}  connected to npcpy server{RESET}");
 
     let npc_names: Vec<String> = kernel.ps().iter().map(|p| p.npc.name.clone()).collect();
@@ -336,15 +359,9 @@ async fn main() -> Result<()> {
             String::new()
         };
 
-        let prompt = if usage_hint.is_empty() {
-            format!(
-                "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET} {PURPLE}>{RESET} "
-            )
-        } else {
-            format!(
-                "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET}\n{DIM}{usage_hint}{RESET}\n{PURPLE}>{RESET} "
-            )
-        };
+        let prompt = format!(
+            "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET}{usage_hint} {PURPLE}>{RESET} "
+        );
 
         let input = match readline_raw(
             &prompt,
@@ -645,17 +662,34 @@ async fn main() -> Result<()> {
                         run_bash(&input).await;
                         None
                     } else {
-                        Some(kernel.exec(current_pid, &input).await)
+                        Some(
+                            run_stream_turn(
+                                &mut kernel,
+                                current_pid,
+                                &input,
+                                mode.clone(),
+                                &http_client,
+                                &server_url,
+                            )
+                            .await,
+                        )
                     }
                 }
-                Mode::Chat => {
-                    Some(kernel.exec_chat(current_pid, &input).await)
-                }
-                Mode::Cmd => {
-                    if run_bash(&input).await {
+                Mode::Chat | Mode::Cmd => {
+                    if matches!(mode, Mode::Cmd) && run_bash(&input).await {
                         None
                     } else {
-                        Some(kernel.exec(current_pid, &input).await)
+                        Some(
+                            run_stream_turn(
+                                &mut kernel,
+                                current_pid,
+                                &input,
+                                mode.clone(),
+                                &http_client,
+                                &server_url,
+                            )
+                            .await,
+                        )
                     }
                 }
             }
@@ -664,8 +698,12 @@ async fn main() -> Result<()> {
         if let Some(result) = exec_result {
             match result {
                 Ok(output) => {
-                    if !output.is_empty() {
-                        println!("\n{}", output);
+                    let streamed = kernel
+                        .get_process(current_pid)
+                        .map(|p| p.last_streamed)
+                        .unwrap_or(false);
+                    if !streamed && !output.trim().is_empty() {
+                        println!("\n{}", output.trim());
                     }
 
                     let p = kernel.get_process(current_pid);
@@ -699,15 +737,6 @@ async fn main() -> Result<()> {
             session_input_tokens = p.usage.total_input_tokens;
             session_output_tokens = p.usage.total_output_tokens;
             session_cost = p.usage.total_cost_usd;
-            if p.usage.total_turns > 0 {
-                eprintln!(
-                    "{DIM}[tokens:{}/{} | turn:{} | cost:${:.4}]{RESET}",
-                    p.usage.total_input_tokens,
-                    p.usage.total_output_tokens,
-                    p.usage.total_turns,
-                    p.usage.total_cost_usd,
-                );
-            }
         }
     }
 
@@ -720,6 +749,135 @@ async fn main() -> Result<()> {
         s.uptime_secs, s.total_tokens, s.total_cost_usd
     );
     Ok(())
+}
+
+async fn run_stream_turn(
+    kernel: &mut Kernel,
+    current_pid: u32,
+    input: &str,
+    mode: Mode,
+    client: &reqwest::Client,
+    server_url: &str,
+) -> Result<String> {
+    {
+        let process = kernel.get_process_mut(current_pid).ok_or_else(|| {
+            npcrs::NpcError::Other(format!("No process with pid {}", current_pid))
+        })?;
+        if let Some(reason) = process.usage.exceeds(&process.limits) {
+            process.kill(137);
+            return Err(npcrs::NpcError::Other(format!(
+                "Process {} killed: {}",
+                current_pid, reason
+            )));
+        }
+        process.state = ProcessState::Running;
+        process.new_turn();
+    }
+
+    let (model, provider, system, npc_name, conv_id) = {
+        let process = kernel.get_process(current_pid).ok_or_else(|| {
+            npcrs::NpcError::Other(format!("No process with pid {}", current_pid))
+        })?;
+        let model = process.npc.resolved_model();
+        let provider = process.npc.resolved_provider();
+        let system = process.npc.system_prompt(kernel.team.context.as_deref());
+        let npc_name = process.npc.name.clone();
+        let conv_id = process.conversation_id.clone();
+        (model, provider, system, npc_name, conv_id)
+    };
+
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    let path_cmd = format!("The current working directory is: {}", cwd);
+    let ls_files = if let Ok(entries) = std::fs::read_dir(&cwd) {
+        let files: Vec<String> = entries
+            .flatten()
+            .take(100)
+            .map(|e| e.path().to_string_lossy().to_string())
+            .collect();
+        let total = std::fs::read_dir(&cwd).map(|d| d.count()).unwrap_or(0);
+        let mut listing = format!(
+            "Files in the current directory (full paths):\n{}",
+            files.join("\n")
+        );
+        if total > 100 {
+            listing.push_str(&format!("\n... and {} more files", total - 100));
+        }
+        listing
+    } else {
+        "No files found in the current directory.".to_string()
+    };
+    let platform_info = format!(
+        "Platform: {} {} ({})",
+        std::env::consts::OS,
+        "",
+        std::env::consts::ARCH
+    );
+    let context_info = format!("{}\n{}\n{}", path_cmd, ls_files, platform_info);
+
+    let tool_guidance = String::new();
+
+    let registered_teams = kernel
+        .team
+        .source_dir
+        .as_ref()
+        .map(|d| vec![d.clone()])
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|d| d.to_string_lossy().to_string())
+                .map(|d| vec![d])
+        });
+
+    let execution_mode = if mode == Mode::Chat {
+        "chat".to_string()
+    } else {
+        "tool_agent".to_string()
+    };
+
+    let request = stream_client::StreamRequest {
+        model,
+        provider,
+        messages: {
+            let process = kernel.get_process(current_pid).unwrap();
+            let mut msgs = vec![Message::system(system)];
+            msgs.extend(process.messages.clone());
+            msgs.push(Message::user(format!(
+                "{}\n{}{}",
+                input, context_info, tool_guidance
+            )));
+            msgs
+        },
+        commandstr: format!("{}\n{}{}", input, context_info, tool_guidance),
+        npc: Some(npc_name.clone()),
+        registered_teams,
+        conversation_id: Some(conv_id.clone()),
+        current_path: Some(cwd.clone()),
+        execution_mode,
+    };
+
+    let response = stream_client::call_stream(client, server_url, &request)
+        .await
+        .map_err(|e| npcrs::NpcError::Other(e))?;
+
+    if let Some(ref usage) = response.usage {
+        let cost = calculate_cost(&request.model, usage.prompt_tokens, usage.completion_tokens);
+        let process = kernel.get_process_mut(current_pid).unwrap();
+        process.record_usage(usage.prompt_tokens, usage.completion_tokens, cost);
+    }
+
+    {
+        let process = kernel.get_process_mut(current_pid).unwrap();
+        process.last_streamed = response.streamed || response.message.content.is_some();
+        process.last_thinking = response.message.thinking.clone();
+        process.messages.push(Message::user(input));
+        process.messages.push(response.message.clone());
+    }
+
+    let process = kernel.get_process_mut(current_pid).unwrap();
+    process.state = ProcessState::Blocked;
+    Ok(response.message.content.clone().unwrap_or_default())
 }
 
 fn handle_set_command(rest: &str, kernel: &mut Kernel, pid: u32, mode: &mut Mode) {
@@ -1005,9 +1163,13 @@ fn find_team_dir() -> String {
     ".".to_string()
 }
 
-async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
+async fn exec_npc_file(
+    npc_file: &str,
+    command: Option<&str>,
+    client: &reqwest::Client,
+    server_url: &str,
+) -> Result<()> {
     use npcrs::npc_compiler::NPC;
-
 
     let npc = NPC::from_file(npc_file)?;
 
@@ -1015,14 +1177,26 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
     let provider = npc.resolved_provider();
 
     if let Some(cmd) = command {
-        let system = npc.system_prompt(None);
-        let messages = vec![
-            npcrs::Message::system(system),
-            npcrs::Message::user(cmd),
-        ];
-        let response = npcrs::r#gen::get_genai_response
-            (&provider, &model, &messages, None, npc.api_url.as_deref(), None, None, None, false, None)
-            .await?;
+        let request = stream_client::StreamRequest {
+            model,
+            provider,
+            messages: vec![
+                npcrs::Message::system(npc.system_prompt(None)),
+                npcrs::Message::user(cmd),
+            ],
+            commandstr: cmd.to_string(),
+            npc: Some(npc.name.clone()),
+            registered_teams: None,
+            conversation_id: None,
+            current_path: Some(
+                std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| ".".to_string())),
+            execution_mode: "chat".to_string(),
+        };
+        let response = stream_client::call_stream(client, server_url, &request)
+            .await
+            .map_err(|e| npcrs::NpcError::Other(e))?;
         if let Some(text) = response.message.content {
             println!("{}", text);
         }
@@ -1036,9 +1210,12 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
         }
 
         eprintln!("\x1b[1;94m{}\x1b[0m", npc_file);
-        eprintln!("NPC: {} | model: {} | provider: {}", 
+        eprintln!(
+            "NPC: {} | model: {} | provider: {}",
             kernel.get_process(0).map(|p| p.npc.name.as_str()).unwrap_or("?"),
-            model, provider);
+            model,
+            provider
+        );
         eprintln!();
 
         let mut rl = rustyline::DefaultEditor::new().unwrap();
@@ -1047,11 +1224,24 @@ async fn exec_npc_file(npc_file: &str, command: Option<&str>) -> Result<()> {
                 Ok(line) => line.trim().to_string(),
                 Err(_) => break,
             };
-            if input.is_empty() { continue; }
-            if input == "exit" || input == "quit" { break; }
+            if input.is_empty() {
+                continue;
+            }
+            if input == "exit" || input == "quit" {
+                break;
+            }
             rl.add_history_entry(&input).ok();
 
-            match kernel.exec(0, &input).await {
+            match run_stream_turn(
+                &mut kernel,
+                0,
+                &input,
+                Mode::Agent,
+                client,
+                server_url,
+            )
+            .await
+            {
                 Ok(output) => {
                     if !output.is_empty() {
                         println!("\n{}", output);
@@ -1101,7 +1291,11 @@ async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-async fn exec_nsh_file(script_path: &str) -> Result<()> {
+async fn exec_nsh_file(
+    script_path: &str,
+    client: &reqwest::Client,
+    server_url: &str,
+) -> Result<()> {
     let team_dir = find_team_dir();
     let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
@@ -1152,7 +1346,16 @@ async fn exec_nsh_file(script_path: &str) -> Result<()> {
             substituted
         };
 
-        match kernel.exec(0, &cmd).await {
+        match run_stream_turn(
+            &mut kernel,
+            0,
+            &cmd,
+            Mode::Agent,
+            client,
+            server_url,
+        )
+        .await
+        {
             Ok(output) => {
                 last_output = output.clone();
                 if !output.is_empty() {
