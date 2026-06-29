@@ -194,18 +194,9 @@ fn apply_sse_event(
         match typ {
             "usage" => {
                 *usage = Some(Usage {
-                    prompt_tokens: json
-                        .get("input_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                    completion_tokens: json
-                        .get("output_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
-                    total_tokens: json
-                        .get("total_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0),
+                    prompt_tokens: json.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                    completion_tokens: json.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                    total_tokens: json.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                 });
             }
             "message_stop" | "stop" => {}
