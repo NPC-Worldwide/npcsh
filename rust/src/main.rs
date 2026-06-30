@@ -5,7 +5,10 @@ use npcrs::process::ProcessState;
 use npcrs::{calculate_cost, Message};
 use std::io::{self, Write};
 
+mod markdown;
 mod stream_client;
+
+use crate::markdown::render_block;
 
 const CYAN: &str = "\x1b[36m";
 const PURPLE: &str = "\x1b[35m";
@@ -166,7 +169,7 @@ async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
     load_npcshrc();
 
-    let server_url = std::env::var("NPCPY_SERVER_URL")
+    let server_url = std::env::var("NPCSH_SERVER_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:5237".to_string());
     let http_client = reqwest::Client::new();
 
@@ -222,7 +225,7 @@ async fn main() -> Result<()> {
                         .map(|p| p.last_streamed)
                         .unwrap_or(false);
                     if !streamed && !output.is_empty() {
-                        println!("{}", output);
+                        println!("{}", render_block(&output));
                     }
                 }
                 Err(e) => {
@@ -703,7 +706,7 @@ async fn main() -> Result<()> {
                         .map(|p| p.last_streamed)
                         .unwrap_or(false);
                     if !streamed && !output.trim().is_empty() {
-                        println!("\n{}", output.trim());
+                        println!("\n{}", render_block(output.trim()));
                     }
 
                     let p = kernel.get_process(current_pid);
