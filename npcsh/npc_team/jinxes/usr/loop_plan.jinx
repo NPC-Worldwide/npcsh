@@ -2,10 +2,10 @@ permissions:
   default: ask
 jinx_name: loop_plan
 description: |
-  Scope-lock and execute a multi-step task by planning which jinxes to invoke,
-  then looping through them with progress reports, investigation-budget checks,
-  and a completion checklist before finishing. Use for broad or ambiguous requests
-  where the agent would otherwise stop at a surface-level fix.
+  Scope-lock and execute a multi-step task. Proposes a plan (optionally asking
+  the user), then runs an agentic loop using the available jinxes and NPCs.
+  Reports progress, enforces action budgets, checkpoints results, and only finishes
+  when the work is verified or the user is asked how to proceed.
 inputs:
   - goal: null
   - max_iterations: "10"
@@ -23,11 +23,13 @@ steps:
 
       from termcolor import colored
       from npcpy.llm_funcs import get_llm_response
+      from npcpy.npc_compiler import NPC
 
-      # ── Inputs ───────────────────────────────────────────────────────────────
+      # ── Inputs ─────────────────────────────────────────────────────────────────
       _npc = context.get('npc')
       _team = context.get('team')
       _messages = context.get('messages', [])
+      _state = context.get('state')
 
       goal = context.get('goal', '')
       if not goal:
@@ -39,25 +41,22 @@ steps:
       budget_actions = int(context.get('budget_actions') or '20')
       require_confirmation = str(context.get('require_confirmation', 'false')).lower() in ('true', '1', 'yes')
 
-      # Use the shell's current model/provider — never let the LLM override these.
+      # Resolve model/provider from state or the invoking NPC.
       _model = None
       _provider = None
       try:
-          _model = state.chat_model
-          _provider = state.chat_provider
+          _model = _state.chat_model
+          _provider = _state.chat_provider
       except Exception:
           pass
-      if not _model and _npc and hasattr(_npc, 'model') and _npc.model:
-          _model = _npc.model
-      if not _provider and _npc and hasattr(_npc, 'provider') and _npc.provider:
-          _provider = _npc.provider
+      if not _model and _npc and hasattr(_npc, 'resolved_model'):
+          _model = _npc.resolved_model()
+      if not _provider and _npc and hasattr(_npc, 'resolved_provider'):
+          _provider = _npc.resolved_provider()
 
-      # ── Discover available jinxes ───────────────────────────────────────────
+      # ── Discover available jinxes ─────────────────────────────────────────────
       def discover_jinxes(npc_obj, team_obj):
-          """Return {name: description} for jinxes from team and global dirs."""
           found = {}
-
-          # Team-loaded jinxes (already parsed)
           if team_obj and hasattr(team_obj, 'jinxes_dict'):
               for name, jinx in team_obj.jinxes_dict.items():
                   if name == 'loop_plan':
@@ -65,7 +64,6 @@ steps:
                   desc = getattr(jinx, 'description', '') or getattr(jinx, 'jinx_name', name)
                   found[name] = desc
 
-          # Also walk the global team directory on disk for anything not loaded
           global_team = os.path.expanduser('~/.npcsh/npc_team')
           for root, dirs, files in os.walk(global_team):
               dirs[:] = [d for d in dirs if d not in {'__pycache__', '.git'}]
@@ -76,7 +74,6 @@ steps:
                       if name in found or name == 'loop_plan':
                           continue
                       try:
-                          # Quick YAML peek for description without full Jinja render
                           with open(path, 'r', errors='replace') as fh:
                               lines = fh.read().splitlines()
                           desc = ''
@@ -99,91 +96,93 @@ steps:
 
       jinx_catalog = discover_jinxes(_npc, _team)
       if not jinx_catalog:
-          context['output'] = "Error: no jinxes discovered in ~/.npcsh/npc_team or current team."
+          context['output'] = "Error: no jinxes discovered."
           context['messages'] = _messages
           exit()
 
       catalog_text = '\n'.join(f"  - {name}: {desc[:120]}" for name, desc in sorted(jinx_catalog.items()))
 
+      # ── Discover available NPCs for delegation ───────────────────────────────
+      npc_catalog = {}
+      if _team and hasattr(_team, 'npcs'):
+          for name, npc_obj in _team.npcs.items():
+              directive = getattr(npc_obj, 'primary_directive', '') or getattr(npc_obj, 'description', '') or name
+              npc_catalog[name] = directive[:120]
+      if _npc and hasattr(_npc, 'name') and _npc.name not in npc_catalog:
+          npc_catalog[_npc.name] = getattr(_npc, 'primary_directive', '') or _npc.name
+
+      npc_catalog_text = '\n'.join(f"  - @{name}: {desc}" for name, desc in sorted(npc_catalog.items())) if npc_catalog else "  (no specialist NPCs loaded)"
+
       # ── Helpers ──────────────────────────────────────────────────────────────
       def status(msg):
           print(colored(f"  [loop_plan] {msg}", "cyan"))
 
-      def llm(prompt, temperature=0.3):
+      def llm(prompt, temperature=0.3, **kwargs):
           result = get_llm_response(
               prompt,
               model=_model,
               provider=_provider,
               npc=_npc,
               temperature=temperature,
-              thinking={'type': 'enabled', 'budget_tokens': 128},
+              **kwargs,
           )
           return str(result.get('response', '')) if isinstance(result, dict) else str(result)
 
-      def parse_json_block(text):
-          text = text.strip()
-          if '```json' in text:
-              text = text.split('```json')[1].split('```')[0]
-          elif '```' in text:
-              text = text.split('```')[1].split('```')[0]
-          return json.loads(text.strip())
+      def llm_json(prompt, temperature=0.2, **kwargs):
+          result = get_llm_response(prompt, model=_model, provider=_provider, npc=_npc, format="json", temperature=temperature, **kwargs)
+          return result.get('response', {}) if isinstance(result, dict) else {}
 
-      # ── Scope-locking: create plan with explicit jinx mapping ────────────────
-      status("Scope-locking: creating plan...")
+      # ── Plan generation ────────────────────────────────────────────────────────
+      status("Generating plan...")
       plan_prompt = f"""You are a planning orchestrator for an NPC shell.
 
-The user wants:
-  {goal}
+       The user wants:
+         {goal}
 
-Available jinxes in ~/.npcsh/npc_team and the current team:
-{catalog_text}
+       Available jinxes:
+       {catalog_text}
 
-Create a concrete execution plan. Each step MUST invoke exactly one of the available jinxes above.
-Do not invent jinxes. Prefer these patterns when appropriate:
-  - /explore for codebase investigation
-  - /plan for sub-planning
-  - /delegate for handing work to a specialist NPC
-  - /chat for LLM-only reasoning
-  - /agent for tool-using autonomous work
-  - /convene for multi-perspective discussion
+       Available NPCs for delegation:
+       {npc_catalog_text}
 
-Return ONLY JSON in this exact format:
-{{
-  "goal_restatement": "concise restatement of the user goal",
-  "uncertainties": ["list any ambiguities you want the user to confirm before continuing"],
-  "steps": [
-    {{
-      "id": 1,
-      "description": "what this step does",
-      "jinx": "exact_jinx_name",
-      "inputs": {{"key": "value"}},
-      "risk": "safe|moderate|dangerous",
-      "success_criteria": "how we know this step is done"
-    }}
-  ],
-  "expected_completion_checklist": ["item 1", "item 2"]
-}}
+       Create a concrete execution plan. Each step must be one of:
+         - invoke a jinx by exact name
+         - delegate to a specialist NPC (@name)
+         - run an agentic sub-loop using the LLM with auto_process_tool_calls=True
 
-If the goal is ambiguous and you need user input, set steps to [] and list uncertainties.
-Use double quotes. Risk must be safe, moderate, or dangerous."""
+       Return ONLY JSON in this exact format:""" + """
+       {
+         "goal_restatement": "concise restatement",
+         "uncertainties": ["list ambiguities to ask the user before continuing"],
+         "steps": [
+           {
+             "id": 1,
+             "description": "what this step does",
+             "type": "jinx|delegate|agentic",
+             "target": "exact_jinx_name or @npc_name or self",
+             "inputs": {"key": "value"},
+             "prompt": "prompt to use for agentic/delegate steps; for jinx this can be null",
+             "risk": "safe|moderate|dangerous",
+             "success_criteria": "how we know this step is done"
+           }
+         ],
+         "expected_completion_checklist": ["item 1", "item 2"]
+       }
+       """ + """Use double quotes. Risk must be safe, moderate, or dangerous."""
 
-      plan_text = llm(plan_prompt, temperature=0.2)
-      try:
-          plan = parse_json_block(plan_text)
-      except Exception as e:
-          context['output'] = f"Failed to parse plan JSON: {e}\n\nLLM response:\n{plan_text[:2000]}"
-          context['messages'] = _messages
-          exit()
+      plan = llm_json(plan_prompt, temperature=0.2)
+      if not isinstance(plan, dict):
+          plan = {}
 
-      uncertainties = plan.get('uncertainties', [])
-      steps = plan.get('steps', [])
+      uncertainties = plan.get('uncertainties', []) or []
+      steps = plan.get('steps', []) or []
 
       if uncertainties and not steps:
           context['output'] = (
               "=== PLANNING PAUSED: NEED USER INPUT ===\n\n"
               + f"Goal: {plan.get('goal_restatement', goal)}\n\n"
               + "Uncertainties:\n  - " + "\n  - ".join(uncertainties)
-              + "\n\nResolve these and re-run /loop_plan with a clearer goal."
+              + "\n\nResolve these and re-run loop_plan with a clearer goal."
           )
           context['messages'] = _messages
           exit()
@@ -193,28 +192,38 @@ Use double quotes. Risk must be safe, moderate, or dangerous."""
           context['messages'] = _messages
           exit()
 
-      # Print plan
+      # ── Present plan ─────────────────────────────────────────────────────────
       print(colored("\n=== LOOP PLAN ===", "cyan", attrs=["bold"]))
       print(colored(f"Goal: {plan.get('goal_restatement', goal)}", "white", attrs=["dark"]))
       for s in steps:
           risk_tag = f"[{s.get('risk', 'safe').upper()}]"
-          print(colored(f"  [{s['id']}] {s.get('description', '')} -> /{s.get('jinx')} {risk_tag}", "white"))
+          ttype = s.get('type', 'jinx')
+          target = s.get('target', s.get('jinx', '?'))
+          print(colored(f"  [{s['id']}] {s.get('description', '')} -> {ttype}:{target} {risk_tag}", "white"))
       print(colored("=================\n", "cyan", attrs=["bold"]))
 
+      # Optional confirmation. In a headless run we proceed; the permission system
+      # will gate dangerous individual tool calls anyway.
       if require_confirmation:
-          print(colored("Confirm plan to continue (not implemented in non-interactive mode).", "yellow"))
+          status("require_confirmation=true but no interactive form available in this context; proceeding.")
 
-      completion_checklist = plan.get('expected_completion_checklist', [])
+      completion_checklist = plan.get('expected_completion_checklist', []) or []
       step_results = []
       action_count = 0
-      completed_steps = 0
+      checkpoint = {
+          "goal": plan.get('goal_restatement', goal),
+          "steps_completed": [],
+          "steps_remaining": [s.get('description', f"Step {s['id']}") for s in steps],
+          "findings": [],
+          "errors": [],
+      }
 
-      # ── Execution loop ─────────────────────────────────────────────────────
+      # ── Execution loop ───────────────────────────────────────────────────────
       status("Entering execution loop...")
 
       for i, step in enumerate(steps):
           if action_count >= budget_actions:
-              print(colored(f"\nInvestigation/action budget ({budget_actions}) reached. Stopping.", "yellow", attrs=["bold"]))
+              print(colored(f"\nAction budget ({budget_actions}) reached. Stopping.", "yellow", attrs=["bold"]))
               break
 
           iteration = i + 1
@@ -222,101 +231,146 @@ Use double quotes. Risk must be safe, moderate, or dangerous."""
               print(colored(f"\nMax iterations ({max_iters}) reached. Stopping.", "yellow", attrs=["bold"]))
               break
 
-          jinx_name = step.get('jinx')
+          stype = step.get('type', 'jinx')
+          target = step.get('target') or step.get('jinx', '')
           inputs = step.get('inputs', {}) or {}
           description = step.get('description', f"Step {iteration}")
           risk = step.get('risk', 'safe')
-
-          if jinx_name not in jinx_catalog:
-              print(colored(f"  Step {iteration}: jinx '{jinx_name}' not available. Skipping.", "red"))
-              step_results.append({"step": iteration, "jinx": jinx_name, "status": "skipped", "reason": "not in catalog"})
-              continue
+          step_prompt = step.get('prompt', '') or description
 
           action_count += 1
 
           print(colored(f"\n── Step {iteration}/{len(steps)} [{risk.upper()}] ──", "yellow", attrs=["bold"]))
           print(colored(f"  {description}", "white"))
-          print(colored(f"  Invoking: /{jinx_name} inputs={json.dumps(inputs)}\n", "white", attrs=["dark"]))
 
-          # Invoke the jinx
           step_output = None
           step_error = None
-          try:
-              if _npc and hasattr(_npc, 'execute_jinx'):
-                  result = _npc.execute_jinx(
-                      jinx_name=jinx_name,
-                      inputs=inputs,
-                      extra_globals={'state': context.get('state'), 'team': _team, 'npc': _npc}
-                  )
-              else:
-                  # Fallback: ask the LLM to simulate what the jinx would do
-                  result = {"response": f"No NPC.execute_jinx available. Simulated invocation of /{jinx_name} with {inputs}."}
 
-              if isinstance(result, dict):
-                  step_output = result.get('output') or result.get('response') or str(result)
+          try:
+              if stype == 'jinx':
+                  jinx_name = target
+                  if jinx_name not in jinx_catalog:
+                      step_error = f"Jinx '{jinx_name}' not in catalog."
+                  else:
+                      print(colored(f"  Invoking /{jinx_name} inputs={json.dumps(inputs)}", "white", attrs=["dark"]))
+                      if _npc and hasattr(_npc, 'execute_jinx'):
+                          result = _npc.execute_jinx(
+                              jinx_name=jinx_name,
+                              inputs=inputs,
+                              extra_globals={'state': _state, 'team': _team, 'npc': _npc}
+                          )
+                      else:
+                          result = {"response": f"No NPC.execute_jinx available. Simulated /{jinx_name}."}
+                      step_output = result.get('output') or result.get('response') or str(result) if isinstance(result, dict) else str(result)
+
+              elif stype == 'delegate':
+                  npc_name = target.lstrip('@')
+                  if npc_name not in npc_catalog:
+                      step_error = f"NPC '{npc_name}' not available for delegation."
+                  else:
+                      print(colored(f"  Delegating to @{npc_name}", "white", attrs=["dark"]))
+                      delegate_npc = _team.npcs.get(npc_name) if _team and hasattr(_team, 'npcs') else None
+                      if delegate_npc is None and _npc and getattr(_npc, 'name', None) == npc_name:
+                          delegate_npc = _npc
+                      if delegate_npc and hasattr(delegate_npc, 'get_llm_response'):
+                          result = delegate_npc.get_llm_response(
+                              step_prompt,
+                              auto_process_tool_calls=True,
+                              model=_model,
+                              provider=_provider,
+                              messages=_messages,
+                          )
+                      else:
+                          result = get_llm_response(
+                              step_prompt,
+                              model=_model,
+                              provider=_provider,
+                              npc=delegate_npc or _npc,
+                              messages=_messages,
+                              auto_process_tool_calls=True,
+                          )
+                      step_output = result.get('response', '') if isinstance(result, dict) else str(result)
+
+              elif stype == 'agentic':
+                  print(colored("  Running agentic sub-loop with auto_process_tool_calls=True", "white", attrs=["dark"]))
+                  result = get_llm_response(
+                      step_prompt,
+                      model=_model,
+                      provider=_provider,
+                      npc=_npc,
+                      messages=_messages,
+                      auto_process_tool_calls=True,
+                  )
+                  step_output = result.get('response', '') if isinstance(result, dict) else str(result)
+
               else:
-                  step_output = str(result)
+                  step_error = f"Unknown step type '{stype}'."
+
           except Exception as e:
               step_error = f"{type(e).__name__}: {e}"
               traceback.print_exc()
 
-          completed_steps += 1 if not step_error else 0
-
-          # Progress report gate after every step
-          progress_lines = [
-              f"Completed: {completed_steps}/{len(steps)} steps",
-              f"Actions used: {action_count}/{budget_actions}",
-          ]
+          # Checkpoint after each step
+          checkpoint["steps_completed"].append(description)
+          if checkpoint["steps_remaining"]:
+              checkpoint["steps_remaining"].pop(0)
           if step_error:
-              progress_lines.append(f"Last step error: {step_error}")
-
-          print(colored("\n  [PROGRESS REPORT]", "green", attrs=["bold"]))
-          for line in progress_lines:
-              print(colored(f"    {line}", "white", attrs=["dark"]))
-          print(colored("  Remaining: " + ", ".join(s.get('jinx', '?') for s in steps[i+1:]), "white", attrs=["dark"]))
+              checkpoint["errors"].append({"step": iteration, "error": step_error})
+          else:
+              checkpoint["findings"].append({"step": iteration, "summary": str(step_output)[:400]})
 
           step_results.append({
               "step": iteration,
-              "jinx": jinx_name,
+              "type": stype,
+              "target": target,
               "description": description,
               "status": "error" if step_error else "done",
               "output_preview": str(step_output)[:500] if step_output else "",
               "error": step_error,
           })
 
-      # ── Diff / completion checklist before finalizing ───────────────────────
-      status("Running completion checklist...")
+          # Progress report
+          print(colored("\n  [PROGRESS REPORT]", "green", attrs=["bold"]))
+          print(colored(f"    Completed: {len(checkpoint['steps_completed'])}/{len(steps)}", "white", attrs=["dark"]))
+          print(colored(f"    Actions used: {action_count}/{budget_actions}", "white", attrs=["dark"]))
+          if step_error:
+              print(colored(f"    Last error: {step_error}", "red"))
+          remaining = steps[i+1:]
+          if remaining:
+              print(colored(f"    Remaining: " + ", ".join(f"[{s['id']}] {s.get('target', s.get('jinx', '?'))}" for s in remaining), "white", attrs=["dark"]))
 
-      checklist_prompt = f"""You are a completion reviewer.
+      # ── Completion review ─────────────────────────────────────────────────────
+      status("Reviewing completion...")
+      review_prompt = f"""You are a completion reviewer for a multi-step NPC loop.
 
-Original goal: {goal}
-Plan restatement: {plan.get('goal_restatement', goal)}
-Expected checklist: {json.dumps(completion_checklist)}
+       Original goal: {goal}
+       Plan restatement: {plan.get('goal_restatement', goal)}
+       Expected checklist: {json.dumps(completion_checklist)}
 
-Steps executed:
-{json.dumps(step_results, indent=2)}
+       Checkpoint:
+       {json.dumps(checkpoint, indent=2)}
 
-Review the results and produce a final assessment. Return ONLY JSON:
-{{
-  "completed_checklist": [
-    {{"item": "expected checklist item", "done": true, "evidence": "which step produced this"}}
-  ],
-  "missing_items": ["things still needed"],
-  "surface_level_only": false,
-  "recommendation": "STOP|CONTINUE|NEEDS_USER_INPUT",
-  "next_actions": ["optional next jinx invocations if CONTINUE"]
-}}
+       Step results:
+       {json.dumps(step_results, indent=2)}
 
-surface_level_only should be true if the results look like shallow exploration without real implementation.
-recommendation must be STOP, CONTINUE, or NEEDS_USER_INPUT."""
+       Review the results and return ONLY JSON in this exact format:""" + """
+       {
+         "completed_checklist": [
+           {"item": "expected checklist item", "done": true, "evidence": "which step produced this"}
+         ],
+         "missing_items": ["things still needed"],
+         "surface_level_only": false,
+         "recommendation": "STOP|CONTINUE|NEEDS_USER_INPUT",
+         "next_actions": ["optional next jinx invocations if CONTINUE"]
+       }
+       """ + """surface_level_only should be true if the work stopped at exploration without implementation or verification.
+       recommendation must be STOP, CONTINUE, or NEEDS_USER_INPUT."""
 
-      review_text = llm(checklist_prompt, temperature=0.2)
-      try:
-          review = parse_json_block(review_text)
-      except Exception as e:
+      review = llm_json(review_prompt, temperature=0.2)
+      if not isinstance(review, dict):
           review = {
               "completed_checklist": [],
-              "missing_items": [f"Review JSON parse error: {e}"],
+              "missing_items": ["Review response was not valid JSON."],
               "surface_level_only": False,
               "recommendation": "NEEDS_USER_INPUT",
               "next_actions": [],
@@ -343,7 +397,7 @@ recommendation must be STOP, CONTINUE, or NEEDS_USER_INPUT."""
               summary_parts.append(f"  [ ] {m}")
 
       if review.get('surface_level_only'):
-          summary_parts.extend(["", "WARNING: Execution looks surface-level. Consider re-running with a more specific goal or higher budget."])
+          summary_parts.extend(["", "WARNING: Execution looks surface-level. Re-run with a more specific goal or higher budget, or ask the user how to proceed."])
 
       next_actions = review.get('next_actions', [])
       if next_actions:
@@ -351,10 +405,12 @@ recommendation must be STOP, CONTINUE, or NEEDS_USER_INPUT."""
           for a in next_actions:
               summary_parts.append(f"  - {a}")
 
+      summary_parts.extend(["", "Checkpoint:", json.dumps(checkpoint, indent=2)])
+
       summary_parts.append("\nDetailed step results:")
       for sr in step_results:
           icon = "✓" if sr.get('status') == 'done' else "✗"
-          summary_parts.append(f"  [{icon}] Step {sr['step']} /{sr['jinx']}: {sr['description']}")
+          summary_parts.append(f"  [{icon}] Step {sr['step']} {sr['type']}:{sr['target']} - {sr['description']}")
           if sr.get('error'):
               summary_parts.append(f"      Error: {sr['error']}")
 
@@ -370,6 +426,7 @@ recommendation must be STOP, CONTINUE, or NEEDS_USER_INPUT."""
           'goal': goal,
           'plan': plan,
           'step_results': step_results,
+          'checkpoint': checkpoint,
           'completion_review': review,
           'actions_used': action_count,
           'budget_actions': budget_actions,
