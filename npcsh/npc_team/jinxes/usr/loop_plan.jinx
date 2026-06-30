@@ -134,41 +134,47 @@ steps:
 
       # ── Plan generation ────────────────────────────────────────────────────────
       status("Generating plan...")
-      plan_prompt = f"""You are a planning orchestrator for an NPC shell.
 
-       The user wants:
-         {goal}
+      plan_example = """
+        {
+          "goal_restatement": "concise restatement",
+          "uncertainties": ["list ambiguities to ask the user before continuing"],
+          "steps": [
+            {
+              "id": 1,
+              "description": "what this step does",
+              "type": "jinx|delegate|agentic",
+              "target": "exact_jinx_name or @npc_name or self",
+              "inputs": {"key": "value"},
+              "prompt": "prompt to use for agentic/delegate steps; for jinx this can be null",
+              "risk": "safe|moderate|dangerous",
+              "success_criteria": "how we know this step is done"
+            }
+          ],
+          "expected_completion_checklist": ["item 1", "item 2"]
+        }
+      """
 
-       Available jinxes:
-       {catalog_text}
+      plan_prompt = f"""
+        You are a planning orchestrator for an NPC shell.
 
-       Available NPCs for delegation:
-       {npc_catalog_text}
+        The user wants:
+          {goal}
 
-       Create a concrete execution plan. Each step must be one of:
-         - invoke a jinx by exact name
-         - delegate to a specialist NPC (@name)
-         - run an agentic sub-loop using the LLM with auto_process_tool_calls=True
+        Available jinxes:
+        {catalog_text}
 
-       Return ONLY JSON in this exact format:""" + """
-       {
-         "goal_restatement": "concise restatement",
-         "uncertainties": ["list ambiguities to ask the user before continuing"],
-         "steps": [
-           {
-             "id": 1,
-             "description": "what this step does",
-             "type": "jinx|delegate|agentic",
-             "target": "exact_jinx_name or @npc_name or self",
-             "inputs": {"key": "value"},
-             "prompt": "prompt to use for agentic/delegate steps; for jinx this can be null",
-             "risk": "safe|moderate|dangerous",
-             "success_criteria": "how we know this step is done"
-           }
-         ],
-         "expected_completion_checklist": ["item 1", "item 2"]
-       }
-       """ + """Use double quotes. Risk must be safe, moderate, or dangerous."""
+        Available NPCs for delegation:
+        {npc_catalog_text}
+
+        Create a concrete execution plan. Each step must be one of:
+          - invoke a jinx by exact name
+          - delegate to a specialist NPC (@name)
+          - run an agentic sub-loop using the LLM with auto_process_tool_calls=True
+
+        Return ONLY JSON in this exact format:{plan_example}
+        Use double quotes. Risk must be safe, moderate, or dangerous.
+      """
 
       plan = llm_json(plan_prompt, temperature=0.2)
       if not isinstance(plan, dict):
@@ -178,12 +184,18 @@ steps:
       steps = plan.get('steps', []) or []
 
       if uncertainties and not steps:
-          context['output'] = (
-              "=== PLANNING PAUSED: NEED USER INPUT ===\n\n"
-              + f"Goal: {plan.get('goal_restatement', goal)}\n\n"
-              + "Uncertainties:\n  - " + "\n  - ".join(uncertainties)
-              + "\n\nResolve these and re-run loop_plan with a clearer goal."
-          )
+          uncertainties_text = "\n            ".join(f"- {u}" for u in uncertainties)
+          paused_message = f"""
+            === PLANNING PAUSED: NEED USER INPUT ===
+
+            Goal: {plan.get('goal_restatement', goal)}
+
+            Uncertainties:
+            {uncertainties_text}
+
+            Resolve these and re-run loop_plan with a clearer goal.
+          """
+          context['output'] = paused_message
           context['messages'] = _messages
           exit()
 
@@ -341,30 +353,36 @@ steps:
 
       # ── Completion review ─────────────────────────────────────────────────────
       status("Reviewing completion...")
-      review_prompt = f"""You are a completion reviewer for a multi-step NPC loop.
 
-       Original goal: {goal}
-       Plan restatement: {plan.get('goal_restatement', goal)}
-       Expected checklist: {json.dumps(completion_checklist)}
+      review_example = """
+        {
+          "completed_checklist": [
+            {"item": "expected checklist item", "done": true, "evidence": "which step produced this"}
+          ],
+          "missing_items": ["things still needed"],
+          "surface_level_only": false,
+          "recommendation": "STOP|CONTINUE|NEEDS_USER_INPUT",
+          "next_actions": ["optional next jinx invocations if CONTINUE"]
+        }
+      """
 
-       Checkpoint:
-       {json.dumps(checkpoint, indent=2)}
+      review_prompt = f"""
+        You are a completion reviewer for a multi-step NPC loop.
 
-       Step results:
-       {json.dumps(step_results, indent=2)}
+        Original goal: {goal}
+        Plan restatement: {plan.get('goal_restatement', goal)}
+        Expected checklist: {json.dumps(completion_checklist)}
 
-       Review the results and return ONLY JSON in this exact format:""" + """
-       {
-         "completed_checklist": [
-           {"item": "expected checklist item", "done": true, "evidence": "which step produced this"}
-         ],
-         "missing_items": ["things still needed"],
-         "surface_level_only": false,
-         "recommendation": "STOP|CONTINUE|NEEDS_USER_INPUT",
-         "next_actions": ["optional next jinx invocations if CONTINUE"]
-       }
-       """ + """surface_level_only should be true if the work stopped at exploration without implementation or verification.
-       recommendation must be STOP, CONTINUE, or NEEDS_USER_INPUT."""
+        Checkpoint:
+        {json.dumps(checkpoint, indent=2)}
+
+        Step results:
+        {json.dumps(step_results, indent=2)}
+
+        Review the results and return ONLY JSON in this exact format:{review_example}
+        surface_level_only should be true if the work stopped at exploration without implementation or verification.
+        recommendation must be STOP, CONTINUE, or NEEDS_USER_INPUT.
+      """
 
       review = llm_json(review_prompt, temperature=0.2)
       if not isinstance(review, dict):
@@ -377,44 +395,44 @@ steps:
           }
 
       # ── Final output ─────────────────────────────────────────────────────────
-      summary_parts = [
-          "=== LOOP PLAN RESULT ===",
-          f"Goal: {plan.get('goal_restatement', goal)}",
-          f"Steps attempted: {len(step_results)}/{len(steps)}",
-          f"Actions used: {action_count}/{budget_actions}",
-          f"Recommendation: {review.get('recommendation', 'UNKNOWN')}",
-          "",
-          "Completed checklist:",
-      ]
-      for item in review.get('completed_checklist', []):
-          mark = "[✓]" if item.get('done') else "[ ]"
-          summary_parts.append(f"  {mark} {item.get('item', '')} — {item.get('evidence', '')}")
+      completed_lines = "\n        ".join(
+          f"{'[✓]' if item.get('done') else '[ ]'} {item.get('item', '')} — {item.get('evidence', '')}"
+          for item in review.get('completed_checklist', [])
+      )
+      missing_section = (
+          "\n\n        Still missing:\n        "
+          + "\n        ".join(f"[ ] {m}" for m in review.get('missing_items', []))
+      ) if review.get('missing_items') else ""
+      warning_section = (
+          "\n\n        WARNING: Execution looks surface-level. Re-run with a more specific goal or higher budget, or ask the user how to proceed."
+      ) if review.get('surface_level_only') else ""
+      next_section = (
+          "\n\n        Suggested next actions:\n        "
+          + "\n        ".join(f"- {a}" for a in review.get('next_actions', []))
+      ) if review.get('next_actions') else ""
+      checkpoint_text = "        " + json.dumps(checkpoint, indent=2).replace("\n", "\n        ")
+      step_lines = "\n        ".join(
+          f"[{'✓' if sr.get('status') == 'done' else '✗'}] Step {sr['step']} {sr['type']}:{sr['target']} - {sr['description']}"
+          + (f"\n            Error: {sr['error']}" if sr.get('error') else "")
+          for sr in step_results
+      )
 
-      missing = review.get('missing_items', [])
-      if missing:
-          summary_parts.extend(["", "Still missing:"])
-          for m in missing:
-              summary_parts.append(f"  [ ] {m}")
+      final_output = f"""
+        === LOOP PLAN RESULT ===
+        Goal: {plan.get('goal_restatement', goal)}
+        Steps attempted: {len(step_results)}/{len(steps)}
+        Actions used: {action_count}/{budget_actions}
+        Recommendation: {review.get('recommendation', 'UNKNOWN')}
 
-      if review.get('surface_level_only'):
-          summary_parts.extend(["", "WARNING: Execution looks surface-level. Re-run with a more specific goal or higher budget, or ask the user how to proceed."])
+        Completed checklist:
+        {completed_lines}{missing_section}{warning_section}{next_section}
 
-      next_actions = review.get('next_actions', [])
-      if next_actions:
-          summary_parts.extend(["", "Suggested next actions:"])
-          for a in next_actions:
-              summary_parts.append(f"  - {a}")
+        Checkpoint:
+        {checkpoint_text}
 
-      summary_parts.extend(["", "Checkpoint:", json.dumps(checkpoint, indent=2)])
-
-      summary_parts.append("\nDetailed step results:")
-      for sr in step_results:
-          icon = "✓" if sr.get('status') == 'done' else "✗"
-          summary_parts.append(f"  [{icon}] Step {sr['step']} {sr['type']}:{sr['target']} - {sr['description']}")
-          if sr.get('error'):
-              summary_parts.append(f"      Error: {sr['error']}")
-
-      final_output = "\n".join(summary_parts)
+        Detailed step results:
+        {step_lines}
+      """
 
       print(colored("\n" + "="*60, "cyan"))
       print(colored("  LOOP PLAN COMPLETE", "cyan", attrs=["bold"]))
