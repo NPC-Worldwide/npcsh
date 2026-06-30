@@ -32,6 +32,160 @@ def resume_bottom_bar():
         _active_bottom_bar.start()
 
 
+def ask_form(title="Input Required", command_label="", fields=None):
+    """Render a TUI selection form and return the user's choice as a dict.
+
+    This core implementation is independent of any NPC team jinx, so tool
+    permission prompts always work even when the user's team does not include
+    the ask_form jinx.  `fields` is either a JSON string or a list of field
+    definitions; the form currently renders simple select-style options.
+    """
+    import os
+    import sys
+    import json
+    import select
+
+    if not sys.stdin.isatty():
+        return {"error": "Form requires interactive terminal"}
+
+    if fields is None:
+        return {"error": "No fields defined"}
+
+    try:
+        field_defs = json.loads(fields) if isinstance(fields, str) else fields
+    except (json.JSONDecodeError, TypeError):
+        field_defs = []
+
+    if not field_defs:
+        return {"error": "No fields defined"}
+
+    try:
+        import tty
+        import termios
+    except ImportError:
+        tty = None
+        termios = None
+
+    if tty is None or termios is None:
+        return {"error": "Terminal control not available"}
+
+    def get_size():
+        try:
+            return os.get_terminal_size()
+        except Exception:
+            return os.terminal_size((80, 24))
+
+    options = []
+    for f in field_defs:
+        ftype = f.get("type", "text")
+        fname = f["name"]
+        if ftype in ("select", "multiselect"):
+            for opt in f.get("options", []):
+                options.append((fname, opt, opt))
+        else:
+            flabel = f.get("label", fname)
+            options.append((fname, None, flabel))
+
+    if not options:
+        return {"error": "No fields defined"}
+
+    class St:
+        sel = 0
+        cancelled = False
+
+    st = St()
+
+    def calc_start_row():
+        w, h = get_size()
+        num_rows = len(options) + 5
+        return max(1, h - num_rows - 2)
+
+    def render():
+        w, h = get_size()
+        start_row = calc_start_row()
+        out = []
+        out.append("\033[2J")
+
+        header = f" {title} "
+        out.append(f"\033[{start_row};1H\033[K\033[7;1m{header.ljust(w)}\033[0m")
+        out.append(f"\033[{start_row+1};1H\033[K\033[90m{'─' * w}\033[0m")
+        out.append(f"\033[{start_row+2};1H\033[K \033[1m{command_label}\033[0m")
+
+        for i, (fname, opt, label) in enumerate(options):
+            row = start_row + 3 + i
+            prefix = ">" if i == st.sel else " "
+            out.append(f"\033[{row};1H\033[K {prefix} {label}")
+
+        out.append(f"\033[{h-2};1H\033[K\033[90m{'─' * w}\033[0m")
+        help_text = " [j/k] Nav | Enter: select | q: Quit "
+        out.append(f"\033[{h};1H\033[K\033[7m{help_text.ljust(w)}\033[0m")
+
+        sys.stdout.write("".join(out))
+        sys.stdout.flush()
+
+    def move_up():
+        st.sel = (st.sel - 1) % len(options)
+
+    def move_down():
+        st.sel = (st.sel + 1) % len(options)
+
+    def handle_input(c, fd):
+        if c == "q" or c == "\x03":
+            st.cancelled = True
+            return False
+
+        if c == "\x1b":
+            if select.select([fd], [], [], 0.05)[0]:
+                c2 = os.read(fd, 1).decode("latin-1")
+                if c2 == "[":
+                    c3 = os.read(fd, 1).decode("latin-1")
+                    if c3 == "A":
+                        move_up()
+                    elif c3 == "B":
+                        move_down()
+            return True
+
+        if c == "j":
+            move_down()
+        elif c == "k":
+            move_up()
+        elif c in ("\r", "\n"):
+            return False
+
+        return True
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.write("\033[?25l")
+        sys.stdout.write("\033[2J")
+        render()
+
+        while True:
+            c = os.read(fd, 1).decode("latin-1")
+            if not handle_input(c, fd):
+                while select.select([fd], [], [], 0.05)[0]:
+                    os.read(fd, 1024)
+                break
+            render()
+    finally:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except Exception:
+            pass
+        sys.stdout.write("\033[?25h")
+        sys.stdout.write("\033[2J\033[H")
+        sys.stdout.flush()
+
+    if st.cancelled:
+        return {"cancelled": True}
+
+    fname, opt, label = options[st.sel]
+    return {fname: opt or label}
+
+
 class BottomBar:
     """Invisible input buffer that captures keystrokes during processing.
 

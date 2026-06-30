@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: "compress"
 description: "Compact conversation context using breathe(). Summarizes the session into a plan and starts a new linked conversation."
 inputs: []

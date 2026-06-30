@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: "shh"
 description: "Enable silent mode - only shows warnings and errors"
 inputs: []

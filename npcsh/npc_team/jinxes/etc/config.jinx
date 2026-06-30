@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: config
 description: Interactive TUI editor for npcsh configuration (~/.npcshrc)
 inputs: []

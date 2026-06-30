@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: pr
 description: Create a GitHub pull request with an LLM-generated title and description. Requires gh CLI.
 inputs:
