@@ -1,3 +1,4 @@
+use crate::markdown::StreamRenderer;
 use futures::StreamExt;
 use npcrs::r#gen::{Message, ToolCall, ToolCallFunction, Usage};
 use serde_json::Value;
@@ -57,6 +58,7 @@ pub async fn call_stream(
     let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut usage: Option<Usage> = None;
     let mut saw_output = false;
+    let mut renderer = StreamRenderer::new();
 
     let mut stream = resp.bytes_stream();
     let mut pending = String::new();
@@ -99,6 +101,7 @@ pub async fn call_stream(
                 &mut tool_calls,
                 &mut usage,
                 &mut saw_output,
+                &mut renderer,
             );
         }
     }
@@ -116,12 +119,14 @@ pub async fn call_stream(
                         &mut tool_calls,
                         &mut usage,
                         &mut saw_output,
+                        &mut renderer,
                     );
                 }
             }
         }
     }
 
+    renderer.flush();
     if saw_output {
         eprintln!();
         let _ = std::io::Write::flush(&mut std::io::stderr());
@@ -189,6 +194,7 @@ fn apply_sse_event(
     tool_calls: &mut Vec<ToolCall>,
     usage: &mut Option<Usage>,
     saw_output: &mut bool,
+    renderer: &mut StreamRenderer,
 ) {
     if let Some(typ) = json.get("type").and_then(|v| v.as_str()) {
         match typ {
@@ -215,10 +221,13 @@ fn apply_sse_event(
                     .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("tool");
+                renderer.flush();
                 eprintln!("\x1b[36m⚡ {}:\x1b[0m", name);
+                renderer.clear();
                 *saw_output = true;
             }
             "tool_result" => {
+                renderer.flush();
                 let name = json
                     .get("name")
                     .and_then(|v| v.as_str())
@@ -248,9 +257,11 @@ fn apply_sse_event(
                 } else {
                     eprintln!("\x1b[36m  {} result: (empty)\x1b[0m", name);
                 }
+                renderer.clear();
                 *saw_output = true;
             }
             "tool_error" => {
+                renderer.flush();
                 let name = json
                     .get("name")
                     .and_then(|v| v.as_str())
@@ -260,6 +271,7 @@ fn apply_sse_event(
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown error");
                 eprintln!("\x1b[31m  {} error: {}\x1b[0m", name, err);
+                renderer.clear();
                 *saw_output = true;
             }
             _ => {}
@@ -273,7 +285,7 @@ fn apply_sse_event(
                 if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
                     content.push_str(text);
                     *saw_output = true;
-                    eprint!("{}", text);
+                    renderer.push(text);
                     let _ = std::io::Write::flush(&mut std::io::stderr());
                 }
                 if let Some(t) = delta.get("thinking").and_then(|v| v.as_str()) {

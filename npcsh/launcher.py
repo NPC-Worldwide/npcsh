@@ -201,7 +201,7 @@ def main():
             )
             sys.exit(1)
         env = os.environ.copy()
-        env["NPCPY_SERVER_URL"] = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
+        env["NPCSH_SERVER_URL"] = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
         try:
             os.execvpe(rust_bin, [rust_bin] + sys.argv[1:], env)
         except OSError as e:
