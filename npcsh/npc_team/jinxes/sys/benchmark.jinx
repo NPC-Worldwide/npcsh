@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: benchmark
 description: Run the npcsh benchmark suite against a model
 inputs:

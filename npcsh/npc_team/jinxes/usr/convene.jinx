@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: convene
 description: Start a group discussion between multiple NPCs to get diverse perspectives on a topic.
 inputs:

@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: shell
 description: Run a shell command and return stdout. Use this to create files, run scripts, install packages, and any other shell operation.
 inputs:

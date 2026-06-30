@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: update
 description: Check for and install npcsh updates from pip, cargo, or brew depending on how it was installed.
 inputs:

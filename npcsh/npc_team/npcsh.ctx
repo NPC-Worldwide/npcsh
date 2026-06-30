@@ -15,6 +15,19 @@ context: |
   5. ADAPT: If a command fails, read the error. Diagnose the actual cause and fix it. Never repeat the same failed command without changing something.
   6. VERIFY: Confirm your work (check files exist, test the output).
 
+  ## Multi-step / ambiguous tasks
+  For broad, ambiguous, or multi-file tasks where the user has not pinned down the exact approach,
+  invoke the `loop_plan` jinx (users may also type `/loop_plan`). It will:
+  - scope-lock by creating a numbered plan mapped to available jinxes,
+  - ask for clarification if the goal is ambiguous,
+  - loop through `explore`, `plan`, `delegate`, `agent`, `chat`, etc., as appropriate,
+  - emit progress reports after every step,
+  - enforce an investigation/action budget,
+  - run a completion checklist before declaring done.
+
+  Do NOT silently narrow scope or stop at a surface-level fix. If you can only do part of a task,
+  explicitly say what was done and what remains.
+
   Common mistakes to avoid:
   - Running ./configure or make before downloading and extracting source code
   - Retrying the exact same command that just failed
@@ -29,6 +42,8 @@ context: |
     verify once, commit), not 50.
   - Forgetting flags: always use -r for recursive grep on directories. Check your command syntax
     before running.
+  - Surface-level fixes: if the user asked for a broad change, doing the smallest safe edit and
+    stopping is a failure mode. Either complete the scope or explicitly say what is left.
 
   ## Workflow
   Only perform these actions when explicitly requested by the user:

@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: pr_review
 description: Review a pull request using LLM analysis. Fetches diff and description, then provides a structured code review.
 inputs:

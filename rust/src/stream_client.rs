@@ -25,8 +25,9 @@ pub async fn call_stream(
     client: &reqwest::Client,
     base_url: &str,
     request: &StreamRequest,
+    permission_prompt: Option<&dyn Fn(&str) -> String>,
 ) -> Result<StreamResponse, String> {
-    let url = format!("{}/api/stream", base_url);
+    let stream_url = format!("{}/api/stream", base_url);
     let body = serde_json::json!({
         "model": request.model,
         "provider": request.provider,
@@ -40,7 +41,7 @@ pub async fn call_stream(
     });
 
     let resp = client
-        .post(&url)
+        .post(&stream_url)
         .json(&body)
         .send()
         .await
@@ -93,7 +94,9 @@ pub async fn call_stream(
                 Err(_) => continue,
             };
 
-            apply_sse_event(
+            let pause = apply_sse_event(
+                client,
+                base_url,
                 json,
                 &mut content,
                 &mut reasoning,
@@ -102,7 +105,12 @@ pub async fn call_stream(
                 &mut usage,
                 &mut saw_output,
                 &mut renderer,
+                permission_prompt,
             );
+            if pause {
+                // The server is waiting for a permission response; read more events.
+                continue;
+            }
         }
     }
 
@@ -111,7 +119,9 @@ pub async fn call_stream(
         if let Some(data) = parse_sse_event_data(&pending) {
             if data.trim() != "[DONE]" {
                 if let Ok(json) = serde_json::from_str(&data) {
-                    apply_sse_event(
+                    let _ = apply_sse_event(
+                        client,
+                        base_url,
                         json,
                         &mut content,
                         &mut reasoning,
@@ -120,6 +130,7 @@ pub async fn call_stream(
                         &mut usage,
                         &mut saw_output,
                         &mut renderer,
+                        permission_prompt,
                     );
                 }
             }
@@ -187,6 +198,8 @@ fn parse_sse_event_data(event_text: &str) -> Option<String> {
 }
 
 fn apply_sse_event(
+    client: &reqwest::Client,
+    base_url: &str,
     json: Value,
     content: &mut String,
     reasoning: &mut String,
@@ -195,7 +208,8 @@ fn apply_sse_event(
     usage: &mut Option<Usage>,
     saw_output: &mut bool,
     renderer: &mut StreamRenderer,
-) {
+    permission_prompt: Option<&dyn Fn(&str) -> String>,
+) -> bool {
     if let Some(typ) = json.get("type").and_then(|v| v.as_str()) {
         match typ {
             "usage" => {
@@ -260,6 +274,26 @@ fn apply_sse_event(
                 renderer.clear();
                 *saw_output = true;
             }
+            "permission_request" => {
+                let request_id = json.get("request_id").and_then(|v| v.as_str()).unwrap_or("");
+                let command_key = json.get("command_key").and_then(|v| v.as_str()).unwrap_or("");
+                let args_preview = json.get("args_preview").and_then(|v| v.as_str()).unwrap_or("");
+                renderer.flush();
+                eprintln!("");
+                let decision = permission_prompt
+                    .map(|f| f(format!("Permission Required: {}\nCommand: {}\nArgs: {}",
+                                       command_key, command_key, args_preview).as_str()))
+                    .unwrap_or_else(|| "No".to_string());
+                let resp_url = format!("{}/api/permission_response", base_url);
+                let body = serde_json::json!({
+                    "request_id": request_id,
+                    "decision": decision,
+                });
+                let _ = client.post(&resp_url).json(&body).send();
+                renderer.clear();
+                *saw_output = true;
+                return true;
+            }
             "tool_error" => {
                 renderer.flush();
                 let name = json
@@ -276,7 +310,7 @@ fn apply_sse_event(
             }
             _ => {}
         }
-        return;
+        return false;
     }
 
     if let Some(choices) = json.get("choices").and_then(|v| v.as_array()) {
@@ -346,6 +380,7 @@ fn apply_sse_event(
             }
         }
     }
+    false
 }
 
 fn append_tool_call_json(

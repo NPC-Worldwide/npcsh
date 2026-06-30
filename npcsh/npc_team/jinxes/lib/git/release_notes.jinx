@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: release_notes
 description: Generate release notes from commits since the last release. Pass a GitHub repo (e.g. npc-worldwide/npcpy) or run in a local repo.
 inputs:

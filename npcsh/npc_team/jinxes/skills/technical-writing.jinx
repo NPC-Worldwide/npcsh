@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: technical-writing
 skill_name: technical-writing
 engine: skill

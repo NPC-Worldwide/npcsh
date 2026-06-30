@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: "verbose"
 description: "Enable verbose logging - shows debug output from npcpy"
 inputs: []

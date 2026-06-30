@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: skill
 description: Constructs and serves a structured skill. Receives the full skill definition and returns the requested part. Do not call directly.
 inputs:

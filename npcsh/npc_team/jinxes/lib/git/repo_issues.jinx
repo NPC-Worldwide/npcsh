@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: repo_issues
 description: Fetch GitHub issues for a repo and run each through LLM loop analysis, producing a structured report.
 inputs:

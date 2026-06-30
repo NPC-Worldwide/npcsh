@@ -4,6 +4,7 @@ use npcrs::kernel::Kernel;
 use npcrs::process::ProcessState;
 use npcrs::{calculate_cost, Message};
 use std::io::{self, Write};
+extern crate atty;
 
 mod markdown;
 mod stream_client;
@@ -860,7 +861,7 @@ async fn run_stream_turn(
         execution_mode,
     };
 
-    let response = stream_client::call_stream(client, server_url, &request)
+    let response = stream_client::call_stream(client, server_url, &request, Some(&ask_permission))
         .await
         .map_err(|e| npcrs::NpcError::Other(e))?;
 
@@ -881,6 +882,83 @@ async fn run_stream_turn(
     let process = kernel.get_process_mut(current_pid).unwrap();
     process.state = ProcessState::Blocked;
     Ok(response.message.content.clone().unwrap_or_default())
+}
+
+fn ask_permission(prompt: &str) -> String {
+    use crossterm::{
+        cursor::MoveTo,
+        event::{self, Event, KeyCode, KeyEventKind},
+        style::Print,
+        terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+        ExecutableCommand,
+    };
+    use std::io::{self, Write};
+
+    let options = vec![
+        "Yes",
+        "Yes (session)",
+        "Yes (always)",
+        "No",
+        "No (never)",
+    ];
+
+    let stdin_is_tty = atty::is(atty::Stream::Stdin);
+    if !stdin_is_tty {
+        eprintln!("\n{}", prompt);
+        eprintln!("Non-interactive stdin: defaulting to 'No'.");
+        return "No".to_string();
+    }
+
+    let mut stdout = io::stdout();
+    let _ = stdout.execute(EnterAlternateScreen);
+    let _ = terminal::enable_raw_mode();
+    let _ = stdout.execute(Clear(ClearType::All));
+
+    let mut selected: usize = 0;
+
+    let draw = |sel: usize, out: &mut io::Stdout| -> io::Result<()> {
+        out.execute(MoveTo(0, 0))?;
+        out.execute(Clear(ClearType::All))?;
+        out.execute(Print(prompt))?;
+        out.execute(Print("\n\n"))?;
+        for (i, opt) in options.iter().enumerate() {
+            if i == sel {
+                out.execute(Print(format!("  \x1b[7m {}\x1b[0m\n", opt)))?;
+            } else {
+                out.execute(Print(format!("  {}\n", opt)))?;
+            }
+        }
+        out.execute(Print("\n[↑/↓ or j/k] select, Enter confirm, q cancel"))?;
+        out.flush()
+    };
+
+    let decision: String = loop {
+        if draw(selected, &mut stdout).is_err() {
+            break "No".to_string();
+        }
+        match event::read() {
+            Ok(Event::Key(key)) if key.kind != KeyEventKind::Release => match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    selected = (selected + 1) % options.len();
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    selected = if selected == 0 {
+                        options.len() - 1
+                    } else {
+                        selected - 1
+                    };
+                }
+                KeyCode::Enter => break options[selected].to_string(),
+                KeyCode::Char('q') | KeyCode::Esc => break "No".to_string(),
+                _ => {}
+            },
+            _ => {}
+        }
+    };
+
+    let _ = terminal::disable_raw_mode();
+    let _ = stdout.execute(LeaveAlternateScreen);
+    decision
 }
 
 fn handle_set_command(rest: &str, kernel: &mut Kernel, pid: u32, mode: &mut Mode) {
@@ -1197,7 +1275,7 @@ async fn exec_npc_file(
                     .unwrap_or_else(|_| ".".to_string())),
             execution_mode: "chat".to_string(),
         };
-        let response = stream_client::call_stream(client, server_url, &request)
+        let response = stream_client::call_stream(client, server_url, &request, None)
             .await
             .map_err(|e| npcrs::NpcError::Other(e))?;
         if let Some(text) = response.message.content {

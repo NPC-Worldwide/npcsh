@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: wait
 description: Wait/pause for a specified duration in seconds
 inputs:

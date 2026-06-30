@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: setup
 description: Interactive setup wizard for npcsh - detect local models, configure defaults
 inputs:
