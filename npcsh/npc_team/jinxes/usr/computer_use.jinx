@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: computer_use
 description: Vision-based GUI automation TUI - visual task management and action automation
 inputs:

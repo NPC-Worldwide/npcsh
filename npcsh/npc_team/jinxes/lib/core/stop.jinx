@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: stop
 description: Signal that you are done and have no more actions to take. Call this when your task is complete.
 inputs:

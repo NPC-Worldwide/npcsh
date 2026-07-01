@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: "screenshot"
 description: "Take screenshot and analyze with vision model. Usage: /screenshot <prompt>"
 inputs:

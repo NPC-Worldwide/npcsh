@@ -1,7 +1,7 @@
 """Launcher that finds and execs the Rust npcrsh binary.
 
-The Rust shell is a thin HTTP/SSE client of a running npcpy server. This
-launcher starts the npcpy server using its own CLI, waits for its /health
+The Rust shell is a thin HTTP/SSE client of a running NPCSH server. This
+launcher starts the NPCSH server using its own CLI, waits for its /health
 endpoint, then execs the Rust binary.
 """
 import os
@@ -62,49 +62,20 @@ def _binary_matches_host(path: str) -> bool:
 
 
 def _find_rust_binary():
-    """Find a host-compatible npcrsh binary in the local repo build tree."""
-    here = os.path.dirname(os.path.abspath(__file__))
+    """Find a host-compatible npcrsh binary on PATH or in ~/.npcsh/bin."""
     ext = ".exe" if platform.system() == "Windows" else ""
-    repo_dir = os.path.dirname(here)
+    local_bin = os.path.expanduser(f"~/.npcsh/bin/npcrsh{ext}")
+    if os.path.isfile(local_bin) and _binary_matches_host(local_bin):
+        return local_bin
 
-    local_release = os.path.join(repo_dir, "rust", "target", "release", f"npcrsh{ext}")
-    if os.path.isfile(local_release) and _binary_matches_host(local_release):
-        return local_release
-
-    local_debug = os.path.join(repo_dir, "rust", "target", "debug", f"npcrsh{ext}")
-    if os.path.isfile(local_debug) and _binary_matches_host(local_debug):
-        return local_debug
-
-    return None
-
-
-def _try_build_rust():
-    repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    rust_dir = os.path.join(repo_dir, "rust")
-    if not os.path.isdir(rust_dir):
-        return None
-    cargo = shutil.which("cargo")
-    if not cargo:
-        return None
-    try:
-        print("Building Rust npcrsh binary...", file=sys.stderr)
-        subprocess.run(
-            [cargo, "build", "--release"],
-            cwd=rust_dir,
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
-        binary = os.path.join(rust_dir, "target", "release", "npcrsh")
-        if os.path.isfile(binary):
-            return binary
-    except Exception:
-        pass
+    found = shutil.which("npcrsh")
+    if found and _binary_matches_host(found):
+        return found
     return None
 
 
 def _server_alive(url: str) -> bool:
-    """Return True if the npcpy server /health endpoint responds."""
+    """Return True if the NPCSH server /health endpoint responds."""
     try:
         with urllib.request.urlopen(f"{url}/api/health", timeout=0.5) as resp:
             return resp.status == 200
@@ -113,10 +84,10 @@ def _server_alive(url: str) -> bool:
 
 
 def _start_server(host: str, port: int, teams_yaml: Optional[str] = None) -> bool:
-    """Start the npcpy server via its own CLI and wait for /health."""
+    """Start the NPCSH server via its own CLI and wait for /health."""
     url = f"http://{host}:{port}"
     if _server_alive(url):
-        print(f"Using existing npcpy server at {url}", file=sys.stderr)
+        print(f"Using existing NPCSH server at {url}", file=sys.stderr)
         return True
 
     log_dir = os.path.dirname(SERVER_LOG_PATH)
@@ -136,7 +107,7 @@ def _start_server(host: str, port: int, teams_yaml: Optional[str] = None) -> boo
     if teams_yaml:
         cmd.extend(["--teams-yaml", teams_yaml])
 
-    print(f"Starting npcpy server on {host}:{port}...", file=sys.stderr)
+    print(f"Starting NPCSH server on {host}:{port}...", file=sys.stderr)
     subprocess.Popen(
         cmd,
         stdout=log_file,
@@ -147,12 +118,12 @@ def _start_server(host: str, port: int, teams_yaml: Optional[str] = None) -> boo
 
     for _ in range(600):
         if _server_alive(url):
-            print(f"npcpy server ready at {url}.", file=sys.stderr)
+            print(f"NPCSH server ready at {url}.", file=sys.stderr)
             return True
         time.sleep(0.1)
 
     print(
-        f"ERROR: npcpy server at {url} did not become healthy within 60 seconds. "
+        f"ERROR: NPCSH server at {url} did not become healthy within 60 seconds. "
         f"See log: {SERVER_LOG_PATH}",
         file=sys.stderr,
     )
@@ -178,8 +149,7 @@ def _ensure_teams_yaml() -> Optional[str]:
 def _fallback_to_python():
     print(
         "WARNING: Rust npcrsh binary not found. Falling back to Python runner.\n"
-        "The Python runner is deprecated. Build the Rust binary with:\n"
-        "  cd npcsh/rust && cargo build --release",
+        "The Python runner is deprecated.",
         file=sys.stderr,
     )
     from npcsh.npcsh import main as python_main
@@ -188,20 +158,18 @@ def _fallback_to_python():
 
 def main():
     rust_bin = _find_rust_binary()
-    if rust_bin is None:
-        rust_bin = _try_build_rust()
 
     if rust_bin:
         teams_yaml = _ensure_teams_yaml()
         if not _start_server(DEFAULT_HOST, DEFAULT_PORT, teams_yaml=teams_yaml):
             print(
-                "ERROR: Could not start the npcpy server; the Rust shell requires it. "
+                "ERROR: Could not start the NPCSH server; the Rust shell requires it. "
                 "Start it manually with: python3 -m npcpy.serve",
                 file=sys.stderr,
             )
             sys.exit(1)
         env = os.environ.copy()
-        env["NPCPY_SERVER_URL"] = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
+        env["NPCSH_SERVER_URL"] = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
         try:
             os.execvpe(rust_bin, [rust_bin] + sys.argv[1:], env)
         except OSError as e:

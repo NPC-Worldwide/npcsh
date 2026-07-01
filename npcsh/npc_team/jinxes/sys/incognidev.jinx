@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: "incognidev"
 description: "Start incognide in dev mode"
 inputs:

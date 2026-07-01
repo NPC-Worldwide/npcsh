@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: cmd
 description: Command mode - LLM generates and executes shell commands
 inputs:

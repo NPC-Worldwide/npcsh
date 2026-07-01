@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: reattach
 description: Interactive viewer to browse and reattach to previous conversations
 inputs:

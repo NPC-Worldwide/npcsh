@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: explore
 description: Thoroughly explore a codebase or directory. Discovers structure, reads key files iteratively using LLM-guided exploration, and produces a comprehensive analysis. Use when you need deep understanding of a project.
 inputs:
