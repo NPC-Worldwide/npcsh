@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: gen_image
 description: Generate an image from a text prompt. Uses NPCSH_IMAGE_GEN_MODEL and NPCSH_IMAGE_GEN_PROVIDER from env by default. Supports ollama, diffusers, openai, gemini.
 inputs:

@@ -2,11 +2,14 @@ from setuptools import setup, find_packages
 from setuptools.command.build_py import build_py
 import os
 import platform
+import shutil
+import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 
-NPCRS_REPO = "NPC-Worldwide/npcsh"
+NPCSH_REPO = "NPC-Worldwide/npcsh"
 
 _MAGIC_ELF = b"\x7fELF"
 _MAGIC_MACHO = {
@@ -46,7 +49,8 @@ def _binary_matches_host(path: str) -> bool:
         return header.startswith(_MAGIC_PE)
     return True
 
-_NPCRS_ARTIFACT = {
+
+_NPCSH_ARTIFACT = {
     ("Linux", "x86_64"): "npcsh-linux-x86_64",
     ("Darwin", "arm64"): "npcsh-macos-aarch64",
     ("Darwin", "x86_64"): "npcsh-macos-x86_64",
@@ -54,16 +58,9 @@ _NPCRS_ARTIFACT = {
 }
 
 
-def _purge_stale_binaries(bin_dir: Path) -> None:
-    for p in bin_dir.iterdir():
-        if p.name == ".gitkeep":
-            continue
-        if _binary_matches_host(str(p)):
-            continue
-        try:
-            p.unlink()
-        except OSError:
-            pass
+def _install_bin_dir() -> Path:
+    """Return the NPCSH bin directory where the binary should live."""
+    return Path(os.path.expanduser("~/.npcsh/bin"))
 
 
 def _remove_old_binaries() -> None:
@@ -87,28 +84,27 @@ def _remove_old_binaries() -> None:
                     pass
 
 
-def _download_npcrs(bin_dir: Path) -> bool:
-    """Download the latest npcrs release binary into bin_dir. Returns True on success or if valid binary already present."""
+def _download_npcrsh(bin_dir: Path) -> bool:
+    """Download the latest npcrsh release binary into bin_dir."""
     import urllib.request
     import json
-    import shutil
 
     system = platform.system()
     machine = platform.machine()
-    artifact = _NPCRS_ARTIFACT.get((system, machine))
+    artifact = _NPCSH_ARTIFACT.get((system, machine))
     if not artifact:
-        print(f"Warning: no npcrs binary for {system}/{machine}")
+        print(f"Warning: no npcrsh binary for {system}/{machine}")
         return False
 
     ext = ".exe" if system == "Windows" else ""
-    dst = bin_dir / f"npcrs{ext}"
+    dst = bin_dir / f"npcrsh{ext}"
 
     if dst.exists() and _binary_matches_host(str(dst)):
-        print(f"Valid npcrs binary already present at {dst}")
+        print(f"Valid npcrsh binary already present at {dst}")
         return True
 
     try:
-        api_url = f"https://api.github.com/repos/{NPCRS_REPO}/releases/latest"
+        api_url = f"https://api.github.com/repos/{NPCSH_REPO}/releases/latest"
         with urllib.request.urlopen(api_url, timeout=15) as resp:
             release = json.loads(resp.read())
 
@@ -117,57 +113,33 @@ def _download_npcrs(bin_dir: Path) -> bool:
             None,
         )
         if not asset_url:
-            print(f"Warning: npcrs artifact '{artifact}' not found in latest release")
+            print(f"Warning: npcrsh artifact '{artifact}' not found in latest release")
             return False
 
-        print(f"Downloading npcrs binary from {asset_url} ...")
+        print(f"Downloading npcrsh binary from {asset_url} ...")
         with urllib.request.urlopen(asset_url, timeout=120) as resp, open(dst, "wb") as f:
             shutil.copyfileobj(resp, f)
 
         os.chmod(str(dst), 0o755)
-        print(f"npcrs binary installed to {dst}")
+        print(f"npcrsh binary installed to {dst}")
         return True
     except Exception as e:
-        print(f"Warning: failed to download npcrs binary ({e})")
+        print(f"Warning: failed to download npcrsh binary ({e})")
         return False
 
 
 class BuildWithRust(build_py):
     def run(self):
-        bin_dir = Path(__file__).parent / "npcsh" / "bin"
+        bin_dir = _install_bin_dir()
         bin_dir.mkdir(parents=True, exist_ok=True)
 
         _remove_old_binaries()
-        _purge_stale_binaries(bin_dir)
 
-        if _download_npcrs(bin_dir):
+        if _download_npcrsh(bin_dir):
             super().run()
             return
 
-        cargo = shutil.which("cargo")
-        rust_dir = Path(__file__).parent / "rust"
-        if cargo and rust_dir.exists():
-            print("Downloading npcrs failed — building from source with cargo...")
-            try:
-                subprocess.run(
-                    [cargo, "build", "--release"],
-                    cwd=str(rust_dir),
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                )
-                src = rust_dir / "target" / "release" / "npcrsh"
-                if src.exists():
-                    dst = bin_dir / "npcrs"
-                    shutil.copy2(str(src), str(dst))
-                    os.chmod(str(dst), 0o755)
-                    print(f"Built npcrs binary at {dst}")
-                    super().run()
-                    return
-            except Exception as e:
-                print(f"Warning: cargo build failed ({e})")
-
-        print("Warning: npcrs binary unavailable — falling back to Python-only mode")
+        print("Warning: npcrsh binary unavailable — falling back to Python-only mode")
         super().run()
 
 
@@ -197,7 +169,6 @@ def conflicts_with_system(name):
     return False
 
 
-
 npc_team_dir = Path(__file__).parent / "npcsh" / "npc_team"
 npc_entries = [f.stem for f in npc_team_dir.glob("*.npc")] if npc_team_dir.exists() else []
 jinx_bin_dir = npc_team_dir / "jinxes" / "bin"
@@ -212,21 +183,21 @@ dynamic_entries = npc_dynamic + jinx_dynamic
 base_requirements = [
     'npcpy>=2.1.1',
     "jinja2",
-    "litellm",   
-    "docx", 
+    "litellm",
+    "docx",
     "scipy",
     "numpy",
-    "thefuzz", 
-    "imagehash", 
+    "thefuzz",
+    "imagehash",
     "requests",
-    "chroptiks", 
+    "chroptiks",
     "matplotlib",
     "markdown",
-    "networkx", 
+    "networkx",
     "PyYAML",
     "PyMuPDF",
     "pyautogui",
-    "pydantic", 
+    "pydantic",
     "pygments",
     "sqlalchemy",
     "termcolor",
@@ -242,103 +213,37 @@ base_requirements = [
     "redis",
     "psycopg2-binary",
     "flask_sse",
-    "wikipedia", 
-    "mcp"
+    "wikipedia",
+    "mcp",
 ]
 
-api_requirements = [
-    "anthropic",
-    "openai",
-    "ollama",
-    "google-generativeai",
-    "google-genai",
-]
-
-local_requirements = [
-    "sentence_transformers",
-    "opencv-python",
-    "ollama",
-    "kuzu",
-    "chromadb",
-    "diffusers",
-    "nltk",
-    "torch",
-    "darts",
-]
-
-voice_requirements = [
-    "pyaudio",
-    "gtts",
-    "playsound==1.2.2",
-    "pygame",
-    "faster_whisper",
-    "pyttsx3",
-]
-
-benchmark_requirements = [
-    "harbor",
-    "terminal-bench",
-]
-
-extra_files = package_files("npcsh/npc_team/")
-
-def get_package_data_patterns():
-    """Get patterns for all files in npc_team directory."""
-    patterns = []
-    npc_team_path = Path(__file__).parent / "npcsh" / "npc_team"
-    if npc_team_path.exists():
-        for root, dirs, files in os.walk(npc_team_path):
-            rel_root = os.path.relpath(root, Path(__file__).parent / "npcsh")
-            for f in files:
-                patterns.append(os.path.join(rel_root, f))
-    return patterns
-
-_version = (Path(__file__).parent / "VERSION").read_text().strip()
 
 setup(
     name="npcsh",
-    version=_version,
-    packages=find_packages(exclude=["tests*"]),
-    install_requires=base_requirements,
-    extras_require={
-        "lite": api_requirements,
-        "local": local_requirements,
-        "yap": voice_requirements,
-        "bench": benchmark_requirements,
-        "all": api_requirements + local_requirements + voice_requirements,
+    version="1.2.30",
+    author="NPC Worldwide",
+    author_email="info@npcworldwide.com",
+    description="The composable multi-agent shell",
+    long_description=open("README.md", encoding="utf-8").read(),
+    long_description_content_type="text/markdown",
+    url="https://github.com/NPC-Worldwide/npcsh",
+    packages=find_packages(),
+    include_package_data=True,
+    package_data={
+        "npcsh": ["**/*"],
     },
+    cmdclass={"build_py": BuildWithRust},
     entry_points={
         "console_scripts": [
             "npcsh=npcsh.launcher:main",
-            "npc=npcsh.npc:main",
-            "npcsh-bench=npcsh.benchmark.runner:main",
-            "npcsh-job=npcsh.job_runner:main",
-        ] + dynamic_entries,
+            *dynamic_entries,
+        ],
     },
-    author="Christopher Agostino",
-    author_email="info@npcworldwi.de",
-    description="npcsh is a command-line toolkit for using AI agents in novel ways.",
-    long_description=open("README.md").read(),
-    long_description_content_type="text/markdown",
-    url="https://github.com/NPC-Worldwide/npcsh",
+    install_requires=base_requirements,
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
     ],
-    cmdclass={"build_py": BuildWithRust},
-    include_package_data=True,
-    package_data={
-        "npcsh": [
-            "bin/*",
-            "npc_team/*.npc",
-            "npc_team/*.ctx",
-            "npc_team/jinxes/**/*.jinx",
-            "npc_team/jinxes/**/*",
-            "npc_team/templates/*",
-            "benchmark/templates/*.j2",
-        ],
-    },
-    data_files=[("npcsh/npc_team", extra_files)],
     python_requires=">=3.10",
 )
-

@@ -32,3 +32,4 @@ tokio = { version = "1", features = ["full"] }
 base64 = "0.22"
 crossterm = "0.28"
 libc = "0.2"
+termimad = "0.34"

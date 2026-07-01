@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: usage
 description: Display current session token usage and cost
 inputs: []

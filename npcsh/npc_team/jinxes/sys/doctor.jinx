@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: doctor
 description: Auto-fix common npcsh issues including stale permissions, broken configs, missing team files, and database corruption.
 inputs:

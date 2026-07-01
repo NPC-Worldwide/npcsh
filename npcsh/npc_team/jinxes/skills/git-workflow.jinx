@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: git-workflow
 description: "Git workflow best practices. Use when asked about git branching, commits, or merge strategy. [Sections: branching, commits, merging, hotfix]"
 inputs:

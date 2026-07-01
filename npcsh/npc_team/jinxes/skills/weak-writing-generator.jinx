@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: weak-writing-generator
 skill_name: weak-writing-generator
 engine: skill

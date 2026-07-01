@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: load_file
 description: Loads and returns the contents of a file using npcpy's file loaders
 inputs:

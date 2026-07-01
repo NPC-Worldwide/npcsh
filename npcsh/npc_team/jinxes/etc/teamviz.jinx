@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: teamviz
 description: "Visualize NPC team structure - NPCs, jinxes, and their relationships"
 inputs:

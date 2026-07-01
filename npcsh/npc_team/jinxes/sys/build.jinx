@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: build
 description: Interactive TUI for building deployment artifacts from an NPC team
 inputs:

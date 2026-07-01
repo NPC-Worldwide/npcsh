@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: "flush"
 description: "Flush the last N messages from the conversation history."
 inputs:

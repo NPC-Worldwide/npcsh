@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: chat
 description: Simple chat mode - LLM conversation without tool execution
 inputs:

@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: edit_file
 description: Creates or edits a file. If the file does not exist, creates it with
   the specified content. If the file exists, examines it and applies changes.

@@ -1,3 +1,5 @@
+permissions:
+  default: ask
 jinx_name: new
 description: Create a new NPC, jinx, or file. Usage - /new npc, /new jinx, /new file
 inputs:
