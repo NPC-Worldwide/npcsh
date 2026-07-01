@@ -4,7 +4,6 @@ use npcrs::kernel::Kernel;
 use npcrs::process::ProcessState;
 use npcrs::{calculate_cost, Message};
 use std::io::{self, Write};
-extern crate atty;
 
 mod markdown;
 mod stream_client;
@@ -902,16 +901,56 @@ fn ask_permission(prompt: &str) -> String {
         "No (never)",
     ];
 
-    let stdin_is_tty = atty::is(atty::Stream::Stdin);
-    if !stdin_is_tty {
-        eprintln!("\n{}", prompt);
-        eprintln!("Non-interactive stdin: defaulting to 'No'.");
-        return "No".to_string();
+    let wrap_lines = |text: &str, width: usize| -> Vec<String> {
+        let mut lines = Vec::new();
+        for paragraph in text.split('\n') {
+            let mut current = String::new();
+            for word in paragraph.split_whitespace() {
+                if current.is_empty() {
+                    current.push_str(word);
+                } else if current.len() + 1 + word.len() <= width.saturating_sub(2) {
+                    current.push(' ');
+                    current.push_str(word);
+                } else {
+                    lines.push(current);
+                    current = word.to_string();
+                }
+            }
+            if !current.is_empty() {
+                lines.push(current);
+            }
+            if paragraph.is_empty() {
+                lines.push(String::new());
+            }
+        }
+        lines
+    };
+
+    struct PromptGuard;
+    impl PromptGuard {
+        fn new() -> io::Result<Self> {
+            let mut stdout = io::stdout();
+            stdout.execute(EnterAlternateScreen)?;
+            terminal::enable_raw_mode()?;
+            Ok(Self)
+        }
+    }
+    impl Drop for PromptGuard {
+        fn drop(&mut self) {
+            let _ = terminal::disable_raw_mode();
+            let _ = io::stdout().execute(LeaveAlternateScreen);
+        }
     }
 
+    let (cols, _rows) = terminal::size().unwrap_or((80, 24));
+    let width = cols as usize;
+
+    let _guard = match PromptGuard::new() {
+        Ok(g) => g,
+        Err(_) => return "No".to_string(),
+    };
+
     let mut stdout = io::stdout();
-    let _ = stdout.execute(EnterAlternateScreen);
-    let _ = terminal::enable_raw_mode();
     let _ = stdout.execute(Clear(ClearType::All));
 
     let mut selected: usize = 0;
@@ -919,16 +958,35 @@ fn ask_permission(prompt: &str) -> String {
     let draw = |sel: usize, out: &mut io::Stdout| -> io::Result<()> {
         out.execute(MoveTo(0, 0))?;
         out.execute(Clear(ClearType::All))?;
-        out.execute(Print(prompt))?;
-        out.execute(Print("\n\n"))?;
-        for (i, opt) in options.iter().enumerate() {
-            if i == sel {
-                out.execute(Print(format!("  \x1b[7m {}\x1b[0m\n", opt)))?;
-            } else {
-                out.execute(Print(format!("  {}\n", opt)))?;
-            }
+
+        let prompt_lines = wrap_lines(prompt, width);
+        let total_rows = prompt_lines.len()
+            .saturating_add(1)
+            .saturating_add(options.len())
+            .saturating_add(1);
+        let rows = terminal::size().map(|(_, r)| r).unwrap_or(24) as usize;
+        let start_row = rows.saturating_sub(total_rows).min(rows.saturating_sub(1)) as u16;
+
+        let mut row: u16 = start_row;
+        for line in prompt_lines {
+            out.execute(MoveTo(0, row))?;
+            out.execute(Print(format!("  {}", line)))?;
+            row = row.saturating_add(1);
         }
-        out.execute(Print("\n[↑/↓ or j/k] select, Enter confirm, q cancel"))?;
+
+        row = row.saturating_add(1);
+        for (i, opt) in options.iter().enumerate() {
+            out.execute(MoveTo(0, row))?;
+            if i == sel {
+                out.execute(Print(format!("  \x1b[7m {}\x1b[0m", opt)))?;
+            } else {
+                out.execute(Print(format!("  {}", opt)))?;
+            }
+            row = row.saturating_add(1);
+        }
+
+        out.execute(MoveTo(0, row.saturating_add(1)))?;
+        out.execute(Print("  [↑/↓ or j/k] select, Enter confirm, q cancel"))?;
         out.flush()
     };
 
@@ -956,8 +1014,12 @@ fn ask_permission(prompt: &str) -> String {
         }
     };
 
-    let _ = terminal::disable_raw_mode();
-    let _ = stdout.execute(LeaveAlternateScreen);
+    // Drain any leftover key events (e.g. the Enter release) before returning
+    // to the main shell, so the next readline loop doesn't see them.
+    while event::poll(std::time::Duration::from_millis(0)).unwrap_or(false) {
+        let _ = event::read();
+    }
+
     decision
 }
 
