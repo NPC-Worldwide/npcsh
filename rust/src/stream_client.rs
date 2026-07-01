@@ -280,16 +280,20 @@ fn apply_sse_event(
                 let args_preview = json.get("args_preview").and_then(|v| v.as_str()).unwrap_or("");
                 renderer.flush();
                 eprintln!("");
+                let tool_name = json.get("tool_name").and_then(|v| v.as_str()).unwrap_or(command_key);
                 let decision = permission_prompt
                     .map(|f| f(format!("Permission Required: {}\nCommand: {}\nArgs: {}",
-                                       command_key, command_key, args_preview).as_str()))
+                                       tool_name, command_key, args_preview).as_str()))
                     .unwrap_or_else(|| "No".to_string());
                 let resp_url = format!("{}/api/permission_response", base_url);
                 let body = serde_json::json!({
                     "request_id": request_id,
                     "decision": decision,
                 });
-                let _ = client.post(&resp_url).json(&body).send();
+                let post_client = client.clone();
+                tokio::spawn(async move {
+                    let _ = post_client.post(&resp_url).json(&body).send().await;
+                });
                 renderer.clear();
                 *saw_output = true;
                 return true;
