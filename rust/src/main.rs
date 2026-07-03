@@ -4,11 +4,25 @@ use npcrs::kernel::Kernel;
 use npcrs::process::ProcessState;
 use npcrs::{calculate_cost, Message};
 use std::io::{self, Write};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
+use std::collections::HashMap;
 
 mod markdown;
 mod stream_client;
+mod tui;
+mod cron;
+mod tutorial;
+mod cli_providers;
 
+use crate::cron::CronRegistry;
+use crate::cli_providers::{CLI_PROVIDERS, run_cli_provider};
 use crate::markdown::render_block;
+
+fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
+    static LOCK: OnceLock<Mutex<HashMap<u32, String>>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 const CYAN: &str = "\x1b[36m";
 const PURPLE: &str = "\x1b[35m";
@@ -216,6 +230,7 @@ async fn main() -> Result<()> {
                 Mode::Agent,
                 &http_client,
                 &server_url,
+                true,
             )
             .await
             {
@@ -280,6 +295,13 @@ async fn main() -> Result<()> {
     }
 
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
+
+    // Cron registry for agent heartbeats and scheduled jinx tasks.
+    let cron_file = shellexpand::tilde("~/.npcsh/loops.yaml").to_string();
+    let cron_registry = Arc::new(Mutex::new(CronRegistry::with_file(cron_file)));
+    cron_registry.lock().unwrap().load_from_jinxes(&team_dir);
+    let (cron_tx, mut cron_rx) = tokio::sync::mpsc::unbounded_channel();
+    crate::cron::spawn_cron_ticker(cron_registry.clone(), cron_tx);
 
     print_welcome(&kernel);
 
@@ -366,6 +388,17 @@ async fn main() -> Result<()> {
             "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET}{usage_hint} {PURPLE}>{RESET} "
         );
 
+        // Collect cron output instead of printing it directly, so it doesn't
+        // corrupt the raw-mode prompt while the user is typing.
+        let mut cron_output_queue: Vec<String> = Vec::new();
+        while let Ok(job) = cron_rx.try_recv() {
+            let out = execute_cron_job_and_capture(&mut kernel, current_pid, &job, &http_client, &server_url, &mut session_input_tokens, &mut session_output_tokens, &mut session_cost).await;
+            if let Some(o) = out { cron_output_queue.push(o); }
+        }
+        for out in cron_output_queue {
+            println!("{}", out);
+        }
+
         let input = match readline_raw(
             &prompt,
             &mut history,
@@ -397,7 +430,8 @@ async fn main() -> Result<()> {
         }
 
 
-        let handled = match input.as_str() {
+        let cmd_token = input.split_whitespace().next().unwrap_or("");
+        let handled = match cmd_token {
             "exit" | "quit" | "/quit" | "/exit" => break,
 
             "/ps" => {
@@ -473,14 +507,22 @@ async fn main() -> Result<()> {
                 eprintln!("{GREEN}Switched to cmd mode{RESET}");
                 true
             }
+            "/switch" => {
+                let args = input.strip_prefix("/switch").unwrap_or("").trim();
+                if args.is_empty() {
+                    eprintln!("{RED}Usage: /switch <npc>{RESET}");
+                } else if let Some(proc) = kernel.find_by_name(args) {
+                    current_pid = proc.pid;
+                    eprintln!("{GREEN}Switched to @{args} (pid:{current_pid}){RESET}");
+                } else {
+                    eprintln!("{RED}NPC '{args}' not found.{RESET}");
+                }
+                true
+            }
 
             "/jinxes" => {
-                let names = kernel.jinx_names();
-                let mut sorted: Vec<&str> = names;
-                sorted.sort();
-                println!("{BOLD}Available jinxes ({}):{RESET}", sorted.len());
-                for chunk in sorted.chunks(6) {
-                    println!("  {}", chunk.iter().map(|n| format!("{CYAN}/{n}{RESET}")).collect::<Vec<_>>().join("  "));
+                if let Err(e) = tui::run_jinxes_tui(&mut kernel) {
+                    eprintln!("{RED}Error: {e}{RESET}");
                 }
                 true
             }
@@ -517,6 +559,74 @@ async fn main() -> Result<()> {
                 true
             }
 
+            "/reattach" => {
+                let args = input.strip_prefix("/reattach").unwrap_or("").trim();
+                let show_all = args == "all";
+                let filter = if show_all {
+                    None
+                } else if args.is_empty() {
+                    Some(std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".to_string()))
+                } else {
+                    Some(shellexpand::tilde(args).to_string())
+                };
+                if let Err(e) = run_reattach(&mut kernel, current_pid, filter.as_deref()) {
+                    eprintln!("{RED}Error: {e}{RESET}");
+                }
+                true
+            }
+
+            "/gitt" => {
+                let args = input.strip_prefix("/gitt").unwrap_or("").trim();
+                let path = if args.is_empty() { None } else { Some(args) };
+                if let Err(e) = tui::run_gitt_tui(path) {
+                    eprintln!("{RED}Error: {e}{RESET}");
+                }
+                true
+            }
+
+            "/config" => {
+                if let Err(e) = tui::run_config_tui() {
+                    eprintln!("{RED}Error: {e}{RESET}");
+                }
+                true
+            }
+
+            "/model" => {
+                if let Err(e) = tui::run_model_tui() {
+                    eprintln!("{RED}Error: {e}{RESET}");
+                }
+                true
+            }
+
+            "/setup" => {
+                if let Err(e) = tui::run_setup_tui() {
+                    eprintln!("{RED}Error: {e}{RESET}");
+                }
+                true
+            }
+
+            "/team" => {
+                if let Err(e) = tui::run_team_tui(&mut kernel) {
+                    eprintln!("{RED}Error: {e}{RESET}");
+                }
+                true
+            }
+
+            "/ask_form" => {
+                let args = input.strip_prefix("/ask_form").unwrap_or("").trim();
+                if let Err(e) = tui::run_ask_form_tui(args) {
+                    eprintln!("{RED}Error: {e}{RESET}");
+                }
+                true
+            }
+
+            "/commit" => {
+                if let Err(e) = tui::run_commit_tui() {
+                    eprintln!("{RED}Error: {e}{RESET}");
+                }
+                true
+            }
+
             "/kill" => {
                 if current_pid == 0 {
                     eprintln!("{RED}Cannot kill init (pid 0){RESET}");
@@ -525,6 +635,73 @@ async fn main() -> Result<()> {
                     kernel.kill(current_pid, 0).ok();
                     current_pid = 0;
                     eprintln!("{YELLOW}Killed @{} — switched to init{RESET}", name.unwrap_or_default());
+                }
+                true
+            }
+
+            "/cron" => {
+                let rest = input.strip_prefix("/cron").unwrap_or("").trim();
+                handle_cron_command(rest, &mut kernel, &cron_registry, current_pid).await;
+                true
+            }
+
+            "/loop" => {
+                let rest = input.strip_prefix("/loop").unwrap_or("").trim();
+                handle_loop_command(rest, &mut kernel, &cron_registry, current_pid).await;
+                true
+            }
+
+            "/loops" => {
+                let rest = input.strip_prefix("/loops").unwrap_or("").trim();
+                handle_jobs_command(rest, &mut kernel, &cron_registry, current_pid).await;
+                true
+            }
+
+            "/looprm" => {
+                let rest = input.strip_prefix("/looprm").unwrap_or("").trim();
+                if let Ok(id) = rest.parse::<u32>() {
+                    if cron_registry.lock().unwrap().remove(id) {
+                        eprintln!("{GREEN}Removed loop {id}{RESET}");
+                    } else {
+                        eprintln!("{RED}No loop with id {id}{RESET}");
+                    }
+                } else {
+                    eprintln!("Usage: /looprm <id>");
+                }
+                true
+            }
+
+            "/loopoff" => {
+                let rest = input.strip_prefix("/loopoff").unwrap_or("").trim();
+                if let Ok(id) = rest.parse::<u32>() {
+                    if cron_registry.lock().unwrap().enable(id, false) {
+                        eprintln!("{GREEN}Disabled loop {id}{RESET}");
+                    } else {
+                        eprintln!("{RED}No loop with id {id}{RESET}");
+                    }
+                } else {
+                    eprintln!("Usage: /loopoff <id>");
+                }
+                true
+            }
+
+            "/loopon" => {
+                let rest = input.strip_prefix("/loopon").unwrap_or("").trim();
+                if let Ok(id) = rest.parse::<u32>() {
+                    if cron_registry.lock().unwrap().enable(id, true) {
+                        eprintln!("{GREEN}Enabled loop {id}{RESET}");
+                    } else {
+                        eprintln!("{RED}No loop with id {id}{RESET}");
+                    }
+                } else {
+                    eprintln!("Usage: /loopon <id>");
+                }
+                true
+            }
+
+            "/tutorial" => {
+                if let Err(e) = tutorial::run_tutorial_tui(&cron_registry, &mut kernel) {
+                    eprintln!("{RED}Error: {e}{RESET}");
                 }
                 true
             }
@@ -564,6 +741,16 @@ async fn main() -> Result<()> {
                 }
             }
             continue;
+        }
+
+        if input.starts_with('/') && input.len() > 1 {
+            let name = &input[1..];
+            if kernel.find_by_name(name).is_some() {
+                if let Err(e) = tui::run_agent_dashboard_tui(&mut kernel, name, &cron_registry) {
+                    eprintln!("{RED}Error: {e}{RESET}");
+                }
+                continue;
+            }
         }
 
         if input.starts_with('/') {
@@ -673,6 +860,7 @@ async fn main() -> Result<()> {
                                 mode.clone(),
                                 &http_client,
                                 &server_url,
+                                true,
                             )
                             .await,
                         )
@@ -690,6 +878,7 @@ async fn main() -> Result<()> {
                                 mode.clone(),
                                 &http_client,
                                 &server_url,
+                                true,
                             )
                             .await,
                         )
@@ -761,6 +950,7 @@ async fn run_stream_turn(
     mode: Mode,
     client: &reqwest::Client,
     server_url: &str,
+    save_history: bool,
 ) -> Result<String> {
     {
         let process = kernel.get_process_mut(current_pid).ok_or_else(|| {
@@ -775,6 +965,13 @@ async fn run_stream_turn(
         }
         process.state = ProcessState::Running;
         process.new_turn();
+    }
+
+    {
+        let process = kernel.get_process_mut(current_pid).unwrap();
+        if process.conversation_id.is_empty() {
+            process.conversation_id = uuid::Uuid::new_v4().to_string();
+        }
     }
 
     let (model, provider, system, npc_name, conv_id) = {
@@ -839,6 +1036,62 @@ async fn run_stream_turn(
         "tool_agent".to_string()
     };
 
+    // -------------------------------------------------------------------------
+    // CLI provider routing (claude_code, opencode, codex, kimi, kilo, ...)
+    // Run local CLI tools directly, track usage, and persist session IDs.
+    // -------------------------------------------------------------------------
+    if CLI_PROVIDERS.contains(&provider.as_str()) {
+        let full_input = format!("{}\n\n{}", input, context_info);
+        let session_id = cli_sessions().lock().unwrap().get(&current_pid).cloned();
+        let cli_result = run_cli_provider(
+            &provider,
+            &model,
+            &full_input,
+            &system,
+            session_id.as_deref(),
+        )
+        .await;
+
+        if let Some(result) = cli_result {
+            let in_tok = result.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0);
+            let out_tok = result.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0);
+            let cost = result.cost_usd;
+
+            {
+                let process = kernel.get_process_mut(current_pid).unwrap();
+                process.record_usage(in_tok, out_tok, cost);
+                process.last_streamed = !result.text.is_empty();
+                process.messages.push(Message::user(input));
+                let msg = Message {
+                    role: "assistant".to_string(),
+                    content: if result.text.is_empty() { None } else { Some(result.text.clone()) },
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                    thinking: None,
+                    reasoning_content: None,
+                };
+                process.messages.push(msg);
+                process.state = ProcessState::Blocked;
+            }
+
+            if let Some(sid) = result.session_id {
+                cli_sessions().lock().unwrap().insert(current_pid, sid.clone());
+            }
+
+            if save_history {
+                save_conversation_turn(kernel, current_pid, input, &result.text, in_tok, out_tok, cost, &cwd).await;
+            }
+
+            return Ok(result.text);
+        } else {
+            return Err(npcrs::NpcError::Other(format!(
+                "CLI provider '{}' failed to produce a response; is the binary installed?",
+                provider
+            )));
+        }
+    }
+
     let request = stream_client::StreamRequest {
         model,
         provider,
@@ -878,9 +1131,56 @@ async fn run_stream_turn(
         process.messages.push(response.message.clone());
     }
 
+    let output = response.message.content.clone().unwrap_or_default();
+
+    if save_history {
+        let in_tok = response.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0);
+        let out_tok = response.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0);
+        let cost = response.usage.as_ref().map(|u| calculate_cost(&request.model, u.prompt_tokens, u.completion_tokens)).unwrap_or(0.0);
+        save_conversation_turn(kernel, current_pid, input, &output, in_tok, out_tok, cost, &cwd).await;
+    }
+
     let process = kernel.get_process_mut(current_pid).unwrap();
     process.state = ProcessState::Blocked;
-    Ok(response.message.content.clone().unwrap_or_default())
+    Ok(output)
+}
+
+async fn save_conversation_turn(
+    kernel: &mut Kernel,
+    current_pid: u32,
+    input: &str,
+    output: &str,
+    in_tok: u64,
+    out_tok: u64,
+    cost: f64,
+    cwd: &str,
+) {
+    let Some(process) = kernel.get_process(current_pid) else { return };
+    let model = process.npc.resolved_model();
+    let provider = process.npc.resolved_provider();
+    let npc_name = process.npc.name.clone();
+    let conv_id = process.conversation_id.clone();
+    if conv_id.is_empty() { return; }
+    let team_name_str = kernel.team.source_dir.as_deref()
+        .and_then(|d| std::path::Path::new(d).file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("npcsh")
+        .to_string();
+
+    let _ = kernel.history.save_conversation_message(
+        &conv_id, "user", input, cwd,
+        Some(&model), Some(&provider),
+        Some(&npc_name), Some(&team_name_str),
+        None, None, None,
+        Some(in_tok), None, None,
+    );
+    let _ = kernel.history.save_conversation_message(
+        &conv_id, "assistant", output, cwd,
+        Some(&model), Some(&provider),
+        Some(&npc_name), Some(&team_name_str),
+        None, None, None,
+        None, Some(out_tok), Some(cost),
+    );
 }
 
 fn ask_permission(prompt: &str) -> String {
@@ -1054,6 +1354,267 @@ fn handle_set_command(rest: &str, kernel: &mut Kernel, pid: u32, mode: &mut Mode
         },
         _ => eprintln!("{RED}Unknown setting: {key}{RESET}"),
     }
+}
+
+async fn handle_cron_command(
+    rest: &str,
+    kernel: &mut Kernel,
+    registry: &Arc<Mutex<CronRegistry>>,
+    current_pid: u32,
+) {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    let cmd = parts.first().copied().unwrap_or("list");
+    match cmd {
+        "list" | "" => {
+            let reg = registry.lock().unwrap();
+            let jobs = reg.list();
+            if jobs.is_empty() {
+                eprintln!("{DIM}No cron jobs. Use /loop <npc> <interval> <task> or /cron add ...{RESET}");
+            } else {
+                eprintln!("{BOLD}Cron jobs:{RESET}");
+                for j in jobs {
+                    let status = if j.enabled { GREEN } else { RED };
+                    let kind = if j.kind == crate::cron::CronJobKind::Jinx { "jinx" } else { "chat" };
+                    let last = j.last_run.map(|_| "ran").unwrap_or("never");
+                    eprintln!(
+                        "  [{status}{:>3}{RESET}] @{:<12} every {:<5} [{:<4}] {} (last: {})",
+                        j.id, j.npc, crate::cron::format_duration(j.interval_secs), kind, j.task, last
+                    );
+                }
+            }
+        }
+        "add" => {
+            if parts.len() < 4 {
+                eprintln!("Usage: /cron add <npc> <interval> <chat|jinx:...>");
+                eprintln!("  /cron add sibiji 30s 'summarize recent commits'");
+                eprintln!("  /cron add corca 5m jinx:shell 'git status'");
+                return;
+            }
+            let npc = parts[1].to_string();
+            let interval = parts[2];
+            let task = parts[3..].join(" ");
+            let (kind, task) = if let Some(t) = task.strip_prefix("jinx:") {
+                (crate::cron::CronJobKind::Jinx, t.to_string())
+            } else {
+                (crate::cron::CronJobKind::Chat, task)
+            };
+            let secs = crate::cron::parse_duration(interval);
+            let id = registry.lock().unwrap().add(npc.clone(), secs, task.clone(), kind);
+            eprintln!("{GREEN}Added cron job {id}: @{npc} every {interval} -> {task}{RESET}");
+        }
+        "remove" | "rm" => {
+            if let Some(id_str) = parts.get(1) {
+                if let Ok(id) = id_str.parse::<u32>() {
+                    if registry.lock().unwrap().remove(id) {
+                        eprintln!("{GREEN}Removed cron job {id}{RESET}");
+                    } else {
+                        eprintln!("{RED}No cron job with id {id}{RESET}");
+                    }
+                } else {
+                    eprintln!("{RED}Invalid id: {id_str}{RESET}");
+                }
+            } else {
+                eprintln!("Usage: /cron remove <id>");
+            }
+        }
+        "enable" | "on" => {
+            if let Some(id_str) = parts.get(1) {
+                if let Ok(id) = id_str.parse::<u32>() {
+                    if registry.lock().unwrap().enable(id, true) {
+                        eprintln!("{GREEN}Enabled cron job {id}{RESET}");
+                    } else {
+                        eprintln!("{RED}No cron job with id {id}{RESET}");
+                    }
+                }
+            }
+        }
+        "disable" | "off" => {
+            if let Some(id_str) = parts.get(1) {
+                if let Ok(id) = id_str.parse::<u32>() {
+                    if registry.lock().unwrap().enable(id, false) {
+                        eprintln!("{GREEN}Disabled cron job {id}{RESET}");
+                    } else {
+                        eprintln!("{RED}No cron job with id {id}{RESET}");
+                    }
+                }
+            }
+        }
+        "run" => {
+            if let Some(id_str) = parts.get(1) {
+                if let Ok(id) = id_str.parse::<u32>() {
+                    let job = registry.lock().unwrap().list().iter().find(|j| j.id == id).cloned();
+                    if let Some(job) = job {
+                        if let Some(out) = execute_cron_job_and_capture(kernel, current_pid, &job, &reqwest::Client::new(), "http://127.0.0.1:5237", &mut 0, &mut 0, &mut 0.0).await {
+                            println!("{}", out);
+                        }
+                    } else {
+                        eprintln!("{RED}No cron job with id {id}{RESET}");
+                    }
+                }
+            }
+        }
+        _ => eprintln!("{RED}Unknown /cron subcommand: {cmd}{RESET}"),
+    }
+}
+
+async fn handle_jobs_command(
+    target: &str,
+    kernel: &mut Kernel,
+    registry: &Arc<Mutex<CronRegistry>>,
+    _current_pid: u32,
+) {
+    let reg = registry.lock().unwrap();
+    let jobs = reg.list();
+    let mut filtered: Vec<&crate::cron::CronJob> = jobs.iter().filter(|j| {
+        if target.is_empty() { true } else { j.npc == target || target == "all" }
+    }).collect();
+    if filtered.is_empty() {
+        if target.is_empty() {
+            eprintln!("{DIM}No loops. Use /loop <npc> <interval> <task>{RESET}");
+        } else {
+            eprintln!("{DIM}No loops for @{target}.{RESET}");
+        }
+        return;
+    }
+    filtered.sort_by(|a, b| a.npc.cmp(&b.npc).then(a.id.cmp(&b.id)));
+
+    eprintln!("{BOLD}Loops{RESET} {}", if target.is_empty() { "(all NPCs)".to_string() } else { format!("for @{target}") });
+    eprintln!("  {DIM}Use /looprm <id>, /loopoff <id>, /loopon <id>{RESET}");
+    let mut last_npc = String::new();
+    for j in filtered {
+        if j.npc != last_npc {
+            eprintln!("\n  {CYAN}@{}{RESET}", j.npc);
+            last_npc = j.npc.clone();
+        }
+        let status = if j.enabled { GREEN } else { RED };
+        let kind = if j.kind == crate::cron::CronJobKind::Jinx { "jinx" } else { "chat" };
+        let last = j.last_run.map(|_| "ran").unwrap_or("never");
+        let next_secs = j.next_run.duration_since(std::time::Instant::now()).as_secs();
+        eprintln!(
+            "    [{status}{:>3}{RESET}] every {:<6} [{:<4}] next in {:<6} | {} (last: {})",
+            j.id,
+            crate::cron::format_duration(j.interval_secs),
+            kind,
+            crate::cron::format_duration(next_secs),
+            j.task,
+            last
+        );
+    }
+}
+
+async fn handle_loop_command(
+    rest: &str,
+    kernel: &mut Kernel,
+    registry: &Arc<Mutex<CronRegistry>>,
+    current_pid: u32,
+) {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    if parts.len() < 3 {
+        eprintln!("Usage: /loop <npc> <interval> <chat task|jinx:jinx_name>");
+        eprintln!("  /loop sibiji 30s 'check for new emails and summarize'");
+        eprintln!("  /loop corca 5m 'review open PRs'");
+        eprintln!("  /loop sibiji 10s jinx:heartbeat_demo");
+        return;
+    }
+    let npc = parts[0].to_string();
+    let interval = parts[1];
+    let task = parts[2..].join(" ");
+    let secs = crate::cron::parse_duration(interval);
+    let (kind, task) = if let Some(t) = task.strip_prefix("jinx:") {
+        (crate::cron::CronJobKind::Jinx, t.to_string())
+    } else {
+        (crate::cron::CronJobKind::Chat, task)
+    };
+    let is_jinx = kind == crate::cron::CronJobKind::Jinx;
+    let label = if is_jinx { format!("jinx:{task}") } else { task.clone() };
+    let id = registry.lock().unwrap().add(npc.clone(), secs, task.clone(), kind);
+    eprintln!("{GREEN}Loop {id} added: @{npc} every {interval} -> {label}{RESET}");
+}
+
+async fn execute_cron_job_and_capture(
+    kernel: &mut Kernel,
+    current_pid: u32,
+    job: &crate::cron::CronJob,
+    client: &reqwest::Client,
+    server_url: &str,
+    session_input_tokens: &mut u64,
+    session_output_tokens: &mut u64,
+    session_cost: &mut f64,
+) -> Option<String> {
+    let mut out = Vec::new();
+    let Some(proc) = kernel.find_by_name(&job.npc) else {
+        out.push(format!("{RED}[cron] unknown NPC: @{}{RESET}", job.npc));
+        return Some(out.join("\n"));
+    };
+    let pid = proc.pid;
+    let label = format!("[cron {}]", job.npc);
+    match job.kind {
+        crate::cron::CronJobKind::Jinx => {
+            let mut args = std::collections::HashMap::new();
+            let mut pieces = job.task.splitn(2, ' ');
+            let jinx_name = pieces.next().unwrap_or(&job.task).to_string();
+            if let Some(rest) = pieces.next() {
+                if let Some(first_input) = kernel.jinxes.get(&jinx_name).and_then(|j| j.inputs.first()) {
+                    args.insert(first_input.name.clone(), rest.to_string());
+                }
+            }
+            match kernel.syscall(pid, &jinx_name, &args).await {
+                Ok(output) => {
+                    if !output.is_empty() {
+                        out.push(format!("{CYAN}{label}{RESET} /{jinx_name}\n{output}"));
+                    }
+                }
+                Err(e) => out.push(format!("{RED}{label} /{jinx_name} error: {e}{RESET}")),
+            }
+        }
+        crate::cron::CronJobKind::Chat => {
+            out.push(format!("{CYAN}{label}{RESET} {DIM}{task}{RESET}", task = job.task));
+            match run_stream_turn(kernel, pid, &job.task, Mode::Agent, client, server_url, false).await {
+                Ok(output) => {
+                    if let Some(p) = kernel.get_process(pid) {
+                        *session_input_tokens += p.usage.total_input_tokens;
+                        *session_output_tokens += p.usage.total_output_tokens;
+                        *session_cost += p.usage.total_cost_usd;
+                    }
+                    if !output.is_empty() {
+                        out.push(output);
+                    }
+                }
+                Err(e) => out.push(format!("{RED}{label} error: {e}{RESET}")),
+            }
+        }
+    }
+    let full = if out.is_empty() { None } else { Some(out.join("\n")) };
+    if let Some(ref text) = full {
+        let _ = save_loop_run(&job.npc,&job.task,
+            job.kind == crate::cron::CronJobKind::Jinx,
+            text,
+        );
+    }
+    full
+}
+
+fn task_slug(task: &str, is_jinx: bool) -> String {
+    let base = if is_jinx { format!("jinx_{}", task) } else { task.to_string() };
+    base.to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric(), "_")
+        .replace("__", "_")
+        .trim_matches('_')
+        .chars()
+        .take(60)
+        .collect::<String>()
+}
+
+fn save_loop_run(npc: &str, task: &str, is_jinx: bool, output: &str) -> std::io::Result<()> {
+    let slug = task_slug(task, is_jinx);
+    let base = std::path::PathBuf::from(shellexpand::tilde("~/.npcsh/loops").to_string())
+        .join(npc)
+        .join(slug)
+        .join("runs");
+    std::fs::create_dir_all(&base)?;
+    let ts = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let path = base.join(format!("{}.txt", ts));
+    std::fs::write(&path, output)
 }
 
 fn print_welcome(kernel: &Kernel) {
@@ -1254,6 +1815,314 @@ fn run_interactive(input: &str) {
         .status();
 }
 
+fn format_ts(ts: &str) -> String {
+    use std::time::{SystemTime, Duration};
+    let now = SystemTime::now();
+    let dt: Option<chrono::DateTime<chrono::Utc>> = if ts.contains('T') {
+        ts.parse::<chrono::DateTime<chrono::Utc>>().ok()
+    } else {
+        chrono::NaiveDateTime::parse_from_str(&ts[..ts.len().min(19)], "%Y-%m-%d %H:%M:%S")
+            .ok()
+            .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc))
+    };
+    if let Some(dt) = dt {
+        let local = dt.with_timezone(&chrono::Local);
+        let utc_dt: chrono::DateTime<chrono::Utc> = dt;
+        let diff = now.duration_since(SystemTime::from(utc_dt)).unwrap_or(Duration::ZERO);
+        let days = diff.as_secs() / 86400;
+        if days == 0 {
+            format!("Today {}", local.format("%H:%M"))
+        } else if days == 1 {
+            format!("Yesterday {}", local.format("%H:%M"))
+        } else if days < 7 {
+            local.format("%a %H:%M").to_string()
+        } else {
+            local.format("%b %d").to_string()
+        }
+    } else {
+        ts.chars().take(16).collect()
+    }
+}
+
+fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> Result<()> {
+    use crossterm::event::{self, Event, KeyCode};
+    use crossterm::terminal;
+    use rusqlite::Connection;
+
+    let db_path = std::env::var("NPCSH_DB_PATH")
+        .map(|s| shellexpand::tilde(&s).to_string())
+        .unwrap_or_else(|_| shellexpand::tilde("~/npcsh_history.db").to_string());
+    let conn = Connection::open(&db_path)
+        .map_err(|e| npcrs::NpcError::Other(format!("failed to open history db: {e}")))?;
+
+    type ConvoRow = (std::string::String, std::string::String, std::string::String, std::string::String, i64, std::string::String, std::string::String, i64, i64, f64);
+
+    let convos: Vec<ConvoRow> = if let Some(path) = filter {
+        let path_slash = format!("{path}/");
+        let mut stmt = conn.prepare(
+            "SELECT conversation_id, directory_path, MIN(timestamp) as started, MAX(timestamp) as last_msg, \
+             COUNT(*) as msg_count, GROUP_CONCAT(DISTINCT npc) as npcs, GROUP_CONCAT(DISTINCT model) as models, \
+             COALESCE(SUM(input_tokens), 0) as total_input_tokens, COALESCE(SUM(output_tokens), 0) as total_output_tokens, \
+             COALESCE(SUM(CAST(cost AS REAL)), 0) as total_cost \
+             FROM conversation_history \
+             WHERE directory_path = ?1 OR directory_path = ?2 \
+             GROUP BY conversation_id \
+             ORDER BY last_msg DESC"
+        ).map_err(|e| npcrs::NpcError::Other(format!("query failed: {e}")))?;
+        stmt.query_map([path, &path_slash], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?))
+        })
+        .map_err(|e| npcrs::NpcError::Other(format!("query failed: {e}")))?
+        .filter_map(|r| r.ok())
+        .collect()
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT conversation_id, directory_path, MIN(timestamp) as started, MAX(timestamp) as last_msg, \
+             COUNT(*) as msg_count, GROUP_CONCAT(DISTINCT npc) as npcs, GROUP_CONCAT(DISTINCT model) as models, \
+             COALESCE(SUM(input_tokens), 0) as total_input_tokens, COALESCE(SUM(output_tokens), 0) as total_output_tokens, \
+             COALESCE(SUM(CAST(cost AS REAL)), 0) as total_cost \
+             FROM conversation_history \
+             GROUP BY conversation_id \
+             ORDER BY last_msg DESC"
+        ).map_err(|e| npcrs::NpcError::Other(format!("query failed: {e}")))?;
+        stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?))
+        })
+        .map_err(|e| npcrs::NpcError::Other(format!("query failed: {e}")))?
+        .filter_map(|r| r.ok())
+        .collect()
+    };
+
+    if convos.is_empty() {
+        let target = filter.unwrap_or("ALL PATHS");
+        println!("{DIM}No conversations for: {target}{RESET}");
+        return Ok(());
+    }
+
+    terminal::enable_raw_mode().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
+    let mut stdout = io::stdout();
+    // Enter alternate screen and hide cursor (vim-style).
+    let _ = write!(stdout, "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H");
+    let _ = stdout.flush();
+
+    let (cols, rows) = terminal::size().unwrap_or((80, 24));
+    let cols = cols as usize;
+    let rows = rows as usize;
+    let list_height = rows.saturating_sub(5);
+
+    let selected: std::cell::Cell<usize> = std::cell::Cell::new(0);
+    let scroll: std::cell::Cell<usize> = std::cell::Cell::new(0);
+    let mode: std::cell::Cell<char> = std::cell::Cell::new('l'); // 'l' list, 'p' preview
+    let preview_scroll: std::cell::Cell<usize> = std::cell::Cell::new(0);
+    let preview_msgs: std::cell::RefCell<Vec<(std::string::String, std::string::String, std::string::String, Option<i64>, Option<i64>)>> = std::cell::RefCell::new(Vec::new());
+
+    fn short_model(model: &str) -> &str {
+        if model.contains("gpt-4") { return "gpt4"; }
+        if model.contains("gpt-3") { return "gpt3"; }
+        if model.contains("claude-3-5-sonnet") { return "sonnet"; }
+        if model.contains("claude-3-5-haiku") { return "haiku"; }
+        if model.contains("claude-3-opus") { return "opus"; }
+        if model.contains("claude") { return "claude"; }
+        if model.contains("gemini") { return "gemini"; }
+        if model.is_empty() { return "-"; }
+        &model[..model.len().min(8)]
+    }
+
+    let target = filter.map(|s| s.to_string()).unwrap_or_else(|| "ALL PATHS".to_string());
+    let (rows_static, cols_static) = (rows, cols);
+
+    let draw_list = |stdout: &mut std::io::Stdout| {
+        let sel_idx = selected.get();
+        let scr = scroll.get();
+        let header = format!(" REATTACH ({} convos): {} ", convos.len(), &target[..target.len().min(cols_static.saturating_sub(30))]);
+        let _ = write!(stdout, "\x1b[H\x1b[7;1m{}\x1b[0m\n", header.chars().take(cols_static).collect::<String>().pad_right(cols_static));
+        let _ = write!(stdout, "\x1b[90m{}\x1b[0m\n", "─".repeat(cols_static));
+        for i in 0..list_height {
+            let idx = scr + i;
+            let _ = write!(stdout, "\x1b[{};1H\x1b[K", 3 + i);
+            if idx >= convos.len() { continue; }
+            let c = &convos[idx];
+            let cid = &c.0[..c.0.len().min(12)];
+            let npcs = c.5.as_str();
+            let npcs = &npcs[..npcs.len().min(10)];
+            let models = short_model(c.6.as_str());
+            let line = format!(" {cid:<14} {:>3} msgs  {} {npcs:<10} {models:<12}", c.4, format_ts(&c.3));
+            let line = &line[..line.len().min(cols_static.saturating_sub(2))];
+            if idx == sel_idx {
+                let _ = write!(stdout, "\x1b[7;1m>{}\x1b[0m", line.pad_right(cols_static.saturating_sub(1)));
+            } else {
+                let _ = write!(stdout, " {}", line.pad_right(cols_static.saturating_sub(1)));
+            }
+        }
+        let sel = &convos[sel_idx];
+        let in_tok = sel.7;
+        let out_tok = sel.8;
+        let cost = sel.9;
+        let cost_str = if cost > 0.0 { format!("${cost:.4}") } else { "-".to_string() };
+        let tok_str = if in_tok > 0 || out_tok > 0 { format!("{in_tok}in/{out_tok}out") } else { "-".to_string() };
+        let footer = format!(" {}  {}  tokens:{}  cost:{}", &sel.0[..sel.0.len().min(16)], short_model(sel.6.as_str()), tok_str, cost_str);
+        let _ = write!(stdout, "\x1b[{};1H\x1b[K\x1b[90m{}\x1b[0m", rows_static - 2, "─".repeat(cols_static));
+        let _ = write!(stdout, "\x1b[{};1H\x1b[K{}", rows_static - 1, footer.chars().take(cols_static).collect::<String>().pad_right(cols_static));
+        let _ = write!(stdout, "\x1b[{};1H\x1b[K\x1b[7m j/k:Nav  Enter:Select  p:Preview  q:Quit  [{}/{}] \x1b[0m", rows_static, sel_idx + 1, convos.len());
+        let _ = stdout.flush();
+    };
+
+    let draw_preview = |stdout: &mut std::io::Stdout| {
+        let sel_idx = selected.get();
+        let scr = preview_scroll.get();
+        let cid = &convos[sel_idx].0;
+        let header = format!(" PREVIEW: {} ", &cid[..cid.len().min(cols_static.saturating_sub(12))]);
+        let _ = write!(stdout, "\x1b[H\x1b[7;1m{}\x1b[0m\n", header.chars().take(cols_static).collect::<String>().pad_right(cols_static));
+        let _ = write!(stdout, "\x1b[90m{}\x1b[0m\n", "─".repeat(cols_static));
+        let msgs = preview_msgs.borrow();
+        for i in 0..list_height {
+            let idx = scr + i;
+            let _ = write!(stdout, "\x1b[{};1H\x1b[K", 3 + i);
+            if idx >= msgs.len() { continue; }
+            let (role, content, model, in_tok, out_tok) = &msgs[idx];
+            let content = content.replace('\n', " ").chars().take(200).collect::<String>();
+            let prefix = match role.as_str() {
+                "user" => format!("{GREEN};1mYou:\x1b[0m "),
+                "assistant" => {
+                    let m = short_model(model);
+                    let tok_info = if in_tok.is_some() || out_tok.is_some() {
+                        format!(" [{}|{}]", in_tok.unwrap_or(0), out_tok.unwrap_or(0))
+                    } else { String::new() };
+                    format!("\x1b[34;1mAI({m}{tok_info}):\x1b[0m ")
+                }
+                _ => format!("\x1b[90m{role}:\x1b[0m "),
+            };
+            let max_content = cols_static.saturating_sub(prefix.len());
+            let _ = write!(stdout, "{}{}", prefix, content.chars().take(max_content).collect::<String>());
+        }
+        let _ = write!(stdout, "\x1b[{};1H\x1b[K\x1b[90m{}\x1b[0m", rows_static - 2, "─".repeat(cols_static));
+        let _ = write!(stdout, "\x1b[{};1H\x1b[K {} messages", rows_static - 1, msgs.len());
+        let _ = write!(stdout, "\x1b[{};1H\x1b[K\x1b[7m j/k:Scroll  b:Back  Enter:Select  q:Quit \x1b[0m", rows_static);
+        let _ = stdout.flush();
+    };
+
+    trait PadRight {
+        fn pad_right(&self, n: usize) -> String;
+    }
+    impl PadRight for str {
+        fn pad_right(&self, n: usize) -> String {
+            if self.len() >= n { self.to_string() } else { format!("{}{}", self, " ".repeat(n - self.len())) }
+        }
+    }
+
+    loop {
+        let sel = selected.get();
+        let scr = scroll.get();
+        if sel < scr { scroll.set(sel); }
+        else if sel >= scr + list_height { scroll.set(sel - list_height + 1); }
+
+        if mode.get() == 'l' {
+            draw_list(&mut stdout);
+        } else {
+            draw_preview(&mut stdout);
+        }
+
+        if let Ok(true) = event::poll(std::time::Duration::from_millis(50)) {
+            if let Ok(Event::Key(key)) = event::read() {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == crossterm::event::KeyModifiers::CONTROL => {
+                        break;
+                    }
+                    KeyCode::Char('q') => { break; }
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        if mode.get() == 'l' && selected.get() < convos.len() - 1 { selected.set(selected.get() + 1); }
+                        else if mode.get() == 'p' && preview_scroll.get() + list_height < preview_msgs.borrow().len() { preview_scroll.set(preview_scroll.get() + 1); }
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        if mode.get() == 'l' && selected.get() > 0 { selected.set(selected.get() - 1); }
+                        else if mode.get() == 'p' && preview_scroll.get() > 0 { preview_scroll.set(preview_scroll.get() - 1); }
+                    }
+                    KeyCode::Char('p') if mode.get() == 'l' => {
+                        let cid = convos[selected.get()].0.clone();
+                        let mut stmt = conn.prepare(
+                            "SELECT role, content, model, input_tokens, output_tokens FROM conversation_history \
+                             WHERE conversation_id = ?1 ORDER BY timestamp ASC"
+                        ).map_err(|e| npcrs::NpcError::Other(format!("preview query failed: {e}")))?;
+                        let loaded: Vec<(String, String, String, Option<i64>, Option<i64>)> = stmt.query_map([&cid
+                        ], |row| {
+                            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+                        })
+                        .map_err(|e| npcrs::NpcError::Other(format!("preview query failed: {e}")))?
+                        .filter_map(|r| r.ok())
+                        .collect();
+                        preview_msgs.replace(loaded);
+                        preview_scroll.set(0);
+                        mode.set('p');
+                    }
+                    KeyCode::Char('b') if mode.get() == 'p' => {
+                        mode.set('l');
+                    }
+                    KeyCode::Enter => {
+                        let cid = convos[selected.get()].0.clone();
+                        if let Some(p) = kernel.get_process_mut(current_pid) {
+                            p.conversation_id = cid.clone();
+                            p.messages.clear();
+                            let mut stmt = conn.prepare(
+                                "SELECT role, content FROM conversation_history WHERE conversation_id = ?1 ORDER BY timestamp ASC"
+                            ).map_err(|e| npcrs::NpcError::Other(format!("load query failed: {e}")))?;
+                            let rows = stmt.query_map([&cid
+                            ], |row| {
+                                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                            })
+                            .map_err(|e| npcrs::NpcError::Other(format!("load query failed: {e}")))?
+                            .filter_map(|r| r.ok());
+                            for (role, content) in rows {
+                                let msg = match role.as_str() {
+                                    "user" => Message::user(content.clone()),
+                                    "assistant" => Message::assistant(content.clone()),
+                                    "system" => Message::system(content.clone()),
+                                    "tool" => Message::tool_result("", content.clone()),
+                                    _ => Message::user(format!("[{role}] {content}")),
+                                };
+                                p.messages.push(msg);
+                            }
+                            let _ = terminal::disable_raw_mode();
+                            // Exit alternate screen before printing reattach summary.
+                            let _ = write!(stdout, "\x1b[2J\x1b[H\x1b[?1049l\x1b[?25h\r\n");
+                            let _ = stdout.flush();
+                            println!("{GREEN}Reattached to: {cid} ({} messages loaded)\x1b[0m", p.messages.len());
+                            let mut n = 0;
+                            for msg in p.messages.iter().rev().take(10).collect::<Vec<_>>().into_iter().rev() {
+                                let role = msg.role.as_str();
+                                let content = msg.content.as_deref().unwrap_or("");
+                                if role == "user" {
+                                    println!("{CYAN}> {content}\x1b[0m");
+                                } else if role == "assistant" {
+                                    println!("{}", content);
+                                } else {
+                                    println!("{DIM}[{role}] {content}\x1b[0m");
+                                }
+                                n += 1;
+                            }
+                            if p.messages.len() > n {
+                                println!("{DIM}... and {} older messages\x1b[0m", p.messages.len() - n);
+                            }
+                            println!();
+                        } else {
+                            let _ = terminal::disable_raw_mode();
+                            let _ = write!(stdout, "\x1b[2J\x1b[H\x1b[?1049l\x1b[?25h");
+                            let _ = stdout.flush();
+                            println!("{YELLOW}Selected: {cid}\x1b[0m");
+                        }
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let _ = terminal::disable_raw_mode();
+    let _ = write!(stdout, "\x1b[2J\x1b[H\x1b[?1049l\x1b[?25h");
+    let _ = stdout.flush();
+    Ok(())
+}
+
 fn run_python_initialization(db_path: &str) {
     eprintln!("Re-initializing npc_team from package...");
     let output = std::process::Command::new("python3")
@@ -1320,28 +2189,54 @@ async fn exec_npc_file(
     let provider = npc.resolved_provider();
 
     if let Some(cmd) = command {
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".to_string());
+        let conv_id = uuid::Uuid::new_v4().to_string();
         let request = stream_client::StreamRequest {
-            model,
-            provider,
+            model: model.clone(),
+            provider: provider.clone(),
             messages: vec![
                 npcrs::Message::system(npc.system_prompt(None)),
-                npcrs::Message::user(cmd),
+                npcrs::Message::user(cmd.to_string()),
             ],
             commandstr: cmd.to_string(),
             npc: Some(npc.name.clone()),
             registered_teams: None,
-            conversation_id: None,
-            current_path: Some(
-                std::env::current_dir()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| ".".to_string())),
+            conversation_id: Some(conv_id.clone()),
+            current_path: Some(cwd.clone()),
             execution_mode: "chat".to_string(),
         };
         let response = stream_client::call_stream(client, server_url, &request, None)
             .await
             .map_err(|e| npcrs::NpcError::Other(e))?;
-        if let Some(text) = response.message.content {
-            println!("{}", text);
+        let output = response.message.content.clone().unwrap_or_default();
+        if !output.is_empty() {
+            println!("{}", output);
+        }
+        let in_tok = response.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0);
+        let out_tok = response.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0);
+        let cost = response.usage.as_ref().map(|u| calculate_cost(&request.model, u.prompt_tokens, u.completion_tokens)).unwrap_or(0.0);
+        let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+        let team_dir = find_team_dir();
+        if let Ok(kernel) = npcrs::Kernel::boot(&team_dir, &db_path) {
+            let team_name_str = kernel.team.source_dir.as_deref()
+                .and_then(|d| std::path::Path::new(d).file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("npcsh")
+                .to_string();
+            let _ = kernel.history.save_conversation_message(
+                &conv_id, "user", cmd, &cwd,
+                Some(&model), Some(&provider), Some(&npc.name), Some(&team_name_str),
+                None, None, None,
+                Some(in_tok), None, None,
+            );
+            let _ = kernel.history.save_conversation_message(
+                &conv_id, "assistant", &output, &cwd,
+                Some(&model), Some(&provider), Some(&npc.name), Some(&team_name_str),
+                None, None, None,
+                None, Some(out_tok), Some(cost),
+            );
         }
     } else {
         let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
@@ -1382,6 +2277,7 @@ async fn exec_npc_file(
                 Mode::Agent,
                 client,
                 server_url,
+                true,
             )
             .await
             {
@@ -1496,6 +2392,7 @@ async fn exec_nsh_file(
             Mode::Agent,
             client,
             server_url,
+            true,
         )
         .await
         {
@@ -1835,9 +2732,16 @@ fn readline_raw(
                                 tab_matches = matches;
                                 tab_index = 0;
                                 print!("\r\n");
-                                for m in &tab_matches {
-                                    println!("  {}", m.display);
+                                // Compact multi-column listing, bash/readline style.
+                                let cols = terminal::size().map(|(c, _)| c as usize).unwrap_or(80);
+                                let max_len = tab_matches.iter().map(|m| m.display.len()).max().unwrap_or(0) + 2;
+                                let col_width = max_len.max(16);
+                                let ncols = (cols / col_width).max(1);
+                                for (i, m) in tab_matches.iter().enumerate() {
+                                    if i > 0 && i % ncols == 0 { print!("\r\n"); }
+                                    print!("{:<width$}", m.display, width = col_width);
                                 }
+                                print!("\r\n");
                                 redraw_prompt(prompt, &buf, pos);
                             }
                         } else {
