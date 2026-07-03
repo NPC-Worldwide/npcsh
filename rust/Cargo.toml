@@ -20,6 +20,7 @@ npcrs = { version = "0.1.23", default-features = false, features = ["ffi"] }
 # HTTP/SSE client for the npcpy server
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
 futures = "0.3"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Shell-specific deps
@@ -33,3 +34,6 @@ base64 = "0.22"
 crossterm = "0.28"
 libc = "0.2"
 termimad = "0.34"
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4.45", features = ["clock", "serde"] }
+uuid = { version = "1", features = ["v4"] }
