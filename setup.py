@@ -220,7 +220,7 @@ base_requirements = [
 
 setup(
     name="npcsh",
-    version="1.2.30",
+    version="1.2.33",
     author="NPC Worldwide",
     author_email="info@npcworldwide.com",
     description="The composable multi-agent shell",

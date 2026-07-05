@@ -105,7 +105,7 @@ impl NpcHelper {
             "/help", "/quit", "/exit",
             "/set", "/jinxes",
             "/gitt", "/config", "/model", "/setup", "/team",
-            "/ask_form", "/commit", "/reattach",
+            "/commit", "/reattach",
             "/cron", "/loop", "/loops", "/looprm", "/loopon", "/loopoff",
             "/tutorial",
         ]
@@ -529,7 +529,6 @@ async fn main() -> Result<()> {
                 println!();
                 println!("{BOLD}Tools:{RESET}");
                 println!("  {CYAN}/gitt{RESET}           Git TUI");
-                println!("  {CYAN}/ask_form{RESET}       Ask form TUI");
                 println!("  {CYAN}/commit{RESET}         Commit helper TUI");
                 println!();
                 println!("{BOLD}Loops / Scheduler:{RESET}");
@@ -673,14 +672,6 @@ async fn main() -> Result<()> {
 
             "/team" => {
                 if let Err(e) = tui::run_team_tui(&mut kernel) {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                }
-                true
-            }
-
-            "/ask_form" => {
-                let args = input.strip_prefix("/ask_form").unwrap_or("").trim();
-                if let Err(e) = tui::run_ask_form_tui(args) {
                     eprintln!("{RED}Error: {e}{RESET}");
                 }
                 true
@@ -1728,9 +1719,8 @@ fn print_welcome(kernel: &Kernel) {
             if let Some(names) = subdirs.get(&None) {
                 let mut sorted = names.clone();
                 sorted.sort();
-                let line: Vec<String> = sorted.iter().map(|n| format!("/{}", n)).collect();
                 let mut current = String::from("    ");
-                for item in &line {
+                for item in &sorted {
                     if current.len() + item.len() + 2 > 80 && current.trim().len() > 0 {
                         eprintln!("{}", current);
                         current = String::from("    ");
@@ -1746,15 +1736,17 @@ fn print_welcome(kernel: &Kernel) {
                 if let Some(sd) = sd {
                     let mut sorted = names.clone();
                     sorted.sort();
-                    let items: Vec<String> = sorted.iter().map(|n| format!("/{}", n)).collect();
-                    eprintln!("      {DIM}{sd}:{RESET} {}", items.join("  "));
+                    eprintln!("      {DIM}{sd}:{RESET} {}", sorted.join("  "));
                 }
             }
         }
     }
 
     eprintln!();
-    eprintln!("  {DIM}/jinxes for full list{RESET}");
+    eprintln!("  {DIM}core commands:{RESET}");
+    eprintln!("    /agent  /chat  /cmd  /model  /config  /setup  /team");
+    eprintln!("    /gitt  /commit  /loop  /cron  /loops");
+    eprintln!("    /ps  /stats  /history  /clear  /help  /quit  /exit");
     eprintln!();
 }
 
