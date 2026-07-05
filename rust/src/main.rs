@@ -87,6 +87,7 @@ fn handle_paste_input(raw: &str) -> (String, Option<String>) {
 struct NpcHelper {
     npc_names: Vec<String>,
     commands: Vec<String>,
+    jinx_names: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -97,20 +98,22 @@ struct Completion {
 
 impl NpcHelper {
     fn new(npc_names: Vec<String>, jinx_names: Vec<String>) -> Self {
-        let mut commands = vec![
-            "/ps", "/stats", "/help", "/quit", "/exit", "/clear",
-            "/agent", "/chat", "/cmd", "/switch", "/kill", "/jinxes",
-            "/set", "/history",
+        let commands = vec![
+            "/agent", "/chat", "/cmd",
+            "/switch", "/kill",
+            "/ps", "/stats", "/history", "/clear",
+            "/help", "/quit", "/exit",
+            "/set", "/jinxes",
+            "/gitt", "/config", "/model", "/setup", "/team",
+            "/ask_form", "/commit", "/reattach",
+            "/cron", "/loop", "/loops", "/looprm", "/loopon", "/loopoff",
+            "/tutorial",
         ]
         .into_iter()
         .map(String::from)
-        .collect::<Vec<_>>();
+        .collect();
 
-        for j in jinx_names {
-            commands.push(format!("/{}", j));
-        }
-
-        Self { npc_names, commands }
+        Self { npc_names, commands, jinx_names }
     }
 
     fn complete(&self, line: &str, pos: usize) -> (usize, Vec<Completion>) {
@@ -138,11 +141,52 @@ impl NpcHelper {
                     });
                 }
             }
+        } else if !word.is_empty() {
+            for name in &self.jinx_names {
+                if name.starts_with(word) {
+                    matches.push(Completion {
+                        display: name.clone(),
+                        replacement: format!("{} ", name),
+                    });
+                }
+            }
         }
 
         (word_start, matches)
     }
+}
 
+async fn run_jinx_command(
+    kernel: &mut Kernel,
+    current_pid: u32,
+    cmd_name: &str,
+    args_str: &str,
+) {
+    let mut args = HashMap::new();
+
+    if !args_str.is_empty() {
+        let mut has_kv = false;
+        for part in args_str.split_whitespace() {
+            if let Some((k, v)) = part.split_once('=') {
+                args.insert(k.to_string(), v.to_string());
+                has_kv = true;
+            }
+        }
+        if !has_kv {
+            if let Some(first_input) = kernel.jinxes[cmd_name].inputs.first() {
+                args.insert(first_input.name.clone(), args_str.to_string());
+            }
+        }
+    }
+
+    match kernel.syscall(current_pid, cmd_name, &args).await {
+        Ok(output) => {
+            if !output.is_empty() {
+                println!("{}", output);
+            }
+        }
+        Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -388,15 +432,13 @@ async fn main() -> Result<()> {
             "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET}{usage_hint} {PURPLE}>{RESET} "
         );
 
-        // Collect cron output instead of printing it directly, so it doesn't
-        // corrupt the raw-mode prompt while the user is typing.
-        let mut cron_output_queue: Vec<String> = Vec::new();
+        // Collect cron output but do not print it into the active terminal session.
+        // Loop output is saved to disk and viewable from the agent dashboard.
         while let Ok(job) = cron_rx.try_recv() {
-            let out = execute_cron_job_and_capture(&mut kernel, current_pid, &job, &http_client, &server_url, &mut session_input_tokens, &mut session_output_tokens, &mut session_cost).await;
-            if let Some(o) = out { cron_output_queue.push(o); }
-        }
-        for out in cron_output_queue {
-            println!("{}", out);
+            let _ = execute_cron_job_and_capture(
+                &mut kernel, current_pid, &job, &http_client, &server_url,
+                &mut session_input_tokens, &mut session_output_tokens, &mut session_cost,
+            ).await;
         }
 
         let input = match readline_raw(
@@ -475,20 +517,44 @@ async fn main() -> Result<()> {
                 println!("  {CYAN}/switch <npc>{RESET}   Switch to NPC process");
                 println!("  {CYAN}/kill{RESET}           Kill current process");
                 println!();
+                println!("{BOLD}System / Config:{RESET}");
+                println!("  {CYAN}/set key=val{RESET}    Set model, provider, mode");
+                println!("  {CYAN}/config{RESET}         Configuration TUI");
+                println!("  {CYAN}/model{RESET}          Model selection TUI");
+                println!("  {CYAN}/setup{RESET}          First-time setup TUI");
+                println!("  {CYAN}/team{RESET}           Team management TUI");
+                println!("  {CYAN}/clear{RESET}          Clear conversation");
+                println!("  {CYAN}/history{RESET}        Show conversation history");
+                println!("  {CYAN}/reattach{RESET}       Reattach to files/sessions");
+                println!();
+                println!("{BOLD}Tools:{RESET}");
+                println!("  {CYAN}/gitt{RESET}           Git TUI");
+                println!("  {CYAN}/ask_form{RESET}       Ask form TUI");
+                println!("  {CYAN}/commit{RESET}         Commit helper TUI");
+                println!();
+                println!("{BOLD}Loops / Scheduler:{RESET}");
+                println!("  {CYAN}/cron{RESET}           Cron management");
+                println!("  {CYAN}/loop{RESET}           Create a loop");
+                println!("  {CYAN}/loops{RESET}          List loops");
+                println!("  {CYAN}/looprm <id>{RESET}    Remove a loop");
+                println!("  {CYAN}/loopoff <id>{RESET}   Disable a loop");
+                println!("  {CYAN}/loopon <id>{RESET}    Enable a loop");
+                println!();
                 println!("{BOLD}Info:{RESET}");
                 println!("  {CYAN}/ps{RESET}             List processes");
                 println!("  {CYAN}/stats{RESET}          Kernel stats");
-                println!("  {CYAN}/jinxes{RESET}         List available tools");
-                println!("  {CYAN}/history{RESET}        Show conversation history");
+                println!("  {CYAN}/jinxes{RESET}         List available jinxes");
+                println!("  {CYAN}/help{RESET}           Show this help");
+                println!("  {CYAN}/quit{RESET} | {CYAN}/exit{RESET}   Exit npcsh");
                 println!();
-                println!("{BOLD}Config:{RESET}");
-                println!("  {CYAN}/set key=val{RESET}    Set model, provider, mode");
-                println!("  {CYAN}/clear{RESET}          Clear conversation");
+                println!("{BOLD}Jinxes:{RESET}");
+                println!("  Jinxes are invoked by name without a leading slash.");
+                println!("  Use {CYAN}/jinxes{RESET} to browse them.");
                 println!();
                 println!("{BOLD}Shell:{RESET}");
                 println!("  Any text is sent to the current NPC.");
                 println!("  In {CYAN}/cmd{RESET} mode, input runs as bash first.");
-                println!("  Tab completes @npcs and /commands.");
+                println!("  Tab completes @npcs, /commands, and jinx names.");
                 true
             }
 
@@ -756,38 +822,19 @@ async fn main() -> Result<()> {
         if input.starts_with('/') {
             let parts: Vec<&str> = input[1..].splitn(2, ' ').collect();
             let cmd_name = parts[0];
-            let args_str = parts.get(1).unwrap_or(&"");
-
-            if kernel.jinxes.contains_key(cmd_name) {
-                let mut args = std::collections::HashMap::new();
-
-                if !args_str.is_empty() {
-                    let mut has_kv = false;
-                    for part in args_str.split_whitespace() {
-                        if let Some((k, v)) = part.split_once('=') {
-                            args.insert(k.to_string(), v.to_string());
-                            has_kv = true;
-                        }
-                    }
-                    if !has_kv {
-                        if let Some(first_input) = kernel.jinxes[cmd_name].inputs.first() {
-                            args.insert(first_input.name.clone(), args_str.to_string());
-                        }
-                    }
-                }
-
-                match kernel.syscall(current_pid, cmd_name, &args).await {
-                    Ok(output) => {
-                        if !output.is_empty() {
-                            println!("{}", output);
-                        }
-                    }
-                    Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
-                }
-            } else {
-                eprintln!("{RED}Unknown command: /{cmd_name}{RESET}");
-            }
+            eprintln!("{RED}Unknown command: /{cmd_name}{RESET}");
             continue;
+        }
+
+        // Invoke jinxes by bare name (no leading slash).
+        {
+            let parts: Vec<&str> = input.splitn(2, ' ').collect();
+            let cmd_name = parts[0];
+            if kernel.jinxes.contains_key(cmd_name) {
+                let args_str = parts.get(1).unwrap_or(&"");
+                run_jinx_command(&mut kernel, current_pid, cmd_name, args_str).await;
+                continue;
+            }
         }
 
         if input.starts_with("cd ") || input == "cd" {
