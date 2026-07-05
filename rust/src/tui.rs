@@ -1021,60 +1021,6 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
     Ok(())
 }
 
-// ────────────────────────────────
-// /ask_form TUI
-// ────────────────────────────────
-
-pub fn run_ask_form_tui(prompt: &str) -> Result<()> {
-    let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
-    let mut out = io::stdout();
-
-    let prompt_text = if prompt.is_empty() { "Enter value:" } else { prompt };
-    let mut buf = String::new();
-    let mut cursor: usize = 0;
-
-    loop {
-        let (cols, rows) = term_size();
-        clear_all(&mut out);
-        header_line(&mut out, cols, " ask_form ");
-        hr(&mut out, cols, 2);
-
-        let wrapped = wrap_text(prompt_text, cols.saturating_sub(4));
-        for (i, line) in wrapped.iter().enumerate() {
-            wline(&mut out, 4 + i, &format!("  {}", line));
-        }
-        let input_row = 6 + wrapped.len();
-        wline(&mut out, input_row, &format!("  > {}", buf));
-        let _ = write!(out, "\x1b[{};{}H", input_row, 6 + cursor);
-
-        hr(&mut out, cols, rows - 2);
-        footer_line(&mut out, cols, rows, " [Enter] Submit  [Esc] Cancel ");
-        let _ = out.flush();
-
-        if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
-            match key.code {
-                KeyCode::Esc => { return Ok(()); }
-                KeyCode::Enter => {
-                    println!("{}", buf);
-                    return Ok(());
-                }
-                KeyCode::Char(c) => {
-                    buf.insert(cursor, c);
-                    cursor += 1;
-                }
-                KeyCode::Backspace if cursor > 0 => {
-                    cursor -= 1;
-                    buf.remove(cursor);
-                }
-                KeyCode::Left if cursor > 0 => cursor -= 1,
-                KeyCode::Right if cursor < buf.len() => cursor += 1,
-                _ => {}
-            }
-        }
-    }
-}
-
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     for para in text.split('\n') {
