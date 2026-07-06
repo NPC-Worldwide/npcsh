@@ -201,6 +201,7 @@ pub fn run_config_tui() -> Result<()> {
             if key.kind == KeyEventKind::Release { continue; }
             match key.code {
                 KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
+                KeyCode::Char('q') if !editing => break,
                 KeyCode::Esc => {
                     if editing {
                         editing = false;
@@ -1538,6 +1539,344 @@ pub fn run_agent_dashboard_tui(
                     let id = jobs[sel].id;
                     registry.lock().unwrap().remove(id);
                     if sel >= jobs.len().saturating_sub(1) { sel = jobs.len().saturating_sub(2); }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+// ────────────────────────────────
+// /memories TUI
+// ────────────────────────────────
+
+pub fn run_memories_tui() -> Result<()> {
+    use rusqlite::params;
+
+    #[derive(Clone, Debug)]
+    struct Memory {
+        id: i64,
+        created_at: String,
+        npc: String,
+        team: String,
+        scope: String,
+        original: String,
+        final_mem: Option<String>,
+        status: String,
+    }
+
+    impl Memory {
+        fn content(&self) -> String {
+            self.final_mem.clone().unwrap_or_else(|| self.original.clone())
+        }
+    }
+
+    let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
+    let mut out = io::stdout();
+
+    let db_path = std::env::var("NPCSH_DB_PATH")
+        .map(|p| shellexpand::tilde(&p).to_string())
+        .unwrap_or_else(|_| shellexpand::tilde("~/npcsh_history.db").to_string());
+
+    let conn = match rusqlite::Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return Err(npcrs::NpcError::Other(format!("Could not open memory DB: {e}")));
+        }
+    };
+
+    fn status_icon(s: &str) -> &'static str {
+        let s = s.to_lowercase();
+        if s.contains("approved") { "\x1b[1;32m+\x1b[0m" }
+        else if s.contains("edited") { "\x1b[1;36m~\x1b[0m" }
+        else if s.contains("rejected") { "\x1b[1;31m-\x1b[0m" }
+        else if s.contains("pending") { "\x1b[1;33m*\x1b[0m" }
+        else { "\x1b[90m?\x1b[0m" }
+    }
+    fn status_color(s: &str) -> &'static str {
+        let s = s.to_lowercase();
+        if s.contains("approved") { "32" }
+        else if s.contains("edited") { "36" }
+        else if s.contains("rejected") { "31" }
+        else if s.contains("pending") { "33" }
+        else { "0" }
+    }
+    fn format_date(dt: &str) -> String {
+        dt.chars().take(16).collect()
+    }
+
+    fn fetch_statuses(conn: &rusqlite::Connection) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut stmt = match conn.prepare("SELECT DISTINCT status FROM memory_lifecycle ORDER BY status") {
+            Ok(s) => s,
+            Err(_) => return out,
+        };
+        let rows = stmt.query_map(params![], |row| row.get::<_, String>(0));
+        if let Ok(r) = rows {
+            out.extend(r.flatten());
+        }
+        out
+    }
+
+    fn load_memories(conn: &rusqlite::Connection, status_filter: Option<&str>) -> Vec<Memory> {
+        let mut memories = Vec::new();
+        let sql = match status_filter {
+            Some(f) => format!(
+                "SELECT id, created_at, npc, team, directory_path, initial_memory, final_memory, status
+                 FROM memory_lifecycle WHERE status = '{}' ORDER BY created_at DESC LIMIT 200",
+                f.replace('\'', "''")
+            ),
+            None => String::from(
+                "SELECT id, created_at, npc, team, directory_path, initial_memory, final_memory, status
+                 FROM memory_lifecycle ORDER BY created_at DESC LIMIT 200"
+            ),
+        };
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(_) => return memories,
+        };
+        let rows = stmt.query_map([], |row| {
+            Ok(Memory {
+                id: row.get(0)?,
+                created_at: row.get(1)?,
+                npc: row.get(2).unwrap_or_default(),
+                team: row.get(3).unwrap_or_default(),
+                scope: row.get(4).unwrap_or_default(),
+                original: row.get(5).unwrap_or_default(),
+                final_mem: row.get(6).ok(),
+                status: row.get(7).unwrap_or_default(),
+            })
+        });
+        if let Ok(r) = rows {
+            memories.extend(r.flatten());
+        }
+        memories
+    }
+
+    fn update_status(conn: &rusqlite::Connection, id: i64, status: &str, final_mem: Option<&str>) {
+        if let Some(fm) = final_mem {
+            let _ = conn.execute(
+                "UPDATE memory_lifecycle SET status = ?1, final_memory = ?2 WHERE id = ?3",
+                params![status, fm, id],
+            );
+        } else {
+            let _ = conn.execute(
+                "UPDATE memory_lifecycle SET status = ?1 WHERE id = ?2",
+                params![status, id],
+            );
+        }
+    }
+
+    let mut db_statuses = fetch_statuses(&conn);
+    let mut tabs: Vec<Option<String>> = vec![None];
+    tabs.extend(db_statuses.iter().cloned().map(Some));
+    // Move pending to the front.
+    if let Some(idx) = tabs.iter().position(|t| t.as_deref().map(|s| s.to_lowercase().contains("pending")).unwrap_or(false)) {
+        let pending = tabs.remove(idx);
+        tabs.insert(1, pending);
+    }
+    let tab_names: Vec<String> = tabs.iter().map(|t| t.clone().unwrap_or_else(|| "All".to_string())).collect();
+
+    let mut tab: usize = 0;
+    let mut sel: usize = 0;
+    let mut scroll: usize = 0;
+    let mut preview: bool = false;
+    let mut msg: String = String::new();
+    let mut msg_color: &str = "33";
+    let mut memories: Vec<Memory> = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
+    let mut approved_count: usize = 0;
+    let mut rejected_count: usize = 0;
+
+    fn clamp_selection(sel: &mut usize, scroll: &mut usize, count: usize, visible: usize) {
+        if count == 0 {
+            *sel = 0;
+            *scroll = 0;
+            return;
+        }
+        if *sel >= count { *sel = count - 1; }
+        if *sel < *scroll { *scroll = *sel; }
+        else if *sel >= *scroll + visible { *scroll = sel.saturating_sub(visible) + 1; }
+    }
+
+    fn wrap(text: &str, width: usize) -> Vec<String> {
+        let mut lines = Vec::new();
+        for para in text.split('\n') {
+            let mut current = String::new();
+            for word in para.split_whitespace() {
+                if current.is_empty() {
+                    current.push_str(word);
+                } else if current.len() + 1 + word.len() <= width.saturating_sub(2) {
+                    current.push(' ');
+                    current.push_str(word);
+                } else {
+                    lines.push(current);
+                    current = word.to_string();
+                }
+            }
+            if !current.is_empty() {
+                lines.push(current);
+            }
+            lines.push(String::new());
+        }
+        lines
+    }
+
+    loop {
+        let (cols, rows) = term_size();
+        let body_h = rows.saturating_sub(7).max(1);
+        clear_all(&mut out);
+
+        let stats = if approved_count > 0 || rejected_count > 0 {
+            format!("  [+{} -{}]", approved_count, rejected_count)
+        } else {
+            String::new()
+        };
+        header_line(&mut out, cols, &format!(" MEMORIES ({}){} ", memories.len(), stats));
+
+        // Tabs
+        let mut tab_str = String::new();
+        for (i, name) in tab_names.iter().enumerate() {
+            if i == tab {
+                tab_str.push_str(&format!("\x1b[1;7m [{}] \x1b[0m", name));
+            } else {
+                tab_str.push_str(&format!(" \x1b[90m{}\x1b[0m ", name));
+            }
+        }
+        wline(&mut out, 2, &format!(" {}", tab_str));
+        hr(&mut out, cols, 3);
+
+        if preview {
+            if let Some(mem) = memories.get(sel) {
+                let sc = status_color(&mem.status);
+                wline(&mut out, 5, &format!("\x1b[1m Memory #{}  \x1b[{}m[{}]\x1b[0m", mem.id, sc, mem.status));
+                wline(&mut out, 6, &format!("\x1b[90m Date: {}  NPC: {}  Team: {}\x1b[0m",
+                    format_date(&mem.created_at), mem.npc, mem.team));
+                wline(&mut out, 7, &format!("\x1b[90m Scope: {}\x1b[0m", mem.scope.chars().take(60).collect::<String>()));
+                wline(&mut out, 9, "\x1b[1m Content:\x1b[0m");
+                let content = mem.content();
+                let mut r = 11;
+                for line in wrap(&content, cols.saturating_sub(5)) {
+                    if r >= rows - 3 { break; }
+                    wline(&mut out, r, &format!("   {}", line.chars().take(cols - 5).collect::<String>()));
+                    r += 1;
+                }
+                if mem.final_mem.as_ref().map(|f| f != &mem.original).unwrap_or(false) {
+                    if r < rows - 3 {
+                        wline(&mut out, r, "");
+                        r += 1;
+                    }
+                    if r < rows - 3 {
+                        wline(&mut out, r, "\x1b[90;1m Original:\x1b[0m");
+                        r += 1;
+                    }
+                    for line in wrap(&mem.original, cols.saturating_sub(5)).iter().take(3) {
+                        if r >= rows - 3 { break; }
+                        wline(&mut out, r, &format!("\x1b[90m   {}\x1b[0m", line.chars().take(cols - 5).collect::<String>()));
+                        r += 1;
+                    }
+                }
+            }
+        } else {
+            for r in 0..body_h {
+                let idx = scroll + r;
+                let row = 4 + r;
+                if idx >= memories.len() {
+                    wline(&mut out, row, "");
+                    continue;
+                }
+                let mem = &memories[idx];
+                let icon = status_icon(&mem.status);
+                let date = format_date(&mem.created_at);
+                let npc = &mem.npc;
+                let content = mem.content().replace('\n', " ").chars().take(cols.saturating_sub(35)).collect::<String>();
+                let line = format!("{} {} {} {} {}", icon, date, npc.chars().take(8).collect::<String>(), " ".repeat(9usize.saturating_sub(npc.chars().take(8).count())), content);
+                if idx == sel {
+                    wline(&mut out, row, &format!("\x1b[7m {} \x1b[0m", line.pad(cols)));
+                } else {
+                    wline(&mut out, row, &format!(" {}", line));
+                }
+            }
+            if memories.is_empty() {
+                wline(&mut out, rows / 2, "  \x1b[90mNo memories found for this filter.\x1b[0m");
+            }
+        }
+
+        // Scroll indicator
+        if memories.len() > body_h && !preview {
+            let total = (memories.len() - body_h).max(1);
+            let pct = ((scroll as f64) / (total as f64) * 100.0) as usize;
+            let _ = write!(out, "\x1b[4;{}H\x1b[90m[{}%]\x1b[0m", cols.saturating_sub(6), pct);
+        }
+
+        hr(&mut out, cols, rows - 2);
+        wline(&mut out, rows - 1, &format!(" \x1b[{};1m{}\x1b[0m", msg_color, msg.chars().take(cols - 2).collect::<String>()));
+        let foot = if preview {
+            " [Esc] Back  [a] Approve  [x] Reject  [j/k] Prev/Next  [q] Quit "
+        } else {
+            " [Tab] Filter  [j/k] Nav  [Enter] Preview  [a] Approve  [x] Reject  [q] Quit "
+        };
+        footer_line(&mut out, cols, rows, foot);
+        let _ = out.flush();
+
+        if let Ok(Event::Key(key)) = event::read() {
+            if key.kind == KeyEventKind::Release { continue; }
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    if preview { preview = false; msg.clear(); }
+                    else { break; }
+                }
+                KeyCode::Tab => {
+                    tab = (tab + 1) % tabs.len();
+                    sel = 0; scroll = 0; preview = false; msg.clear();
+                    memories = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
+                }
+                KeyCode::BackTab => {
+                    tab = if tab == 0 { tabs.len() - 1 } else { tab - 1 };
+                    sel = 0; scroll = 0; preview = false; msg.clear();
+                    memories = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if preview {
+                        if sel + 1 < memories.len() { sel += 1; }
+                    } else {
+                        if sel + 1 < memories.len() { sel += 1; }
+                        clamp_selection(&mut sel, &mut scroll, memories.len(), body_h);
+                    }
+                    msg.clear();
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if sel > 0 { sel -= 1; }
+                    if !preview { clamp_selection(&mut sel, &mut scroll, memories.len(), body_h); }
+                    msg.clear();
+                }
+                KeyCode::Enter => {
+                    if !memories.is_empty() && !preview {
+                        preview = true;
+                        msg.clear();
+                    }
+                }
+                KeyCode::Char('a') => {
+                    if let Some(mem) = memories.get(sel) {
+                        let content = mem.content();
+                        update_status(&conn, mem.id, "human-approved", Some(&content));
+                        approved_count += 1;
+                        msg = format!("APPROVED #{}", mem.id);
+                        msg_color = "32";
+                        memories = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
+                        clamp_selection(&mut sel, &mut scroll, memories.len(), body_h);
+                    }
+                }
+                KeyCode::Char('x') => {
+                    if let Some(mem) = memories.get(sel) {
+                        update_status(&conn, mem.id, "human-rejected", None);
+                        rejected_count += 1;
+                        msg = format!("REJECTED #{}", mem.id);
+                        msg_color = "31";
+                        memories = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
+                        clamp_selection(&mut sel, &mut scroll, memories.len(), body_h);
+                    }
                 }
                 _ => {}
             }
