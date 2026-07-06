@@ -1,12 +1,13 @@
 
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
-use npcrs::process::ProcessState;
+use npcrs::process::{Capabilities, ProcessState};
 use npcrs::{calculate_cost, Message};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 mod markdown;
 mod stream_client;
@@ -98,21 +99,11 @@ struct Completion {
 
 impl NpcHelper {
     fn new(npc_names: Vec<String>, jinx_names: Vec<String>) -> Self {
-        let commands = vec![
-            "/agent", "/chat", "/cmd",
-            "/switch", "/kill",
-            "/ps", "/stats", "/history", "/clear",
-            "/help", "/quit", "/exit",
-            "/set", "/jinxes",
-            "/gitt", "/config", "/model", "/setup", "/team",
-            "/ask_form", "/commit", "/reattach",
-            "/cron", "/loop", "/loops", "/looprm", "/loopon", "/loopoff",
-            "/tutorial",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-
+        let commands = CORE_COMMANDS
+            .iter()
+            .filter(|c| c.name.starts_with('/'))
+            .map(|c| c.name.to_string())
+            .collect();
         Self { npc_names, commands, jinx_names }
     }
 
@@ -205,6 +196,121 @@ impl std::fmt::Display for Mode {
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Core slash-command registry
+//
+// Single source of truth for built-in slash commands.  /help, tab completion,
+// startup banner, and dispatch are all derived from this table so the list is
+// never maintained by hand.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CoreCmd {
+    // Modes
+    Agent,
+    Chat,
+    CmdMode,
+    // NPCs
+    Kill,
+    // System / Config
+    Clear,
+    Config,
+    History,
+    Memories,
+    Model,
+    Reattach,
+    Set,
+    Setup,
+    Team,
+    // Tools
+    Commit,
+    Gitt,
+    // Loops
+    Cron,
+    Loop,
+    LoopDemo,
+    LoopOff,
+    LoopOn,
+    LoopRm,
+    Loops,
+    // Jinx-backed system helpers  (string = jinx name to invoke)
+    Jinx(&'static str),
+    // Info
+    Exit,
+    Help,
+    Jinxes,
+    Ps,
+    Stats,
+    Tutorial,
+}
+
+struct CommandDef {
+    name: &'static str,
+    category: &'static str,
+    description: &'static str,
+    cmd: CoreCmd,
+}
+
+const CORE_COMMANDS: &[CommandDef] = &[
+    // Info
+    CommandDef { name: "exit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
+    CommandDef { name: "quit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
+    CommandDef { name: "/exit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
+    CommandDef { name: "/help", category: "Info", description: "Show this help", cmd: CoreCmd::Help },
+    CommandDef { name: "/jinxes", category: "Info", description: "List available jinxes", cmd: CoreCmd::Jinxes },
+    CommandDef { name: "/ps", category: "Info", description: "List processes", cmd: CoreCmd::Ps },
+    CommandDef { name: "/quit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
+    CommandDef { name: "/stats", category: "Info", description: "Kernel stats", cmd: CoreCmd::Stats },
+    CommandDef { name: "/tutorial", category: "Info", description: "Run interactive tutorial", cmd: CoreCmd::Tutorial },
+    // Modes
+    CommandDef { name: "/agent", category: "Modes", description: "Full agent mode (tools + bash + LLM)", cmd: CoreCmd::Agent },
+    CommandDef { name: "/chat", category: "Modes", description: "Chat-only mode (LLM, no tools)", cmd: CoreCmd::Chat },
+    CommandDef { name: "/cmd", category: "Modes", description: "Command mode (bash first, LLM fallback)", cmd: CoreCmd::CmdMode },
+    // NPCs
+    CommandDef { name: "/kill", category: "NPCs", description: "Kill current process", cmd: CoreCmd::Kill },
+    // System / Config
+    CommandDef { name: "/clear", category: "System / Config", description: "Clear conversation", cmd: CoreCmd::Clear },
+    CommandDef { name: "/config", category: "System / Config", description: "Configuration TUI", cmd: CoreCmd::Config },
+    CommandDef { name: "/history", category: "System / Config", description: "Show conversation history", cmd: CoreCmd::History },
+    CommandDef { name: "/memories", category: "System / Config", description: "Browse memory lifecycle TUI", cmd: CoreCmd::Memories },
+    CommandDef { name: "/model", category: "System / Config", description: "Model selection TUI", cmd: CoreCmd::Model },
+    CommandDef { name: "/reattach", category: "System / Config", description: "Reattach to files/sessions", cmd: CoreCmd::Reattach },
+    CommandDef { name: "/set", category: "System / Config", description: "Set model, provider, or mode", cmd: CoreCmd::Set },
+    CommandDef { name: "/setup", category: "System / Config", description: "First-time setup TUI", cmd: CoreCmd::Setup },
+    CommandDef { name: "/team", category: "System / Config", description: "Team management TUI", cmd: CoreCmd::Team },
+    // Tools
+    CommandDef { name: "/commit", category: "Tools", description: "Commit helper TUI", cmd: CoreCmd::Commit },
+    CommandDef { name: "/gitt", category: "Tools", description: "Git TUI", cmd: CoreCmd::Gitt },
+    // Loops
+    CommandDef { name: "/cron", category: "Loops", description: "Cron management", cmd: CoreCmd::Cron },
+    CommandDef { name: "/loop", category: "Loops", description: "Create a loop", cmd: CoreCmd::Loop },
+    CommandDef { name: "/loop_demo", category: "Loops", description: "Add a demo heartbeat loop", cmd: CoreCmd::LoopDemo },
+    CommandDef { name: "/loopoff", category: "Loops", description: "Disable a loop", cmd: CoreCmd::LoopOff },
+    CommandDef { name: "/loopon", category: "Loops", description: "Enable a loop", cmd: CoreCmd::LoopOn },
+    CommandDef { name: "/looprm", category: "Loops", description: "Remove a loop", cmd: CoreCmd::LoopRm },
+    CommandDef { name: "/loops", category: "Loops", description: "List loops", cmd: CoreCmd::Loops },
+    // System Commands (backed by existing jinxes)
+    CommandDef { name: "/doctor", category: "System Commands", description: "Diagnose and auto-fix common issues", cmd: CoreCmd::Jinx("doctor") },
+    CommandDef { name: "/init", category: "System Commands", description: "Initialize / reinitialize npcsh", cmd: CoreCmd::Jinx("init") },
+    CommandDef { name: "/nsync", category: "System Commands", description: "Sync npcsh state", cmd: CoreCmd::Jinx("nsync") },
+    CommandDef { name: "/refresh", category: "System Commands", description: "Refresh npcsh (alias of reload)", cmd: CoreCmd::Jinx("reload") },
+    CommandDef { name: "/reload", category: "System Commands", description: "Reload npcsh state", cmd: CoreCmd::Jinx("reload") },
+    CommandDef { name: "/shh", category: "System Commands", description: "Toggle quiet mode", cmd: CoreCmd::Jinx("shh") },
+    CommandDef { name: "/update", category: "System Commands", description: "Update npcsh", cmd: CoreCmd::Jinx("update") },
+    CommandDef { name: "/usage", category: "System Commands", description: "Show usage info", cmd: CoreCmd::Jinx("usage") },
+    CommandDef { name: "/verbose", category: "System Commands", description: "Toggle verbose mode", cmd: CoreCmd::Jinx("verbose") },
+];
+
+const COMMAND_CATEGORIES: &[&str] = &[
+    "Modes",
+    "NPCs",
+    "System / Config",
+    "Tools",
+    "Loops",
+    "System Commands",
+    "Info",
+];
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -370,6 +476,7 @@ async fn main() -> Result<()> {
     let mut session_output_tokens: u64 = 0;
     let mut session_cost: f64 = 0.0;
     let session_start = std::time::Instant::now();
+    let mut input_queue: VecDeque<String> = VecDeque::new();
 
     loop {
         let npc_name = kernel
@@ -441,27 +548,32 @@ async fn main() -> Result<()> {
             ).await;
         }
 
-        let input = match readline_raw(
-            &prompt,
-            &mut history,
-            &mut history_index,
-            &helper,
-            &mut kernel,
-            current_pid,
-        ) {
-            Ok(ReadlineResult::Input(line)) => {
-                history.push(line.clone());
-                history_index = None;
-                line
-            }
-            Ok(ReadlineResult::Cancel) => continue,
-            Ok(ReadlineResult::Eof) => {
-                println!();
-                break;
-            }
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                break;
+        let input = if let Some(queued) = input_queue.pop_front() {
+            println!("{}{}", prompt, queued);
+            queued
+        } else {
+            match readline_raw(
+                &prompt,
+                &mut history,
+                &mut history_index,
+                &helper,
+                &mut kernel,
+                current_pid,
+            ) {
+                Ok(ReadlineResult::Input(line)) => {
+                    history.push(line.clone());
+                    history_index = None;
+                    line
+                }
+                Ok(ReadlineResult::Cancel) => continue,
+                Ok(ReadlineResult::Eof) => {
+                    println!();
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    break;
+                }
             }
         };
 
@@ -473,312 +585,33 @@ async fn main() -> Result<()> {
 
 
         let cmd_token = input.split_whitespace().next().unwrap_or("");
-        let handled = match cmd_token {
-            "exit" | "quit" | "/quit" | "/exit" => break,
 
-            "/ps" => {
-                for p in kernel.ps() {
-                    let state_color = match p.state {
-                        npcrs::process::ProcessState::Running => GREEN,
-                        npcrs::process::ProcessState::Blocked => YELLOW,
-                        npcrs::process::ProcessState::Dead => RED,
-                        _ => DIM,
-                    };
-                    println!(
-                        "  {CYAN}@{:<12}{RESET} pid:{:<3} {state_color}{:?}{RESET}  tokens:{}/{} cost:${:.4} turns:{}",
-                        p.npc.name, p.pid, p.state,
-                        p.usage.total_input_tokens, p.usage.total_output_tokens,
-                        p.usage.total_cost_usd, p.usage.total_turns,
-                    );
-                }
-                true
+        // Resolve slash commands through the CORE_COMMANDS registry.
+        let maybe_core = CORE_COMMANDS.iter().find(|c| c.name == cmd_token).map(|c| c.cmd);
+        if let Some(cmd) = maybe_core {
+            let rest = input.strip_prefix(cmd_token).unwrap_or("").trim();
+            match dispatch_core_command(
+                cmd,
+                rest,
+                &mut kernel,
+                &mut current_pid,
+                &mut mode,
+                &cron_registry,
+            )
+            .await
+            {
+                CoreDispatch::Break => break,
+                CoreDispatch::Handled => continue,
+                CoreDispatch::NotHandled => {}
             }
-
-            "/stats" => {
-                let s = kernel.stats();
-                println!(
-                    "{BOLD}Kernel Stats{RESET}\n  uptime: {}s\n  processes: {} (run:{} blk:{} dead:{})\n  tokens: {} (in+out)\n  cost: ${:.4}\n  jinxes: {}",
-                    s.uptime_secs, s.total_processes, s.running, s.blocked, s.dead,
-                    s.total_tokens, s.total_cost_usd, s.jinx_count,
-                );
-                true
-            }
-
-            "/help" => {
-                println!("{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n", env!("NPCSH_VERSION"));
-                println!("{BOLD}Modes:{RESET}");
-                println!("  {CYAN}/agent{RESET}          Full agent mode (tools + bash + LLM)");
-                println!("  {CYAN}/chat{RESET}           Chat-only mode (LLM, no tools)");
-                println!("  {CYAN}/cmd{RESET}            Command mode (bash first, LLM fallback)");
-                println!();
-                println!("{BOLD}NPC Commands:{RESET}");
-                println!("  {CYAN}@npc{RESET}            Switch to NPC process");
-                println!("  {CYAN}@npc command{RESET}    Delegate command to NPC");
-                println!("  {CYAN}/switch <npc>{RESET}   Switch to NPC process");
-                println!("  {CYAN}/kill{RESET}           Kill current process");
-                println!();
-                println!("{BOLD}System / Config:{RESET}");
-                println!("  {CYAN}/set key=val{RESET}    Set model, provider, mode");
-                println!("  {CYAN}/config{RESET}         Configuration TUI");
-                println!("  {CYAN}/model{RESET}          Model selection TUI");
-                println!("  {CYAN}/setup{RESET}          First-time setup TUI");
-                println!("  {CYAN}/team{RESET}           Team management TUI");
-                println!("  {CYAN}/clear{RESET}          Clear conversation");
-                println!("  {CYAN}/history{RESET}        Show conversation history");
-                println!("  {CYAN}/reattach{RESET}       Reattach to files/sessions");
-                println!();
-                println!("{BOLD}Tools:{RESET}");
-                println!("  {CYAN}/gitt{RESET}           Git TUI");
-                println!("  {CYAN}/ask_form{RESET}       Ask form TUI");
-                println!("  {CYAN}/commit{RESET}         Commit helper TUI");
-                println!();
-                println!("{BOLD}Loops / Scheduler:{RESET}");
-                println!("  {CYAN}/cron{RESET}           Cron management");
-                println!("  {CYAN}/loop{RESET}           Create a loop");
-                println!("  {CYAN}/loops{RESET}          List loops");
-                println!("  {CYAN}/looprm <id>{RESET}    Remove a loop");
-                println!("  {CYAN}/loopoff <id>{RESET}   Disable a loop");
-                println!("  {CYAN}/loopon <id>{RESET}    Enable a loop");
-                println!();
-                println!("{BOLD}Info:{RESET}");
-                println!("  {CYAN}/ps{RESET}             List processes");
-                println!("  {CYAN}/stats{RESET}          Kernel stats");
-                println!("  {CYAN}/jinxes{RESET}         List available jinxes");
-                println!("  {CYAN}/help{RESET}           Show this help");
-                println!("  {CYAN}/quit{RESET} | {CYAN}/exit{RESET}   Exit npcsh");
-                println!();
-                println!("{BOLD}Jinxes:{RESET}");
-                println!("  Jinxes are invoked by name without a leading slash.");
-                println!("  Use {CYAN}/jinxes{RESET} to browse them.");
-                println!();
-                println!("{BOLD}Shell:{RESET}");
-                println!("  Any text is sent to the current NPC.");
-                println!("  In {CYAN}/cmd{RESET} mode, input runs as bash first.");
-                println!("  Tab completes @npcs, /commands, and jinx names.");
-                true
-            }
-
-            "/agent" => {
-                mode = Mode::Agent;
-                eprintln!("{GREEN}Switched to agent mode{RESET}");
-                true
-            }
-            "/chat" => {
-                mode = Mode::Chat;
-                eprintln!("{GREEN}Switched to chat mode{RESET}");
-                true
-            }
-            "/cmd" => {
-                mode = Mode::Cmd;
-                eprintln!("{GREEN}Switched to cmd mode{RESET}");
-                true
-            }
-            "/switch" => {
-                let args = input.strip_prefix("/switch").unwrap_or("").trim();
-                if args.is_empty() {
-                    eprintln!("{RED}Usage: /switch <npc>{RESET}");
-                } else if let Some(proc) = kernel.find_by_name(args) {
-                    current_pid = proc.pid;
-                    eprintln!("{GREEN}Switched to @{args} (pid:{current_pid}){RESET}");
-                } else {
-                    eprintln!("{RED}NPC '{args}' not found.{RESET}");
-                }
-                true
-            }
-
-            "/jinxes" => {
-                if let Err(e) = tui::run_jinxes_tui(&mut kernel) {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                }
-                true
-            }
-
-            "/clear" => {
-                if let Some(p) = kernel.get_process_mut(current_pid) {
-                    p.messages.clear();
-                    eprintln!("{GREEN}Conversation cleared{RESET}");
-                }
-                true
-            }
-
-            "/history" => {
-                if let Some(p) = kernel.get_process(current_pid) {
-                    if p.messages.is_empty() {
-                        println!("{DIM}(no messages){RESET}");
-                    } else {
-                        for m in &p.messages {
-                            let role_color = match m.role.as_str() {
-                                "user" => CYAN,
-                                "assistant" => GREEN,
-                                _ => DIM,
-                            };
-                            let content = m.content.as_deref().unwrap_or("");
-                            let preview = if content.len() > 80 {
-                                format!("{}...", &content[..80])
-                            } else {
-                                content.to_string()
-                            };
-                            println!("  {role_color}{:<10}{RESET} {}", m.role, preview);
-                        }
-                    }
-                }
-                true
-            }
-
-            "/reattach" => {
-                let args = input.strip_prefix("/reattach").unwrap_or("").trim();
-                let show_all = args == "all";
-                let filter = if show_all {
-                    None
-                } else if args.is_empty() {
-                    Some(std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".to_string()))
-                } else {
-                    Some(shellexpand::tilde(args).to_string())
-                };
-                if let Err(e) = run_reattach(&mut kernel, current_pid, filter.as_deref()) {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                }
-                true
-            }
-
-            "/gitt" => {
-                let args = input.strip_prefix("/gitt").unwrap_or("").trim();
-                let path = if args.is_empty() { None } else { Some(args) };
-                if let Err(e) = tui::run_gitt_tui(path) {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                }
-                true
-            }
-
-            "/config" => {
-                if let Err(e) = tui::run_config_tui() {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                }
-                true
-            }
-
-            "/model" => {
-                if let Err(e) = tui::run_model_tui() {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                }
-                true
-            }
-
-            "/setup" => {
-                if let Err(e) = tui::run_setup_tui() {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                }
-                true
-            }
-
-            "/team" => {
-                if let Err(e) = tui::run_team_tui(&mut kernel) {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                }
-                true
-            }
-
-            "/ask_form" => {
-                let args = input.strip_prefix("/ask_form").unwrap_or("").trim();
-                if let Err(e) = tui::run_ask_form_tui(args) {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                }
-                true
-            }
-
-            "/commit" => {
-                if let Err(e) = tui::run_commit_tui() {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                }
-                true
-            }
-
-            "/kill" => {
-                if current_pid == 0 {
-                    eprintln!("{RED}Cannot kill init (pid 0){RESET}");
-                } else {
-                    let name = kernel.get_process(current_pid).map(|p| p.npc.name.clone());
-                    kernel.kill(current_pid, 0).ok();
-                    current_pid = 0;
-                    eprintln!("{YELLOW}Killed @{} — switched to init{RESET}", name.unwrap_or_default());
-                }
-                true
-            }
-
-            "/cron" => {
-                let rest = input.strip_prefix("/cron").unwrap_or("").trim();
-                handle_cron_command(rest, &mut kernel, &cron_registry, current_pid).await;
-                true
-            }
-
-            "/loop" => {
-                let rest = input.strip_prefix("/loop").unwrap_or("").trim();
-                handle_loop_command(rest, &mut kernel, &cron_registry, current_pid).await;
-                true
-            }
-
-            "/loops" => {
-                let rest = input.strip_prefix("/loops").unwrap_or("").trim();
-                handle_jobs_command(rest, &mut kernel, &cron_registry, current_pid).await;
-                true
-            }
-
-            "/looprm" => {
-                let rest = input.strip_prefix("/looprm").unwrap_or("").trim();
-                if let Ok(id) = rest.parse::<u32>() {
-                    if cron_registry.lock().unwrap().remove(id) {
-                        eprintln!("{GREEN}Removed loop {id}{RESET}");
-                    } else {
-                        eprintln!("{RED}No loop with id {id}{RESET}");
-                    }
-                } else {
-                    eprintln!("Usage: /looprm <id>");
-                }
-                true
-            }
-
-            "/loopoff" => {
-                let rest = input.strip_prefix("/loopoff").unwrap_or("").trim();
-                if let Ok(id) = rest.parse::<u32>() {
-                    if cron_registry.lock().unwrap().enable(id, false) {
-                        eprintln!("{GREEN}Disabled loop {id}{RESET}");
-                    } else {
-                        eprintln!("{RED}No loop with id {id}{RESET}");
-                    }
-                } else {
-                    eprintln!("Usage: /loopoff <id>");
-                }
-                true
-            }
-
-            "/loopon" => {
-                let rest = input.strip_prefix("/loopon").unwrap_or("").trim();
-                if let Ok(id) = rest.parse::<u32>() {
-                    if cron_registry.lock().unwrap().enable(id, true) {
-                        eprintln!("{GREEN}Enabled loop {id}{RESET}");
-                    } else {
-                        eprintln!("{RED}No loop with id {id}{RESET}");
-                    }
-                } else {
-                    eprintln!("Usage: /loopon <id>");
-                }
-                true
-            }
-
-            "/tutorial" => {
-                if let Err(e) = tutorial::run_tutorial_tui(&cron_registry, &mut kernel) {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                }
-                true
-            }
-
-            _ => false,
-        };
-
-        if handled {
-            continue;
         }
 
+        // /set without a space (single token) isn't matched above; handle it here.
+        if input == "/set" {
+            eprintln!("Usage: /set key=value");
+            eprintln!("  model=gpt-4o  provider=openai  mode=chat");
+            continue;
+        }
         if input.starts_with("/set ") {
             let rest = input.strip_prefix("/set ").unwrap().trim();
             handle_set_command(rest, &mut kernel, current_pid, &mut mode);
@@ -800,9 +633,17 @@ async fn main() -> Result<()> {
                     current_pid = proc.pid;
                     eprintln!("{GREEN}Switched to @{target} (pid:{current_pid}){RESET}");
                 } else {
-                    eprintln!("{RED}NPC '{target}' not found.{RESET} Available:");
-                    for p in kernel.ps() {
-                        eprintln!("  {CYAN}@{}{RESET}", p.npc.name);
+                    match spawn_npc_from_registered_teams(target, &mut kernel, current_pid).await {
+                        Ok(new_pid) if new_pid != 0 => {
+                            current_pid = new_pid;
+                            eprintln!("{GREEN}Switched to @{target} (pid:{current_pid}){RESET}");
+                        }
+                        _ => {
+                            eprintln!("{RED}NPC '{target}' not found.{RESET} Available:");
+                            for p in kernel.ps() {
+                                eprintln!("  {CYAN}@{}{RESET}", p.npc.name);
+                            }
+                        }
                     }
                 }
             }
@@ -817,6 +658,15 @@ async fn main() -> Result<()> {
                 }
                 continue;
             }
+            // If not a running process, maybe an NPC in another registered team.
+            match spawn_npc_from_registered_teams(name, &mut kernel, current_pid).await {
+                Ok(new_pid) if new_pid != 0 => {
+                    current_pid = new_pid;
+                    eprintln!("{GREEN}Switched to @{name} (pid:{current_pid}){RESET}");
+                    continue;
+                }
+                _ => {}
+            }
         }
 
         if input.starts_with('/') {
@@ -824,17 +674,6 @@ async fn main() -> Result<()> {
             let cmd_name = parts[0];
             eprintln!("{RED}Unknown command: /{cmd_name}{RESET}");
             continue;
-        }
-
-        // Invoke jinxes by bare name (no leading slash).
-        {
-            let parts: Vec<&str> = input.splitn(2, ' ').collect();
-            let cmd_name = parts[0];
-            if kernel.jinxes.contains_key(cmd_name) {
-                let args_str = parts.get(1).unwrap_or(&"");
-                run_jinx_command(&mut kernel, current_pid, cmd_name, args_str).await;
-                continue;
-            }
         }
 
         if input.starts_with("cd ") || input == "cd" {
@@ -899,36 +738,34 @@ async fn main() -> Result<()> {
                         run_bash(&input).await;
                         None
                     } else {
-                        Some(
-                            run_stream_turn(
-                                &mut kernel,
-                                current_pid,
-                                &input,
-                                mode.clone(),
-                                &http_client,
-                                &server_url,
-                                true,
-                            )
-                            .await,
+                        let (result, queued) = run_interactive_stream_turn(
+                            &mut kernel,
+                            current_pid,
+                            &input,
+                            mode.clone(),
+                            &http_client,
+                            &server_url,
                         )
+                        .await;
+                        input_queue.extend(queued);
+                        Some(result)
                     }
                 }
                 Mode::Chat | Mode::Cmd => {
                     if matches!(mode, Mode::Cmd) && run_bash(&input).await {
                         None
                     } else {
-                        Some(
-                            run_stream_turn(
-                                &mut kernel,
-                                current_pid,
-                                &input,
-                                mode.clone(),
-                                &http_client,
-                                &server_url,
-                                true,
-                            )
-                            .await,
+                        let (result, queued) = run_interactive_stream_turn(
+                            &mut kernel,
+                            current_pid,
+                            &input,
+                            mode.clone(),
+                            &http_client,
+                            &server_url,
                         )
+                        .await;
+                        input_queue.extend(queued);
+                        Some(result)
                     }
                 }
             }
@@ -990,7 +827,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_stream_turn(
+async fn run_stream_turn_with_interrupt(
     kernel: &mut Kernel,
     current_pid: u32,
     input: &str,
@@ -998,6 +835,7 @@ async fn run_stream_turn(
     client: &reqwest::Client,
     server_url: &str,
     save_history: bool,
+    interrupt: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
 ) -> Result<String> {
     {
         let process = kernel.get_process_mut(current_pid).ok_or_else(|| {
@@ -1160,9 +998,15 @@ async fn run_stream_turn(
         execution_mode,
     };
 
-    let response = stream_client::call_stream(client, server_url, &request, Some(&ask_permission))
-        .await
-        .map_err(|e| npcrs::NpcError::Other(e))?;
+    let response = stream_client::call_stream_with_interrupt(
+        client,
+        server_url,
+        &request,
+        Some(&ask_permission),
+        interrupt,
+    )
+    .await
+    .map_err(|e| npcrs::NpcError::Other(e))?;
 
     if let Some(ref usage) = response.usage {
         let cost = calculate_cost(&request.model, usage.prompt_tokens, usage.completion_tokens);
@@ -1190,6 +1034,136 @@ async fn run_stream_turn(
     let process = kernel.get_process_mut(current_pid).unwrap();
     process.state = ProcessState::Blocked;
     Ok(output)
+}
+
+async fn run_stream_turn(
+    kernel: &mut Kernel,
+    current_pid: u32,
+    input: &str,
+    mode: Mode,
+    client: &reqwest::Client,
+    server_url: &str,
+    save_history: bool,
+) -> Result<String> {
+    run_stream_turn_with_interrupt(
+        kernel,
+        current_pid,
+        input,
+        mode,
+        client,
+        server_url,
+        save_history,
+        None,
+    )
+    .await
+}
+
+async fn run_interactive_stream_turn(
+    kernel: &mut Kernel,
+    current_pid: u32,
+    input: &str,
+    mode: Mode,
+    client: &reqwest::Client,
+    server_url: &str,
+) -> (Result<String>, Vec<String>) {
+    use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+    use crossterm::terminal;
+    use std::io::{self, Write};
+
+    let (interrupt_tx, interrupt_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+    let (queue_tx, mut queue_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+    let running = Arc::new(AtomicBool::new(true));
+    let listener_running = running.clone();
+
+    let _ = terminal::enable_raw_mode();
+    let (_, rows) = terminal::size().unwrap_or((80, 24));
+    let bottom_row = rows;
+    let last_scroll_row = rows.saturating_sub(1).max(1);
+
+    // Reserve the bottom line for user input; stream output scrolls above it.
+    let _ = io::stdout().write_all(format!("\x1b[1;{}r", last_scroll_row).as_bytes());
+    let _ = io::stdout().write_all(format!("\x1b[{};{}H> ", bottom_row, 1).as_bytes());
+    let _ = io::stdout().write_all(format!("\x1b[{};{}H", last_scroll_row, 1).as_bytes());
+    let _ = io::stdout().flush();
+
+    let listener = tokio::task::spawn_blocking(move || {
+        let mut buf = String::new();
+
+        let draw_input = |buf: &str| {
+            if let Ok((_, rows)) = terminal::size() {
+                let bottom_row = rows;
+                let _ = io::stdout().write_all(b"\x1b[s");
+                let _ = io::stdout().write_all(format!("\x1b[{};{}H", bottom_row, 1).as_bytes());
+                let _ = io::stdout().write_all(b"\x1b[2K");
+                let _ = io::stdout().write_all(format!("> {}", buf).as_bytes());
+                let _ = io::stdout().write_all(b"\x1b[u");
+                let _ = io::stdout().flush();
+            }
+        };
+
+        while listener_running.load(Ordering::Relaxed) {
+            if event::poll(std::time::Duration::from_millis(100)).unwrap_or(false) {
+                if let Ok(Event::Key(key)) = event::read() {
+                    if key.kind == crossterm::event::KeyEventKind::Release {
+                        continue;
+                    }
+                    match key.code {
+                        KeyCode::Esc => {
+                            let _ = interrupt_tx.send(());
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            let _ = interrupt_tx.send(());
+                        }
+                        KeyCode::Enter => {
+                            let line = std::mem::take(&mut buf);
+                            if !line.is_empty() {
+                                let _ = queue_tx.send(line);
+                            }
+                            draw_input(&buf);
+                        }
+                        KeyCode::Char(c) => {
+                            buf.push(c);
+                            draw_input(&buf);
+                        }
+                        KeyCode::Backspace => {
+                            buf.pop();
+                            draw_input(&buf);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    });
+
+    let result = run_stream_turn_with_interrupt(
+        kernel,
+        current_pid,
+        input,
+        mode,
+        client,
+        server_url,
+        true,
+        Some(interrupt_rx),
+    )
+    .await;
+
+    running.store(false, Ordering::Relaxed);
+    let _ = listener.await;
+
+    // Reset scroll region and clear the bottom input line.
+    let _ = io::stdout().write_all(b"\x1b[r");
+    let _ = io::stdout().write_all(format!("\x1b[{};{}H\x1b[2K", bottom_row, 1).as_bytes());
+    let _ = io::stdout().flush();
+    let _ = terminal::disable_raw_mode();
+
+    let mut queued = Vec::new();
+    while let Ok(line) = queue_rx.try_recv() {
+        queued.push(line);
+    }
+
+    (result, queued)
 }
 
 async fn save_conversation_turn(
@@ -1403,6 +1377,300 @@ fn handle_set_command(rest: &str, kernel: &mut Kernel, pid: u32, mode: &mut Mode
     }
 }
 
+enum CoreDispatch {
+    Break,
+    Handled,
+    NotHandled,
+}
+
+async fn dispatch_core_command(
+    cmd: CoreCmd,
+    rest: &str,
+    kernel: &mut Kernel,
+    current_pid: &mut u32,
+    mode: &mut Mode,
+    cron_registry: &Arc<Mutex<CronRegistry>>,
+) -> CoreDispatch {
+    match cmd {
+        CoreCmd::Exit => CoreDispatch::Break,
+
+        CoreCmd::Help => {
+            print_core_help();
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Agent => {
+            *mode = Mode::Agent;
+            eprintln!("{GREEN}Switched to agent mode{RESET}");
+            CoreDispatch::Handled
+        }
+        CoreCmd::Chat => {
+            *mode = Mode::Chat;
+            eprintln!("{GREEN}Switched to chat mode{RESET}");
+            CoreDispatch::Handled
+        }
+        CoreCmd::CmdMode => {
+            *mode = Mode::Cmd;
+            eprintln!("{GREEN}Switched to cmd mode{RESET}");
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Kill => {
+            if *current_pid == 0 {
+                eprintln!("{RED}Cannot kill init (pid 0){RESET}");
+            } else {
+                let name = kernel.get_process(*current_pid).map(|p| p.npc.name.clone());
+                kernel.kill(*current_pid, 0).ok();
+                *current_pid = 0;
+                eprintln!("{YELLOW}Killed @{} — switched to init{RESET}", name.unwrap_or_default());
+            }
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Clear => {
+            if let Some(p) = kernel.get_process_mut(*current_pid) {
+                p.messages.clear();
+                eprintln!("{GREEN}Conversation cleared{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::History => {
+            if let Some(p) = kernel.get_process(*current_pid) {
+                if p.messages.is_empty() {
+                    println!("{DIM}(no messages){RESET}");
+                } else {
+                    for m in &p.messages {
+                        let role_color = match m.role.as_str() {
+                            "user" => CYAN,
+                            "assistant" => GREEN,
+                            _ => DIM,
+                        };
+                        let content = m.content.as_deref().unwrap_or("");
+                        let preview = if content.len() > 80 {
+                            format!("{}...", &content[..80])
+                        } else {
+                            content.to_string()
+                        };
+                        println!("  {role_color}{:<10}{RESET} {}", m.role, preview);
+                    }
+                }
+            }
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Reattach => {
+            let show_all = rest == "all";
+            let filter = if show_all {
+                None
+            } else if rest.is_empty() {
+                Some(std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".to_string()))
+            } else {
+                Some(shellexpand::tilde(rest).to_string())
+            };
+            if let Err(e) = run_reattach(kernel, *current_pid, filter.as_deref()) {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Config => {
+            if let Err(e) = tui::run_config_tui() {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+        CoreCmd::Model => {
+            if let Err(e) = tui::run_model_tui() {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+        CoreCmd::Setup => {
+            if let Err(e) = tui::run_setup_tui() {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+        CoreCmd::Team => {
+            if let Err(e) = tui::run_team_tui(kernel) {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+        CoreCmd::Commit => {
+            if let Err(e) = tui::run_commit_tui() {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+        CoreCmd::Gitt => {
+            let path = if rest.is_empty() { None } else { Some(rest) };
+            if let Err(e) = tui::run_gitt_tui(path) {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+        CoreCmd::Memories => {
+            if let Err(e) = tui::run_memories_tui() {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Jinxes => {
+            if let Err(e) = tui::run_jinxes_tui(kernel) {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Ps => {
+            for p in kernel.ps() {
+                let state_color = match p.state {
+                    npcrs::process::ProcessState::Running => GREEN,
+                    npcrs::process::ProcessState::Blocked => YELLOW,
+                    npcrs::process::ProcessState::Dead => RED,
+                    _ => DIM,
+                };
+                println!(
+                    "  {CYAN}@{:<12}{RESET} pid:{:<3} {state_color}{:?}{RESET}  tokens:{}/{} cost:${:.4} turns:{}",
+                    p.npc.name, p.pid, p.state,
+                    p.usage.total_input_tokens, p.usage.total_output_tokens,
+                    p.usage.total_cost_usd, p.usage.total_turns,
+                );
+            }
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Stats => {
+            let s = kernel.stats();
+            println!(
+                "{BOLD}Kernel Stats{RESET}\n  uptime: {}s\n  processes: {} (run:{} blk:{} dead:{})\n  tokens: {} (in+out)\n  cost: ${:.4}\n  jinxes: {}",
+                s.uptime_secs, s.total_processes, s.running, s.blocked, s.dead,
+                s.total_tokens, s.total_cost_usd, s.jinx_count,
+            );
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Cron => {
+            handle_cron_command(rest, kernel, cron_registry, *current_pid).await;
+            CoreDispatch::Handled
+        }
+        CoreCmd::Loop => {
+            handle_loop_command(rest, kernel, cron_registry, *current_pid).await;
+            CoreDispatch::Handled
+        }
+        CoreCmd::Loops => {
+            handle_jobs_command(rest, kernel, cron_registry, *current_pid).await;
+            CoreDispatch::Handled
+        }
+        CoreCmd::LoopDemo => {
+            let npc_name = kernel
+                .get_process(*current_pid)
+                .map(|p| p.npc.name.clone())
+                .unwrap_or_default();
+            if npc_name.is_empty() {
+                eprintln!("{RED}No active NPC to attach the demo loop to.{RESET}");
+            } else {
+                let loop_rest = format!("{npc_name} 10s heartbeat demo: print the current time");
+                handle_loop_command(&loop_rest, kernel, cron_registry, *current_pid).await;
+            }
+            CoreDispatch::Handled
+        }
+        CoreCmd::LoopRm => {
+            if let Ok(id) = rest.parse::<u32>() {
+                if cron_registry.lock().unwrap().remove(id) {
+                    eprintln!("{GREEN}Removed loop {id}{RESET}");
+                } else {
+                    eprintln!("{RED}No loop with id {id}{RESET}");
+                }
+            } else {
+                eprintln!("Usage: /looprm <id>");
+            }
+            CoreDispatch::Handled
+        }
+        CoreCmd::LoopOff => {
+            if let Ok(id) = rest.parse::<u32>() {
+                if cron_registry.lock().unwrap().enable(id, false) {
+                    eprintln!("{GREEN}Disabled loop {id}{RESET}");
+                } else {
+                    eprintln!("{RED}No loop with id {id}{RESET}");
+                }
+            } else {
+                eprintln!("Usage: /loopoff <id>");
+            }
+            CoreDispatch::Handled
+        }
+        CoreCmd::LoopOn => {
+            if let Ok(id) = rest.parse::<u32>() {
+                if cron_registry.lock().unwrap().enable(id, true) {
+                    eprintln!("{GREEN}Enabled loop {id}{RESET}");
+                } else {
+                    eprintln!("{RED}No loop with id {id}{RESET}");
+                }
+            } else {
+                eprintln!("Usage: /loopon <id>");
+            }
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Tutorial => {
+            if let Err(e) = tutorial::run_tutorial_tui(cron_registry, kernel) {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Jinx(jinx_name) => {
+            run_jinx_command(kernel, *current_pid, jinx_name, rest).await;
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Set => CoreDispatch::NotHandled,
+    }
+}
+
+fn print_core_help() {
+    println!("{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n", env!("NPCSH_VERSION"));
+    println!("{BOLD}Modes:{RESET}");
+    println!("  {CYAN}@npc{RESET}            Switch to NPC process (across all registered teams)");
+    println!("  {CYAN}@npc command{RESET}    Delegate command to NPC");
+    println!("  {CYAN}/agent{RESET}          Full agent mode (tools + bash + LLM)");
+    println!("  {CYAN}/chat{RESET}           Chat-only mode (LLM, no tools)");
+    println!("  {CYAN}/cmd{RESET}            Command mode (bash first, LLM fallback)");
+    println!("  {CYAN}/kill{RESET}           Kill current process");
+    println!();
+
+    for category in COMMAND_CATEGORIES {
+        let cmds: Vec<&CommandDef> = CORE_COMMANDS
+            .iter()
+            .filter(|c| c.category == *category && c.name.starts_with('/'))
+            .collect();
+        if cmds.is_empty() {
+            continue;
+        }
+        println!("{BOLD}{}:{RESET}", category);
+        for c in cmds {
+            println!(
+                "  {CYAN}{:<14}{RESET} {}",
+                c.name,
+                c.description
+            );
+        }
+        println!();
+    }
+
+    println!("{BOLD}Jinxes:{RESET}");
+    println!("  Jinxes are invoked by name without a leading slash.");
+    println!("  Use {CYAN}/jinxes{RESET} to browse them.");
+    println!();
+    println!("{BOLD}Shell:{RESET}");
+    println!("  Any text is sent to the current NPC.");
+    println!("  In {CYAN}/cmd{RESET} mode, input runs as bash first.");
+    println!("  Tab completes @npcs, /commands, and jinx names.");
+}
+
 async fn handle_cron_command(
     rest: &str,
     kernel: &mut Kernel,
@@ -1560,7 +1828,7 @@ async fn handle_loop_command(
         eprintln!("Usage: /loop <npc> <interval> <chat task|jinx:jinx_name>");
         eprintln!("  /loop sibiji 30s 'check for new emails and summarize'");
         eprintln!("  /loop corca 5m 'review open PRs'");
-        eprintln!("  /loop sibiji 10s jinx:heartbeat_demo");
+        eprintln!("  /loop sibiji 10s jinx:shell 'echo heartbeat'");
         return;
     }
     let npc = parts[0].to_string();
@@ -1664,6 +1932,54 @@ fn save_loop_run(npc: &str, task: &str, is_jinx: bool, output: &str) -> std::io:
     std::fs::write(&path, output)
 }
 
+fn load_registered_teams() -> Vec<(String, String)> {
+    let path = shellexpand::tilde("~/.npcsh/teams.yaml").to_string();
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let parsed: serde_yaml::Value = match serde_yaml::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    if let Some(teams) = parsed.get("teams").and_then(|t| t.as_mapping()) {
+        for (name, path_value) in teams {
+            let name = name.as_str().unwrap_or("").to_string();
+            let path = path_value.as_str().unwrap_or("").to_string();
+            if !name.is_empty() && !path.is_empty() {
+                let expanded = shellexpand::tilde(&path).to_string();
+                out.push((name, expanded));
+            }
+        }
+    }
+    out
+}
+
+async fn spawn_npc_from_registered_teams(
+    name: &str,
+    kernel: &mut Kernel,
+    current_pid: u32,
+) -> Result<u32> {
+    // Avoid shadowing the currently-running process's NPC name.
+    if kernel.find_by_name(name).is_some() {
+        return Ok(0);
+    }
+
+    let teams = load_registered_teams();
+    for (_team_name, team_dir) in teams {
+        let path = std::path::Path::new(&team_dir).join(format!("{}.npc", name));
+        if path.exists() {
+            let npc = npcrs::npc_compiler::NPC::from_file(&path).map_err(|e| {
+                npcrs::NpcError::Other(format!("Failed to load NPC {}: {}", name, e))
+            })?;
+            let pid = kernel.spawn(npc, current_pid, Capabilities::root());
+            return Ok(pid);
+        }
+    }
+    Ok(0)
+}
+
 fn print_welcome(kernel: &Kernel) {
     let s = kernel.stats();
 
@@ -1728,9 +2044,8 @@ fn print_welcome(kernel: &Kernel) {
             if let Some(names) = subdirs.get(&None) {
                 let mut sorted = names.clone();
                 sorted.sort();
-                let line: Vec<String> = sorted.iter().map(|n| format!("/{}", n)).collect();
                 let mut current = String::from("    ");
-                for item in &line {
+                for item in &sorted {
                     if current.len() + item.len() + 2 > 80 && current.trim().len() > 0 {
                         eprintln!("{}", current);
                         current = String::from("    ");
@@ -1746,15 +2061,32 @@ fn print_welcome(kernel: &Kernel) {
                 if let Some(sd) = sd {
                     let mut sorted = names.clone();
                     sorted.sort();
-                    let items: Vec<String> = sorted.iter().map(|n| format!("/{}", n)).collect();
-                    eprintln!("      {DIM}{sd}:{RESET} {}", items.join("  "));
+                    eprintln!("      {DIM}{sd}:{RESET} {}", sorted.join("  "));
                 }
             }
         }
     }
 
     eprintln!();
-    eprintln!("  {DIM}/jinxes for full list{RESET}");
+    eprintln!("  {DIM}core commands:{RESET}");
+    for category in COMMAND_CATEGORIES {
+        let cmds: Vec<&CommandDef> = CORE_COMMANDS
+            .iter()
+            .filter(|c| c.category == *category && c.name.starts_with('/'))
+            .collect();
+        if cmds.is_empty() {
+            continue;
+        }
+        let mut line = format!("    {DIM}{}:{RESET} ", category);
+        let joined = cmds
+            .iter()
+            .map(|c| format!("{CYAN}{}", c.name))
+            .collect::<Vec<_>>()
+            .join("\x1b[0m  ");
+        line.push_str(&joined);
+        line.push_str("\x1b[0m");
+        eprintln!("{}", line);
+    }
     eprintln!();
 }
 

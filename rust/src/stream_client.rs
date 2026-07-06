@@ -27,6 +27,16 @@ pub async fn call_stream(
     request: &StreamRequest,
     permission_prompt: Option<&dyn Fn(&str) -> String>,
 ) -> Result<StreamResponse, String> {
+    call_stream_with_interrupt(client, base_url, request, permission_prompt, None).await
+}
+
+pub async fn call_stream_with_interrupt(
+    client: &reqwest::Client,
+    base_url: &str,
+    request: &StreamRequest,
+    permission_prompt: Option<&dyn Fn(&str) -> String>,
+    mut interrupt: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
+) -> Result<StreamResponse, String> {
     let stream_url = format!("{}/api/stream", base_url);
     let body = serde_json::json!({
         "model": request.model,
@@ -65,7 +75,16 @@ pub async fn call_stream(
     let mut pending = String::new();
 
     loop {
-        let chunk = match stream.next().await {
+        let chunk = if let Some(ref mut rx) = interrupt {
+            tokio::select! {
+                biased;
+                _ = rx.recv() => break,
+                chunk = stream.next() => chunk,
+            }
+        } else {
+            stream.next().await
+        };
+        let chunk = match chunk {
             Some(Ok(bytes)) => bytes,
             Some(Err(e)) => return Err(format!("HTTP stream chunk: {}", e)),
             None => break,
