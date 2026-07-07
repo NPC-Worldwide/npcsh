@@ -10,44 +10,7 @@ from pathlib import Path
 
 
 NPCSH_REPO = "NPC-Worldwide/npcsh"
-
-_MAGIC_ELF = b"\x7fELF"
-_MAGIC_MACHO = {
-    b"\xcf\xfa\xed\xfe",
-    b"\xce\xfa\xed\xfe",
-    b"\xfe\xed\xfa\xcf",
-    b"\xfe\xed\xfa\xce",
-}
-_MAGIC_PE = b"MZ"
-
-
-def _host_binary_kind():
-    system = platform.system()
-    if system == "Linux":
-        return "elf"
-    if system == "Darwin":
-        return "macho"
-    if system == "Windows":
-        return "pe"
-    return None
-
-
-def _binary_matches_host(path: str) -> bool:
-    kind = _host_binary_kind()
-    if kind is None:
-        return True
-    try:
-        with open(path, "rb") as f:
-            header = f.read(4)
-    except OSError:
-        return False
-    if kind == "elf":
-        return header.startswith(_MAGIC_ELF)
-    if kind == "macho":
-        return header in _MAGIC_MACHO
-    if kind == "pe":
-        return header.startswith(_MAGIC_PE)
-    return True
+CRATE_NAME = "npcsh"
 
 
 _NPCSH_ARTIFACT = {
@@ -84,8 +47,30 @@ def _remove_old_binaries() -> None:
                     pass
 
 
-def _download_npcrsh(bin_dir: Path) -> bool:
-    """Download the latest npcrsh release binary into bin_dir."""
+def _latest_crate_version(crate: str) -> str | None:
+    """Return the latest version of `crate` published on crates.io."""
+    import urllib.request
+    import json
+
+    url = f"https://crates.io/api/v1/crates/{crate}/versions"
+    headers = {"User-Agent": "npcsh-setup.py/1.0"}
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+        versions = data.get("versions", [])
+        for v in versions:
+            num = v.get("num")
+            yanked = v.get("yanked", False)
+            if num and not yanked:
+                return num
+    except Exception as e:
+        print(f"Warning: failed to query crates.io for latest version ({e})")
+    return None
+
+
+def _download_npcrsh(bin_dir: Path, version: str | None = None) -> bool:
+    """Download the matching npcrsh release binary into bin_dir."""
     import urllib.request
     import json
 
@@ -99,12 +84,13 @@ def _download_npcrsh(bin_dir: Path) -> bool:
     ext = ".exe" if system == "Windows" else ""
     dst = bin_dir / f"npcrsh{ext}"
 
-    if dst.exists() and _binary_matches_host(str(dst)):
-        print(f"Valid npcrsh binary already present at {dst}")
-        return True
+    if version:
+        tag = f"v{version}"
+        api_url = f"https://api.github.com/repos/{NPCSH_REPO}/releases/tags/{tag}"
+    else:
+        api_url = f"https://api.github.com/repos/{NPCSH_REPO}/releases/latest"
 
     try:
-        api_url = f"https://api.github.com/repos/{NPCSH_REPO}/releases/latest"
         with urllib.request.urlopen(api_url, timeout=15) as resp:
             release = json.loads(resp.read())
 
@@ -113,7 +99,8 @@ def _download_npcrsh(bin_dir: Path) -> bool:
             None,
         )
         if not asset_url:
-            print(f"Warning: npcrsh artifact '{artifact}' not found in latest release")
+            tag_name = release.get("tag_name", "unknown")
+            print(f"Warning: npcrsh artifact '{artifact}' not found in release {tag_name}")
             return False
 
         print(f"Downloading npcrsh binary from {asset_url} ...")
@@ -135,9 +122,12 @@ class BuildWithRust(build_py):
 
         _remove_old_binaries()
 
-        if _download_npcrsh(bin_dir):
-            super().run()
-            return
+        latest_version = _latest_crate_version(CRATE_NAME)
+        if latest_version:
+            print(f"Latest published npcsh crate version is {latest_version}")
+            if _download_npcrsh(bin_dir, version=latest_version):
+                super().run()
+                return
 
         print("Warning: npcrsh binary unavailable — falling back to Python-only mode")
         super().run()
@@ -220,7 +210,7 @@ base_requirements = [
 
 setup(
     name="npcsh",
-    version="1.2.33",
+    version="1.2.34",
     author="NPC Worldwide",
     author_email="info@npcworldwide.com",
     description="The composable multi-agent shell",

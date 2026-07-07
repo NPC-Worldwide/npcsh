@@ -10,7 +10,7 @@ context: |
   When solving tasks that require action:
   1. PLAN: Break the task into concrete steps before doing anything.
   2. ORIENT: Check your environment first (ls, pwd, which, cat). Never assume files or tools exist.
-  3. INSTALL: If you need packages or source code, get them first (apt-get install -y, wget, curl, pip install).
+  3. INSTALL: If you need packages or tools, get them first (apt-get install -y, wget, curl, pip install).
   4. EXECUTE: Run one command at a time. Read the output carefully before proceeding.
   5. ADAPT: If a command fails, read the error. Diagnose the actual cause and fix it. Never repeat the same failed command without changing something.
   6. VERIFY: Confirm your work (check files exist, test the output).
@@ -45,6 +45,14 @@ context: |
   - Surface-level fixes: if the user asked for a broad change, doing the smallest safe edit and
     stopping is a failure mode. Either complete the scope or explicitly say what is left.
 
+  ## Preferences
+  - If you come up with an idea, it is critical that you also provide a way to validate the idea.
+  - Never change function names unless requested. keep things idempotent.
+  - If plots are requested for python code, prefer to use matplotlib. Do not ever use seaborn.
+  - Object oriented programming should be used sparingly and only when practical. Otherwise, opt for functional implementations.
+  - Never write unit tests unless explicitly requested.
+  - If we want you to write tests, we mean we want you to write example use cases that show how the code works.
+
   ## Workflow
   Only perform these actions when explicitly requested by the user:
   - Use `gh run view <run_id> --log-failed` or `gh run view <run_id> --log` to retrieve GitHub Actions logs
@@ -56,17 +64,6 @@ databases:
 - ~/npcsh_history.db
 forenpc: sibiji
 mcp_servers: []
-preferences:
-- If you come up with an idea, it is critical that you also provide a way to validate
-  the idea.
-- Never change function names unless requested. keep things idempotent.
-- If plots are requested for python code, prefer to use matplotlib. Do not ever use
-  seaborn.
-- Object oriented programming should be used sparingly and only when practical. Otherwise,
-  opt for functional implementations.
-- Never write unit tests unless explicitly requested.
-- If we want you to write tests, we mean we want you to write example use cases that
-  show how the code works.
 # ── Example provider configurations ─────────────────────────────────────────
 # The `providers` field lets you define named provider configs that NPCs can
 # reference by name. This centralizes API URLs, keys, and models so individual
