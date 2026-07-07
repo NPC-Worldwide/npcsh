@@ -340,10 +340,19 @@ fn apply_sse_event(
         for choice in choices {
             if let Some(delta) = choice.get("delta") {
                 if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
-                    content.push_str(text);
-                    *saw_output = true;
-                    renderer.push(text);
-                    let _ = std::io::Write::flush(&mut std::io::stderr());
+                    // Some providers / npcpy paths send the full accumulated content
+                    // in every delta.  Only append the part that is actually new.
+                    let new_text = if content.len() > text.len() || !text.starts_with(content.as_str()) {
+                        text
+                    } else {
+                        &text[content.len()..]
+                    };
+                    if !new_text.is_empty() {
+                        content.push_str(new_text);
+                        *saw_output = true;
+                        renderer.push(new_text);
+                        let _ = std::io::Write::flush(&mut std::io::stderr());
+                    }
                 }
                 if let Some(t) = delta.get("thinking").and_then(|v| v.as_str()) {
                     thinking.push_str(t);

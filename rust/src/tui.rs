@@ -1884,3 +1884,268 @@ pub fn run_memories_tui() -> Result<()> {
     }
     Ok(())
 }
+
+// ────────────────────────────────
+// /ctx TUI
+// ────────────────────────────────
+
+pub fn run_ctx_tui(kernel: &mut Kernel, current_pid: &mut u32) -> Result<()> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use npcrs::process::Capabilities;
+
+    let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
+    let mut out = io::stdout();
+
+    let team_dir = kernel.team.source_dir.clone().unwrap_or_else(|| find_team_dir_fallback());
+    let team_name = kernel.team.name.clone();
+
+    let ctx_path = find_ctx_file(&team_dir, &team_name);
+    let ctx_path_str = ctx_path.to_string_lossy().to_string();
+
+    let mut ctx_data: serde_yaml::Mapping = if ctx_path.exists() {
+        match std::fs::read_to_string(&ctx_path) {
+            Ok(text) => serde_yaml::from_str(&text).unwrap_or_default(),
+            Err(_) => serde_yaml::Mapping::new(),
+        }
+    } else {
+        serde_yaml::Mapping::new()
+    };
+
+    let mut sel: usize = 0;
+    let mut scroll: usize = 0;
+    let mut dirty = false;
+    let mut msg = String::new();
+    let mut msg_color = "90";
+
+    fn keys_in_order(data: &serde_yaml::Mapping) -> Vec<serde_yaml::Value> {
+        data.keys().cloned().collect()
+    }
+
+    fn value_to_edit_string(value: &serde_yaml::Value) -> String {
+        match value {
+            serde_yaml::Value::Sequence(seq) => seq
+                .iter()
+                .map(|v| v.as_str().map(|s| s.to_string()).unwrap_or_else(|| serde_yaml::to_string(v).unwrap_or_default().trim().to_string()))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            serde_yaml::Value::Bool(b) => (if *b { "true" } else { "false" }).to_string(),
+            serde_yaml::Value::Null => String::new(),
+            _ => value.as_str().map(|s| s.to_string()).unwrap_or_else(|| serde_yaml::to_string(value).unwrap_or_default().trim().to_string()),
+        }
+    }
+
+    fn parse_edited_string(original: &serde_yaml::Value, text: String) -> serde_yaml::Value {
+        match original {
+            serde_yaml::Value::Sequence(_) => {
+                let items: Vec<serde_yaml::Value> = text
+                    .lines()
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| serde_yaml::Value::String(s.to_string()))
+                    .collect();
+                serde_yaml::Value::Sequence(items)
+            }
+            serde_yaml::Value::Bool(_) => {
+                serde_yaml::Value::Bool(text.trim().to_lowercase() == "true" || text.trim() == "1" || text.trim() == "yes")
+            }
+            serde_yaml::Value::Null => serde_yaml::Value::String(text),
+            _ => serde_yaml::Value::String(text),
+        }
+    }
+
+    fn fmt_value(value: &serde_yaml::Value, maxw: usize) -> String {
+        let s = value_to_edit_string(value);
+        let s = s.replace('\n', " ");
+        if s.len() > maxw {
+            format!("{}...", &s[..maxw.saturating_sub(3)])
+        } else {
+            s
+        }
+    }
+
+    loop {
+        let (cols, rows) = term_size();
+        let body_h = rows.saturating_sub(6).max(1);
+        let keys = keys_in_order(&ctx_data);
+        if sel >= keys.len() && !keys.is_empty() { sel = keys.len() - 1; }
+        if sel < scroll { scroll = sel; }
+        else if sel >= scroll + body_h && !keys.is_empty() { scroll = sel.saturating_sub(body_h) + 1; }
+
+        clear_all(&mut out);
+        header_line(&mut out, cols, " Context ");
+        hr(&mut out, cols, 2);
+        wline(&mut out, 3, &format!("  \x1b[90m{}\x1b[0m", ctx_path_str));
+        hr(&mut out, cols, 4);
+
+        for r in 0..body_h {
+            let idx = scroll + r;
+            let row = 5 + r;
+            if idx >= keys.len() {
+                wline(&mut out, row, "");
+                continue;
+            }
+            let key = keys[idx].as_str().unwrap_or("?");
+            let value = ctx_data.get(&keys[idx]).unwrap_or(&serde_yaml::Value::Null);
+            let val = fmt_value(value, cols.saturating_sub(22));
+            let line = if val.is_empty() {
+                format!("  {}: \x1b[90m(empty)\x1b[0m", key)
+            } else {
+                format!("  {}: \x1b[32m{}\x1b[0m", key, val)
+            };
+            if idx == sel {
+                wline(&mut out, row, &format!("\x1b[7m{}\x1b[0m", line.pad(cols)));
+            } else {
+                wline(&mut out, row, &line);
+            }
+        }
+
+        if keys.is_empty() {
+            wline(&mut out, rows / 2, "  \x1b[90mNo fields. Press 'a' to add one.\x1b[0m");
+        }
+
+        hr(&mut out, cols, rows - 2);
+        let dirty_marker = if dirty { "  [unsaved]" } else { "" };
+        wline(&mut out, rows - 1, &format!(" \x1b[{};1m{}\x1b[0m\x1b[90m{} fields{}\x1b[0m", msg_color, msg.chars().take(cols - 2).collect::<String>(), keys.len(), dirty_marker));
+        footer_line(&mut out, cols, rows, " [j/k] Nav  [Enter] Edit field  [a] Add  [d] Delete  [s] Save  [q] Quit ");
+        let _ = out.flush();
+
+        if let Ok(Event::Key(key)) = event::read() {
+            if key.kind == KeyEventKind::Release { continue; }
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
+                KeyCode::Esc | KeyCode::Char('q') => break,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if sel + 1 < keys.len() { sel += 1; }
+                    msg.clear();
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if sel > 0 { sel -= 1; }
+                    msg.clear();
+                }
+                KeyCode::Enter => {
+                    if let Some(key) = keys.get(sel) {
+                        let key_str = key.as_str().unwrap_or("").to_string();
+                        let original = ctx_data.get(key).cloned().unwrap_or(serde_yaml::Value::Null);
+                        let text = value_to_edit_string(&original);
+                        if let Some(result) = edit_in_editor(&text, &key_str) {
+                            ctx_data.insert(key.clone(), parse_edited_string(&original, result));
+                            dirty = true;
+                            msg = format!("Updated {}", key_str);
+                            msg_color = "33";
+                        }
+                    }
+                }
+                KeyCode::Char('a') => {
+                    let _ = terminal::disable_raw_mode();
+                    let _ = io::stdout().write_all(b"\x1b[?1049l\x1b[?25h");
+                    let _ = io::stdout().flush();
+                    print!("New field name: ");
+                    let _ = io::stdout().flush();
+                    let mut name = String::new();
+                    let _ = std::io::stdin().read_line(&mut name);
+                    let name = name.trim();
+                    let _ = terminal::enable_raw_mode();
+                    let _ = io::stdout().write_all(b"\x1b[?1049h\x1b[?25l");
+                    let _ = io::stdout().flush();
+                    if !name.is_empty() {
+                        ctx_data.insert(serde_yaml::Value::String(name.to_string()), serde_yaml::Value::String(String::new()));
+                        sel = keys.len();
+                        dirty = true;
+                        msg = format!("Added {} — press Enter to edit", name);
+                        msg_color = "33";
+                    }
+                }
+                KeyCode::Char('d') => {
+                    if let Some(key) = keys.get(sel) {
+                        let removed = key.as_str().unwrap_or("").to_string();
+                        ctx_data.remove(key);
+                        if sel >= keys.len().saturating_sub(1) && sel > 0 { sel -= 1; }
+                        dirty = true;
+                        msg = format!("Deleted {}", removed);
+                        msg_color = "33";
+                    }
+                }
+                KeyCode::Char('s') => {
+                    match save_ctx_mapping(&ctx_path, &ctx_data) {
+                        Ok(_) => {
+                            dirty = false;
+                            msg = format!("Saved {}", ctx_path.file_name().unwrap_or_default().to_string_lossy());
+                            msg_color = "32";
+                            if let Some(forenpc) = ctx_data.get("forenpc").and_then(|v| v.as_str()) {
+                                if kernel.team.npcs.contains_key(forenpc) {
+                                    kernel.team.forenpc = Some(forenpc.to_string());
+                                    // Switch current_pid to the forenpc process if one exists, else spawn.
+                                    let existing = kernel.ps().iter().find(|p| p.npc.name == forenpc).map(|p| p.pid);
+                                    if let Some(pid) = existing {
+                                        *current_pid = pid;
+                                    } else if let Some(npc) = kernel.team.get_npc(forenpc).cloned() {
+                                        let pid = kernel.spawn(npc, *current_pid, Capabilities::default());
+                                        if pid != 0 {
+                                            *current_pid = pid;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            msg = format!("Save error: {}", e);
+                            msg_color = "31";
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+fn find_team_dir_fallback() -> String {
+    if std::path::Path::new("./npc_team").exists() {
+        return "./npc_team".to_string();
+    }
+    shellexpand::tilde("~/.npcsh/npc_team").to_string()
+}
+
+fn find_ctx_file(team_dir: &str, team_name: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(team_dir);
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if let Some(s) = name.to_str() {
+                if s.ends_with(".ctx") {
+                    return entry.path();
+                }
+            }
+        }
+    }
+    dir.join(format!("{}.ctx", team_name))
+}
+
+fn edit_in_editor(text: &str, suffix: &str) -> Option<String> {
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| "vim".to_string());
+    let _ = terminal::disable_raw_mode();
+    let _ = io::stdout().write_all(b"\x1b[?1049l\x1b[?25h");
+    let _ = io::stdout().flush();
+    let result = (|| {
+        let mut temp = std::env::temp_dir();
+        temp.push(format!("npcsh_ctx_{}_{}.txt", suffix.replace(' ', "_"), std::process::id()));
+        std::fs::write(&temp, text).ok()?;
+        let status = std::process::Command::new(&editor).arg(&temp).status().ok()?;
+        if !status.success() {
+            return None;
+        }
+        std::fs::read_to_string(&temp).ok()
+    })();
+    let _ = terminal::enable_raw_mode();
+    let _ = io::stdout().write_all(b"\x1b[?1049h\x1b[?25l");
+    let _ = io::stdout().flush();
+    result
+}
+
+fn save_ctx_mapping(path: &std::path::Path, data: &serde_yaml::Mapping) -> std::io::Result<()> {
+    let yaml = serde_yaml::to_string(data).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::write(path, yaml)
+}

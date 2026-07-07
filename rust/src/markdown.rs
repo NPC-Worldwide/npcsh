@@ -10,9 +10,13 @@ pub fn render_block(md: &str) -> String {
     format!("{}", skin.term_text(md))
 }
 
-/// Renderer that updates a growing markdown buffer in place on the terminal.
-/// It uses termimad to render the accumulated markdown to ANSI and overwrites
-/// the previous render using cursor control sequences.
+/// Renderer that streams markdown while avoiding duplication and offsets.
+///
+/// The server sometimes sends the full accumulated content in every delta, so
+/// we only append the genuinely new suffix.  To make output visible as it
+/// streams we overwrite the current block in place using absolute cursor moves
+/// based on the *previously emitted* height.  We commit (move to a new line)
+/// when the content ends with a newline so the next block starts fresh.
 pub struct StreamRenderer {
     buffer: String,
     skin: termimad::MadSkin,
@@ -37,32 +41,47 @@ impl StreamRenderer {
         }
     }
 
-    /// Append a raw markdown delta and, if enough time has passed, re-render.
+    /// Append a raw markdown delta and re-render if enough time has passed or
+    /// the delta ends with a newline.
     pub fn push(&mut self, text: &str) {
         if self.disabled {
             eprint!("{}", text);
+            self.buffer.push_str(text);
+            let _ = std::io::Write::flush(&mut std::io::stderr());
             return;
         }
         let was_empty = self.buffer.is_empty();
         self.buffer.push_str(text);
         self.dirty = true;
+
+        let ends_with_newline = self.buffer.ends_with('\n') || self.buffer.ends_with("\r\n");
         let now = Instant::now();
-        if was_empty || now.duration_since(self.last_render) >= self.min_interval {
+        if was_empty
+            || now.duration_since(self.last_render) >= self.min_interval
+            || ends_with_newline
+        {
             self.render();
+            if ends_with_newline {
+                // Commit: leave the cursor on a fresh line so the next chunk
+                // doesn't redraw from the old anchor.
+                eprintln!();
+                self.last_height = 0;
+                self.buffer.clear();
+                self.dirty = false;
+            }
         }
     }
 
-    /// Force an immediate re-render of the current buffer.
+    /// Force a final render and reset the saved height.
     pub fn flush(&mut self) {
         if self.disabled {
             return;
         }
         self.render();
+        self.last_height = 0;
     }
 
-    /// Clear the internal buffer and forget any previous on-screen height.
-    /// Call this after flushing and printing something else inline (e.g. a
-    /// tool result) so the next content block starts fresh below it.
+    /// Clear the accumulated buffer and forget the previous height.
     pub fn clear(&mut self) {
         self.buffer.clear();
         self.last_height = 0;
@@ -74,13 +93,16 @@ impl StreamRenderer {
             return;
         }
 
-        let rendered = format!("{}", self.skin.term_text(&self.buffer));
+        let raw = self.buffer.trim_end_matches(['\n', '\r']);
+        if raw.is_empty() {
+            return;
+        }
+
+        let rendered = format!("{}", self.skin.term_text(raw));
         let rendered = rendered.trim_end_matches(['\n', '\r']).to_string();
         if rendered.is_empty() {
             return;
         }
-
-        let height = rendered.chars().filter(|&c| c == '\n').count() + 1;
 
         if self.last_height > 0 {
             let up = self.last_height.saturating_sub(1);
@@ -92,7 +114,7 @@ impl StreamRenderer {
 
         eprint!("{}", rendered);
 
-        self.last_height = height;
+        self.last_height = rendered.chars().filter(|c| *c == '\n').count() + 1;
         self.last_render = Instant::now();
         self.dirty = false;
     }
