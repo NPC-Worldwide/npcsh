@@ -5,7 +5,6 @@ use npcrs::process::{Capabilities, ProcessState};
 use npcrs::{calculate_cost, Message};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -124,13 +123,19 @@ impl NpcHelper {
                 }
             }
         } else if word.starts_with('/') {
+            let mut had_cmd = false;
             for cmd in &self.commands {
                 if cmd.starts_with(word) {
+                    had_cmd = true;
                     matches.push(Completion {
                         display: cmd.clone(),
                         replacement: format!("{} ", cmd),
                     });
                 }
+            }
+            // If no command matches an absolute-looking token, try path completion.
+            if !had_cmd {
+                matches.extend(complete_paths(word));
             }
         } else if !word.is_empty() {
             for name in &self.jinx_names {
@@ -141,10 +146,75 @@ impl NpcHelper {
                     });
                 }
             }
+            // Also complete filenames/paths for bare words (cd, ls, cat, ...).
+            matches.extend(complete_paths(word));
+        } else {
+            // Empty word: complete filenames in cwd (e.g. `ls <Tab>`).
+            matches.extend(complete_paths(word));
         }
 
         (word_start, matches)
     }
+}
+
+fn complete_paths(word: &str) -> Vec<Completion> {
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+
+    let expanded = shellexpand::tilde(word).to_string();
+
+    // Determine directory to search and the prefix inside it.
+    let (search_dir, file_prefix, typed_dir_prefix): (String, String, String) =
+        if word.ends_with('/') {
+            let dir = if expanded.is_empty() { cwd.clone() } else { expanded.clone() };
+            (dir, String::new(), word.to_string())
+        } else if let Some(idx) = expanded.rfind('/') {
+            let dir = expanded[..idx + 1].to_string();
+            let file = expanded[idx + 1..].to_string();
+            let typed_dir = word[..word.rfind('/').map(|i| i + 1).unwrap_or(0)].to_string();
+            (dir, file, typed_dir)
+        } else {
+            (format!("{}/", cwd), expanded.clone(), String::new())
+        };
+
+    let mut out = Vec::new();
+    let entries = match std::fs::read_dir(&search_dir) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with(&file_prefix) {
+            continue;
+        }
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let display = if is_dir {
+            format!("{}/", name)
+        } else {
+            name.clone()
+        };
+        let replacement = if is_dir {
+            format!("{}{}/", typed_dir_prefix, name)
+        } else {
+            format!("{}{} ", typed_dir_prefix, name)
+        };
+        out.push(Completion { display, replacement });
+    }
+
+    // Offer . and .. when the typed prefix matches them (cd ../...).
+    for (dot, dot_display) in [(".", "."), ("..", "..")] {
+        if dot.starts_with(&file_prefix) {
+            out.push(Completion {
+                display: dot_display.to_string(),
+                replacement: format!("{}{}/", typed_dir_prefix, dot_display),
+            });
+        }
+    }
+
+    out.sort_by(|a, b| a.display.cmp(&b.display));
+    out
 }
 
 async fn run_jinx_command(
@@ -216,6 +286,7 @@ enum CoreCmd {
     // System / Config
     Clear,
     Config,
+    Ctx,
     History,
     Memories,
     Model,
@@ -272,6 +343,7 @@ const CORE_COMMANDS: &[CommandDef] = &[
     // System / Config
     CommandDef { name: "/clear", category: "System / Config", description: "Clear conversation", cmd: CoreCmd::Clear },
     CommandDef { name: "/config", category: "System / Config", description: "Configuration TUI", cmd: CoreCmd::Config },
+    CommandDef { name: "/ctx", category: "System / Config", description: "Browse and edit team context fields", cmd: CoreCmd::Ctx },
     CommandDef { name: "/history", category: "System / Config", description: "Show conversation history", cmd: CoreCmd::History },
     CommandDef { name: "/memories", category: "System / Config", description: "Browse memory lifecycle TUI", cmd: CoreCmd::Memories },
     CommandDef { name: "/model", category: "System / Config", description: "Model selection TUI", cmd: CoreCmd::Model },
@@ -402,6 +474,10 @@ async fn main() -> Result<()> {
         }
     }
 
+    let cli_npc = arg_value(&args, &["-n", "--npc"]);
+    let cli_model = arg_value(&args, &["-m", "--model"]);
+    let cli_provider = arg_value(&args, &["-p", "--provider"]);
+
     if args.iter().any(|a| a == "--refresh") {
         let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
         let user_npc_team = shellexpand::tilde("~/.npcsh/npc_team").to_string();
@@ -444,7 +520,31 @@ async fn main() -> Result<()> {
         run_python_initialization(&db_path);
     }
 
+    let mut current_pid: u32 = 0;
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
+
+    // Apply CLI overrides before starting the REPL.
+    if let Some(name) = cli_npc.as_deref() {
+        if let Some(proc) = kernel.find_by_name(name) {
+            current_pid = proc.pid;
+        } else {
+            match spawn_npc_from_registered_teams(name, &mut kernel, current_pid).await {
+                Ok(new_pid) if new_pid != 0 => {
+                    current_pid = new_pid;
+                }
+                _ => eprintln!("{RED}Warning: NPC '{name}' not found; using default.{RESET}"),
+            }
+        }
+    }
+    {
+        let process = kernel.get_process_mut(current_pid).unwrap();
+        if let Some(m) = cli_model.as_deref() {
+            process.npc.model = Some(m.to_string());
+        }
+        if let Some(p) = cli_provider.as_deref() {
+            process.npc.provider = Some(p.to_string());
+        }
+    }
 
     // Cron registry for agent heartbeats and scheduled jinx tasks.
     let cron_file = shellexpand::tilde("~/.npcsh/loops.yaml").to_string();
@@ -469,7 +569,6 @@ async fn main() -> Result<()> {
         .collect();
     let mut history_index: Option<usize> = None;
 
-    let mut current_pid: u32 = 0;
     let mut mode = Mode::Agent;
     let mut _turn_count: u64 = 0;
     let mut session_input_tokens: u64 = 0;
@@ -1067,8 +1166,7 @@ async fn run_interactive_stream_turn(
     server_url: &str,
 ) -> (Result<String>, Vec<String>) {
     use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-    use crossterm::terminal;
-    use std::io::{self, Write};
+    use std::time::Duration;
 
     let (interrupt_tx, interrupt_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let (queue_tx, mut queue_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -1076,43 +1174,22 @@ async fn run_interactive_stream_turn(
     let running = Arc::new(AtomicBool::new(true));
     let listener_running = running.clone();
 
-    let _ = terminal::enable_raw_mode();
-    let (_, rows) = terminal::size().unwrap_or((80, 24));
-    let bottom_row = rows;
-    let last_scroll_row = rows.saturating_sub(1).max(1);
-
-    // Reserve the bottom line for user input; stream output scrolls above it.
-    let _ = io::stdout().write_all(format!("\x1b[1;{}r", last_scroll_row).as_bytes());
-    let _ = io::stdout().write_all(format!("\x1b[{};{}H> ", bottom_row, 1).as_bytes());
-    let _ = io::stdout().write_all(format!("\x1b[{};{}H", last_scroll_row, 1).as_bytes());
-    let _ = io::stdout().flush();
-
+    // Collect queued input in the background without drawing an input overlay on
+    // top of the streamed output.  Previous attempts to reserve the bottom line
+    // for input corrupted the stderr stream; just buffer keystrokes and replay
+    // them after the response finishes.
     let listener = tokio::task::spawn_blocking(move || {
         let mut buf = String::new();
-
-        let draw_input = |buf: &str| {
-            if let Ok((_, rows)) = terminal::size() {
-                let bottom_row = rows;
-                let _ = io::stdout().write_all(b"\x1b[s");
-                let _ = io::stdout().write_all(format!("\x1b[{};{}H", bottom_row, 1).as_bytes());
-                let _ = io::stdout().write_all(b"\x1b[2K");
-                let _ = io::stdout().write_all(format!("> {}", buf).as_bytes());
-                let _ = io::stdout().write_all(b"\x1b[u");
-                let _ = io::stdout().flush();
-            }
-        };
-
         while listener_running.load(Ordering::Relaxed) {
-            if event::poll(std::time::Duration::from_millis(100)).unwrap_or(false) {
+            if event::poll(Duration::from_millis(100)).unwrap_or(false) {
                 if let Ok(Event::Key(key)) = event::read() {
                     if key.kind == crossterm::event::KeyEventKind::Release {
                         continue;
                     }
                     match key.code {
-                        KeyCode::Esc => {
-                            let _ = interrupt_tx.send(());
-                        }
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Esc | KeyCode::Char('c')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             let _ = interrupt_tx.send(());
                         }
                         KeyCode::Enter => {
@@ -1120,21 +1197,20 @@ async fn run_interactive_stream_turn(
                             if !line.is_empty() {
                                 let _ = queue_tx.send(line);
                             }
-                            draw_input(&buf);
                         }
                         KeyCode::Char(c) => {
                             buf.push(c);
-                            draw_input(&buf);
                         }
                         KeyCode::Backspace => {
                             buf.pop();
-                            draw_input(&buf);
                         }
                         _ => {}
                     }
                 }
             }
         }
+        // Any uncommitted buffered input is lost; the user will see their typed
+        // text appear on the next prompt because the terminal was in raw mode.
     });
 
     let result = run_stream_turn_with_interrupt(
@@ -1151,12 +1227,6 @@ async fn run_interactive_stream_turn(
 
     running.store(false, Ordering::Relaxed);
     let _ = listener.await;
-
-    // Reset scroll region and clear the bottom input line.
-    let _ = io::stdout().write_all(b"\x1b[r");
-    let _ = io::stdout().write_all(format!("\x1b[{};{}H\x1b[2K", bottom_row, 1).as_bytes());
-    let _ = io::stdout().flush();
-    let _ = terminal::disable_raw_mode();
 
     let mut queued = Vec::new();
     while let Ok(line) = queue_rx.try_recv() {
@@ -1480,6 +1550,12 @@ async fn dispatch_core_command(
             }
             CoreDispatch::Handled
         }
+        CoreCmd::Ctx => {
+            if let Err(e) = tui::run_ctx_tui(kernel, current_pid) {
+                eprintln!("{RED}Error: {e}{RESET}");
+            }
+            CoreDispatch::Handled
+        }
         CoreCmd::Model => {
             if let Err(e) = tui::run_model_tui() {
                 eprintln!("{RED}Error: {e}{RESET}");
@@ -1668,7 +1744,7 @@ fn print_core_help() {
     println!("{BOLD}Shell:{RESET}");
     println!("  Any text is sent to the current NPC.");
     println!("  In {CYAN}/cmd{RESET} mode, input runs as bash first.");
-    println!("  Tab completes @npcs, /commands, and jinx names.");
+    println!("  Tab completes @npcs, /commands, jinx names, and file paths.");
 }
 
 async fn handle_cron_command(
@@ -1956,6 +2032,15 @@ fn load_registered_teams() -> Vec<(String, String)> {
     out
 }
 
+fn arg_value(args: &[String], flags: &[&str]) -> Option<String> {
+    for window in args.windows(2) {
+        if flags.contains(&window[0].as_str()) {
+            return Some(window[1].clone());
+        }
+    }
+    None
+}
+
 async fn spawn_npc_from_registered_teams(
     name: &str,
     kernel: &mut Kernel,
@@ -2002,7 +2087,7 @@ fn print_welcome(kernel: &Kernel) {
     eprintln!("  {DIM}{} processes | {} jinxes | /help for commands{RESET}", s.total_processes, s.jinx_count);
     eprintln!();
 
-    eprintln!("  {DIM}mode:{RESET} {BOLD}agent{RESET}  {DIM}switch:{RESET} /agent  /cmd  /chat");
+    eprintln!("  {DIM}mode:{RESET} {BOLD}agent{RESET}");
     eprint!("  {DIM}npcs:{RESET} ");
     let names: Vec<String> = kernel.ps().iter().map(|p| format!("{BLUE}@{}{RESET}", p.npc.name)).collect();
     eprintln!("{}", names.join("  "));
