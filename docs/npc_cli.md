@@ -1,54 +1,55 @@
 
 ## NPC CLI
-When npcsh is installed, it comes with the `npc` cli as well. The `npc` cli has various command to make initializing and serving NPC projects easier.
 
-Users can make queries like so:
-```bash
-$ npc 'whats the biggest file in my computer'
-Loaded .env file from /home/caug/npcww/npcsh
-action chosen: request_input
-explanation given: The user needs to provide more context about their operating system or specify which directory to search for the biggest file.
+Installing `npcsh` installs two related command-line tools:
 
-Additional input needed: The user did not specify their operating system or the directory to search for the biggest file, making it unclear how to execute the command.
-Please specify your operating system (e.g., Windows, macOS, Linux) and the directory you want to search in.: linux and root
-action chosen: execute_command
-explanation given: The user is asking for the biggest file on their computer, which can be accomplished with a simple bash command that searches for the largest files.
-sibiji generating command
-LLM suggests the following bash command: sudo find / -type f -exec du -h {} + | sort -rh | head -n 1
-Running command: sudo find / -type f -exec du -h {} + | sort -rh | head -n 1
-Command executed with output: 11G       /home/caug/.cache/huggingface/hub/models--state-spaces--mamba-2.8b/blobs/39911a8470a2b256016b57cc71c68e0f96751cba5b229216ab1f4f9d82096a46
+- **`npcsh`** — the interactive multi-agent shell (REPL).
+- **`npc`** — the dedicated NPC/jinx executor.
 
-I ran a command on your Linux system that searches for the largest files on your computer. The command `sudo find / -type f -exec du -h {} + | sort -rh | head -n 1` performs the following steps:
+They share the same `npcrs` Rust core and the same `npcpy` Python server, but they are separate binaries with separate responsibilities. `npcsh` is for interactive sessions; `npc` is for running `.npc` files, `.jinx` files, and `npc init`.
 
-1. **Find Command**: It searches for all files (`-type f`) starting from the root directory (`/`).
-2. **Disk Usage**: For each file found, it calculates its disk usage in a human-readable format (`du -h`).
-3. **Sort**: It sorts the results in reverse order based on size (`sort -rh`), so the largest files appear first.
-4. **Head**: Finally, it retrieves just the largest file using `head -n 1`.
+### How `npc` works
 
-The output indicates that the biggest file on your system is located at `/home/caug/.cache/huggingface/hub/models--state-spaces--mamba-2.8b/blobs/39911a8470a2b256016b57cc71c68e0f96751cba5b229216ab1f4f9d82096a46` and is 11GB in size.
+`npc` is shipped as a Rust binary (`npc`) built from `npcsh/rust/src/bin/npc.rs`. When you run `npc`, a Python launcher (`npcsh/npc_launcher.py`) first looks for the compiled Rust binary and execs it. If the Rust binary is missing, the launcher falls back to a pure-Python executor (`npcsh.npc`).
 
-```
+The Rust binary talks to the NPCSH server (`npcpy.serve`) over HTTP for LLM calls, and uses the `npcrs` kernel locally for jinx execution. The launcher starts the server on `127.0.0.1:5237` if it is not already running and sets `NPCSH_SERVER_URL` for the Rust binary.
+
+### Running `.npc` files
 
 ```bash
-$ npc 'whats the weather in tokyo'
-Loaded .env file from /home/caug/npcww/npcsh
-action chosen: invoke_jinx
-explanation given: The user's request for the current weather in Tokyo requires up-to-date information, which can be best obtained through an internet search.
-Jinx found: internet_search
-Executing jinx with input values: {'query': 'whats the weather in tokyo'}
-QUERY in jinx whats the weather in tokyo
-[{'title': 'Tokyo, Tokyo, Japan Weather Forecast | AccuWeather', 'href': 'https://www.accuweather.com/en/jp/tokyo/226396/weather-forecast/226396', 'body': 'Tokyo, Tokyo, Japan Weather Forecast, with current conditions, wind, air quality, and what to expect for the next 3 days.'}, {'title': 'Tokyo, Japan 14 day weather forecast - timeanddate.com', 'href': 'https://www.timeanddate.com/weather/japan/tokyo/ext', 'body': 'Tokyo Extended Forecast with high and low temperatures. °F. Last 2 weeks of weather'}, {'title': 'Tokyo, Tokyo, Japan Current Weather | AccuWeather', 'href': 'https://www.accuweather.com/en/jp/tokyo/226396/current-weather/226396', 'body': 'Current weather in Tokyo, Tokyo, Japan. Check current conditions in Tokyo, Tokyo, Japan with radar, hourly, and more.'}, {'title': 'Weather in Tokyo, Japan - timeanddate.com', 'href': 'https://www.timeanddate.com/weather/japan/tokyo', 'body': 'Current weather in Tokyo and forecast for today, tomorrow, and next 14 days'}, {'title': 'Tokyo Weather Forecast Today', 'href': 'https://japanweather.org/tokyo', 'body': "For today's mild weather in Tokyo, with temperatures between 13ºC to 16ºC (55.4ºF to 60.8ºF), consider wearing: - Comfortable jeans or slacks - Sun hat (if spending time outdoors) - Lightweight sweater or cardigan - Long-sleeve shirt or blouse. Temperature. Day. 14°C. Night. 10°C. Morning. 10°C. Afternoon."}] <class 'list'>
-RESULTS in jinx ["Tokyo, Tokyo, Japan Weather Forecast, with current conditions, wind, air quality, and what to expect for the next 3 days.\n Citation: https://www.accuweather.com/en/jp/tokyo/226396/weather-forecast/226396\n\n\n\nTokyo Extended Forecast with high and low temperatures. °F. Last 2 weeks of weather\n Citation: https://www.timeanddate.com/weather/japan/tokyo/ext\n\n\n\nCurrent weather in Tokyo, Tokyo, Japan. Check current conditions in Tokyo, Tokyo, Japan with radar, hourly, and more.\n Citation: https://www.accuweather.com/en/jp/tokyo/226396/current-weather/226396\n\n\n\nCurrent weather in Tokyo and forecast for today, tomorrow, and next 14 days\n Citation: https://www.timeanddate.com/weather/japan/tokyo\n\n\n\nFor today's mild weather in Tokyo, with temperatures between 13ºC to 16ºC (55.4ºF to 60.8ºF), consider wearing: - Comfortable jeans or slacks - Sun hat (if spending time outdoors) - Lightweight sweater or cardigan - Long-sleeve shirt or blouse. Temperature. Day. 14°C. Night. 10°C. Morning. 10°C. Afternoon.\n Citation: https://japanweather.org/tokyo\n\n\n", 'https://www.accuweather.com/en/jp/tokyo/226396/weather-forecast/226396\n\nhttps://www.timeanddate.com/weather/japan/tokyo/ext\n\nhttps://www.accuweather.com/en/jp/tokyo/226396/current-weather/226396\n\nhttps://www.timeanddate.com/weather/japan/tokyo\n\nhttps://japanweather.org/tokyo\n']
-The current weather in Tokyo, Japan is mild, with temperatures ranging from 13°C to 16°C (approximately 55.4°F to 60.8°F). For today's conditions, it is suggested to wear comfortable jeans or slacks, a lightweight sweater or cardigan, and a long-sleeve shirt or blouse, especially if spending time outdoors. The temperature today is expected to reach a high of 14°C (57.2°F) during the day and a low of 10°C (50°F) at night.
-
-For more detailed weather information, you can check out the following sources:
-- [AccuWeather Forecast](https://www.accuweather.com/en/jp/tokyo/226396/weather-forecast/226396)
-- [Time and Date Extended Forecast](https://www.timeanddate.com/weather/japan/tokyo/ext)
-- [Current Weather on AccuWeather](https://www.accuweather.com/en/jp/tokyo/226396/current-weather/226396)
-- [More on Time and Date](https://www.timeanddate.com/weather/japan/tokyo)
-- [Japan Weather](https://japanweather.org/tokyo)
+npc ./npc_team/sibiji.npc "what is the biggest file on my computer?"
 ```
 
+If you omit the prompt, `npc` drops into a minimal REPL for that NPC:
+
+```bash
+npc ./npc_team/sibiji.npc
+```
+
+### Running `.jinx` files
+
+```bash
+npc ./npc_team/jinxes/bin/render.jinx url=https://example.com
+```
+
+Jinx inputs can be passed positionally or as `key=value` pairs.
+
+### Initializing a project
+
+```bash
+npc init          # create ./npc_team
+npc init ./myteam # create ./myteam/npc_team
+```
+
+### Relationship to `npcsh`
+
+- `npcsh` uses `launcher.py` to find the Rust `npcrsh` binary, start the server, and run the shell.
+- `npc` uses `npc_launcher.py` to find the Rust `npc` binary, start the same server, and run the NPC/jinx executor.
+- Both launchers exist because the shell and the NPC CLI are separate tools; they share server-starting logic but target different Rust binaries.
+
+### Legacy examples
+
+Older versions of `npc` accepted free-form prompts like `npc 'what is the weather in tokyo?'`. That mode is handled by the Python fallback when the Rust binary is not installed. New installations should use the Rust-first binary and run `.npc` files directly.
 
 ## Serving
 To serve an NPC project, first install redis-server and start it
