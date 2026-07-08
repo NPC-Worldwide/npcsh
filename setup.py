@@ -208,9 +208,11 @@ base_requirements = [
 ]
 
 
+_VERSION = (Path(__file__).parent / "VERSION").read_text().strip()
+
 setup(
     name="npcsh",
-    version="1.2.34",
+    version=_VERSION,
     author="NPC Worldwide",
     author_email="info@npcworldwide.com",
     description="The composable multi-agent shell",
