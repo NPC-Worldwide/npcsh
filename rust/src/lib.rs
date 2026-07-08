@@ -70,10 +70,18 @@ pub async fn exec_npc_file(
     command: Option<&str>,
     client: &reqwest::Client,
     server_url: &str,
+    override_model: Option<&str>,
+    override_provider: Option<&str>,
 ) -> Result<()> {
     use npcrs::npc_compiler::NPC;
 
-    let npc = NPC::from_file(npc_file)?;
+    let mut npc = NPC::from_file(npc_file)?;
+    if let Some(m) = override_model {
+        npc.model = Some(m.to_string());
+    }
+    if let Some(p) = override_provider {
+        npc.provider = Some(p.to_string());
+    }
     let npc_name = npc.name.clone();
 
     let model = npc.resolved_model();
