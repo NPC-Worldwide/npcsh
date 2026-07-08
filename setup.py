@@ -226,6 +226,7 @@ setup(
     entry_points={
         "console_scripts": [
             "npcsh=npcsh.launcher:main",
+            "npc=npcsh.npc_launcher:main",
             *dynamic_entries,
         ],
     },

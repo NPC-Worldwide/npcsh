@@ -14,6 +14,10 @@ readme = "../README.md"
 name = "npcrsh"
 path = "src/main.rs"
 
+[[bin]]
+name = "npc"
+path = "src/bin/npc.rs"
+
 [dependencies]
 npcrs = { version = "0.1.23", default-features = false, features = ["ffi"] }
 
