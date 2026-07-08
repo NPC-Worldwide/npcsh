@@ -1,18 +1,42 @@
 //! `npc` — dedicated NPC CLI binary.
 //!
-//! Executes `.npc` files, `.jinx` files, and `npc init`. It contains none of
-//! the `npcsh` shell/REPL/TUI code and depends on the `npcsh` library for the
-//! shared implementation.
+//! Executes `.npc` files, `.jinx` files, `npc init`, and legacy free-form
+//! prompts such as `npc "hello" -n sibiji`. It contains none of the `npcsh`
+//! shell/REPL/TUI code and depends on the `npcsh` library for the shared
+//! implementation.
 
 use npcrs::error::Result;
-use npcsh::{exec_jinx_file, exec_npc_file, init_team};
+use npcsh::{exec_jinx_file, exec_npc_file, find_team_dir, init_team};
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: &str = "5237";
+const DEFAULT_NPC: &str = "sibiji";
 
 fn server_url() -> String {
     std::env::var("NPCSH_SERVER_URL")
         .unwrap_or_else(|_| format!("http://{DEFAULT_HOST}:{DEFAULT_PORT}"))
+}
+
+fn resolve_npc_file(name: &str) -> Option<String> {
+    if name.ends_with(".npc") {
+        if std::path::Path::new(name).is_file() {
+            return Some(name.to_string());
+        }
+        return None;
+    }
+
+    let team_dir = find_team_dir();
+    let candidates = [
+        format!("./{}.npc", name),
+        format!("{}/{}.npc", team_dir, name),
+        format!("{}/npc_team/{}.npc", team_dir, name),
+    ];
+    for candidate in &candidates {
+        if std::path::Path::new(candidate).is_file() {
+            return Some(candidate.clone());
+        }
+    }
+    None
 }
 
 #[tokio::main]
@@ -20,19 +44,87 @@ async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
 
     let args: Vec<String> = std::env::args().collect();
-    if let Some(file) = args.get(1) {
-        if file == "init" {
-            let dir = args.get(2).map(|s| s.as_str()).unwrap_or(".");
+    let mut positional: Vec<&str> = Vec::new();
+    let mut override_model: Option<String> = None;
+    let mut override_provider: Option<String> = None;
+    let mut override_npc: Option<String> = None;
+
+    let mut i = 1;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        match arg {
+            "-m" | "--model" => {
+                if i + 1 < args.len() {
+                    override_model = Some(args[i + 1].clone());
+                    i += 2;
+                    continue;
+                }
+            }
+            "-pr" | "--provider" => {
+                if i + 1 < args.len() {
+                    override_provider = Some(args[i + 1].clone());
+                    i += 2;
+                    continue;
+                }
+            }
+            "-n" | "--npc" => {
+                if i + 1 < args.len() {
+                    override_npc = Some(args[i + 1].clone());
+                    i += 2;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        positional.push(arg);
+        i += 1;
+    }
+
+    if let Some(file) = positional.first() {
+        if *file == "init" {
+            let dir = positional.get(1).copied().unwrap_or(".");
             return init_team(dir);
         } else if file.ends_with(".jinx") {
-            let jinx_args: Vec<&str> = args[2..].iter().map(|s| s.as_str()).collect();
+            let jinx_args: Vec<&str> = positional[1..].to_vec();
             return exec_jinx_file(file, &jinx_args).await;
         } else if file.ends_with(".npc") {
             let client = reqwest::Client::new();
-            return exec_npc_file(file, args.get(2).map(|s| s.as_str()), &client, &server_url()).await;
+            return exec_npc_file(
+                file,
+                positional.get(1).copied(),
+                &client,
+                &server_url(),
+                override_model.as_deref(),
+                override_provider.as_deref(),
+            )
+            .await;
+        } else {
+            // Legacy free-form prompt: npc 'hello' -n sibiji -m model -pr provider
+            let prompt = positional.join(" ");
+            if prompt.is_empty() {
+                eprintln!("Usage: npc <prompt> [-n NPC] [-m MODEL] [-pr PROVIDER]");
+                eprintln!("       npc <file.npc|file.jinx|init> [args...]");
+                std::process::exit(1);
+            }
+            let npc_name = override_npc.as_deref().unwrap_or(DEFAULT_NPC);
+            let npc_file = resolve_npc_file(npc_name).unwrap_or_else(|| {
+                eprintln!("Error: could not find NPC file for '{}'", npc_name);
+                std::process::exit(1);
+            });
+            let client = reqwest::Client::new();
+            return exec_npc_file(
+                &npc_file,
+                Some(&prompt),
+                &client,
+                &server_url(),
+                override_model.as_deref(),
+                override_provider.as_deref(),
+            )
+            .await;
         }
     }
 
-    eprintln!("Usage: npc <file.npc|file.jinx|init> [args...]");
+    eprintln!("Usage: npc <prompt> [-n NPC] [-m MODEL] [-pr PROVIDER]");
+    eprintln!("       npc <file.npc|file.jinx|init> [args...]");
     std::process::exit(1);
 }
