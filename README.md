@@ -44,8 +44,6 @@ Everything in `npcsh` is built around a small set of file types in an `npc_team/
 | **`.npc`** | Agent definitions (persona, directive, model, provider, available tools). Executable with a shebang. |
 | **`.jinx`** | Jinja execution templates — reusable tools/workflows that agents invoke like functions. |
 | **`.ctx`** | Team context: default model/provider, forenpc (orchestrator), MCP servers, env vars, shared memory. |
-| **`.sql`** | NQL models — SQL with embedded AI functions, runnable locally or on Snowflake/Databricks/BigQuery. |
-| **`.pipe`** | Assembly lines — multi-step workflow pipelines. |
 
 A minimal project looks like this:
 
