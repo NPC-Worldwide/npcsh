@@ -3,7 +3,7 @@ permissions:
 jinx_name: "flush"
 description: "Flush the last N messages from the conversation history."
 inputs:
-  - n: 1 # The number of messages to flush (default to 1).
+  - n: 1
 steps:
   - name: "flush_messages"
     engine: "python"

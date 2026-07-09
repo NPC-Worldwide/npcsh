@@ -1,9 +1,3 @@
-"""Launcher that finds and execs the Rust npcrsh binary.
-
-The Rust shell is a thin HTTP/SSE client of a running NPCSH server. This
-launcher starts the NPCSH server using its own CLI, waits for its /health
-endpoint, then execs the Rust binary.
-"""
 import os
 import shutil
 import platform

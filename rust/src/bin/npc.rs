@@ -1,10 +1,3 @@
-//! `npc` — dedicated NPC CLI binary.
-//!
-//! Executes `.npc` files, `.jinx` files, `npc init`, and legacy free-form
-//! prompts such as `npc "hello" -n sibiji`. It contains none of the `npcsh`
-//! shell/REPL/TUI code and depends on the `npcsh` library for the shared
-//! implementation.
-
 use npcrs::error::Result;
 use npcsh::{exec_jinx_file, exec_npc_file, find_team_dir, init_team};
 
@@ -99,7 +92,6 @@ async fn main() -> Result<()> {
             )
             .await;
         } else {
-            // Legacy free-form prompt: npc 'hello' -n sibiji -m model -pr provider
             let prompt = positional.join(" ");
             if prompt.is_empty() {
                 eprintln!("Usage: npc <prompt> [-n NPC] [-m MODEL] [-pr PROVIDER]");

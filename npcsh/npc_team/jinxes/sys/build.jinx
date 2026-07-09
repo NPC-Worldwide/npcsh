@@ -48,7 +48,6 @@ steps:
       _direct = bool(_direct_target) or not sys.stdin.isatty()
 
       if _direct:
-          # Direct build: target passed explicitly or non-interactive
           try:
               from npcpy.build_funcs import (
                   build_flask_server as _bf,
@@ -92,10 +91,9 @@ steps:
           context['output'] = "Build functions not available. Install npcpy with build support."
           exit()
 
-      # ========== State ==========
       class BuildState:
           def __init__(self):
-              self.phase = 0  # 0=select target, 1=configure, 2=building, 3=result
+              self.phase = 0
               self.sel = 0
               self.targets = [
                   {'key': 'flask',  'name': 'Flask Server',  'desc': 'Standalone Python web server with NPC API endpoints'},
@@ -125,9 +123,6 @@ steps:
 
       ui = BuildState()
 
-      # TUI mode: no target was passed, user picks interactively
-
-      # ========== Helpers ==========
       def get_size():
           try:
               s = os.get_terminal_size()
@@ -135,7 +130,6 @@ steps:
           except:
               return 80, 24
 
-      # ========== Rendering ==========
       def render():
           width, height = get_size()
           out = []
@@ -207,7 +201,6 @@ steps:
                   out.append(f'\033[{y};3H \033[1m{label}:\033[0m {val}')
               y += 2
 
-          # Show which configs are relevant for this target
           y += 1
           relevant = {'flask': ['outdir', 'team', 'port', 'cors'],
                       'docker': ['outdir', 'team', 'port', 'cors'],
@@ -244,7 +237,6 @@ steps:
 
           out.append(f'\033[{height};1H\033[K\033[7m Enter:New Build  o:Open output dir  q:Quit \033[0m'.ljust(width))
 
-      # ========== Build Execution ==========
       def do_build():
           target = ui.targets[ui.sel]
           config = {
@@ -272,7 +264,6 @@ steps:
 
           ui.phase = 3
 
-      # ========== Input ==========
       def handle_input(c, fd):
           if ui.editing:
               return handle_edit(c, fd)
@@ -356,7 +347,6 @@ steps:
           elif ui.phase == 1:
               ui.config_sel = min(len(ui.config_keys) - 1, ui.config_sel + 1)
 
-      # ========== Main Loop ==========
       fd = sys.stdin.fileno()
       old_settings = termios.tcgetattr(fd)
 

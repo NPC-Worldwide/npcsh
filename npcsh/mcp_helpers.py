@@ -1,7 +1,4 @@
 #!/usr/bin/env python
-"""
-Raw MCP client with no exception handling and full visibility.
-"""
 
 import asyncio
 import sys

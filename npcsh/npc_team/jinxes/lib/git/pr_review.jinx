@@ -19,12 +19,10 @@ steps:
           )
           return r.returncode, r.stdout, r.stderr
 
-      # Check gh is available
       rc, _, _ = run_gh('--version')
       if rc != 0:
           context['output'] = 'Error: gh CLI not found. Install from https://cli.github.com'
       else:
-          # Get PR info — if no number given, use current branch's PR
           view_args = ['pr', 'view']
           if pr_ref:
               view_args.append(pr_ref)
@@ -44,7 +42,6 @@ steps:
               if pr_data:
                   pr_num = pr_data.get('number', pr_ref or 'current')
 
-                  # Get the diff
                   diff_args = ['pr', 'diff']
                   if pr_ref:
                       diff_args.append(str(pr_ref))

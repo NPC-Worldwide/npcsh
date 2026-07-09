@@ -20,7 +20,6 @@ steps:
       steps_input = {{ steps | default("") | tojson }}
       state = context.get('state')
 
-      # --- action: get ---
       if action == "get":
           if state and getattr(state, '_active_plan', None):
               output = json.dumps(state._active_plan)
@@ -28,7 +27,6 @@ steps:
               output = json.dumps({"steps": [], "goal": None})
           exit()
 
-      # --- action: mark ---
       if action == "mark":
           if not (state and getattr(state, '_active_plan', None)):
               output = json.dumps({"error": "No active plan"})
@@ -49,7 +47,6 @@ steps:
           })
           exit()
 
-      # --- action: revise ---
       if action == "revise":
           if not state:
               output = json.dumps({"error": "No state available"})
@@ -72,7 +69,6 @@ steps:
           output = json.dumps({"status": "revised", "plan": current_plan})
           exit()
 
-      # --- action: create ---
       if action != "create":
           output = json.dumps({"error": "Unknown action. Use create/get/revise/mark"})
           exit()
@@ -84,7 +80,6 @@ steps:
               output = json.dumps({"error": "Please provide a goal or task to plan for."})
               exit()
 
-      # Build LLM prompt
       from npcpy.llm_funcs import get_llm_response
 
       npc = context.get('npc')
@@ -122,7 +117,6 @@ steps:
           result = get_llm_response(plan_prompt, model=model, provider=provider, stream=False)
           response_text = result.get('response', '') if isinstance(result, dict) else str(result)
 
-          # Extract JSON from possible markdown fences
           json_text = response_text
           if '```json' in response_text:
               json_text = response_text.split('```json')[1].split('```')[0]
@@ -146,13 +140,11 @@ steps:
               ],
           }
 
-      # Store plan in state
       if state:
           plan_data['current_step'] = 0
           plan_data['started_at'] = datetime.now().isoformat()
           state._active_plan = plan_data
 
-      # Format output
       goal_display = plan_data.get('goal', 'N/A')
       if len(goal_display) > 55:
           goal_display = f"{goal_display[:55]}..."
