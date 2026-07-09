@@ -20,6 +20,13 @@ _NPCSH_ARTIFACT = {
     ("Windows", "AMD64"): "npcsh-windows-x86_64.exe",
 }
 
+_NPCRU_ARTIFACT = {
+    ("Linux", "x86_64"): "npcru-linux-x86_64",
+    ("Darwin", "arm64"): "npcru-macos-aarch64",
+    ("Darwin", "x86_64"): "npcru-macos-x86_64",
+    ("Windows", "AMD64"): "npcru-windows-x86_64.exe",
+}
+
 
 def _install_bin_dir() -> Path:
     """Return the NPCSH bin directory where the binary should live."""
@@ -37,7 +44,7 @@ def _remove_old_binaries() -> None:
             continue
         if resolved == env_bin:
             continue
-        for name in ("npcrsh",):
+        for name in ("npcrsh", "npcru"):
             p = Path(dir_path) / name
             if p.exists():
                 try:
@@ -69,20 +76,20 @@ def _latest_crate_version(crate: str) -> str | None:
     return None
 
 
-def _download_npcrsh(bin_dir: Path, version: str | None = None) -> bool:
-    """Download the matching npcrsh release binary into bin_dir."""
+def _download_binary(bin_dir: Path, name: str, artifact_map: dict, version: str | None = None) -> bool:
+    """Download a named release binary into bin_dir."""
     import urllib.request
     import json
 
     system = platform.system()
     machine = platform.machine()
-    artifact = _NPCSH_ARTIFACT.get((system, machine))
+    artifact = artifact_map.get((system, machine))
     if not artifact:
-        print(f"Warning: no npcrsh binary for {system}/{machine}")
+        print(f"Warning: no {name} binary for {system}/{machine}")
         return False
 
     ext = ".exe" if system == "Windows" else ""
-    dst = bin_dir / f"npcrsh{ext}"
+    dst = bin_dir / f"{name}{ext}"
 
     if version:
         tag = f"v{version}"
@@ -100,18 +107,18 @@ def _download_npcrsh(bin_dir: Path, version: str | None = None) -> bool:
         )
         if not asset_url:
             tag_name = release.get("tag_name", "unknown")
-            print(f"Warning: npcrsh artifact '{artifact}' not found in release {tag_name}")
+            print(f"Warning: {name} artifact '{artifact}' not found in release {tag_name}")
             return False
 
-        print(f"Downloading npcrsh binary from {asset_url} ...")
+        print(f"Downloading {name} binary from {asset_url} ...")
         with urllib.request.urlopen(asset_url, timeout=120) as resp, open(dst, "wb") as f:
             shutil.copyfileobj(resp, f)
 
         os.chmod(str(dst), 0o755)
-        print(f"npcrsh binary installed to {dst}")
+        print(f"{name} binary installed to {dst}")
         return True
     except Exception as e:
-        print(f"Warning: failed to download npcrsh binary ({e})")
+        print(f"Warning: failed to download {name} binary ({e})")
         return False
 
 
@@ -123,13 +130,12 @@ class BuildWithRust(build_py):
         _remove_old_binaries()
 
         latest_version = _latest_crate_version(CRATE_NAME)
-        if latest_version:
-            print(f"Latest published npcsh crate version is {latest_version}")
-            if _download_npcrsh(bin_dir, version=latest_version):
-                super().run()
-                return
+        if not latest_version:
+            raise RuntimeError("Could not determine latest npcsh crate version")
 
-        print("Warning: npcrsh binary unavailable — falling back to Python-only mode")
+        print(f"Latest published npcsh crate version is {latest_version}")
+        _download_binary(bin_dir, "npcrsh", _NPCSH_ARTIFACT, version=latest_version)
+        _download_binary(bin_dir, "npcru", _NPCRU_ARTIFACT, version=latest_version)
         super().run()
 
 
