@@ -12,6 +12,7 @@ mod tui;
 mod cron;
 mod tutorial;
 mod cli_providers;
+mod version_check;
 
 use crate::cron::CronRegistry;
 use crate::cli_providers::{CLI_PROVIDERS, run_cli_provider};
@@ -502,6 +503,14 @@ async fn main() -> Result<()> {
     crate::cron::spawn_cron_ticker(cron_registry.clone(), cron_tx);
 
     print_welcome(&kernel);
+
+    let current_version = env!("NPCSH_VERSION").to_string();
+    let http_client_for_update = http_client.clone();
+    tokio::spawn(async move {
+        if let Some(info) = version_check::check_version(&http_client_for_update, &current_version).await {
+            eprintln!("{}", version_check::format_update_notice(&info));
+        }
+    });
 
     eprintln!("{DIM}  connected to npcpy server{RESET}");
 
