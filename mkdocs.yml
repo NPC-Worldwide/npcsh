@@ -26,7 +26,7 @@ plugins:
             members:
               - public
             filters:
-              - "!^__init__$"  # Properly excludes __init__
+              - "!^__init__$"
           rendering:
             show_source: true
             show_root_heading: false

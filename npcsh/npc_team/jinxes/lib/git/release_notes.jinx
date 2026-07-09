@@ -89,7 +89,7 @@ steps:
               files_text = diff_stat if diff_stat else '(unavailable)'
               prs_text = prs if prs else '(none)'
 
-              # Build example 4 as a plain string to avoid f-string/Jinja2 brace conflicts
+
               example4_commits = """0f238f5\tjinxs renaming\tChris Agostino
               401d727\tjinx to jinxes\tTest User
               f7af1c3\tsys\tChris Agostino"""

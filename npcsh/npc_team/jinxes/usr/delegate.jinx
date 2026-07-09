@@ -15,7 +15,6 @@ steps:
       from termcolor import colored
       from npcpy.llm_funcs import get_llm_response
 
-      # Try to get spinner for status updates
       try:
           from npcsh.ui import get_current_spinner
           spinner = get_current_spinner()
@@ -51,7 +50,6 @@ steps:
       jinx_list = ', '.join(list(target_jinxes.keys())[:8])
       print(colored(f"  [{target_name}] Jinxes: {jinx_list}...", "white", attrs=["dark"]))
 
-      # Update spinner to show sub-agent
       if spinner:
           spinner.set_message(f"{orchestrator_name} delegated to {target_name}")
 
@@ -63,7 +61,6 @@ steps:
       while iteration < max_iters and not task_complete:
           iteration += 1
 
-          # Update spinner with current iteration
           if spinner:
               spinner.set_message(f"{target_name} working (iter {iteration}/{max_iters})")
 
@@ -93,11 +90,9 @@ steps:
               print(colored(f"  @{target_name} iteration {iteration} complete", "green"))
               print(colored(sep + "\n", "cyan"))
 
-              # Update spinner for review phase
               if spinner:
                   spinner.set_message(f"{orchestrator_name} reviewing {target_name}'s work")
 
-              # Build review prompt without f-strings to avoid YAML issues
               output_preview = delegate_output[:2000] if delegate_output else 'No output received'
               msg_preview = str(delegate_messages[-5:]) if delegate_messages else 'No messages'
 

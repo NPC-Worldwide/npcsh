@@ -17,7 +17,6 @@ steps:
       query = context.get('query', '')
       stream = context.get('stream', True)
 
-      # Use the shell's current model/provider — NEVER let the LLM override these.
       model = None
       provider = None
       try:
@@ -46,7 +45,6 @@ steps:
           context['output'] = response.get('response', '')
           context['messages'] = response.get('messages', messages)
 
-          # Track usage
           if 'usage' in response and npc and hasattr(npc, 'shared_context'):
               usage = response['usage']
               npc.shared_context['session_input_tokens'] += usage.get('input_tokens', 0)

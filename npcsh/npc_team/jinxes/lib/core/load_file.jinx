@@ -18,7 +18,6 @@ steps:
           output = f"Error: File not found at {file_path}"
       else:
           try:
-              # Special handling for Jupyter notebooks
               if file_path.endswith('.ipynb'):
                   with open(file_path, 'r', encoding='utf-8') as f:
                       notebook = json.load(f)

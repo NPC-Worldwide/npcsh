@@ -6,17 +6,12 @@ use crossterm::terminal;
 
 const ONE_WEEK: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
 
-// ────────────────────────────────
-// Common helpers
-// ────────────────────────────────
-
 pub type Result<T> = std::result::Result<T, npcrs::NpcError>;
 
 pub struct RawModeGuard;
 impl RawModeGuard {
     pub fn new() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
-        // Save cursor position, switch to alternate screen buffer, and hide cursor.
         let _ = io::stdout().write_all(b"\x1b[?1049h\x1b[?25l");
         let _ = io::stdout().flush();
         Ok(Self)
@@ -24,7 +19,6 @@ impl RawModeGuard {
 }
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
-        // Clear alternate screen, restore main screen, re-enable cursor, and disable raw mode.
         let _ = io::stdout().write_all(b"\x1b[2J\x1b[H\x1b[?1049l\x1b[?25h");
         let _ = io::stdout().flush();
         let _ = terminal::disable_raw_mode();
@@ -101,9 +95,6 @@ fn git_err(output: std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).to_string()
 }
 
-// ────────────────────────────────
-// /config TUI
-// ────────────────────────────────
 
 pub fn run_config_tui() -> Result<()> {
     let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
@@ -266,9 +257,6 @@ pub fn run_config_tui() -> Result<()> {
     Ok(())
 }
 
-// ────────────────────────────────
-// /gitt TUI
-// ────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum GitTab { Status, Log, Branches, Stash, Diff }
@@ -398,8 +386,26 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
             clear_all(&mut out);
             header_line(&mut out, cols, " gitt ");
             hr(&mut out, cols, 2);
-            let tabs = "[1:status] [2:log] [3:branches] [4:stash] [5:diff]";
-            wline(&mut out, 3, &format!("  {} | {} | {}", repo_str, status, tabs));
+            let tab_idx = match tab {
+                GitTab::Status => 0,
+                GitTab::Log => 1,
+                GitTab::Branches => 2,
+                GitTab::Stash => 3,
+                GitTab::Diff => 4,
+            };
+            let tab_labels = ["status", "log", "branches", "stash", "diff"];
+            let tabs = tab_labels
+                .iter()
+                .enumerate()
+                .map(|(i, label)| {
+                    if i == tab_idx {
+                        format!("\x1b[1;7m [{}] \x1b[0m", label)
+                    } else {
+                        format!("\x1b[90m [{}] \x1b[0m", label)
+                    }
+                })
+                .collect::<String>();
+            wline(&mut out, 3, &format!("  {} | {} |{}", repo_str, status, tabs));
             hr(&mut out, cols, 4);
 
             for r in 0..body_h {
@@ -518,9 +524,6 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-// ────────────────────────────────
-// /model TUI
-// ────────────────────────────────
 
 #[derive(Clone)]
 struct ModelEntry { provider: String, id: String, name: String }
@@ -686,7 +689,7 @@ pub fn run_model_tui() -> Result<()> {
     let mut provider_models: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     let mut chat_model = std::env::var("NPCSH_CHAT_MODEL").unwrap_or_default();
     let mut chat_provider = std::env::var("NPCSH_CHAT_PROVIDER").unwrap_or_default();
-    let mut level = 0; // 0 providers, 1 models
+    let mut level = 0;
     let mut active_provider = String::new();
     let mut sel: usize = 0;
     let mut scroll: usize = 0;
@@ -849,9 +852,6 @@ fn set_npcsh_config_value(key: &str, value: &str) {
     unsafe { std::env::set_var(key, value); }
 }
 
-// ────────────────────────────────
-// /setup TUI
-// ────────────────────────────────
 
 pub fn run_setup_tui() -> Result<()> {
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
@@ -942,9 +942,6 @@ pub fn run_setup_tui() -> Result<()> {
     Ok(())
 }
 
-// ────────────────────────────────
-// /team TUI
-// ────────────────────────────────
 
 pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
@@ -1036,9 +1033,6 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-// ────────────────────────────────
-// /commit TUI
-// ────────────────────────────────
 
 pub fn run_commit_tui() -> Result<()> {
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
@@ -1050,7 +1044,7 @@ pub fn run_commit_tui() -> Result<()> {
 
     let mut sel: usize = 0;
     let mut msg = String::new();
-    let mut stage: usize = 0; // 0 = pick files, 1 = message
+    let mut stage: usize = 0;
 
     loop {
         let (cols, rows) = term_size();
@@ -1109,12 +1103,9 @@ pub fn run_commit_tui() -> Result<()> {
     Ok(())
 }
 
-// ────────────────────────────────
-// /jinxes TUI
-// ────────────────────────────────
 
 pub fn run_jinxes_tui(kernel: &mut Kernel) -> Result<()> {
-    let mut all: Vec<(String, String, String, String)> = Vec::new(); // source, folder, name, description
+    let mut all: Vec<(String, String, String, String)> = Vec::new();
     let team_dir = kernel.team.source_dir.clone();
     let global_dir = shellexpand::tilde("~/.npcsh/npc_team").to_string();
     scan_jinxes(&team_dir, "team", &mut all);
@@ -1221,9 +1212,6 @@ fn scan_jinxes(dir: &Option<String>, source: &str, out: &mut Vec<(String, String
     }
 }
 
-// ────────────────────────────────
-// /agent dashboard TUI
-// ────────────────────────────────
 
 use std::sync::{Arc, Mutex};
 
@@ -1239,7 +1227,6 @@ struct AgentLog {
 fn load_agent_logs(kernel: &Kernel, npc_name: &str, limit: usize) -> Vec<AgentLog> {
     let mut logs: Vec<AgentLog> = Vec::new();
 
-    // Conversation history messages for this NPC.
     if let Ok(msgs) = kernel.history.get_messages_by_npc(npc_name, limit) {
         for m in msgs {
             logs.push(AgentLog {
@@ -1252,7 +1239,6 @@ fn load_agent_logs(kernel: &Kernel, npc_name: &str, limit: usize) -> Vec<AgentLo
         }
     }
 
-    // Jinx executions for this NPC via direct DB query.
     if let Ok(conn) = rusqlite::Connection::open(&kernel.history.db_path) {
         let mut stmt = conn.prepare(
             "SELECT jinx_name, input, output, status, timestamp, error_message FROM jinx_executions WHERE npc = ?1 ORDER BY timestamp DESC LIMIT ?2"
@@ -1288,7 +1274,6 @@ fn load_agent_logs(kernel: &Kernel, npc_name: &str, limit: usize) -> Vec<AgentLo
         }
     }
 
-    // NPC executions (direct LLM/tool runs) for this NPC.
     if let Ok(rows) = kernel.history.get_npc_executions(npc_name, limit) {
         for row in rows {
             let input = row.get("input").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -1416,7 +1401,7 @@ pub fn run_agent_dashboard_tui(
     let mut sel: usize = 0;
     let mut scroll: usize = 0;
     let mut selected_job: Option<crate::cron::CronJob> = None;
-    let mut runs: Vec<(String, String)> = Vec::new(); // (timestamp_label, content)
+    let mut runs: Vec<(String, String)> = Vec::new();
 
     loop {
         let (cols, rows) = term_size();
@@ -1547,9 +1532,6 @@ pub fn run_agent_dashboard_tui(
     Ok(())
 }
 
-// ────────────────────────────────
-// /memories TUI
-// ────────────────────────────────
 
 pub fn run_memories_tui() -> Result<()> {
     use rusqlite::params;
@@ -1671,7 +1653,6 @@ pub fn run_memories_tui() -> Result<()> {
     let mut db_statuses = fetch_statuses(&conn);
     let mut tabs: Vec<Option<String>> = vec![None];
     tabs.extend(db_statuses.iter().cloned().map(Some));
-    // Move pending to the front.
     if let Some(idx) = tabs.iter().position(|t| t.as_deref().map(|s| s.to_lowercase().contains("pending")).unwrap_or(false)) {
         let pending = tabs.remove(idx);
         tabs.insert(1, pending);
@@ -1734,7 +1715,6 @@ pub fn run_memories_tui() -> Result<()> {
         };
         header_line(&mut out, cols, &format!(" MEMORIES ({}){} ", memories.len(), stats));
 
-        // Tabs
         let mut tab_str = String::new();
         for (i, name) in tab_names.iter().enumerate() {
             if i == tab {
@@ -1802,7 +1782,6 @@ pub fn run_memories_tui() -> Result<()> {
             }
         }
 
-        // Scroll indicator
         if memories.len() > body_h && !preview {
             let total = (memories.len() - body_h).max(1);
             let pct = ((scroll as f64) / (total as f64) * 100.0) as usize;
@@ -1885,9 +1864,6 @@ pub fn run_memories_tui() -> Result<()> {
     Ok(())
 }
 
-// ────────────────────────────────
-// /ctx TUI
-// ────────────────────────────────
 
 pub fn run_ctx_tui(kernel: &mut Kernel, current_pid: &mut u32) -> Result<()> {
     use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -2074,7 +2050,6 @@ pub fn run_ctx_tui(kernel: &mut Kernel, current_pid: &mut u32) -> Result<()> {
                             if let Some(forenpc) = ctx_data.get("forenpc").and_then(|v| v.as_str()) {
                                 if kernel.team.npcs.contains_key(forenpc) {
                                     kernel.team.forenpc = Some(forenpc.to_string());
-                                    // Switch current_pid to the forenpc process if one exists, else spawn.
                                     let existing = kernel.ps().iter().find(|p| p.npc.name == forenpc).map(|p| p.pid);
                                     if let Some(pid) = existing {
                                         *current_pid = pid;

@@ -1,21 +1,23 @@
 <p align="center">
-  <a href= "https://github.com/cagostino/npcpy/blob/main/docs/npcpy.md"> 
+  <a href= "https://github.com/cagostino/npcpy/blob/main/docs/npcpy.md">
   <img src="https://raw.githubusercontent.com/cagostino/npcpy/main/npcpy/npc-python.png" alt="npc-python logo" width=250></a>
 </p>
 
+# npcsh Documentation
 
+`npcsh` is an agentic shell built around a declarative data layer for AI teams. Agents, tools, context, and workflows are defined as plain files in an `npc_team/` directory; the shell compiles them into a live multi-agent system you can chat with, schedule, or serve over an API.
 
 ## Quick Links
-- [Full Guide](guide.md) — Agents, jinxes, orchestration, NQL, knowledge graphs, and more
+
 - [Installation Guide](installation.md)
-- [NPC Data Layer](npc_data_layer.md)
-- [API Reference](api/index.md)
+- [Full Guide](guide.md) — agents, jinxes, orchestration, NQL, knowledge graphs, and more
+- [Benchmarks](benchmarks.md) — pass/fail results across 125 agentic-shell tasks
+- [NPC CLI](npc_cli.md)
+- [Skills](skills.md) — knowledge-content jinxes with progressive section disclosure
 
+## Program Guides
 
-## Guides for NPC Shell programs
 - [NPC Shell](npcsh.md)
-- [NPC CLI ](api/npc_cli.md)
-- [Skills](skills.md) — Knowledge-content jinxes with progressive section disclosure
 - [Alicanto](alicanto.md)
 - [Guac](guac.md)
 - [PTI](pti.md)
@@ -23,20 +25,27 @@
 - [Wander](wander.md)
 - [Yap](yap.md)
 - [TLDR Cheat Sheet](TLDR_Cheat_sheet.md)
-- [API Reference](api/index.md)
 
+## The NPC Data Layer
+
+Everything customizable in `npcsh` lives in `npc_team/` as simple files:
+
+- **`.npc`** — agent definitions (persona, directive, model, provider, jinxes)
+- **`.jinx`** — Jinja execution templates, i.e. tools and workflows
+- **`.ctx`** — team context (default model/provider, forenpc, MCP servers, env vars)
+- **`.sql`** — NQL models: SQL with embedded AI functions
+- **`.pipe`** — assembly-line workflow pipelines
+
+Because these are ordinary files, you can version them in git, share them across projects, and drop in agent definitions from other ecosystems.
 
 ## Contributing
+
 Contributions are welcome! Please submit issues and pull requests on the GitHub repository.
 
 ## Support
-If you appreciate the work here, [consider supporting NPC Worldwide](https://buymeacoffee.com/npcworldwide). If you'd like to explore how to use `npcpy` to help your business, please reach out to info@npcworldwi.de .
 
-
-## NPC Studio
-Coming soon! NPC Studio will be a desktop application for managing chats and agents on your own machine.
-Be sure to sign up for the [npcpy newsletter](https://forms.gle/n1NzQmwjsV4xv1B2A) to hear updates!
+If you appreciate the work here, [consider supporting NPC Worldwide](https://buymeacoffee.com/npcworldwide). If you'd like to explore how to use `npcpy` to help your business, please reach out to info@npcworldwi.de.
 
 ## License
-This project is licensed under the MIT License.
 
+This project is licensed under the MIT License.

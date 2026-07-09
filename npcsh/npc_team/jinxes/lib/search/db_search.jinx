@@ -26,7 +26,6 @@ steps:
       query = context.get('query', '').strip()
       text_mode = context.get('text', '').lower() in ('true', '1', 'yes')
 
-      # Force text mode when called by an agent (non-interactive context)
       if not text_mode:
           try:
               if ('state' in dir() and state is not None
@@ -99,7 +98,6 @@ steps:
               if not rows:
                   context['output'] = f"No results found for '{query}'"
               elif text_mode:
-                  # Text-only output
                   lines = [f"Found {len(rows)} results for '{query}':", ""]
                   for row in rows:
                       cid = row['conversation_id'][:8] if row['conversation_id'] else '?'
@@ -116,7 +114,6 @@ steps:
                       lines.append("")
                   context['output'] = "\n".join(lines)
               else:
-                  # Interactive TUI mode
                   def get_terminal_size():
                       try:
                           size = os.get_terminal_size()
@@ -151,8 +148,8 @@ steps:
                   list_height = height - 5
                   mode = 'list'
                   preview_scroll = 0
-                  sort_mode = 'time'  # time, role, npc
-                  role_filter = 'all'  # all, user, assistant
+                  sort_mode = 'time'
+                  role_filter = 'all'
 
                   def sort_rows(rows, sort_mode):
                       if sort_mode == 'time':
@@ -190,7 +187,6 @@ steps:
 
                           sys.stdout.write('\033[H')
 
-                          # Header
                           if mode == 'list':
                               sort_ind = {'time': '1', 'role': '2', 'npc': '3'}[sort_mode]
                               header = f" DB SEARCH ({len(display_rows)} results): '{query}' [sort:{sort_mode}({sort_ind}) filter:{role_filter}] "
@@ -198,7 +194,6 @@ steps:
                               header = f" PREVIEW: {display_rows[selected]['conversation_id'][:16]} "
                           sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
 
-                          # Column headers
                           if mode == 'list':
                               col_header = f' {"TIMESTAMP":<16} {"ROLE":<10} {"NPC":<12} {"CONTENT":<40}'
                               sys.stdout.write(f'\033[90m{col_header[:width]}\033[0m\n')
@@ -218,23 +213,21 @@ steps:
                                   npc_name = (r.get('npc') or 'default')[:12]
                                   content = (r.get('content') or '')[:60].replace('\n', ' ')
 
-                                  # Color by role
                                   if r.get('role') == 'user':
-                                      role_color = '\033[32m'  # green
+                                      role_color = '\033[32m'
                                   elif r.get('role') == 'assistant':
-                                      role_color = '\033[34m'  # blue
+                                      role_color = '\033[34m'
                                   else:
-                                      role_color = '\033[90m'  # gray
+                                      role_color = '\033[90m'
 
                                   line = f" {ts:<16} {role_color}{role:<10}\033[0m {npc_name:<12} {content}"
-                                  line = line[:width+20]  # allow for color codes
+                                  line = line[:width+20]
 
                                   if idx == selected:
                                       sys.stdout.write(f'\033[7;1m>{line}\033[0m')
                                   else:
                                       sys.stdout.write(f' {line}')
 
-                              # Status bar
                               sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
                               sel = display_rows[selected] if display_rows else {}
                               cid = sel.get('conversation_id', '')[:20]
@@ -244,7 +237,7 @@ steps:
                               sys.stdout.write(f'\033[{height-1};1H\033[K {cid}  @ {path}'.ljust(width))
                               sys.stdout.write(f'\033[{height};1H\033[K\033[7m j/k:Nav 1/2/3:Sort f:Filter p:Preview r:Reattach q:Quit [{selected+1}/{len(display_rows)}] \033[0m')
 
-                          else:  # preview mode
+                          else:
                               sel = display_rows[selected]
                               content = sel.get('content') or ''
                               lines = content.split('\n')
@@ -280,12 +273,12 @@ steps:
                                   continue
                               if c2 == '[':
                                   c3 = os.read(fd, 1).decode('latin-1')
-                                  if c3 == 'A':  # Up
+                                  if c3 == 'A':
                                       if mode == 'list' and selected > 0:
                                           selected -= 1
                                       elif mode == 'preview' and preview_scroll > 0:
                                           preview_scroll -= 1
-                                  elif c3 == 'B':  # Down
+                                  elif c3 == 'B':
                                       if mode == 'list' and selected < len(display_rows) - 1:
                                           selected += 1
                                       elif mode == 'preview':
@@ -334,7 +327,6 @@ steps:
                               selected = 0
                               scroll = 0
                           elif c == 'f' and mode == 'list':
-                              # Cycle through filters
                               if role_filter == 'all':
                                   role_filter = 'user'
                               elif role_filter == 'user':

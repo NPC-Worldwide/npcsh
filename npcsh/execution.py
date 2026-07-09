@@ -1,6 +1,3 @@
-"""
-Command execution utilities for npcsh
-"""
 import os
 import shutil
 import subprocess

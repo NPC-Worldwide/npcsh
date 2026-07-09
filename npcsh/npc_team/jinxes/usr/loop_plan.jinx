@@ -25,7 +25,6 @@ steps:
       from npcpy.llm_funcs import get_llm_response
       from npcpy.npc_compiler import NPC
 
-      # ── Inputs ─────────────────────────────────────────────────────────────────
       _npc = context.get('npc')
       _team = context.get('team')
       _messages = context.get('messages', [])
@@ -41,7 +40,6 @@ steps:
       budget_actions = int(context.get('budget_actions') or '20')
       require_confirmation = str(context.get('require_confirmation', 'false')).lower() in ('true', '1', 'yes')
 
-      # Resolve model/provider from state or the invoking NPC.
       _model = None
       _provider = None
       try:
@@ -54,7 +52,6 @@ steps:
       if not _provider and _npc and hasattr(_npc, 'resolved_provider'):
           _provider = _npc.resolved_provider()
 
-      # ── Discover available jinxes ─────────────────────────────────────────────
       def discover_jinxes(npc_obj, team_obj):
           found = {}
           if team_obj and hasattr(team_obj, 'jinxes_dict'):
@@ -102,7 +99,6 @@ steps:
 
       catalog_text = '\n'.join(f"  - {name}: {desc[:120]}" for name, desc in sorted(jinx_catalog.items()))
 
-      # ── Discover available NPCs for delegation ───────────────────────────────
       npc_catalog = {}
       if _team and hasattr(_team, 'npcs'):
           for name, npc_obj in _team.npcs.items():
@@ -113,7 +109,6 @@ steps:
 
       npc_catalog_text = '\n'.join(f"  - @{name}: {desc}" for name, desc in sorted(npc_catalog.items())) if npc_catalog else "  (no specialist NPCs loaded)"
 
-      # ── Helpers ──────────────────────────────────────────────────────────────
       def status(msg):
           print(colored(f"  [loop_plan] {msg}", "cyan"))
 
@@ -132,7 +127,6 @@ steps:
           result = get_llm_response(prompt, model=_model, provider=_provider, npc=_npc, format="json", temperature=temperature, **kwargs)
           return result.get('response', {}) if isinstance(result, dict) else {}
 
-      # ── Plan generation ────────────────────────────────────────────────────────
       status("Generating plan...")
 
       plan_example = """
@@ -204,7 +198,6 @@ steps:
           context['messages'] = _messages
           exit()
 
-      # ── Present plan ─────────────────────────────────────────────────────────
       print(colored("\n=== LOOP PLAN ===", "cyan", attrs=["bold"]))
       print(colored(f"Goal: {plan.get('goal_restatement', goal)}", "white", attrs=["dark"]))
       for s in steps:
@@ -214,8 +207,6 @@ steps:
           print(colored(f"  [{s['id']}] {s.get('description', '')} -> {ttype}:{target} {risk_tag}", "white"))
       print(colored("=================\n", "cyan", attrs=["bold"]))
 
-      # Optional confirmation. In a headless run we proceed; the permission system
-      # will gate dangerous individual tool calls anyway.
       if require_confirmation:
           status("require_confirmation=true but no interactive form available in this context; proceeding.")
 
@@ -230,7 +221,6 @@ steps:
           "errors": [],
       }
 
-      # ── Execution loop ───────────────────────────────────────────────────────
       status("Entering execution loop...")
 
       for i, step in enumerate(steps):
@@ -322,7 +312,6 @@ steps:
               step_error = f"{type(e).__name__}: {e}"
               traceback.print_exc()
 
-          # Checkpoint after each step
           checkpoint["steps_completed"].append(description)
           if checkpoint["steps_remaining"]:
               checkpoint["steps_remaining"].pop(0)
@@ -341,7 +330,6 @@ steps:
               "error": step_error,
           })
 
-          # Progress report
           print(colored("\n  [PROGRESS REPORT]", "green", attrs=["bold"]))
           print(colored(f"    Completed: {len(checkpoint['steps_completed'])}/{len(steps)}", "white", attrs=["dark"]))
           print(colored(f"    Actions used: {action_count}/{budget_actions}", "white", attrs=["dark"]))
@@ -351,7 +339,6 @@ steps:
           if remaining:
               print(colored(f"    Remaining: " + ", ".join(f"[{s['id']}] {s.get('target', s.get('jinx', '?'))}" for s in remaining), "white", attrs=["dark"]))
 
-      # ── Completion review ─────────────────────────────────────────────────────
       status("Reviewing completion...")
 
       review_example = """
@@ -394,7 +381,6 @@ steps:
               "next_actions": [],
           }
 
-      # ── Final output ─────────────────────────────────────────────────────────
       completed_lines = "\n        ".join(
           f"{'[✓]' if item.get('done') else '[ ]'} {item.get('item', '')} — {item.get('evidence', '')}"
           for item in review.get('completed_checklist', [])

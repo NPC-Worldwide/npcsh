@@ -1,8 +1,7 @@
-"""
-Standalone benchmark runner for npcsh.
+"""Standalone benchmark runner for npcsh.
 
-Runs a set of tasks through npcsh -c with a local model and verifies
-results by checking file system state and command output.
+Runs a set of tasks through the Rust `npcsh` binary and verifies results by
+checking file system state and command output.
 
 Usage:
     python -m npcsh.benchmark.local_runner
@@ -14,33 +13,40 @@ Usage:
 
 import os
 import re
+import shutil
 import subprocess
 import tempfile
-import threading
 import time
+import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
 import pandas as pd
-from npcsh.routes import router
 
 
-from npcsh._state import (
-    initial_state,
-    execute_command,
-    setup_shell,
-)
-import npcsh.ui as _ui
 SUPPORTED_FRAMEWORKS = (
     "npcsh",
     "claude", "opencode", "nanocoder",
-    "npc-claude", "npc-codex", "npc-gemini", "npc-opencode",
+    "npc-claude", "npc-codex", "npc-opencode",
 )
-
 NPCSH_SPECIFIC_CATEGORIES = frozenset({
     "delegation", "tool-chain", "image-gen", "audio-gen", "web-search",
 })
+
+NPCSH_BIN = os.path.expanduser("~/.npcsh/bin/npcsh")
+
+
+def _find_npcsh_bin(path: Optional[str] = None) -> str:
+    """Return the path to the npcsh binary, falling back to PATH lookup."""
+    if path:
+        return path
+    if os.path.exists(NPCSH_BIN):
+        return NPCSH_BIN
+    found = shutil.which("npcsh")
+    if found:
+        return found
+    raise FileNotFoundError("npcsh binary not found; build and install it first")
 
 
 @dataclass
@@ -126,9 +132,6 @@ def setup_bench_env():
     except ImportError:
         pass
 
-    import sys
-    sys.stdin = open(os.devnull, 'r')
-
     try:
         import ollama as _ollama
         import httpx
@@ -139,24 +142,17 @@ def setup_bench_env():
 
 
 def _remove_sudo_trap():
-    import shutil
     shutil.rmtree(_NOSUDO_DIR, ignore_errors=True)
     parts = os.environ.get("PATH", "").split(os.pathsep)
     os.environ["PATH"] = os.pathsep.join(p for p in parts if p != _NOSUDO_DIR)
 
 
 def clean_task_artifacts(task: dict = None):
-    """Remove /tmp files that a task's verify_cmd and instruction reference.
-
-    Extracts every /tmp/ path from the task definition so cleanup is always
-    in sync with the actual tasks — no more stale artifacts causing false passes.
-    """
-    import shutil
-
+    """Remove /tmp files that a task's verify_cmd and instruction reference."""
     paths = set()
     if task:
-        for field in ("verify_cmd", "instruction"):
-            text = task.get(field, "")
+        for fld in ("verify_cmd", "instruction"):
+            text = task.get(fld, "")
             for m in re.findall(r'/tmp/[\w.*/-]+', text):
                 clean = m.rstrip(")'\"`;,")
                 paths.add(clean)
@@ -183,100 +179,87 @@ def clean_task_artifacts(task: dict = None):
                 pass
 
 
-_BENCH_DROP_JINXES = {"ask_form"}
-
-
-def _setup_state(model: str, provider: str, state, work_dir: str = None,
-                 think=None):
-    """One-time setup for a task: load team, register jinxes, configure model."""
-    command_history, team, default_npc = setup_shell()
-
-    for obj in (default_npc, team):
-        d = getattr(obj, "jinxes_dict", None)
-        if d:
-            for name in _BENCH_DROP_JINXES:
-                d.pop(name, None)
-        c = getattr(obj, "jinx_tool_catalog", None)
-        if c:
-            for name in _BENCH_DROP_JINXES:
-                c.pop(name, None)
-
-    state.check_tool_permission = lambda tool_name, arguments: "allow"
-
-    if team and hasattr(team, 'jinxes_dict'):
-        for jinx_name, jinx_obj in team.jinxes_dict.items():
-            router.register_jinx(jinx_obj)
-    state.npc = default_npc
-    state.npc.model = model
-    state.npc.provider = provider
-    state.team = team
-    state.team.model = model
-    state.team.provider = provider
-    state.chat_model = model
-    state.chat_provider = provider
-    state.command_history = command_history
-    state.current_path = work_dir or os.getcwd()
-    state.messages = []
-    state._max_iterations = 10
-    state.think = think
-    return command_history
-
-
-def _kill_child_processes():
-    """SIGKILL child subprocesses and reap zombies."""
+def _kill_descendants(root_pid: int) -> None:
+    """SIGKILL the process group AND every descendant, then poll until reaped."""
+    import signal as _signal
+    try:
+        pgid = os.getpgid(root_pid)
+        os.killpg(pgid, _signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    descendants: list = []
     try:
         import psutil
-        current = psutil.Process()
-        for child in current.children(recursive=True):
+        try:
+            root = psutil.Process(root_pid)
+            descendants = root.children(recursive=True)
+        except psutil.NoSuchProcess:
+            descendants = []
+        for child in descendants:
             try:
                 child.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
-        for child in current.children(recursive=True):
-            try:
-                if child.status() == psutil.STATUS_ZOMBIE:
-                    child.wait(timeout=0)
-            except (psutil.NoSuchProcess, psutil.AccessDenied,
-                    psutil.TimeoutExpired, ChildProcessError):
-                pass
+        psutil.wait_procs(descendants, timeout=3)
     except ImportError:
-        pass
-    try:
-        while True:
-            pid, _ = os.waitpid(-1, os.WNOHANG)
-            if pid == 0:
-                break
-    except ChildProcessError:
-        pass
-
-
-def _reset_ollama_client():
-    """Kill the in-flight ollama HTTP request and create a fresh client.
-
-    After a timeout, the old HTTP request is still in-flight.  Ollama
-    processes inference sequentially, so every new request queues behind
-    the stale one.  We close the old httpx connection pool (aborts the
-    TCP stream so ollama cancels the generation), then create a brand-new
-    ollama.Client and rebind the module-level functions (chat, generate,
-    etc.) so subsequent calls use the clean connection.
-    """
-    try:
-        import ollama as _ollama
-        import httpx
-        import inspect
-
-        old = _ollama.chat.__self__
         try:
-            old._client.close()
+            subprocess.run(["pkill", "-9", "-P", str(root_pid)],
+                           capture_output=True, timeout=5)
         except Exception:
             pass
-        new = _ollama.Client(timeout=httpx.Timeout(90.0))
-        for name, obj in inspect.getmembers(_ollama):
-            if hasattr(obj, '__self__') and obj.__self__ is old:
-                setattr(_ollama, name, getattr(new, name))
-        print("  [ollama] client reset — stale request aborted", flush=True)
-    except Exception as e:
-        print(f"  [warn] ollama client reset failed: {e}", flush=True)
+
+
+def _run_npcsh_attempt(
+    instruction: str,
+    binary: str,
+    model: str,
+    provider: str,
+    attempt_timeout: float,
+    work_dir: str,
+) -> str:
+    """Launch the Rust npcsh binary as a subprocess for one task attempt."""
+    env = os.environ.copy()
+    env["NPCSH_CHAT_MODEL"] = model
+    env["NPCSH_CHAT_PROVIDER"] = provider
+
+    print(f"  [npcsh] {instruction[:80]}... (cwd={work_dir})", flush=True)
+    try:
+        proc = subprocess.Popen(
+            [binary, instruction],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            cwd=work_dir,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        return f"Exception: npcsh binary not found at {binary}"
+
+    hard_deadline = time.time() + attempt_timeout + 5.0
+    try:
+        stdout, stderr = proc.communicate(timeout=attempt_timeout)
+        return (stdout or "") + (stderr or "")
+    except subprocess.TimeoutExpired:
+        pass
+
+    _kill_descendants(proc.pid)
+    try:
+        proc.kill()
+    except Exception:
+        pass
+    while proc.poll() is None and time.time() < hard_deadline:
+        try:
+            proc.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            _kill_descendants(proc.pid)
+    if proc.poll() is None:
+        try:
+            proc.stdout.close()
+            proc.stderr.close()
+        except Exception:
+            pass
+    return f"Timed out after {attempt_timeout:.0f}s"
 
 
 def _build_external_command(framework: str, instruction: str, model: str,
@@ -321,49 +304,13 @@ def _build_external_command(framework: str, instruction: str, model: str,
         return ["nanocoder", "run", instruction], env
     if framework == "npc-codex":
         return ["npc-codex", "--npc", npc, "exec", instruction], env
-    if framework == "npc-gemini":
-        return ["npc-gemini", "--npc", npc, "-p", instruction], env
 
     raise ValueError(f"Unsupported external framework: {framework}")
 
 
-def _kill_descendants(root_pid: int) -> None:
-    """SIGKILL the process group AND every descendant, then poll until reaped."""
-    import signal as _signal
-    try:
-        pgid = os.getpgid(root_pid)
-        os.killpg(pgid, _signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
-    descendants: list = []
-    try:
-        import psutil
-        try:
-            root = psutil.Process(root_pid)
-            descendants = root.children(recursive=True)
-        except psutil.NoSuchProcess:
-            descendants = []
-        for child in descendants:
-            try:
-                child.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-        psutil.wait_procs(descendants, timeout=3)
-    except ImportError:
-        try:
-            subprocess.run(["pkill", "-9", "-P", str(root_pid)],
-                           capture_output=True, timeout=5)
-        except Exception:
-            pass
-
-
 def _run_external_attempt(instruction: str, framework: str, model: str,
                           attempt_timeout: float, work_dir: str) -> str:
-    """Subprocess-launch an external framework CLI in `work_dir`.
-
-    `cwd=work_dir` is non-negotiable — without it, claude/opencode/etc
-    inherit the runner's cwd and run git/file commands against the real repo.
-    """
+    """Subprocess-launch an external framework CLI in `work_dir`."""
     cmd, env = _build_external_command(framework, instruction, model)
     print(f"  [{framework}] {' '.join(cmd[:3])}... (cwd={work_dir})", flush=True)
     try:
@@ -405,98 +352,15 @@ def _run_external_attempt(instruction: str, framework: str, model: str,
     return f"Timed out after {attempt_timeout:.0f}s"
 
 
-def _run_attempt(instruction: str, state, command_history,
-                 attempt_timeout: float = 120) -> tuple:
-    """Execute one instruction within an existing session.
-
-    Uses a daemon thread with hard SIGKILL on child processes when the
-    timeout fires so ollama/sh calls actually die.
-    """
-    msg_count_before = len(state.messages)
-    result_box = {}
-
-    def _worker():
-        try:
-            os.chdir(state.current_path)
-            fs, out = execute_command(
-                instruction, state, router=router,
-                command_history=command_history,
-            )
-            result_box["state"] = fs
-            result_box["output"] = out
-        except Exception as e:
-            result_box["error"] = e
-
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
-    deadline_at = time.time() + attempt_timeout
-    while t.is_alive() and time.time() < deadline_at:
-        t.join(timeout=1)
-
-    if t.is_alive():
-        print(f"  TIMEOUT after {attempt_timeout:.0f}s — killing", flush=True)
-        spinner = _ui._current_spinner
-        if spinner is not None:
-            spinner._stop = True
-            _ui._current_spinner = None
-        _kill_child_processes()
-        _kill_child_processes()
-        _reset_ollama_client()
-        state.messages = state.messages[:msg_count_before]
-        final_state = state
-        output = {"output": f"Timed out after {attempt_timeout:.0f}s"}
-    elif "error" in result_box:
-        err = result_box["error"]
-        print(f"  Exception during execute_command: {err}", flush=True)
-        final_state = state
-        output = {"output": f"Exception: {err}"}
-    else:
-        final_state = result_box.get("state", state)
-        output = result_box.get("output", {"output": ""})
-
-    output_str = ""
-    if isinstance(output, dict):
-        output_str = output.get('output') or output.get('response') or str(output)
-        print(output_str)
-    elif final_state.stream_output and output is not None:
-        chunks = []
-        for chunk in output:
-            s = str(chunk)
-            chunks.append(s)
-            print(s, end='')
-        print()
-        output_str = "".join(chunks)
-    elif output is not None:
-        output_str = str(output)
-        print(output_str)
-
-    new_msgs = final_state.messages[msg_count_before:]
-    trace_parts = []
-    for msg in new_msgs:
-        role = msg.get("role", "?")
-        content = str(msg.get("content", "")).replace("\n", "\\n")
-        tool_calls = msg.get("tool_calls", [])
-        if content:
-            trace_parts.append(f"[{role}] {content}")
-        for tc in tool_calls:
-            fn = tc.get("function", {})
-            args = str(fn.get("arguments", "")).replace("\n", "\\n")
-            trace_parts.append(f"[tool_call] {fn.get('name', '?')}({args})")
-    trace = " | ".join(trace_parts)
-
-    full_output = f"{output_str} ---TRACE--- {trace}" if trace else output_str
-    return final_state, full_output
-
-
 def run_task(task: dict,
              model: str,
              provider: str,
              timeout: int = 120,
              max_attempts: int = 5,
              think=None,
-             framework: str = "npcsh") -> TaskResult:
-    """Run a task with retries until it passes or the timeout/attempt budget is exhausted."""
-
+             framework: str = "npcsh",
+             binary: str = NPCSH_BIN) -> TaskResult:
+    """Run a task with retries until it passes or the budget is exhausted."""
     task_id = task["id"]
     instruction = task["instruction"]
     verify_cmd = task["verify_cmd"]
@@ -513,15 +377,6 @@ def run_task(task: dict,
     last_output = ""
 
     task_dir = tempfile.mkdtemp(prefix=f"npcsh_bench_{task_id}_")
-    os.chdir(task_dir)
-
-    if framework == "npcsh":
-        command_history = _setup_state(model, provider, initial_state,
-                                       work_dir=task_dir, think=think)
-        msg_count_before = len(initial_state.messages)
-    else:
-        command_history = None
-        msg_count_before = 0
 
     while attempt < max_attempts:
         remaining = deadline - time.time()
@@ -551,26 +406,10 @@ def run_task(task: dict,
         if attempt == 1:
             current_instruction = instruction
         else:
-            if framework == "npcsh":
-                prev_msgs = initial_state.messages[msg_count_before:]
-                prev_summary_parts = []
-                for msg in prev_msgs:
-                    role = msg.get("role", "")
-                    for tc in msg.get("tool_calls", []):
-                        fn = tc.get("function", {})
-                        name = fn.get("name", "?")
-                        args = fn.get("arguments", "")
-                        prev_summary_parts.append(f"Called {name} with: {args}")
-                    if role == "tool":
-                        content = msg.get("content", "")
-                        prev_summary_parts.append(f"Result: {content}")
-                prev_summary = "\n".join(prev_summary_parts) if prev_summary_parts else last_output
-            else:
-                prev_summary = last_output
-
+            prev_summary = last_output
             current_instruction = f"""{instruction}
 
-Your previous attempt did not produce the correct result. Here is what you did and what it produced:
+Your previous attempt did not produce the correct result. Here is what happened:
 {prev_summary}
 
 Try a different approach. Do not search the web about this."""
@@ -585,9 +424,9 @@ Try a different approach. Do not search the web about this."""
 
         try:
             if framework == "npcsh":
-                _, output_str = _run_attempt(
-                    current_instruction, initial_state, command_history,
-                    attempt_timeout=attempt_timeout,
+                output_str = _run_npcsh_attempt(
+                    current_instruction, binary, model, provider,
+                    attempt_timeout=attempt_timeout, work_dir=task_dir,
                 )
             else:
                 output_str = _run_external_attempt(
@@ -632,7 +471,6 @@ Try a different approach. Do not search the web about this."""
 
     duration = time.time() - start
 
-    import shutil
     shutil.rmtree(task_dir, ignore_errors=True)
 
     return TaskResult(
@@ -647,8 +485,8 @@ Try a different approach. Do not search the web about this."""
 
 
 def run_benchmark(
-    model:str,
-    provider:str,
+    model: str,
+    provider: str,
     category: Optional[str] = None,
     difficulty: Optional[str] = None,
     task_id: Optional[str] = None,
@@ -656,6 +494,7 @@ def run_benchmark(
     resume: bool = False,
     think=None,
     framework: str = "npcsh",
+    binary: str = NPCSH_BIN,
 ) -> BenchmarkReport:
 
     setup_bench_env()
@@ -716,14 +555,13 @@ def run_benchmark(
         print(f"  {task['description']}", flush=True)
 
         result = run_task(task, model, provider, timeout, think=think,
-                          framework=framework)
+                          framework=framework, binary=binary)
         report.results.append(result)
 
         if result.passed:
             report.passed += 1
             print(f"  PASS ({result.duration:.1f}s, {result.attempts} attempt(s))", flush=True)
         elif result.error:
-            print(result)
             report.errors += 1
             report.failed += 1
             print(f"  ERROR: {result.error} ({result.duration:.1f}s)", flush=True)
@@ -804,6 +642,7 @@ def compare_models(
     timeout: int = 120,
     think=None,
     framework: str = "npcsh",
+    binary: str = NPCSH_BIN,
 ) -> dict:
     """Run benchmark across multiple models and print comparison."""
     all_results = {}
@@ -821,6 +660,7 @@ def compare_models(
             timeout=timeout,
             think=think,
             framework=framework,
+            binary=binary,
         )
         all_results[key] = report
 
@@ -867,7 +707,7 @@ def compare_models(
 
 
 def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
-                 think=None, framework: str = "npcsh"):
+                 think=None, framework: str = "npcsh", binary: str = NPCSH_BIN):
     """Re-run only the failed tasks from an existing CSV and overwrite results in-place."""
     setup_bench_env()
     import csv as csv_mod
@@ -906,7 +746,7 @@ def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
         print(f"\n  [{j+1}/{len(failed_ids)}] {tid} ({task['category']}/{task['difficulty']})", flush=True)
 
         result = run_task(task, model, provider, timeout, think=think,
-                          framework=framework)
+                          framework=framework, binary=binary)
 
         if result.passed:
             print(f"    PASS ({result.duration:.1f}s) — upgraded!", flush=True)
@@ -932,8 +772,6 @@ def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
 
 
 def main():
-    import argparse
-
     parser = argparse.ArgumentParser(description="npcsh local benchmark")
     parser.add_argument("--model", "-m", default="mistral-small3.2")
     parser.add_argument("--provider", "-p", default="ollama")
@@ -953,8 +791,12 @@ def main():
     parser.add_argument("--framework", "-f", default="npcsh",
                         choices=list(SUPPORTED_FRAMEWORKS),
                         help="Which framework runs the task (default: npcsh)")
+    parser.add_argument("--binary", default=NPCSH_BIN,
+                        help="Path to the npcsh binary (default: ~/.npcsh/bin/npcsh)")
 
     args = parser.parse_args()
+
+    binary = _find_npcsh_bin(args.binary)
 
     think_val = None
     if args.think is not None:
@@ -973,29 +815,25 @@ def main():
             timeout=args.timeout,
             think=think_val,
             framework=args.framework,
+            binary=binary,
         )
     elif args.compare:
         models = [
-          
             ("qwen3:8b", "ollama"),
-          
             ("qwen3:1.7b", "ollama"),
             ("qwen3:4b", "ollama"),
-            ("qwen3:30b", "ollama"),  
+            ("qwen3:30b", "ollama"),
             ("qwen3:0.6b", "ollama"),
-          
-            ('llama3.2:1b', 'ollama'),
-            ('llama3.2:3b', 'ollama'),
-            ('llama3.1:8b', 'ollama'),
-            ('gemma3:1b', 'ollama'),
-            ('gemma3:4b', 'ollama'),
-            ('gemma3:12b', 'ollama'),
-          
-            ('gemma3:27b', 'ollama'),
-                 
+            ("llama3.2:1b", "ollama"),
+            ("llama3.2:3b", "ollama"),
+            ("llama3.1:8b", "ollama"),
+            ("gemma3:1b", "ollama"),
+            ("gemma3:4b", "ollama"),
+            ("gemma3:12b", "ollama"),
+            ("gemma3:27b", "ollama"),
             ("mistral-small3.2:latest", "ollama"),
             ("phi4", "ollama"),
-            ('gpt-oss:20b', 'ollama')
+            ("gpt-oss:20b", "ollama"),
         ]
         compare_models(
             models,
@@ -1004,6 +842,7 @@ def main():
             timeout=args.timeout,
             think=think_val,
             framework=args.framework,
+            binary=binary,
         )
     else:
         run_benchmark(
@@ -1016,6 +855,7 @@ def main():
             resume=args.resume,
             think=think_val,
             framework=args.framework,
+            binary=binary,
         )
 
 

@@ -11,23 +11,21 @@ categories = ["command-line-utilities"]
 readme = "../README.md"
 
 [[bin]]
-name = "npcrsh"
+name = "npcsh"
 path = "src/main.rs"
 
 [[bin]]
-name = "npcru"
+name = "npc"
 path = "src/bin/npc.rs"
 
 [dependencies]
 npcrs = { version = "0.1.23", default-features = false, features = ["ffi"] }
 
-# HTTP/SSE client for the npcpy server
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Shell-specific deps
 rustyline = { version = "15", features = ["with-file-history"] }
 serde_yaml = "0.9"
 dotenvy = "0.15"
@@ -41,3 +39,4 @@ termimad = "0.34"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4.45", features = ["clock", "serde"] }
 uuid = { version = "1", features = ["v4"] }
+semver = "1"

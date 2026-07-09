@@ -62,8 +62,6 @@ impl StreamRenderer {
         {
             self.render();
             if ends_with_newline {
-                // Commit: leave the cursor on a fresh line so the next chunk
-                // doesn't redraw from the old anchor.
                 eprintln!();
                 self.last_height = 0;
                 self.buffer.clear();

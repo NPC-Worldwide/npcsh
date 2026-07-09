@@ -1,6 +1,3 @@
-"""
-Command parsing utilities for npcsh
-"""
 import shlex
 from typing import List
 

@@ -82,7 +82,7 @@ class NpcshAgent(BaseInstalledAgent):
         await super().setup(environment)
 
     def create_run_agent_commands(self, instruction: str) -> list:
-        """Run instruction through npcsh -c, which handles everything."""
+        """Run instruction through npcsh as a positional argument."""
         escaped_instruction = shlex.quote(instruction)
 
         env_vars = []
@@ -120,7 +120,7 @@ class NpcshAgent(BaseInstalledAgent):
             ExecInput(command=f"mkdir -p {shlex.quote(output_dir)}", timeout_sec=30),
             ExecInput(command="touch /app/.npcsh_global", timeout_sec=10),
             ExecInput(
-                command=f'{env_prefix} npcsh -c {escaped_instruction} 2>&1 | tee {shlex.quote(output_file)}',
+                command=f'{env_prefix} npcsh {escaped_instruction} 2>&1 | tee {shlex.quote(output_file)}',
                 timeout_sec=1800,
             ),
         ]
