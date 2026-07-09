@@ -8,7 +8,7 @@ Outputs a CSV with one row per (framework, task) pair including the
 model's actual output so you can inspect what each framework did.
 
 Supported frameworks:
-  - npcsh:     npcsh -c "instruction"
+  - npcsh:     npcsh "instruction"
   - opencode:  ~/.opencode/bin/opencode run "instruction" -m ollama/model
   - nanocoder: nanocoder run "instruction"
   - claude:    claude -p "instruction" --dangerously-skip-permissions (via Ollama)
@@ -158,7 +158,7 @@ def build_command(framework: str, instruction: str, model: str) -> tuple:
         env["NPCSH_STREAM_OUTPUT"] = "0"
         env.setdefault("OLLAMA_HOST", "http://localhost:11434")
         env["NPCSH_OLLAMA_NUM_CTX"] = "32768"
-        return ["npcsh", "-c", instruction], env
+        return ["npcsh", instruction], env
 
     elif framework == "opencode":
         opencode_path = os.path.expanduser("~/.opencode/bin/opencode")

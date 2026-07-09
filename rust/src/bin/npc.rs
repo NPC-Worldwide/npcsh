@@ -37,6 +37,10 @@ async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
 
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--version" || a == "-v") {
+        println!("npc {}", env!("NPCSH_VERSION"));
+        return Ok(());
+    }
     let mut positional: Vec<&str> = Vec::new();
     let mut override_model: Option<String> = None;
     let mut override_provider: Option<String> = None;

@@ -11,11 +11,11 @@ categories = ["command-line-utilities"]
 readme = "../README.md"
 
 [[bin]]
-name = "npcrsh"
+name = "npcsh"
 path = "src/main.rs"
 
 [[bin]]
-name = "npcru"
+name = "npc"
 path = "src/bin/npc.rs"
 
 [dependencies]

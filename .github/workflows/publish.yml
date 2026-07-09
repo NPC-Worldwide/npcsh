@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   publish-crate:
     runs-on: ubuntu-latest
@@ -24,26 +27,31 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --allow-dirty
 
-  build-wheels:
+  build-binaries:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            artifact: npcsh-linux-x86_64
-            plat_name: manylinux_2_35_x86_64
+            shell_artifact: npcsh-linux-x86_64
+            npc_artifact: npc-linux-x86_64
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            shell_artifact: npcsh-linux-aarch64
+            npc_artifact: npc-linux-aarch64
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact: npcsh-macos-x86_64
-            plat_name: macosx_13_0_x86_64
+            shell_artifact: npcsh-macos-x86_64
+            npc_artifact: npc-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: npcsh-macos-aarch64
-            plat_name: macosx_14_0_arm64
+            shell_artifact: npcsh-macos-aarch64
+            npc_artifact: npc-macos-aarch64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: npcsh-windows-x86_64.exe
-            plat_name: win_amd64
+            shell_artifact: npcsh-windows-x86_64.exe
+            npc_artifact: npc-windows-x86_64.exe
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -54,54 +62,69 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Install cross-compilation tools (Linux aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
-      - name: Build Rust binary
-        working-directory: rust
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Place binary in package
+      - name: Patch version
         shell: bash
         run: |
-          mkdir -p npcsh/bin
-          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            cp rust/target/${{ matrix.target }}/release/npcrsh.exe npcsh/bin/npcrs.exe
-          else
-            cp rust/target/${{ matrix.target }}/release/npcrsh npcsh/bin/npcrs
-            chmod +x npcsh/bin/npcrs
-          fi
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          sed -i.bak "s/^version = \"0.0.0\"/version = \"$VERSION\"/" rust/Cargo.toml
 
-      - name: Build platform wheel
-        run: |
-          pip install build wheel setuptools
-          python setup.py bdist_wheel --plat-name ${{ matrix.plat_name }}
+      - name: Build Rust binaries
+        working-directory: rust
+        shell: bash
+        run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheel-${{ matrix.artifact }}
-          path: dist/*.whl
-
-      - name: Package standalone binary
+      - name: Stage binaries
         shell: bash
         run: |
           mkdir -p release
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            cp rust/target/${{ matrix.target }}/release/npcrsh.exe release/${{ matrix.artifact }}
+            cp rust/target/${{ matrix.target }}/release/npcsh.exe release/${{ matrix.shell_artifact }}
+            cp rust/target/${{ matrix.target }}/release/npc.exe release/${{ matrix.npc_artifact }}
           else
-            cp rust/target/${{ matrix.target }}/release/npcrsh release/${{ matrix.artifact }}
-            chmod +x release/${{ matrix.artifact }}
+            cp rust/target/${{ matrix.target }}/release/npcsh release/${{ matrix.shell_artifact }}
+            cp rust/target/${{ matrix.target }}/release/npc release/${{ matrix.npc_artifact }}
+            chmod +x release/${{ matrix.shell_artifact }} release/${{ matrix.npc_artifact }}
           fi
 
-      - name: Package .deb
-        if: contains(matrix.target, 'linux')
+      - name: Sign macOS binaries
+        if: contains(matrix.os, 'macos')
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        shell: bash
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ]; then
+            echo "No signing certificate provided; applying ad-hoc signature."
+            codesign -s - -f release/${{ matrix.shell_artifact }}
+            codesign -s - -f release/${{ matrix.npc_artifact }}
+            exit 0
+          fi
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain || true
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign || true
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PASSWORD" build.keychain || true
+          /usr/bin/codesign --force -s "Developer ID Application" release/${{ matrix.shell_artifact }}
+          /usr/bin/codesign --force -s "Developer ID Application" release/${{ matrix.npc_artifact }}
+          rm certificate.p12
+
+      - name: Package .deb (x86_64 Linux only)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
         run: |
           mkdir -p deb/usr/local/bin deb/DEBIAN
-          cp release/${{ matrix.artifact }} deb/usr/local/bin/npcsh
-          chmod +x deb/usr/local/bin/npcsh
+          cp release/${{ matrix.shell_artifact }} deb/usr/local/bin/npcsh
+          cp release/${{ matrix.npc_artifact }} deb/usr/local/bin/npc
+          chmod +x deb/usr/local/bin/*
           cat > deb/DEBIAN/control << CTRL
           Package: npcsh
           Version: ${GITHUB_REF_NAME#v}
@@ -114,55 +137,18 @@ jobs:
           sed -i 's/^          //' deb/DEBIAN/control
           dpkg-deb --build deb release/npcsh_${GITHUB_REF_NAME#v}_amd64.deb
 
-      - name: Upload to release
+      - name: Upload binaries to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/${{ matrix.artifact }}
+            release/${{ matrix.shell_artifact }}
+            release/${{ matrix.npc_artifact }}
             release/*.deb
 
-  build-sdist:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Build sdist
-        run: |
-          pip install build
-          python -m build --sdist
-      - name: Upload sdist artifact
+      - name: Upload binary artifacts
+        if: github.event_name != 'release'
         uses: actions/upload-artifact@v4
         with:
-          name: sdist
-          path: dist/*.tar.gz
-
-  publish-pypi:
-    needs: [build-wheels, build-sdist]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: wheel-*
-          path: dist
-          merge-multiple: true
-
-      - name: Download sdist
-        uses: actions/download-artifact@v4
-        with:
-          name: sdist
-          path: dist
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          verify_metadata: true
-          skip_existing: true
-          verbose: true
-          repository_url: https://upload.pypi.org/legacy/
-          packages_dir: dist
+          name: binaries-${{ matrix.shell_artifact }}
+          path: release/*

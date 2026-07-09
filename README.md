@@ -11,8 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/npc-worldwide/npcsh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
-  <a href="https://pypi.org/project/npcsh/"><img src="https://img.shields.io/pypi/v/npcsh.svg" alt="PyPI"></a>
-  <a href="https://pypi.org/project/npcsh/"><img src="https://img.shields.io/pypi/pyversions/npcsh.svg" alt="Python"></a>
+  <a href="https://crates.io/crates/npcsh"><img src="https://img.shields.io/crates/v/npcsh.svg" alt="Crates.io"></a>
   <a href="https://npc-shell.readthedocs.io/"><img src="https://img.shields.io/badge/docs-readthedocs-brightgreen.svg" alt="Docs"></a>
 </p>
 
@@ -23,7 +22,7 @@
 The fastest way to try it:
 
 ```bash
-pip install 'npcsh[lite]'
+curl -fsSL https://enpisi.com/install-npcsh.sh | sh
 npcsh
 ```
 
@@ -114,7 +113,7 @@ Skills are a special kind of jinx that serve instructional content progressively
 
 `npcsh` is not a command catalog — it is a runtime for capabilities you define and compose:
 
-- **Agentic shell** — Chat with individual NPCs or the team orchestrator. Switch agents with `/npc` or invoke one directly with `/@corca`.
+- **Agentic shell** — Chat with individual NPCs or the team orchestrator. Switch agents with `/@corca` or invoke one directly.
 - **Custom tools** — Author jinxes and skills for your domain; agents use them automatically.
 - **Multi-agent orchestration** — The forenpc delegates tasks, convenes discussions, and runs review loops across specialized NPCs.
 - **Memory & knowledge graphs** — Conversations feed a memory lifecycle; approved memories can be synthesized into a queryable knowledge graph.
@@ -128,11 +127,14 @@ Skills are a special kind of jinx that serve instructional content progressively
 
 ## Benchmark Results
 
-The benchmark suite runs 135 tasks across 15 categories — shell commands, file operations, Python scripting, debugging, git, multi-step workflows, tool chaining, and more — and scores pass/fail. The table below reflects scores from the **current Rust-based `npcsh` runtime**. Additional models are being evaluated continuously; see `docs/benchmarks.md` for the full per-category breakdown.
+The benchmark suite measures how well a model can drive `npcsh` as an agentic shell. It covers 135 tasks across 15 categories, from basic shell commands and file operations to multi-step workflows, debugging, git, tool chaining, delegation, web search, and media generation. Each task is scored pass/fail by an automated verifier.
+
+The table below shows historical scores from the original Python runtime (125 tasks). Rust-based scores to come soon. For the latest results and per-category breakdown, see `docs/benchmarks.md`.
+
+### Historical Python runtime scores (125 tasks)
 
 <table>
 <tr><th>Family</th><th>Model</th><th>Score</th></tr>
-<tr><td><b>Kimi</b></td><td>k2.5</td><td><b>121/125 (97%)</b></td></tr>
 <tr><td rowspan="6"><b>Qwen3.5</b></td><td>0.8b</td><td>31/125 (24%)</td></tr>
 <tr><td>2b</td><td>81/125 (65%)</td></tr>
 <tr><td>4b</td><td>77/125 (62%)</td></tr>
@@ -173,7 +175,7 @@ The benchmark suite runs 135 tasks across 15 categories — shell commands, file
 <tr><td>4.5-haiku</td><td>—</td></tr>
 <tr><td><b>GPT</b></td><td>5-mini</td><td>—</td></tr>
 <tr><td rowspan="3"><b>DeepSeek</b></td><td>v4-flash</td><td><b>99/125 (79%)</b></td></tr>
-<tr><td>chat</td><td>—</td></tr>
+<tr><td>v4-pro</td><td>—</td></tr>
 <tr><td>reasoner</td><td>—</td></tr>
 </table>
 
@@ -181,7 +183,7 @@ Run the benchmark yourself against a local or remote model:
 
 ```bash
 python -m npcsh.benchmark.rust_runner --model qwen3.5:9b --provider ollama
-python -m npcsh.benchmark.rust_runner --model gemini-2.5-flash --provider gemini
+python -m npcsh.benchmark.rust_runner --model deepseek-v4-pro --provider deepseek
 ```
 
 For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).
@@ -190,25 +192,24 @@ For a more comprehensive view of npcsh's capabilities and the advantages of the 
 
 ## Installation
 
-### PyPI (recommended)
+### Install script (recommended)
 
 ```bash
-pip install 'npcsh[lite]'        # API + Ollama providers
-pip install 'npcsh[local]'       # + local diffusers/transformers/torch
-pip install 'npcsh[yap]'         # + voice mode
-pip install 'npcsh[all]'          # everything
+curl -fsSL https://enpisi.com/install-npcsh.sh | sh
 ```
 
-What you get:
+This downloads the latest `npcsh` and `npc` Rust binaries for your platform into `~/.npcsh/bin`. Add that directory to your PATH, then run `npcsh`.
 
-- The `npcsh` Python launcher, which starts the NPCSH server and execs the Rust shell.
-- The `npc` and `npcsh-bench` CLI entry points.
-- A default global team in `~/.npcsh/npc_team/`.
+### Cargo
+
+```bash
+cargo install npcsh
+```
 
 ### macOS system dependencies
 
 ```bash
-brew install portaudio ffmpeg pygobject3 ollama
+brew install ollama
 brew services start ollama
 ollama pull qwen3.5:2b
 ```
@@ -216,8 +217,6 @@ ollama pull qwen3.5:2b
 ### Linux system dependencies
 
 ```bash
-sudo apt-get install espeak portaudio19-dev python3-pyaudio ffmpeg \
-                     libcairo2-dev libgirepository1.0-dev inotify-tools
 # Ollama
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen3.5:2b
@@ -225,20 +224,18 @@ ollama pull qwen3.5:2b
 
 ### Windows
 
-Install [Ollama](https://ollama.com) and [ffmpeg](https://ffmpeg.org), then:
+Install [Ollama](https://ollama.com), then use the install script from PowerShell via WSL, or install with cargo.
 
-```powershell
-ollama pull qwen3.5:2b
-pip install 'npcsh[lite]'
+### Rust build (development)
+
+```bash
+cd rust
+cargo build --release
+cp target/release/npcsh ~/.npcsh/bin/npcsh
+cp target/release/npc ~/.npcsh/bin/npc
 ```
 
-### Rust edition (development / latest)
-
-`npcsh` ships as a Python launcher that starts the NPCSH server and execs the Rust shell binary (`npcrsh`). The launcher looks for `npcrsh` at `~/.npcsh/bin/npcrsh` first, then falls back to PATH.
-
-For normal use, install the pre-built release via pip or brew. The Rust source build is for development only.
-
-Both editions share `~/npcsh_history.db` and `~/.npcsh/npc_team/`.
+For normal use, install the pre-built release via the install script or cargo. The source build is for development only.
 
 ### Configuration
 

@@ -43,7 +43,7 @@ npc init ./myteam # create ./myteam/npc_team
 
 ### Relationship to `npcsh`
 
-- `npcsh` uses `launcher.py` to find the Rust `npcrsh` binary, start the server, and run the shell.
+- `npcsh` uses `launcher.py` to find the Rust `npcsh` binary, start the server, and run the shell.
 - `npc` uses `npc_launcher.py` to find the Rust `npc` binary, start the same server, and run the NPC/jinx executor.
 - Both launchers exist because the shell and the NPC CLI are separate tools; they share server-starting logic but target different Rust binaries.
 

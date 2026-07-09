@@ -20,6 +20,10 @@ Results are written to `~/.npcsh/benchmarks/local/`.
 
 ## Overall Scores
 
+The table below shows historical scores from the original Python runtime (125 tasks). Rust-based scores to come soon.
+
+### Historical Python runtime scores (125 tasks)
+
 | Family | Model | Score |
 |--------|-------|-------|
 | **Kimi** | k2.5 | **121/125 (97%)** |

@@ -1,13 +1,11 @@
 #!/bin/sh
-# Install the latest npcsh Rust binary.
+# Install the latest npcsh Rust binaries.
 # Usage: curl -fsSL https://enpisi.com/install-npcsh.sh | sh
 
 set -e
 
 REPO="NPC-Worldwide/npcsh"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.npcsh/bin}"
-BIN_NAME="npcrsh"
-SHELL_NAME="npcsh"
 
 get_os() {
     case "$(uname -s)" in
@@ -34,9 +32,9 @@ if [ "$OS" = "unknown" ] || [ "$ARCH" = "unknown" ]; then
     exit 1
 fi
 
+EXT=""
 if [ "$OS" = "windows" ]; then
-    echo "Windows install is not supported by this script yet. Use cargo install npcsh." >&2
-    exit 1
+    EXT=".exe"
 fi
 
 fetch_latest_tag() {
@@ -51,43 +49,44 @@ if [ -z "$TAG" ]; then
     exit 1
 fi
 
-ASSET="npcrsh-${OS}-${ARCH}"
-URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
-
 echo "Installing npcsh ${TAG} for ${OS}/${ARCH}..."
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-TMP_BIN="${TMP_DIR}/npcrsh"
-curl -fsSL "$URL" -o "$TMP_BIN"
-chmod +x "$TMP_BIN"
-
 mkdir -p "$INSTALL_DIR"
-INSTALL_PATH="${INSTALL_DIR}/${BIN_NAME}"
-cp "$TMP_BIN" "$INSTALL_PATH"
 
-echo "Binary installed to ${INSTALL_PATH}"
+install_binary() {
+    name="$1"
+    asset="${name}-${OS}-${ARCH}${EXT}"
+    url="https://github.com/${REPO}/releases/download/${TAG}/${asset}"
+    tmp_bin="${TMP_DIR}/${name}${EXT}"
+    install_path="${INSTALL_DIR}/${name}${EXT}"
 
-# Optionally symlink npcsh -> npcrsh for the shell entry point.
-LINK_PATH="${INSTALL_DIR}/${SHELL_NAME}"
-if [ ! -e "$LINK_PATH" ] && [ "$(basename "$LINK_PATH")" != "$(basename "$INSTALL_PATH")" ]; then
-    ln -sf "$INSTALL_PATH" "$LINK_PATH"
-    echo "Linked ${SHELL_NAME} -> ${BIN_NAME}"
-fi
+    echo "  downloading ${asset}..."
+    curl -fsSL "$url" -o "$tmp_bin"
+    chmod +x "$tmp_bin"
+    cp "$tmp_bin" "$install_path"
+    echo "  installed ${install_path}"
+}
 
-# macOS: if the downloaded binary was not signed by us, ad-hoc sign it so
-# Gatekeeper does not kill it on first run. This is a fallback only.
+install_binary "npcsh"
+install_binary "npc"
+
+# macOS: if a downloaded binary is not signed, apply an ad-hoc signature so
+# Gatekeeper does not kill it on first run. Signed release binaries skip this.
 if [ "$OS" = "macos" ] && command -v codesign >/dev/null 2>&1; then
-    if ! codesign -v "$INSTALL_PATH" >/dev/null 2>&1; then
-        echo "Applying ad-hoc signature for macOS Gatekeeper..."
-        codesign -s - -f "$INSTALL_PATH" >/dev/null
-    fi
+    for bin in "${INSTALL_DIR}/npcsh" "${INSTALL_DIR}/npc"; do
+        if ! codesign -v "$bin" >/dev/null 2>&1; then
+            echo "  ad-hoc signing ${bin} for macOS..."
+            codesign -s - -f "$bin" >/dev/null
+        fi
+    done
 fi
 
 # Ensure ~/.npcsh/bin is on PATH.
 case ":${PATH}:" in
-    *":${INSTALL_DIR}:"*) ;;
+    *":${INSTALL_DIR}:") ;;
     *)
         echo ""
         echo "Add ${INSTALL_DIR} to your PATH:"
@@ -96,4 +95,4 @@ case ":${PATH}:" in
 esac
 
 echo ""
-echo "Run 'npcsh --version' to verify."
+echo "Run 'npcsh --version' or 'npc --version' to verify."
