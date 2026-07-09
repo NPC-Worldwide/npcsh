@@ -18,39 +18,117 @@
 
 ---
 
-`npcsh` makes the most of LLMs and agents through slash commands and interactive modes, all from the command line. Build teams of agents, schedule them on jobs, engineer context, and design custom Jinja Execution templates (Jinxes) for you and your agents to invoke.
+`npcsh` is an agentic shell for building, orchestrating, and interacting with teams of AI agents from the terminal. Instead of treating AI as a single chat window, `npcsh` gives you a **declarative data layer** for defining agents, tools, context, and workflows as plain files in a project directory. The shell then compiles that data into a live team you can chat with, delegate to, schedule, or serve over an API.
 
-To get started, view the latest release in the sidebar on github, and download the executable binary for your system. Once downloaded, ensure that it is executable.
+The fastest way to try it:
 
 ```bash
-#linux
-chmod +x npcsh-binary-path
-```
-Then run the executable 
-```bash
-./npcsh-binary-path
-```
-Alternatively, you can install with brew or pip.
-```bash
-brew install npcsh
-```
-```
 pip install 'npcsh[lite]'
+npcsh
 ```
 
-Once installed, run `npcsh` to enter the NPC shell. Also provides the CLI tools `npc` and `npcsh-bench`.
+Then ask for help, edit files, search the web, or just chat:
 
-`.npc` files are directly executable with shebangs (`#!/usr/bin/env npc`):
 ```bash
-npc ./myagent.npc "summarize this repo"     # run an NPC with a prompt
-./myagent.npc "hello"                       # or just execute it (with shebang)
+npcsh> can you help me identify what process is listening on port 5337?
+npcsh> please read through the markdown files in the docs folder and suggest changes
 ```
+
+---
+
+## The NPC Data Layer
+
+Everything in `npcsh` is built around a small set of file types in an `npc_team/` directory. This lets you treat agents, tools, and context as data that can be versioned, shared, and composed across projects.
+
+| File | Purpose |
+|------|---------|
+| **`.npc`** | Agent definitions (persona, directive, model, provider, available tools). Executable with a shebang. |
+| **`.jinx`** | Jinja execution templates — reusable tools/workflows that agents invoke like functions. |
+| **`.ctx`** | Team context: default model/provider, forenpc (orchestrator), MCP servers, env vars, shared memory. |
+| **`.sql`** | NQL models — SQL with embedded AI functions, runnable locally or on Snowflake/Databricks/BigQuery. |
+| **`.pipe`** | Assembly lines — multi-step workflow pipelines. |
+
+A minimal project looks like this:
+
+```
+npc_team/
+├── team.ctx            # team config + forenpc
+├── sibiji.npc          # orchestrator
+├── corca.npc           # coding specialist
+├── agents.md           # optional bulk agent definitions
+├── agents/             # optional one-agent-per-file markdown
+├── jinxes/
+│   ├── skills/
+│   │   └── debugging/
+│   │       └── SKILL.md
+│   └── my_tool.jinx
+└── models/
+    └── daily_summary.sql
+```
+
+Because these are ordinary files, you can:
+
+- Check an entire agent team into git.
+- Share reusable jinxes/skills across projects.
+- Drop in `agents.md` or `agents/` folders from other tools (Claude Code, Codex, etc.) and `npcsh` picks them up.
+- Switch models, providers, or whole team configurations without touching code.
+
+## Build Your Own Tools
+
+Jinxes are the main extension point. A jinx is a YAML file that describes inputs, a prompt template, and one or more execution steps. They are invoked as slash commands and can call other jinxes, run Python or shell, query the local DB, or call LLMs.
+
+```yaml
+# jinxes/hello.jinx
+jinx_name: hello
+description: Greet someone by name.
+inputs:
+  - name
+steps:
+  - engine: llm
+    prompt: |
+      Say a warm, personalized hello to {{ name }}.
+```
+
+Use it inside `npcsh`:
+
+```bash
+/hello name=world
+```
+
+Or make it available to agents by adding it to an NPC:
+
+```yaml
+# corca.npc
+name: corca
+primary_directive: You are a coding specialist.
+jinxes:
+  - lib/core/python
+  - lib/core/sh
+  - lib/core/edit_file
+  - hello
+```
+
+Skills are a special kind of jinx that serve instructional content progressively. A skill like `debugging` can expose sections (`reproduce`, `isolate`, `fix`) so agents only load the methodology they need, keeping token usage low.
+
+## Capabilities
+
+`npcsh` is not a command catalog — it is a runtime for capabilities you define and compose:
+
+- **Agentic shell** — Chat with individual NPCs or the team orchestrator. Switch agents with `/npc` or invoke one directly with `/@corca`.
+- **Custom tools** — Author jinxes and skills for your domain; agents use them automatically.
+- **Multi-agent orchestration** — The forenpc delegates tasks, convenes discussions, and runs review loops across specialized NPCs.
+- **Memory & knowledge graphs** — Conversations feed a memory lifecycle; approved memories can be synthesized into a queryable knowledge graph.
+- **NQL** — SQL models with embedded AI functions that run on SQLite locally and translate to native AI functions on Snowflake, Databricks, and BigQuery.
+- **Computer use** — GUI automation via vision, browser automation, screenshot analysis.
+- **API server** — Serve any NPC team via OpenAI-compatible endpoints (`/serve`).
+- **Scheduling** — Cron jobs, daemons, and triggered workflows.
+- **Model portability** — Switch between Ollama, OpenAI, Anthropic, Gemini, DeepSeek, and any LiteLLM-compatible provider.
 
 ---
 
 ## Benchmark Results
 
-How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 categories — from basic shell commands to multi-step workflows, code debugging, and tool chaining — scored pass/fail. Comparisons with other agent coders coming soon. For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, check out [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380)
+The benchmark suite runs 135 tasks across 15 categories — shell commands, file operations, Python scripting, debugging, git, multi-step workflows, tool chaining, and more — and scores pass/fail. The table below reflects scores from the **current Rust-based `npcsh` runtime**. Additional models are being evaluated continuously; see `docs/benchmarks.md` for the full per-category breakdown.
 
 <table>
 <tr><th>Family</th><th>Model</th><th>Score</th></tr>
@@ -99,120 +177,98 @@ How well can a model drive `npcsh` as an agentic shell? 125 tasks across 15 cate
 <tr><td>reasoner</td><td>—</td></tr>
 </table>
 
-<details><summary><b>Category breakdown (completed models)</b></summary>
-
-<table>
-<tr>
-<th rowspan="2">Category</th>
-<th colspan="4">Qwen3.5</th>
-<th colspan="5">Qwen3</th>
-<th colspan="2">Gemma4</th>
-<th colspan="3">Gemma3</th>
-<th>Llama</th>
-<th colspan="3">Mistral</th>
-<th>Phi</th>
-<th>GPT-OSS</th>
-<th>Cogito</th>
-<th colspan="2">GLM</th>
-<th>Kimi</th>
-<th>Qwen3.5</th>
-<th>MiniMax</th>
-<th>Devstral</th>
-<th>Nemotron</th>
-<th>DeepSeek</th>
-</tr>
-<tr>
-<th>0.8b</th><th>2b</th><th>9b</th><th>35b</th>
-<th>1.7b</th><th>4b</th><th>8b</th><th>30b</th><th>0.6b</th>
-<th>e4b</th><th>31b</th>
-<th>4b</th><th>12b</th><th>27b</th>
-<th>3.2:3b</th>
-<th>small3.2</th><th>ministral-3</th><th>large-3</th>
-<th>phi4</th>
-<th>20b</th>
-<th>3b</th>
-<th>4.7</th><th>5</th>
-<th>k2.5</th>
-<th>397b</th>
-<th>M2.7</th>
-<th>2</th>
-<th>3-super</th>
-<th>v4-flash</th>
-</tr>
-<tr><td>shell (10)</td><td>5</td><td>6</td><td>10</td><td>10</td><td>8</td><td>8</td><td>9</td><td>9</td><td>—</td><td>6</td><td>10</td><td>6</td><td>6</td><td>9</td><td>6</td><td>10</td><td>7</td><td>8</td><td>9</td><td>10</td><td>0</td><td>10</td><td>10</td><td>10</td><td>10</td><td>10</td><td>9</td><td>7</td><td>8</td></tr>
-<tr><td>file-ops (10)</td><td>8</td><td>9</td><td>10</td><td>10</td><td>8</td><td>10</td><td>9</td><td>10</td><td>—</td><td>5</td><td>8</td><td>6</td><td>9</td><td>10</td><td>2</td><td>6</td><td>10</td><td>8</td><td>10</td><td>10</td><td>0</td><td>10</td><td>9</td><td>10</td><td>10</td><td>9</td><td>10</td><td>5</td><td>9</td></tr>
-<tr><td>python (10)</td><td>0</td><td>3</td><td>9</td><td>10</td><td>0</td><td>5</td><td>6</td><td>6</td><td>—</td><td>1</td><td>10</td><td>0</td><td>3</td><td>1</td><td>0</td><td>3</td><td>6</td><td>6</td><td>4</td><td>10</td><td>0</td><td>10</td><td>10</td><td>10</td><td>10</td><td>10</td><td>6</td><td>5</td><td>10</td></tr>
-<tr><td>data (10)</td><td>0</td><td>2</td><td>4</td><td>6</td><td>2</td><td>4</td><td>5</td><td>6</td><td>—</td><td>0</td><td>9</td><td>1</td><td>5</td><td>7</td><td>0</td><td>5</td><td>9</td><td>5</td><td>4</td><td>6</td><td>0</td><td>5</td><td>9</td><td>9</td><td>9</td><td>9</td><td>4</td><td>4</td><td>9</td></tr>
-<tr><td>system (10)</td><td>2</td><td>8</td><td>9</td><td>10</td><td>7</td><td>9</td><td>7</td><td>10</td><td>—</td><td>6</td><td>10</td><td>5</td><td>9</td><td>7</td><td>2</td><td>9</td><td>6</td><td>10</td><td>6</td><td>9</td><td>0</td><td>10</td><td>10</td><td>10</td><td>10</td><td>10</td><td>8</td><td>6</td><td>9</td></tr>
-<tr><td>text (10)</td><td>1</td><td>7</td><td>6</td><td>8</td><td>2</td><td>10</td><td>6</td><td>7</td><td>—</td><td>0</td><td>8</td><td>3</td><td>9</td><td>8</td><td>1</td><td>7</td><td>0</td><td>0</td><td>4</td><td>8</td><td>0</td><td>7</td><td>10</td><td>10</td><td>10</td><td>10</td><td>0</td><td>0</td><td>10</td></tr>
-<tr><td>debug (10)</td><td>2</td><td>6</td><td>10</td><td>10</td><td>0</td><td>4</td><td>2</td><td>10</td><td>—</td><td>4</td><td>0</td><td>0</td><td>3</td><td>0</td><td>0</td><td>4</td><td>0</td><td>2</td><td>0</td><td>9</td><td>0</td><td>9</td><td>10</td><td>10</td><td>10</td><td>10</td><td>0</td><td>3</td><td>10</td></tr>
-<tr><td>git (10)</td><td>0</td><td>8</td><td>6</td><td>9</td><td>2</td><td>9</td><td>9</td><td>8</td><td>—</td><td>2</td><td>9</td><td>4</td><td>6</td><td>9</td><td>4</td><td>8</td><td>4</td><td>0</td><td>6</td><td>8</td><td>0</td><td>5</td><td>10</td><td>10</td><td>9</td><td>9</td><td>0</td><td>1</td><td>9</td></tr>
-<tr><td>multi-step (10)</td><td>0</td><td>6</td><td>7</td><td>6</td><td>0</td><td>6</td><td>3</td><td>7</td><td>—</td><td>0</td><td>9</td><td>3</td><td>5</td><td>5</td><td>2</td><td>3</td><td>0</td><td>0</td><td>5</td><td>4</td><td>0</td><td>5</td><td>8</td><td>9</td><td>9</td><td>9</td><td>2</td><td>0</td><td>4</td></tr>
-<tr><td>scripting (10)</td><td>1</td><td>5</td><td>8</td><td>10</td><td>0</td><td>7</td><td>2</td><td>6</td><td>—</td><td>0</td><td>9</td><td>0</td><td>2</td><td>1</td><td>0</td><td>3</td><td>1</td><td>6</td><td>3</td><td>7</td><td>0</td><td>8</td><td>10</td><td>9</td><td>9</td><td>10</td><td>8</td><td>2</td><td>5</td></tr>
-<tr><td>image-gen (5)</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>—</td><td>5</td><td>5</td><td>3</td><td>5</td><td>3</td><td>5</td><td>5</td><td>1</td><td>5</td><td>2</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>0</td></tr>
-<tr><td>audio-gen (5)</td><td>5</td><td>4</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>—</td><td>5</td><td>5</td><td>4</td><td>5</td><td>5</td><td>4</td><td>5</td><td>1</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td></tr>
-<tr><td>web-search (5)</td><td>1</td><td>5</td><td>4</td><td>5</td><td>1</td><td>5</td><td>4</td><td>5</td><td>—</td><td>0</td><td>5</td><td>1</td><td>5</td><td>5</td><td>0</td><td>4</td><td>5</td><td>0</td><td>0</td><td>3</td><td>0</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>0</td><td>2</td><td>5</td></tr>
-<tr><td>delegation (5)</td><td>0</td><td>2</td><td>3</td><td>3</td><td>0</td><td>2</td><td>2</td><td>4</td><td>—</td><td>0</td><td>4</td><td>0</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>3</td><td>0</td><td>0</td><td>0</td><td>3</td><td>4</td><td>4</td><td>4</td><td>4</td><td>2</td><td>3</td><td>1</td></tr>
-<tr><td>tool-chain (5)</td><td>1</td><td>5</td><td>4</td><td>4</td><td>2</td><td>5</td><td>2</td><td>5</td><td>—</td><td>0</td><td>4</td><td>1</td><td>3</td><td>3</td><td>0</td><td>0</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>1</td><td>1</td><td>5</td></tr>
-<tr><td><b>Total (125)</b></td><td><b>31</b></td><td><b>81</b></td><td><b>100</b></td><td><b>111</b></td><td><b>42</b></td><td><b>94</b></td><td><b>76</b></td><td><b>103</b></td><td>—</td><td><b>34</b></td><td><b>105</b></td><td><b>37</b></td><td><b>77</b></td><td><b>73</b></td><td><b>26</b></td><td><b>72</b></td><td><b>51</b></td><td><b>59</b></td><td><b>58</b></td><td><b>94</b></td><td><b>10</b></td><td><b>102</b></td><td><b>120</b></td><td><b>121</b></td><td><b>120</b></td><td><b>120</b></td><td><b>60</b></td><td><b>49</b></td><td><b>99</b></td></tr>
-</table>
-
-</details>
+Run the benchmark yourself against a local or remote model:
 
 ```bash
-python -m npcsh.benchmark.local_runner --model qwen3:4b --provider ollama
+python -m npcsh.benchmark.rust_runner --model qwen3.5:9b --provider ollama
+python -m npcsh.benchmark.rust_runner --model gemini-2.5-flash --provider gemini
 ```
+
+For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).
 
 ---
 
-## Usage
+## Installation
 
-- Get help with a task:
-    ```bash
-    npcsh>can you help me identify what process is listening on port 5337?
-    ```
+### PyPI (recommended)
 
-- Edit files:
-    ```bash
-    npcsh>please read through the markdown files in the docs folder and suggest changes
-    ```
+```bash
+pip install 'npcsh[lite]'        # API + Ollama providers
+pip install 'npcsh[local]'       # + local diffusers/transformers/torch
+pip install 'npcsh[yap]'         # + voice mode
+pip install 'npcsh[all]'          # everything
+```
 
-- **Search & Knowledge**
-  ```bash
-  /web_search "cerulean city"            # Web search
-  /db_search "query"                     # Database search
-  /file_search "pattern"                 # File search
-  /memories                              # Interactive memory browser TUI
-  ```
-  <p align="center">
-      <img src="gh_images/Screenshot%20from%202026-01-29%2015-02-52.png" alt="Web search results", width=600>
-  </p>
+What you get:
 
-- **Computer Use**
-  ```bash
-  /computer_use
-  ```
-  <p align="center">
-      <img src="gh_images/plonk.png" alt="Plonk GUI automation TUI" width=500>
-      <img src="gh_images/plonk_task.png" alt="Plonk GUI automation — completed task" width=500>
-  </p>
+- The `npcsh` Python launcher, which starts the NPCSH server and execs the Rust shell.
+- The `npc` and `npcsh-bench` CLI entry points.
+- A default global team in `~/.npcsh/npc_team/`.
 
-- **Multi-Agent Discussions**
-  ```bash
-  /convene "Is the universe a simulation?" npcs=alicanto,corca,guac rounds=3
-  ```
-  <p align="center">
-      <img src="gh_images/convene.png" alt="Convene — multi-NPC discussion" width=500>
-  </p>
+### macOS system dependencies
 
+```bash
+brew install portaudio ffmpeg pygobject3 ollama
+brew services start ollama
+ollama pull qwen3.5:2b
+```
+
+### Linux system dependencies
+
+```bash
+sudo apt-get install espeak portaudio19-dev python3-pyaudio ffmpeg \
+                     libcairo2-dev libgirepository1.0-dev inotify-tools
+# Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen3.5:2b
+```
+
+### Windows
+
+Install [Ollama](https://ollama.com) and [ffmpeg](https://ffmpeg.org), then:
+
+```powershell
+ollama pull qwen3.5:2b
+pip install 'npcsh[lite]'
+```
+
+### Rust edition (development / latest)
+
+`npcsh` ships as a Python launcher that starts the NPCSH server and execs the Rust shell binary (`npcrsh`). The launcher looks for `npcrsh` at `~/.npcsh/bin/npcrsh` first, then falls back to PATH.
+
+For normal use, install the pre-built release via pip or brew. The Rust source build is for development only.
+
+Both editions share `~/npcsh_history.db` and `~/.npcsh/npc_team/`.
+
+### Configuration
+
+On first run, `npcsh` creates `~/.npcshrc`:
+
+```bash
+export NPCSH_CHAT_MODEL=qwen3.5:2b
+export NPCSH_CHAT_PROVIDER=ollama
+export NPCSH_DEFAULT_MODE=agent
+export NPCSH_EMBEDDING_MODEL=nomic-embed-text
+export NPCSH_EMBEDDING_PROVIDER=ollama
+```
+
+API keys can go in `~/.npcshrc`, `~/.bashrc`, or a project `.env`:
+
+```bash
+export OPENAI_API_KEY="your_key"
+export ANTHROPIC_API_KEY="your_key"
+export GEMINI_API_KEY="your_key"
+export DEEPSEEK_API_KEY="your_key"
+```
 
 ---
 
 ## Agent Formats
 
-npcsh supports multiple ways to define agents inside your `npc_team/` directory. You can mix all three formats — `.npc` files take precedence if names collide.
+`npcsh` supports three ways to define agents inside `npc_team/`. They can be mixed; `.npc` files take precedence if names collide.
 
-**`.npc` files** — Full-featured YAML agent definitions with model, provider, jinxes, and more:
+**`.npc` files** — full-featured YAML agent definitions:
+
 ```yaml
 #!/usr/bin/env npc
 name: analyst
@@ -223,7 +279,8 @@ jinxes:
   - skills/data-analysis
 ```
 
-**`agents.md`** — Define multiple agents in a single markdown file. Each `## heading` = agent name, body = directive:
+**`agents.md`** — multiple agents in one markdown file:
+
 ```markdown
 ## summarizer
 You summarize long documents into concise bullet points.
@@ -232,7 +289,8 @@ You summarize long documents into concise bullet points.
 You verify claims against reliable sources and flag inaccuracies.
 ```
 
-**`agents/` directory** — One `.md` file per agent. Filename (minus `.md`) = agent name. Supports YAML frontmatter:
+**`agents/` directory** — one `.md` file per agent:
+
 ```markdown
 ---
 model: gemini-2.5-flash
@@ -241,133 +299,38 @@ provider: gemini
 You translate content between languages while preserving tone and idiom.
 ```
 
-All three formats are supported by both the **Python** and **Rust** editions of npcsh. Agents from `agents.md` and `agents/` inherit the team's default model/provider from `team.ctx`.
-
-The full team structure:
-```
-npc_team/
-├── team.ctx           # Team config (model, provider, forenpc, context)
-├── coordinator.npc    # YAML agent definitions
-├── analyst.npc
-├── agents.md          # Markdown-defined agents
-├── agents/            # One .md file per agent
-│   └── translator.md
-├── jinxes/            # Workflows and tools
-│   ├── research.jinx
-│   └── skills/        # Knowledge-content skills
-└── tools/             # Custom tool functions
-```
-
-This means you can bring agents from other ecosystems — if you already have an `agents.md` or an `agents/` directory from Claude Code, Codex, Amp, or any other tool, just drop them into your `npc_team/` and npcsh will pick them up alongside your `.npc` files.
+All formats inherit the team's default model/provider from `team.ctx` when not specified.
 
 ---
 
-## Launching AI Coding Tools with NPC Teams
+## Launching External Coding Tools with NPC Teams
 
-Your `npc_team/` works beyond `npcsh` — you can launch any major AI coding tool as an NPC from your team using the CLI launchers from [npcpy](https://github.com/cagostino/npcpy). Each tool gets the NPC's persona injected and gains awareness of the other team members.
+Your `npc_team/` works beyond `npcsh`. The `npcpy` CLI launchers let you start Claude Code, Codex, Gemini CLI, Aider, Amp, and others as an NPC from your team, injecting that NPC's persona and team awareness.
 
 ```bash
-pip install npcpy   # if not already installed
+pip install npcpy
 
-# Launch Claude Code as an NPC (interactive picker)
 npc-claude
-
-# Launch as a specific NPC
 npc-claude --npc corca
-
-# Same for other coding tools
 npc-codex --npc researcher
 npc-gemini --npc analyst
 npc-opencode --npc coder
 npc-aider --npc reviewer
 npc-amp --npc writer
-
-# Point to a specific team directory
-npc-claude --team ./my_project/npc_team
 ```
 
-The launcher discovers your team from `./npc_team` or `~/.npcsh/npc_team`, lets you pick an NPC, and starts the tool with that NPC's directive. For Claude Code, it also passes the other NPCs as sub-agents via `--agents`.
-
-For deeper integration (jinxes exposed as MCP tools, team switching mid-conversation), register the NPC plugin:
+For deeper integration (jinxes as MCP tools, team switching), register the NPC plugin:
 
 ```bash
-npc-plugin claude    # install MCP server + hooks
-npc-plugin codex     # same for Codex
-npc-plugin gemini    # same for Gemini CLI
+npc-plugin claude
+npc-plugin codex
 ```
 
 ---
-
-## Features
-
-- **[Agents (NPCs)](https://npc-shell.readthedocs.io/en/latest/guide/#working-with-npcs-agents)** — AI agents with personas, directives, and tool sets
-- **[Team Orchestration](https://npc-shell.readthedocs.io/en/latest/guide/#team-orchestration)** — Delegation, review loops, multi-NPC discussions
-- **[Jinxes](https://npc-shell.readthedocs.io/en/latest/guide/#all-commands)** — Jinja Execution templates — reusable tools for users and agents
-- **[Skills](https://npc-shell.readthedocs.io/en/latest/guide/#skills-knowledge-content-for-agents)** — Knowledge-content jinxes with progressive section disclosure
-- **[NQL](https://npc-shell.readthedocs.io/en/latest/guide/#nql---sql-models-with-ai-functions)** — SQL models with embedded AI functions (Snowflake, BigQuery, Databricks, SQLite)
-- **[Knowledge Graphs](https://npc-shell.readthedocs.io/en/latest/guide/#memory--knowledge-graph)** — Build and evolve knowledge graphs from conversations
-- **[Deep Research](https://npc-shell.readthedocs.io/en/latest/guide/#deep-research)** — Multi-agent hypothesis generation, persona sub-agents, paper writing
-- **[Computer Use](https://npc-shell.readthedocs.io/en/latest/guide/#all-commands)** — GUI automation with vision
-- **[Image, Audio & Video](https://npc-shell.readthedocs.io/en/latest/guide/#all-commands)** — Generation via Ollama, diffusers, OpenAI, Gemini
-- **[MCP Integration](https://npc-shell.readthedocs.io/en/latest/guide/#all-commands)** — Full MCP server support with agentic shell TUI
-- **[API Server](https://npc-shell.readthedocs.io/en/latest/guide/#serving-an-npc-team)** — Serve teams via OpenAI-compatible REST API
-- **Self-updating** — `/update` checks pip/cargo/brew and tells you the command to upgrade
-- **Self-healing** — `/doctor` auto-fixes stale permissions, broken configs, and DB corruption
-
-Works with all major LLM providers through LiteLLM: `ollama`, `openai`, `anthropic`, `gemini`, `deepseek`, `openai-like`, and more.
-
----
-
-## Installation
-
-```bash
-pip install 'npcsh[lite]'        # API providers (ollama, gemini, anthropic, openai, etc.)
-pip install 'npcsh[local]'       # Local models (diffusers/transformers/torch)
-pip install 'npcsh[yap]'         # Voice mode
-pip install 'npcsh[all]'         # Everything
-```
-
-<details><summary>System dependencies</summary>
-
-**Linux:**
-```bash
-sudo apt-get install espeak portaudio19-dev python3-pyaudio ffmpeg libcairo2-dev libgirepository1.0-dev
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen3.5:2b
-```
-
-**macOS:**
-```bash
-brew install portaudio ffmpeg pygobject3 ollama
-brew services start ollama
-ollama pull qwen3.5:2b
-```
-
-**Windows:** Install [Ollama](https://ollama.com) and [ffmpeg](https://ffmpeg.org), then `ollama pull qwen3.5:2b`.
-
-</details>
-
-API keys go in a `.env` file:
-```bash
-export OPENAI_API_KEY="your_key"
-export ANTHROPIC_API_KEY="your_key"
-export GEMINI_API_KEY="your_key"
-```
-
-### Rust Edition (experimental)
-
-A native Rust build of `npcsh` is available — same shell, same DB, same team files, faster startup. Still experimental.
-
-```bash
-cd npcsh/rust && cargo build --release
-cp target/release/npcrsh ~/.local/bin/npc   # or wherever you want
-```
-
-Both editions share `~/npcsh_history.db` and `~/.npcsh/npc_team/` and can be used interchangeably.
 
 ## Read the Docs
 
-Full documentation, guides, and API reference at [npc-shell.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/).
+Full guides and API reference at [npc-shell.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/).
 
 ## Links
 
@@ -379,6 +342,7 @@ Full documentation, guides, and API reference at [npc-shell.readthedocs.io](http
 
 - Quantum-like nature of natural language interpretation: [arxiv](https://arxiv.org/abs/2506.10077), accepted at [QNLP 2025](https://qnlp.ai)
 - Simulating hormonal cycles for AI: [arxiv](https://arxiv.org/abs/2508.11829)
+- ALARA for Agents: [arxiv](https://arxiv.org/abs/2603.20380)
 
 ## Community & Support
 

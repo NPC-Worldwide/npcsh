@@ -1,6 +1,8 @@
 # npcsh Guide
 
-Full documentation for the NPC Shell — agents, jinxes, orchestration, NQL, knowledge graphs, and more.
+`npcsh` is a runtime for AI teams defined as data. This guide covers the core concepts — the **NPC Data Layer**, agents, jinxes, team orchestration, memory/knowledge graphs, and NQL — and how to build your own tools on top of them.
+
+For a complete reference of individual slash commands, see [NPC Shell Commands](npcsh.md).
 
 ## NPC Data Layer
 
@@ -350,55 +352,22 @@ The NPC responds using their persona and available jinxes, then control returns 
 | `guac` | General assistant | python, sh, edit_file, load_file |
 | `kadiefa` | Creative generation | vixynt |
 
-## All Commands
+## Capability Areas
 
-| Command | Description |
-|---------|-------------|
-| `/deep_research` | Multi-agent deep research — hypotheses, persona sub-agents, paper writing |
-| `/mcp_shell` | MCP-powered agentic shell — chat, tool management, server controls |
-| `/convene` | Multi-NPC structured discussion with live trains of thought |
-| `/spool` | Chat session with fresh context, file attachments, and RAG |
-| `/pti` | Pardon-the-interruption reasoning mode |
-| `/computer_use` | GUI automation with vision |
-| `/wander` | Exploratory thinking with temperature shifts |
-| `/yap` | Voice chat — continuous VAD listening, auto-transcribe, TTS |
-| `/guac` | Interactive Python REPL with LLM code generation |
-| `/kg` | Knowledge graph browser — facts, concepts, links, search, graph |
-| `/kg sleep` | Evolve knowledge graph through consolidation |
-| `/kg dream` | Creative synthesis across KG domains |
-| `/memories` | Memory browser — browse, approve, reject, filter by status |
-| `/nql` | Database browser and NQL SQL model runner |
-| `/papers` | Multi-platform research paper browser |
-| `/arxiv` | ArXiv paper browser |
-| `/git` | Git integration TUI — status, log, branches, stash, cherry-pick file picker |
-| `/build` | Build team to deployable format (flask, docker, cli, static) |
-| `/team` | Team config browser — context, NPCs, jinxes |
-| `/config` | Interactive config editor |
-| `/reattach` | Resume previous conversation sessions |
-| `/delegate` | Delegate task to NPC with review loop |
-| `/web_search` | Web search |
-| `/db_search` | Database search |
-| `/file_search` | File search |
-| `/vixynt` | Generate/edit images |
-| `/roll` | Video creation studio |
-| `/crond` | System task manager (cron, daemons, processes) |
-| `/sample` | Context-free LLM prompt |
-| `/serve` | Serve NPC team as API with OpenAI-compatible endpoints |
-| `/compile` | Compile NPC profiles |
-| `/set` | Set config values — `/set model qwen3.5:2b`, `/set provider ollama` |
-| `/teamviz` | Visualize team structure |
-| `/ots` | Screenshot analysis |
-| `/models` | Browse available models |
-| `/chat` | Switch to chat mode |
-| `/cmd` | Switch to command mode |
-| `/switch` | Switch NPC |
-| `/edit` | Edit NPC, jinx, context, or file — `/edit npc`, `/edit jinx`, `/edit ctx` |
-| `/new` | Create new NPC, jinx, or file — `/new npc`, `/new jinx`, `/new file` |
-| `/ask_form` | Structured form input for agents to gather user data |
-| `/extract_memories` | Extract memories from recent conversations |
-| `/reload` | Reload team jinxes and NPCs — `/reload`, `/reload npc name` |
-| `/repo_issues` | Fetch GitHub issues and run LLM analysis on each |
-| `/sync` | Sync npc_team files from repo to home |
+Rather than memorizing a long command list, think of `npcsh` as a set of capability areas that you extend through the data layer. Each area is exposed through slash commands and TUIs; see [NPC Shell Commands](npcsh.md) for the full command reference.
+
+| Area | What it does |
+|------|--------------|
+| **Agent chat** | Talk to NPCs, switch between them, ask one-off questions. |
+| **Custom tools** | Author `.jinx` files and skills that agents use as tools. |
+| **Orchestration** | Delegate tasks with review loops, convene multi-NPC discussions, visualize team structure. |
+| **Memory & KG** | Extract, approve, and evolve memories into a queryable knowledge graph. |
+| **NQL** | Run SQL models with embedded AI functions locally or on enterprise warehouses. |
+| **Computer use** | GUI automation, browser automation, screenshot analysis. |
+| **Search** | Web, database, and file search across the local data layer. |
+| **Media** | Image generation/editing, video generation, voice chat. |
+| **System** | Cron jobs, daemons, process manager, config editor, model browser. |
+| **API** | Serve any NPC team via OpenAI-compatible endpoints. |
 
 Most commands launch full-screen TUIs — just type and interact. For CLI usage with `npc`, common flags include `--model (-mo)`, `--provider (-pr)`, `--npc (-np)`, and `--temperature (-t)`. Run `npc --help` for the full list.
 
