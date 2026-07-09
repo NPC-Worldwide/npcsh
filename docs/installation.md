@@ -109,33 +109,17 @@ Individual NPCs can override the default model/provider by setting `model` and `
 
 ## Project structure
 
-On startup, `npcsh` will generate a folder at `~/.npcsh/` that contains the default global NPCs and jinxes if there is no `npc_team` in the current directory. It also records interactions in a local SQLite database at the path specified by `NPCSH_DB_PATH` (default `~/npcsh_history.db`).
-
-```
-~/.npcsh/
-├── images/              # images created or uploaded during conversations
-├── jobs/                # scheduled jobs
-├── logs/                # logs for triggers and jobs
-├── npc_team/            # global NPC team
-│   ├── jinxes/          # global jinxes
-│   └── assembly_lines/  # workflow pipelines
-├── screenshots/         # taken with screenshot jinx or /ots
-└── triggers/            # condition-triggered jobs
-```
-
-For project-specific teams, add an `npc_team/` directory to your project:
+`npcsh` keeps per-project configuration in an `npc_team/` directory. Add one to any project:
 
 ```
 ./npc_team/
 ├── team.ctx            # team config
 ├── jinxes/             # project jinxes
 │   └── example.jinx
-├── assembly_lines/     # project workflows
-│   └── example.pipe
-├── models/             # NQL SQL models
-│   └── example.sql
 ├── example1.npc        # agent definition
 └── example2.npc
 ```
 
-`npcsh` automatically detects the local `npc_team/` and overlays it on the global team.
+Or keep agent definitions in `agents.md` or an `agents/` folder at the project root, alongside `npc_team/` for context and jinxes. `npcsh` detects the layout on startup and asks which to use if both are present.
+
+State such as conversation history, images, screenshots, jobs, and triggers is stored under `~/.npcsh/` (and in `~/npcsh_history.db` by default).
