@@ -66,6 +66,15 @@ jobs:
       working-directory: rust
       run: cargo check
 
+  rust-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Run Rust tests
+      working-directory: rust
+      run: cargo test
+
   no-committed-binaries:
     runs-on: ubuntu-latest
     steps:

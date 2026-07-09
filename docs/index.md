@@ -10,7 +10,7 @@
 ## Quick Links
 
 - [Installation Guide](installation.md)
-- [Full Guide](guide.md) — agents, jinxes, orchestration, NQL, knowledge graphs, and more
+- [Full Guide](guide.md) — agents, jinxes, orchestration, knowledge graphs, and more
 - [Benchmarks](benchmarks.md) — pass/fail results across 125 agentic-shell tasks
 - [NPC CLI](npc_cli.md)
 - [Skills](skills.md) — knowledge-content jinxes with progressive section disclosure
@@ -28,13 +28,13 @@
 
 ## The NPC Data Layer
 
-Everything customizable in `npcsh` lives in `npc_team/` as simple files:
+Everything customizable in `npcsh` lives as simple files. You can keep them inside `npc_team/`, or use a flat layout with `agents.md`/`agents/` at the project root.
 
 - **`.npc`** — agent definitions (persona, directive, model, provider, jinxes)
+- **`agents.md`** — multiple agents defined in one markdown file
+- **`agents/`** — one agent per `.md` file
 - **`.jinx`** — Jinja execution templates, i.e. tools and workflows
 - **`.ctx`** — team context (default model/provider, forenpc, MCP servers, env vars)
-- **`.sql`** — NQL models: SQL with embedded AI functions
-- **`.pipe`** — assembly-line workflow pipelines
 
 Because these are ordinary files, you can version them in git, share them across projects, and drop in agent definitions from other ecosystems.
 

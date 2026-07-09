@@ -1,6 +1,6 @@
 # npcsh Guide
 
-`npcsh` is a runtime for AI teams defined as data. This guide covers the core concepts — the **NPC Data Layer**, agents, jinxes, team orchestration, memory/knowledge graphs, and NQL — and how to build your own tools on top of them.
+`npcsh` is a runtime for AI teams defined as data. This guide covers the core concepts — the **NPC Data Layer**, agents, jinxes, team orchestration, memory/knowledge graphs — and how to build your own tools on top of them.
 
 For a complete reference of individual slash commands, see [NPC Shell Commands](npcsh.md).
 
@@ -13,15 +13,14 @@ The core of npcsh's capabilities is powered by the NPC Data Layer. Upon initiali
 Users can extend NPC capabilities through simple YAML files:
 
 - **NPCs** (.npc): are defined with a name, primary directive, and optional model specifications. NPC files are executable — add `#!/usr/bin/env npc` as the first line and run them directly: `./myagent.npc "what's the weather?"`
-- **Jinxes** (.jinx): Jinja execution templates that provide function-like capabilities and scaleable extensibility through Jinja references to call other jinxes to build upon. Jinxes are also executable — add `#!/usr/bin/env npc` and run them directly: `./sh.jinx bash_command="echo hello"`. Jinxes are executed through prompt-based flows, allowing them to be used by models regardless of their tool-calling capabilities, making it possible then to enable agents at the edge of computing through this simple methodology.
+- **Jinxes** (.jinx): Jinja execution templates that provide function-like capabilities and scaleable extensibility through Jinja references to call other jinxes to build upon. Jinxes are executed through prompt-based flows, allowing them to be used by models regardless of their tool-calling capabilities, making it possible then to enable agents at the edge of computing through this simple methodology.
 - **Context** (.ctx): Specify contextual information, team preferences, MCP server paths, database connections, and other environment variables that are loaded for the team or for specific agents (e.g. `GUAC_FORENPC`). Teams are specified by their path and the team name in the `<team>.ctx` file. Teams organize collections of NPCs with shared context and specify a coordinator within the team context who is used whenever the team is called upon for orchestration.
-- **SQL Models** (.sql): NQL (NPC Query Language) models combine SQL with AI-powered transformations. Place `.sql` files in `npc_team/models/` to create data pipelines with embedded LLM calls.
 
 The NPC Shell system integrates the capabilities of `npcpy` to maintain conversation history, track command execution, and provide intelligent autocomplete through an extensible command routing system. State is preserved between sessions, allowing for continuous knowledge building over time.
 
 This architecture enables users to build complex AI workflows while maintaining a simple, declarative syntax that abstracts away implementation complexity. By organizing AI capabilities in composable data structures rather than code, `npcsh` creates a more accessible and adaptable framework for AI automation that can scale more intentionally. Within teams can be subteams, and these sub-teams may be called upon for orchestration, but importantly, when the orchestrator is deciding between using one of its own team's NPCs versus yielding to a sub-team, they see only the descriptions of the subteams rather than the full persona descriptions for each of the sub-team's agents, making it easier for the orchestrator to better delineate and keep their attention focused by restricting the number of options in each decisino step. Thus, they may yield to the sub-team's orchestrator, letting them decide which sub-team NPC to use based on their own team's agents.
 
-Importantly, users can switch easily between the NPCs they are chatting with by typing `/n npc_name` within the NPC shell. Likewise, they can create Jinxes and then use them from within the NPC shell by invoking the jinx name and the arguments required for the Jinx;  `/<jinx_name> arg1 arg2`
+Importantly, users can switch easily between the NPCs they are chatting with by typing `/npc npc_name` within the NPC shell. Likewise, the NPCs can use Jinxes as tools when they need to take action.
 
 ## Team Orchestration
 
@@ -134,7 +133,7 @@ steps:
 
 #### Using Skills
 
-In npcsh, skills work as slash commands like any jinx:
+In npcsh, skills work like any jinx:
 
 ```bash
 /debugging                       # All sections
@@ -227,105 +226,17 @@ This generates two views:
     <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/teamviz.png" alt="Team structure visualization", width=700>
 </p>
 
-## NQL - SQL Models with AI Functions
-
-NQL (NPC Query Language) enables AI-powered data transformations directly in SQL, similar to dbt but with embedded LLM calls. Create `.sql` files in `npc_team/models/` that combine standard SQL with `nql.*` AI function calls, then run them on a schedule to build analytical tables enriched with AI insights.
-
-### How It Works
-
-NQL models are SQL files with embedded AI function calls. When executed:
-
-1. **Model Discovery**: The compiler finds all `.sql` files in your `models/` directory
-2. **Dependency Resolution**: Models referencing other models via `{{ ref('model_name') }}` are sorted topologically
-3. **Jinja Processing**: Template expressions (`{% %}`) are evaluated with access to NPC/team/jinx context
-4. **Execution Path**:
-   - **Native AI databases** (Snowflake, Databricks, BigQuery): NQL calls are translated to native AI functions (e.g., `SNOWFLAKE.CORTEX.COMPLETE()`)
-   - **Standard databases** (SQLite, PostgreSQL, etc.): SQL executes first, then Python-based AI functions process each row
-5. **Materialization**: Results are written back to the database as tables or views
-
-### Example Model
-
-```sql
-{{ config(materialized='table') }}
-
-SELECT
-    command,
-    count(*) as exec_count,
-    nql.synthesize(
-        'Analyze "{command}" usage pattern with {exec_count} executions',
-        'sibiji',
-        'pattern_insight'
-    ) as insight
-FROM command_history
-GROUP BY command
-```
-
-### Enterprise Database Support
-
-NQL **automatically translates** your `nql.*` function calls to native database AI functions under the hood. You write portable NQL syntax once, and the compiler handles the translation:
-
-| Database | Auto-Translation | Your Code → Native SQL |
-|----------|------------------|------------------------|
-| **Snowflake** | Cortex AI | `nql.synthesize(...)` → `SNOWFLAKE.CORTEX.COMPLETE('llama3.1-8b', ...)` |
-| **Databricks** | ML Serving | `nql.generate_text(...)` → `ai_query('databricks-meta-llama...', ...)` |
-| **BigQuery** | Vertex AI | `nql.summarize(...)` → `ML.GENERATE_TEXT(MODEL 'gemini-pro', ...)` |
-| **SQLite/PostgreSQL** | Python Fallback | SQL executes first, then AI applied row-by-row via `npcpy` |
-
-Write models locally with SQLite, deploy to Snowflake/Databricks/BigQuery with zero code changes—the NQL compiler rewrites your AI calls to use native accelerated functions automatically.
-
-### NQL Functions
-
-**Built-in LLM functions** (from `npcpy.llm_funcs`):
-- `nql.synthesize(prompt, npc, alias)` - Synthesize insights from multiple perspectives
-- `nql.summarize(text, npc, alias)` - Summarize text content
-- `nql.criticize(text, npc, alias)` - Provide critical analysis
-- `nql.extract_entities(text, npc, alias)` - Extract named entities
-- `nql.generate_text(prompt, npc, alias)` - General text generation
-- `nql.translate(text, npc, alias)` - Translate between languages
-
-**Team jinxes as functions**: Any jinx in your team can be called as `nql.<jinx_name>(...)`:
-```sql
-nql.sample('Generate variations of: {text}', 'frederic', 'variations')
-```
-
-**Model references**: Use `{{ ref('other_model') }}` to create dependencies between models. The compiler ensures models run in the correct order.
-
-### Running Models
-
-```bash
-# List available models (shows [NQL] tag for models with AI functions)
-nql show=1
-
-# Run all models in dependency order
-nql
-
-# Run a specific model
-nql model=daily_summary
-
-# Use a different database
-nql db=~/analytics.db
-
-# Schedule with cron (runs daily at 6am)
-nql install_cron="0 6 * * *"
-```
-
 ## Working with NPCs (Agents)
 
 NPCs are AI agents with distinct personas, models, and tool sets. You can interact with them in two ways:
 
 ### Switching to an NPC
 
-Use `/npc <name>` or `/n <name>` to switch your session to a different NPC. All subsequent messages will be handled by that NPC until you switch again:
+Use `/npc <name>` to switch your session to a different NPC. All subsequent messages will be handled by that NPC until you switch again:
 
 ```bash
 /npc corca          # Switch to corca for coding tasks
-/n frederic         # Switch to frederic for math/music
-```
-
-You can also invoke an NPC directly as a slash command to switch to them:
-```bash
-/corca              # Same as /npc corca
-/guac               # Same as /npc guac
+/npc frederic       # Switch to frederic for math/music
 ```
 
 ### One-Time Questions with @
@@ -347,7 +258,7 @@ The NPC responds using their persona and available jinxes, then control returns 
 | `sibiji` | Orchestrator/coordinator | delegate, convene, python, sh |
 | `corca` | Coding and development | python, sh, edit_file, load_file |
 | `plonk` | Browser/GUI automation | browser_action, screenshot, click, key_press |
-| `alicanto` | Research and analysis | python, sh, sql, load_file |
+| `alicanto` | Research and analysis | python, sh, load_file |
 | `frederic` | Math, physics, music | python, vixynt, roll, sample |
 | `guac` | General assistant | python, sh, edit_file, load_file |
 | `kadiefa` | Creative generation | vixynt |
@@ -362,7 +273,6 @@ Rather than memorizing a long command list, think of `npcsh` as a set of capabil
 | **Custom tools** | Author `.jinx` files and skills that agents use as tools. |
 | **Orchestration** | Delegate tasks with review loops, convene multi-NPC discussions, visualize team structure. |
 | **Memory & KG** | Extract, approve, and evolve memories into a queryable knowledge graph. |
-| **NQL** | Run SQL models with embedded AI functions locally or on enterprise warehouses. |
 | **Computer use** | GUI automation, browser automation, screenshot analysis. |
 | **Search** | Web, database, and file search across the local data layer. |
 | **Media** | Image generation/editing, video generation, voice chat. |
@@ -605,16 +515,12 @@ npc_team/
 │   │   │   └── SKILL.md
 │   │   └── git-workflow.jinx  # .jinx format
 │   ├── lib/
-│   │   ├── core/         # Core tools (python, sh, sql, skill, edit_file, delegate, etc.)
+│   │   ├── core/         # Core tools (python, sh, skill, edit_file, delegate, etc.)
 │   │   │   └── search/   # Search tools (web_search, db_search, file_search)
 │   │   ├── utils/        # Utility jinxes (set, compile, serve, teamviz, etc.)
 │   │   ├── browser/      # Browser automation (browser_action, screenshot, etc.)
 │   │   └── computer_use/ # Computer use (click, key_press, screenshot, etc.)
 │   └── incognide/        # Incognide desktop workspace jinxes
-├── models/               # NQL SQL models
-│   ├── base/             # Base statistics models
-│   └── insights/         # Models with nql.* AI functions
-├── assembly_lines/       # Workflow pipelines
 ├── sibiji.npc            # Orchestrator NPC
 ├── corca.npc             # Coding specialist
 ├── ...                   # Other NPCs

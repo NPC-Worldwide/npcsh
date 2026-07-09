@@ -19,7 +19,7 @@ use crate::cli_providers::{CLI_PROVIDERS, run_cli_provider};
 use npcsh::markdown::render_block;
 use npcsh::{
     exec_jinx_file, exec_npc_file, find_team_dir, init_team,
-    stream_client,
+    resolve_team_layout, stream_client,
 };
 
 fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
@@ -381,6 +381,8 @@ async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
     load_npcshrc();
 
+    resolve_team_layout();
+
     let server_url = std::env::var("NPCSH_SERVER_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:5237".to_string());
     let http_client = reqwest::Client::new();
@@ -388,40 +390,6 @@ async fn main() -> Result<()> {
     if let Some(file) = args.get(1) {
         if file.ends_with(".nsh") && !file.starts_with('-') {
             return exec_nsh_file(file, &http_client, &server_url).await;
-        }
-    }
-
-    if let Some(pos) = args.iter().position(|a| a == "-c" || a == "--command") {
-        if let Some(command) = args.get(pos + 1) {
-            let team_dir = find_team_dir();
-            let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
-            let mut kernel = Kernel::boot(&team_dir, &db_path)?;
-            match run_stream_turn(
-                &mut kernel,
-                0,
-                command,
-                Mode::Agent,
-                &http_client,
-                &server_url,
-                true,
-            )
-            .await
-            {
-                Ok(output) => {
-                    let streamed = kernel
-                        .get_process(0)
-                        .map(|p| p.last_streamed)
-                        .unwrap_or(false);
-                    if !streamed && !output.is_empty() {
-                        println!("{}", render_block(&output));
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
-            }
-            return Ok(());
         }
     }
 

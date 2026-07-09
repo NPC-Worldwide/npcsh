@@ -37,31 +37,44 @@ npcsh> please read through the markdown files in the docs folder and suggest cha
 
 ## The NPC Data Layer
 
-Everything in `npcsh` is built around a small set of file types in an `npc_team/` directory. This lets you treat agents, tools, and context as data that can be versioned, shared, and composed across projects.
+Everything in `npcsh` is built around a small set of file types. Agents, tools, and context are plain files that can be versioned, shared, and composed across projects. You can keep them inside an `npc_team/` directory, or use a flat layout with `agents.md`/`agents/` at the project root.
 
-| File | Purpose |
-|------|---------|
+| File or Folder | Purpose |
+|----------------|---------|
 | **`.npc`** | Agent definitions (persona, directive, model, provider, available tools). Executable with a shebang. |
-| **`.jinx`** | Jinja execution templates — reusable tools/workflows that agents invoke like functions. |
+| **`agents.md`** | Multiple agents defined in one markdown file. |
+| **`agents/`** | One agent per `.md` file. |
+| **`.jinx`** | Jinja execution templates — reusable tools/workflows that agents use. |
 | **`.ctx`** | Team context: default model/provider, forenpc (orchestrator), MCP servers, env vars, shared memory. |
 
 A minimal project looks like this:
 
 ```
-npc_team/
-├── team.ctx            # team config + forenpc
-├── sibiji.npc          # orchestrator
-├── corca.npc           # coding specialist
-├── agents.md           # optional bulk agent definitions
-├── agents/             # optional one-agent-per-file markdown
-├── jinxes/
-│   ├── skills/
-│   │   └── debugging/
-│   │       └── SKILL.md
-│   └── my_tool.jinx
-└── models/
-    └── daily_summary.sql
+myproject/
+├── npc_team/
+│   ├── team.ctx            # team config + forenpc
+│   ├── sibiji.npc          # orchestrator
+│   ├── corca.npc           # coding specialist
+│   └── jinxes/
+│       ├── skills/
+│       │   └── debugging/
+│       │       └── SKILL.md
+│       └── my_tool.jinx
 ```
+
+Or, if you prefer a flat layout, replace `npc_team/*.npc` with `agents.md` or an `agents/` folder at the project root:
+
+```
+myproject/
+├── npc_team/
+│   ├── team.ctx            # team config + forenpc
+│   └── jinxes/
+│       └── my_tool.jinx
+├── agents.md               # bulk agent definitions
+└── agents/                 # one agent per file
+```
+
+If both `npc_team/*.npc` and `agents.md`/`agents/` are present, `npcsh` asks which layout to use on first run and saves the choice in `.NPCSH_PREFERRED_TEAM_NAME` at the project root. On later runs it loads the preferred layout automatically.
 
 Because these are ordinary files, you can:
 
@@ -72,7 +85,7 @@ Because these are ordinary files, you can:
 
 ## Build Your Own Tools
 
-Jinxes are the main extension point. A jinx is a YAML file that describes inputs, a prompt template, and one or more execution steps. They are invoked as slash commands and can call other jinxes, run Python or shell, query the local DB, or call LLMs.
+Jinxes are the main extension point. A jinx is a YAML file that describes inputs, a prompt template, and one or more execution steps. Agents use jinxes as tools; a jinx can call other jinxes, run Python or shell, query the local DB, or call LLMs.
 
 ```yaml
 # jinxes/hello.jinx
@@ -115,7 +128,6 @@ Skills are a special kind of jinx that serve instructional content progressively
 - **Custom tools** — Author jinxes and skills for your domain; agents use them automatically.
 - **Multi-agent orchestration** — The forenpc delegates tasks, convenes discussions, and runs review loops across specialized NPCs.
 - **Memory & knowledge graphs** — Conversations feed a memory lifecycle; approved memories can be synthesized into a queryable knowledge graph.
-- **NQL** — SQL models with embedded AI functions that run on SQLite locally and translate to native AI functions on Snowflake, Databricks, and BigQuery.
 - **Computer use** — GUI automation via vision, browser automation, screenshot analysis.
 - **API server** — Serve any NPC team via OpenAI-compatible endpoints (`/serve`).
 - **Scheduling** — Cron jobs, daemons, and triggered workflows.
