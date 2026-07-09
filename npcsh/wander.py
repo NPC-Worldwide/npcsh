@@ -1,8 +1,3 @@
-"""
-wander - Experimental wandering mode CLI entry point
-
-This is a thin wrapper that executes the wander.jinx through the jinx mechanism.
-"""
 import argparse
 import sys
 

@@ -15,7 +15,6 @@ steps:
 
       query = context.get('query', '').strip()
 
-      # Force text mode when called by an agent (non-interactive context)
       try:
           text_mode
       except NameError:
@@ -43,10 +42,8 @@ steps:
           try:
               raw_results = search_web(query, provider=provider, num_results=num_results)
 
-              # Normalize results - handle different provider formats
               results = []
               if raw_results:
-                  # Perplexity returns [answer_text, [url1, url2, ...]]
                   if (len(raw_results) == 2
                       and isinstance(raw_results[0], str)
                       and isinstance(raw_results[1], (list, tuple))):

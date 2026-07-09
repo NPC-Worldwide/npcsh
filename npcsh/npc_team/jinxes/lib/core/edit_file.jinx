@@ -20,10 +20,8 @@ steps:
       backup_str = {{ backup | default("true") | string | tojson }}
       create_backup = backup_str.lower() not in ('false', 'no', '0', '')
 
-      # Ensure parent directory exists
       os.makedirs(os.path.dirname(file_path) or '.', exist_ok=True)
 
-      # If file doesn't exist, create it
       if not os.path.exists(file_path):
           prompt = """You are a code writing assistant. Create the content for a new file based on these instructions.
 

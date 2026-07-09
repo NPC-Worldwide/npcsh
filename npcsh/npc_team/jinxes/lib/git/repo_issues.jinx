@@ -32,13 +32,11 @@ steps:
           )
           return r.returncode, r.stdout, r.stderr
 
-      # --- verify gh is available ---
       rc, _, err = run_gh('--version')
       if rc != 0:
           context['output'] = 'Error: gh CLI not found. Install from https://cli.github.com'
           exit()
 
-      # --- build issue list command ---
       list_args = [
           'issue', 'list',
           '--state', state,
@@ -66,7 +64,6 @@ steps:
           exit()
       print('issues', issues)
 
-      # --- default analysis prompt ---
       if not analysis_prompt:
           analysis_prompt = (
               'Analyze this GitHub issue and provide a structured assessment covering:\n'
@@ -82,7 +79,6 @@ steps:
               'Suggested labels if none are set (bug, enhancement, docs, question, etc.).'
           )
 
-      # --- loop over each issue and analyze ---
       results = []
 
       {% for i in range(issues | length) %}
@@ -128,7 +124,6 @@ steps:
       })
       {% endfor %}
 
-      # --- build final report ---
       repo_label = repo if repo else '(current repo)'
       header = (
           f'# Issue Analysis Report\n'

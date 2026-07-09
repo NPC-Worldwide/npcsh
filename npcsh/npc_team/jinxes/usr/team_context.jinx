@@ -19,7 +19,6 @@ steps:
       query_pattern = {{ pattern | default('*') | tojson }}
       max_files = {{ max_files | default(10) | tojson }}
 
-      # Locate team.ctx by walking upward from current directory
       team_ctx_path = None
       cwd = os.getcwd()
       while cwd != '/':

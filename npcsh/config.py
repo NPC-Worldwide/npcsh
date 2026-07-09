@@ -1,6 +1,3 @@
-"""
-npcsh configuration management
-"""
 import os
 import importlib.metadata
 

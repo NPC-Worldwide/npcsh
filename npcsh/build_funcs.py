@@ -1,7 +1,3 @@
-"""
-Build functions for NPC team deployment artifacts.
-"""
-
 import os
 import yaml
 from pathlib import Path

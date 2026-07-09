@@ -145,7 +145,6 @@ steps:
                           ts = format_ts(c['last_msg'])
                           npcs = (c['npcs'] or 'default')[:10]
                           models = (c.get('models') or '')
-                          # Shorten model names
                           if models:
                               short_models = []
                               for m in models.split(',')[:2]:
@@ -197,7 +196,6 @@ steps:
                           if role == 'user':
                               prefix = '\033[32;1mYou:\033[0m '
                           elif role == 'assistant':
-                              # Shorten model name for display
                               short_model = ''
                               if model:
                                   if 'gpt-4' in model: short_model = 'gpt4'
@@ -232,12 +230,12 @@ steps:
                       c2 = sys.stdin.read(1)
                       if c2 == '[':
                           c3 = sys.stdin.read(1)
-                          if c3 == 'A':  # Up
+                          if c3 == 'A':
                               if mode == 'list' and selected > 0:
                                   selected -= 1
                               elif mode == 'preview' and preview_scroll > 0:
                                   preview_scroll -= 1
-                          elif c3 == 'B':  # Down
+                          elif c3 == 'B':
                               if mode == 'list' and selected < len(convos) - 1:
                                   selected += 1
                               elif mode == 'preview' and preview_scroll < max(0, len(preview_msgs) - list_height):
@@ -285,7 +283,6 @@ steps:
                       cid = convos[selected]['conversation_id']
                       if 'state' in dir() and state is not None:
                           state.conversation_id = cid
-                          # Load past messages into state.messages so agents have context
                           loaded_msgs = []
                           try:
                               if hasattr(state, 'command_history') and state.command_history is not None:
@@ -303,9 +300,7 @@ steps:
                               pass
                           state.messages = loaded_msgs
                           msg_count = len(loaded_msgs)
-                          # Reset compression tracking since we loaded an existing conversation
                           state._last_compress_prompted_pct = 0
-                          # Build replay of last 10 messages into output
                           replay = []
                           for m in loaded_msgs[-10:]:
                               r, c = m.get('role',''), m.get('content','')
@@ -315,7 +310,6 @@ steps:
                                   replay.append(c)
                           replay.append(f"Reattached to: {cid} ({msg_count} messages loaded)")
                           context['output'] = '\n\n'.join(replay)
-                          # Return messages in context so the router preserves them
                           context['messages'] = loaded_msgs
                       else:
                           context['output'] = f"Selected: {cid}\n\nRun: /set conversation_id={cid}"
