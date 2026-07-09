@@ -146,36 +146,22 @@ def _ensure_teams_yaml() -> Optional[str]:
         return None
 
 
-def _fallback_to_python():
-    print(
-        "WARNING: Rust npcrsh binary not found. Falling back to Python runner.\n"
-        "The Python runner is deprecated.",
-        file=sys.stderr,
-    )
-    from npcsh.npcsh import main as python_main
-    python_main()
-
-
 def main():
     rust_bin = _find_rust_binary()
 
-    if rust_bin:
-        teams_yaml = _ensure_teams_yaml()
-        if not _start_server(DEFAULT_HOST, DEFAULT_PORT, teams_yaml=teams_yaml):
-            print(
-                "ERROR: Could not start the NPCSH server; the Rust shell requires it. "
-                "Start it manually with: python3 -m npcpy.serve",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        env = os.environ.copy()
-        env["NPCSH_SERVER_URL"] = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
-        try:
-            os.execvpe(rust_bin, [rust_bin] + sys.argv[1:], env)
-        except OSError as e:
-            print(
-                f"Warning: failed to exec {rust_bin} ({e}) — falling back to Python",
-                file=sys.stderr,
-            )
+    if not rust_bin:
+        print("ERROR: Rust npcrsh binary not found.", file=sys.stderr)
+        sys.exit(1)
 
-    _fallback_to_python()
+    teams_yaml = _ensure_teams_yaml()
+    if not _start_server(DEFAULT_HOST, DEFAULT_PORT, teams_yaml=teams_yaml):
+        print(
+            "ERROR: Could not start the NPCSH server; the Rust shell requires it. "
+            "Start it manually with: python3 -m npcpy.serve",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    env = os.environ.copy()
+    env["NPCSH_SERVER_URL"] = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
+    os.execvpe(rust_bin, [rust_bin] + sys.argv[1:], env)
