@@ -20,7 +20,6 @@ steps:
       from termcolor import colored
       from npcpy.llm_funcs import get_llm_response
 
-      # ── Inputs ──────────────────────────────────────────────
       _npc = context.get('npc')
       _team = context.get('team')
       _messages = context.get('messages', [])
@@ -30,7 +29,6 @@ steps:
       elif isinstance(_npc, str):
           _npc = None
 
-      # Use the shell's current model/provider — NEVER let the LLM override these.
       _model = None
       _provider = None
       try:
@@ -50,7 +48,6 @@ steps:
       max_iters = int(context.get('max_iterations') or '15')
       max_lines = int(context.get('max_file_lines') or '300')
 
-      # Spinner support
       try:
           from npcsh.ui import get_current_spinner
           spinner = get_current_spinner()
@@ -78,7 +75,6 @@ steps:
           print(colored(f"    LLM: {elapsed:.1f}s", "white", attrs=["dark"]))
           return result
 
-      # ── Helpers ─────────────────────────────────────────────
       SKIP_DIRS = {
           '.git', '__pycache__', 'node_modules', '.tox', '.mypy_cache',
           '.pytest_cache', 'dist', 'build', '.eggs',
@@ -129,9 +125,6 @@ steps:
               return rel.lstrip('/')
           return path
 
-      # ══════════════════════════════════════════════════════════
-      #  PHASE 1: Structure Discovery
-      # ══════════════════════════════════════════════════════════
       status("Phase 1: Discovering project structure...")
 
       ext_counts = defaultdict(int)
@@ -172,7 +165,6 @@ steps:
               if f.lower() in KEY_NAMES:
                   key_files.append(rel)
 
-      # Build tree (top 3 levels)
       tree_lines = []
       for root, dirs, files in os.walk(base_path):
           dirs[:] = [d for d in sorted(dirs) if not should_skip_dir(d)]
@@ -185,11 +177,9 @@ steps:
           n_files = len(files)
           tree_lines.append(f"{indent}{dirname}/ ({n_files} files)")
 
-      # Sort extensions by count
       top_exts = sorted(ext_counts.items(), key=lambda x: x[1], reverse=True)[:20]
       ext_summary = ', '.join(f"{e}: {c}" for e, c in top_exts)
 
-      # Build file listing — only readable (non-binary) files
       readable_files = [f for f in all_files if not is_binary(f['path'])]
       file_listing_lines = []
       for f in sorted(readable_files, key=lambda x: x['rel']):
@@ -224,7 +214,6 @@ steps:
       print(colored(f"\n  {len(readable_files)} readable files across {dir_count} directories", "green"))
       print(colored(f"  Top types: {ext_summary[:80]}", "white", attrs=["dark"]))
 
-      # Parse file list from LLM response
       def parse_file_list(text):
           text = text.strip()
           start = text.find('[')
@@ -237,15 +226,12 @@ steps:
           import re
           return re.findall(r'"([^"]+)"', text)
 
-      # Pick initial files using heuristics (no LLM call needed)
       SKIP_BASENAMES = {'.env', '.gitignore', '.dockerignore', 'license', 'license.md'}
       SKIP_PREFIXES = ('test_', 'screenshot', 'salmon_', 'experiment')
 
-      # Tier 1: READMEs and project configs (always read first)
       TIER1 = {'readme.md', 'readme.rst', 'readme.txt', 'readme',
                'pyproject.toml', 'setup.py', 'setup.cfg', 'package.json',
                'cargo.toml', 'go.mod'}
-      # Tier 2: Entry points and top-level source
       TIER2 = {'main.py', 'app.py', 'index.js', 'index.ts', 'main.go',
                'main.rs', 'makefile', 'requirements.txt', 'conftest.py'}
 
@@ -262,16 +248,13 @@ steps:
           elif basename in TIER2 and depth == 0:
               tier2.append(f)
           elif depth == 0 and f['ext'] in ('.py', '.js', '.ts', '.go', '.rs'):
-              # Top-level source files (not buried in subdirs)
               rest.append(f)
 
-      # Top-level __init__.py only (not nested ones)
       for f in readable_files:
           if f['rel'] == '__init__.py':
               tier1.append(f)
               break
 
-      # Sort rest by size (prefer smaller files that are likely more focused)
       rest.sort(key=lambda f: f['size'])
 
       initial_picks = []
@@ -283,22 +266,16 @@ steps:
       files_to_read = initial_picks
       print(colored(f"\n  Starting with {len(files_to_read)} files: {', '.join(os.path.basename(f) for f in files_to_read)}", "yellow"))
 
-      # ══════════════════════════════════════════════════════════
-      #  PHASE 2: Iterative Deep Exploration
-      # ══════════════════════════════════════════════════════════
       status("Phase 2: Deep exploration...")
 
       files_read = set()
-      findings = []  # List of (file, summary) tuples
+      findings = []
       iteration = 0
 
-      # Resolve relative paths to absolute
       def resolve_path(rel_path):
-          # Try direct join
           candidate = os.path.join(base_path, rel_path)
           if os.path.isfile(candidate):
               return candidate
-          # Try case-insensitive search
           rel_lower = rel_path.lower()
           for f in all_files:
               if f['rel'].lower() == rel_lower:
@@ -311,9 +288,8 @@ steps:
           iteration += 1
           status(f"  Iteration {iteration}/{max_iters} - reading {len(files_to_read)} files...")
 
-          # Read requested files
           file_contents = []
-          for rel_path in files_to_read[:4]:  # Cap at 4 per round to keep prompts manageable
+          for rel_path in files_to_read[:4]:
               abs_path = resolve_path(rel_path)
               if abs_path is None:
                   file_contents.append(f"### {rel_path}\n[file not found]")
@@ -331,7 +307,6 @@ steps:
               print(colored("    No new files to read, finishing exploration", "yellow"))
               break
 
-          # Build cumulative findings summary
           findings_summary = ""
           if findings:
               findings_summary = "\n\nFINDINGS SO FAR:\n" + "\n".join(
@@ -340,7 +315,6 @@ steps:
 
           files_read_list = '\n'.join('  - ' + get_relative(f) for f in sorted(files_read))
 
-          # Build list of files NOT yet read for the LLM to pick from
           unread_files = '\n'.join(
               '  ' + f['rel'] for f in sorted(all_files, key=lambda x: x['rel'])
               if f['path'] not in files_read
@@ -383,7 +357,6 @@ steps:
           resp = llm(analysis_prompt, temperature=0.3)
           analysis = str(resp.get('response', ''))
 
-          # Parse file summaries
           if 'FILE_SUMMARIES:' in analysis:
               summ_start = analysis.find('FILE_SUMMARIES:') + len('FILE_SUMMARIES:')
               summ_end = analysis.find('NEXT_FILES:')
@@ -396,7 +369,6 @@ steps:
                       parts = line.split(':', 1)
                       findings.append((parts[0].strip(), parts[1].strip()))
 
-          # Parse next files (cap at 8 to prevent LLM from dumping everything)
           next_files = []
           if 'NEXT_FILES:' in analysis:
               nf_start = analysis.find('NEXT_FILES:') + len('NEXT_FILES:')
@@ -406,7 +378,6 @@ steps:
               nf_block = analysis[nf_start:nf_end].strip()
               next_files = parse_file_list(nf_block)[:8]
 
-          # Check if complete
           is_complete = 'STATUS: COMPLETE' in analysis.upper() or 'STATUS:COMPLETE' in analysis.upper().replace(' ', '')
 
           n_new = len([f for f in (files_to_read[:6]) if resolve_path(f) and resolve_path(f) not in files_read])
@@ -418,9 +389,6 @@ steps:
 
           files_to_read = next_files
 
-      # ══════════════════════════════════════════════════════════
-      #  PHASE 3: Synthesis
-      # ══════════════════════════════════════════════════════════
       status("Phase 3: Synthesizing findings...")
 
       findings_text = '\n'.join(f"- {f}: {s}" for f, s in findings)
@@ -460,7 +428,6 @@ steps:
       resp = llm(synth_prompt, temperature=0.4)
       report = str(resp.get('response', 'No synthesis generated.'))
 
-      # Print final report
       sep = '=' * 60
       print(colored(f"\n{sep}", "cyan"))
       print(colored("  EXPLORATION REPORT", "cyan", attrs=["bold"]))

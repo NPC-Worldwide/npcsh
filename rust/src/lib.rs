@@ -1,9 +1,3 @@
-//! Shared library for the `npcsh` and `npc` binaries.
-//!
-//! Exposes the SSE stream client, markdown renderer, and the core NPC/jinx
-//! execution helpers so that the shell and the dedicated NPC CLI can share
-//! implementation without sharing a single `main.rs`.
-
 pub mod markdown;
 pub mod stream_client;
 

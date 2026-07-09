@@ -1,6 +1,3 @@
-"""
-Readline and tab completion for npcsh
-"""
 import os
 from typing import List, Any
 

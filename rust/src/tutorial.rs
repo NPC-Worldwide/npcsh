@@ -30,9 +30,9 @@ pub fn run_tutorial_tui(registry: &Arc<Mutex<CronRegistry>>, kernel: &mut npcrs:
     let mut editing = false;
     let mut edit_label = "";
 
-    let mut heartbeats: Vec<(String, String, String)> = Vec::new(); // npc, interval, task
+    let mut heartbeats: Vec<(String, String, String)> = Vec::new();
     let mut hb_sel: usize = 0;
-    let mut hb_field = 0; // 0 npc, 1 interval, 2 task
+    let mut hb_field = 0;
 
     let mut skills: HashMap<String, bool> = [
         ("git-workflow".to_string(), false),
@@ -187,7 +187,6 @@ pub fn run_tutorial_tui(registry: &Arc<Mutex<CronRegistry>>, kernel: &mut npcrs:
                             let mut keys: Vec<String> = skills.keys().cloned().collect();
                             keys.sort();
                             if let Some(idx) = keys.iter().position(|k| *skills.get(k).unwrap_or(&false)) {
-                                // toggle next
                             }
                         }
                         _ => {}
@@ -370,7 +369,6 @@ fn finish_tutorial(
     registry: &Arc<Mutex<CronRegistry>>,
     kernel: &mut npcrs::kernel::Kernel,
 ) {
-    // Write ~/.npcshrc updates
     let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
     let mut lines: Vec<String> = Vec::new();
     let mut found_model = false;
@@ -393,10 +391,8 @@ fn finish_tutorial(
         std::env::set_var("NPCSH_CHAT_PROVIDER", provider);
     }
 
-    // Write heartbeats as plain-text jinx files with cron blocks
     let user_jinxes = PathBuf::from(shellexpand::tilde("~/.npcsh/npc_team/jinxes/usr").to_string());
     let _ = std::fs::create_dir_all(&user_jinxes);
-    // Clear previous tutorial heartbeats to avoid duplicates
     if let Ok(entries) = std::fs::read_dir(&user_jinxes) {
         for e in entries.flatten() {
             let p = e.path();
@@ -422,7 +418,6 @@ fn finish_tutorial(
         reg.add(npc.clone(), secs, task.clone(), CronJobKind::Chat);
     }
 
-    // Copy selected skills into user jinxes if not present
     let skills_dir = PathBuf::from(shellexpand::tilde("~/.npcsh/npc_team/jinxes/skills").to_string());
     for (skill, enabled) in skills {
         if !enabled { continue; }
@@ -433,7 +428,6 @@ fn finish_tutorial(
         }
     }
 
-    // Save tutorial state
     let state = serde_yaml::to_string(&TutorialState {
         completed_at: chrono::Utc::now().to_rfc3339(),
         model: model.to_string(),

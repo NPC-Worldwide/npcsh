@@ -1,17 +1,5 @@
-"""Launcher for the `npc` CLI.
-
-Tries to exec the Rust npc binary, and falls back to the Python jinx/NPC
-executor when the Rust binary is unavailable or fails.
-"""
 import os
 import sys
-
-from npcsh.launcher import (
-    _start_server,
-    _ensure_teams_yaml,
-    DEFAULT_HOST,
-    DEFAULT_PORT,
-)
 
 
 def _find_npc_binary():
@@ -30,7 +18,7 @@ def _find_npc_binary():
 
     path_dirs = os.environ.get("PATH", "").split(os.pathsep)
     for path_dir in reversed(path_dirs):
-        candidate = os.path.join(path_dir, f"npcru{ext}")
+        candidate = os.path.join(path_dir, f"npc{ext}")
         if os.path.isfile(candidate) and _looks_native_binary(candidate):
             return candidate
     return None
@@ -61,27 +49,15 @@ def _looks_native_binary(path: str) -> bool:
 
 def main():
     rust_bin = _find_npc_binary()
+    if not rust_bin:
+        print("ERROR: Rust npc binary not found.", file=sys.stderr)
+        sys.exit(1)
 
-    if rust_bin:
-        teams_yaml = _ensure_teams_yaml()
-        if _start_server(DEFAULT_HOST, DEFAULT_PORT, teams_yaml=teams_yaml):
-            env = os.environ.copy()
-            env["NPCSH_SERVER_URL"] = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
-            try:
-                os.execvpe(rust_bin, [rust_bin] + sys.argv[1:], env)
-            except OSError as e:
-                print(
-                    f"Warning: failed to exec {rust_bin} ({e}) — falling back to Python",
-                    file=sys.stderr,
-                )
-        else:
-            print(
-                "Warning: Could not start the NPCSH server for Rust runner; "
-                "falling back to Python.",
-                file=sys.stderr,
-            )
-
-    raise RuntimeError("Rust npcru binary not found")
+    try:
+        os.execvp(rust_bin, [rust_bin] + sys.argv[1:])
+    except OSError as e:
+        print(f"ERROR: failed to exec {rust_bin} ({e})", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

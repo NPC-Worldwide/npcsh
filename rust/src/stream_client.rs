@@ -127,13 +127,11 @@ pub async fn call_stream_with_interrupt(
                 permission_prompt,
             );
             if pause {
-                // The server is waiting for a permission response; read more events.
                 continue;
             }
         }
     }
 
-    // Handle any trailing bytes that never got terminated by a blank line.
     if !pending.trim().is_empty() {
         if let Some(data) = parse_sse_event_data(&pending) {
             if data.trim() != "[DONE]" {
@@ -162,7 +160,6 @@ pub async fn call_stream_with_interrupt(
         let _ = std::io::Write::flush(&mut std::io::stderr());
     }
 
-    // Remove empty trailing tool call slots.
     tool_calls.retain(|tc| !tc.function.name.is_empty());
 
     let message = Message {
@@ -340,8 +337,6 @@ fn apply_sse_event(
         for choice in choices {
             if let Some(delta) = choice.get("delta") {
                 if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
-                    // Some providers / npcpy paths send the full accumulated content
-                    // in every delta.  Only append the part that is actually new.
                     let new_text = if content.len() > text.len() || !text.starts_with(content.as_str()) {
                         text
                     } else {
@@ -407,7 +402,6 @@ fn apply_sse_event(
             }
             if let Some(finish) = choice.get("finish_reason").and_then(|v| v.as_str()) {
                 if finish == "stop" || finish == "length" {
-                    // End of this assistant turn; keep reading until EOF/[DONE].
                 }
             }
         }

@@ -16,7 +16,6 @@ steps:
       current_npc = context.get('npc')
       team_obj = context.get('team')
 
-      # Use the shell's current model/provider — NEVER let the LLM override these.
       m = None
       p = None
       try:
@@ -37,7 +36,6 @@ steps:
           context['output'] = "Error during compression: " + str(e)
           exit()
 
-      # Start new linked conversation
       old_cid = state.conversation_id if state else None
       last_msg_id = None
       ch = None

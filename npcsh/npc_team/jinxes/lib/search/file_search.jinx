@@ -30,7 +30,6 @@ steps:
       recursive = context.get('recursive', 'true').lower() in ('true', '1', 'yes')
       text_mode = context.get('text', '').lower() in ('true', '1', 'yes')
 
-      # Force text mode when called by an agent (non-interactive context)
       if not text_mode:
           try:
               if ('state' in dir() and state is not None
@@ -71,11 +70,9 @@ steps:
               base_path = os.path.abspath(base_path)
 
           try:
-              # Find matching files
               files = []
 
               if recursive:
-                  # Walk directory tree
                   for root, dirs, filenames in os.walk(base_path):
                       dirs[:] = [d for d in dirs if not d.startswith('.')]
                       for f in filenames:
@@ -92,7 +89,6 @@ steps:
                               except:
                                   pass
               else:
-                  # Just current directory
                   for f in os.listdir(base_path):
                       if fnmatch.fnmatch(f, pattern) or fnmatch.fnmatch(f.lower(), pattern.lower()):
                           fpath = os.path.join(base_path, f)
@@ -111,13 +107,11 @@ steps:
               if not files:
                   context['output'] = f"No files matching '{pattern}' in {base_path}"
               elif text_mode:
-                  # Text-only output
                   lines = [f"Found {len(files)} files matching '{pattern}':", ""]
                   for f in sorted(files, key=lambda x: x['name']):
                       lines.append(f"  {f['path']}")
                   context['output'] = "\n".join(lines)
               else:
-                  # Interactive TUI mode
                   def get_terminal_size():
                       try:
                           size = os.get_terminal_size()
@@ -154,7 +148,7 @@ steps:
                   mode = 'list'
                   preview_scroll = 0
                   preview_lines = []
-                  sort_mode = 'name'  # name, size, date
+                  sort_mode = 'name'
 
                   def sort_files(files, sort_mode):
                       if sort_mode == 'name':
@@ -187,7 +181,6 @@ steps:
 
                           sys.stdout.write('\033[H')
 
-                          # Header
                           if mode == 'list':
                               sort_ind = {'name': '1', 'size': '2', 'date': '3'}[sort_mode]
                               header = f" FILES ({len(display_files)}): '{pattern}' [sort:{sort_mode}({sort_ind})] "
@@ -195,7 +188,6 @@ steps:
                               header = f" PREVIEW: {display_files[selected]['name']} "
                           sys.stdout.write(f'\033[7;1m{header.ljust(width)}\033[0m\n')
 
-                          # Column headers
                           if mode == 'list':
                               col_header = f' {"NAME":<30} {"SIZE":<8} {"MODIFIED":<12} {"PATH":<30}'
                               sys.stdout.write(f'\033[90m{col_header[:width]}\033[0m\n')
@@ -213,7 +205,6 @@ steps:
                                   name = f['name'][:30]
                                   size = format_size(f['size'])
                                   mtime = format_date(f['mtime'])
-                                  # Show relative path if possible
                                   path = f['path']
                                   cwd = os.getcwd()
                                   if path.startswith(cwd):
@@ -228,7 +219,6 @@ steps:
                                   else:
                                       sys.stdout.write(f' {line}')
 
-                              # Status bar
                               sys.stdout.write(f'\033[{height-2};1H\033[K\033[90m{"─" * width}\033[0m')
                               f = display_files[selected] if display_files else {}
                               full_path = f.get('path', '')
@@ -312,7 +302,6 @@ steps:
                               selected = 0
                               scroll = 0
                           elif c == 'p' and mode == 'list' and display_files:
-                              # Preview file contents
                               f = display_files[selected]
                               try:
                                   with open(f['path'], 'r', errors='replace') as fp:
@@ -329,7 +318,6 @@ steps:
                           elif c == 'o' and display_files:
                               f = display_files[selected]
                               editor = os.environ.get('EDITOR', 'vim')
-                              # Restore terminal, run editor, then back to TUI
                               termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
                               sys.stdout.write('\033[?25h\033[2J\033[H')
                               os.system(f'{editor} "{f["path"]}"')

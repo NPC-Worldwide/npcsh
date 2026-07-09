@@ -23,7 +23,6 @@ steps:
           context['output'] = "Crond requires an interactive terminal."
 
       else:
-          # Stop spinner before taking over terminal — its key_thread steals stdin
           try:
               from npcsh.ui import get_current_spinner, SpinnerContext
               import time
@@ -35,7 +34,6 @@ steps:
                       spinner._thread.join(timeout=0.5)
                   if spinner._key_thread:
                       spinner._key_thread.join(timeout=1.0)
-              # Also stop any stray spinner instances (e.g. if __exit__ already cleared _current_spinner)
               for t in _threading.enumerate():
                   if t is _threading.current_thread():
                       continue
@@ -51,7 +49,6 @@ steps:
                   os.read(fd_tmp, 1)
           except:
               pass
-          # ── TUI state ────────────────────────────────────────
           class TUIState:
               def __init__(self):
                   self.tab = 0
@@ -66,12 +63,12 @@ steps:
                   self.detail_lines = []
                   self.detail_scroll = 0
                   self.status = ""
-                  self.confirm_action = None  # (action_name, callback)
+                  self.confirm_action = None
                   self.input_mode = False
                   self.input_buf = ""
                   self.input_label = ""
                   self.input_callback = None
-                  self.sort_key = 'cpu'  # for processes tab
+                  self.sort_key = 'cpu'
 
           ui = TUIState()
 
@@ -89,11 +86,9 @@ steps:
               except Exception as e:
                   return "", str(e), 1
 
-          # ── data loading ─────────────────────────────────────
           def load_cron():
               items = []
 
-              # Job templates (cron type) at the top
               for job in _load_job_templates():
                   if job['type'] == 'cron':
                       items.append({
@@ -106,7 +101,6 @@ steps:
                           'job': job,
                       })
 
-              # Raw crontab entries
               out, err, rc = run_cmd("crontab -l 2>/dev/null")
               if rc == 0 and out:
                   for i, line in enumerate(out.splitlines()):
@@ -135,7 +129,6 @@ steps:
               import platform
               items = []
 
-              # Job templates (daemon type) at the top
               for job in _load_job_templates():
                   if job['type'] == 'daemon':
                       items.append({
@@ -150,7 +143,6 @@ steps:
                       })
 
               if platform.system() == 'Darwin':
-                  # macOS: use launchctl
                   out, err, rc = run_cmd("launchctl list 2>/dev/null")
                   if rc == 0 and out:
                       for line in out.splitlines():
@@ -174,7 +166,6 @@ steps:
                               'is_job': False,
                           })
               else:
-                  # Linux: use systemctl
                   out, err, rc = run_cmd("systemctl --user list-units --type=service --all --no-pager --no-legend 2>/dev/null")
                   if rc == 0 and out:
                       for line in out.splitlines():
@@ -203,7 +194,6 @@ steps:
               items = []
               if rc == 0 and out:
                   for line in out.splitlines():
-                      # Skip header line
                       if line.startswith('USER') or line.startswith('UID'):
                           continue
                       parts = line.split(None, 10)
@@ -249,10 +239,8 @@ steps:
               items = []
               is_mac = platform.system() == 'Darwin'
 
-              # Find the jobs directory relative to this jinx
               jinx_base = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) if '__file__' in dir() else None
               jobs_dirs = []
-              # Check standard locations
               for base in [
                   os.path.expanduser('~/.npcsh/team'),
                   os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0]))), 'npc_team', 'jinxes') if sys.argv else None,
@@ -262,7 +250,6 @@ steps:
                       if os.path.isdir(jd):
                           jobs_dirs.append(jd)
 
-              # Also check the package's own jobs directory
               try:
                   import npcsh
                   pkg_jobs = os.path.join(os.path.dirname(npcsh.__file__), 'npc_team', 'jinxes', 'jobs')
@@ -288,7 +275,6 @@ steps:
                       desc = data.get('description', '')
                       inputs = data.get('inputs', [])
 
-                      # Determine job type from steps
                       job_type = 'cron'
                       for step in data.get('steps', []):
                           eng = step.get('engine', '')
@@ -296,13 +282,11 @@ steps:
                               job_type = 'daemon'
                               break
 
-                      # Extract default schedule from inputs
                       schedule = ''
                       for inp in inputs:
                           if isinstance(inp, dict) and 'schedule' in inp:
                               schedule = inp['schedule']
 
-                      # Check if this job is currently active
                       active = False
                       if job_type == 'cron':
                           if is_mac:
@@ -352,7 +336,6 @@ steps:
                       items = [x for x in items if q in x['name'].lower() or q in x['command'].lower() or q in x['user'].lower()]
               return items
 
-          # ── rendering ────────────────────────────────────────
           def wline(row, text):
               return f"\033[{row};1H\033[K{text}"
 
@@ -361,11 +344,9 @@ steps:
               out = []
               out.append("\033[H")
 
-              # ── header ──
               hdr = " CROND - System Task Manager "
               out.append(wline(1, f"\033[7;1m{hdr.ljust(W)}\033[0m"))
 
-              # ── tabs ──
               tb = ""
               for i, t in enumerate(ui.tabs):
                   if i == ui.tab:
@@ -374,7 +355,6 @@ steps:
                       tb += f"  {t}  "
               out.append(wline(2, f" {tb}"))
 
-              # ── separator + count ──
               out.append(wline(3, f"\033[90m{'-' * W}\033[0m"))
 
               filtered = get_filtered()
@@ -391,7 +371,6 @@ steps:
               out.append(wline(4, count_text))
               out.append(wline(5, f"\033[90m{'-' * W}\033[0m"))
 
-              # ── body ──
               body_start = 6
               body_end = H - 3
               body_h = max(1, body_end - body_start + 1)
@@ -408,10 +387,8 @@ steps:
                   elif ui.tab == 2:
                       render_process_list(out, W, body_start, body_h, filtered)
 
-              # ── separator ──
               out.append(wline(H - 2, f"\033[90m{'-' * W}\033[0m"))
 
-              # ── status / search / confirm ──
               if ui.confirm_action:
                   out.append(wline(H - 1, f" \033[1;33m{ui.confirm_action[0]} (y/n)?\033[0m"))
               elif ui.search_mode:
@@ -421,7 +398,6 @@ steps:
               else:
                   out.append(wline(H - 1, ""))
 
-              # ── footer ──
               if ui.confirm_action:
                   foot = " [y] Confirm  [n] Cancel "
               elif ui.search_mode:
@@ -451,7 +427,6 @@ steps:
                       continue
                   item = vis[r]
                   if item.get('is_job'):
-                      # Job template row
                       job = item['job']
                       if job['active']:
                           toggle = "\033[32m[ON] \033[0m"
@@ -467,7 +442,6 @@ steps:
                       else:
                           out.append(wline(row, f"   {toggle} \033[33m{sched}\033[0m \033[36m{name}\033[0m \033[90m{desc}\033[0m"))
                   else:
-                      # Raw crontab entry
                       tag = "\033[35m[npc]\033[0m " if item['npcsh'] else "      "
                       sched = item['schedule'][:20].ljust(20)
                       cmd = item['command'][:W - 32]
@@ -491,7 +465,6 @@ steps:
                       continue
                   item = vis[r]
                   if item.get('is_job'):
-                      # Job template row
                       job = item['job']
                       if job['active']:
                           toggle = "\033[32m[ON] \033[0m"
@@ -506,7 +479,6 @@ steps:
                       else:
                           out.append(wline(row, f"   {toggle} \033[36m{name}\033[0m \033[90m{desc}\033[0m"))
                   else:
-                      # Raw system daemon entry
                       tag = "\033[35m[npc]\033[0m " if item['npcsh'] else "      "
                       if item['active'] == 'active' or item['active'] == 'running':
                           state_color = "\033[32m"
@@ -528,7 +500,6 @@ steps:
                       out.append(wline(start + r, ""))
 
           def render_process_list(out, W, start, body_h, filtered):
-              # Header row
               hdr = "   PID      Name                 User         CPU%   MEM%   Status"
               out.append(wline(start, f"\033[1m{hdr[:W]}\033[0m"))
 
@@ -547,7 +518,6 @@ steps:
                   mem = str(item['mem'])[:6].ljust(6)
                   stat = item['stat'][:8]
 
-                  # Color coding for CPU/MEM
                   cpu_color = "\033[31m" if item['cpu'] > 50 else ("\033[33m" if item['cpu'] > 20 else "")
                   mem_color = "\033[31m" if item['mem'] > 50 else ("\033[33m" if item['mem'] > 20 else "")
                   cpu_str = f"{cpu_color}{cpu}{'\033[0m' if cpu_color else ''}"
@@ -580,7 +550,6 @@ steps:
               for r in range(4, body_h):
                   out.append(wline(start + r, ""))
 
-          # ── actions ──────────────────────────────────────────
           def show_cron_detail():
               filtered = get_filtered()
               if not filtered:
@@ -594,7 +563,6 @@ steps:
                   f"\033[1mRaw:\033[0m       {item['raw']}",
                   f"\033[1mNPCSH:\033[0m     {'Yes' if item['npcsh'] else 'No'}",
               ]
-              # Check for log file
               if item['npcsh'] and '/.npcsh/npc_team/jobs/' in item['command']:
                   import re
                   m = re.search(r'(~?/[^\s]+\.log)', item['command'])
@@ -648,7 +616,6 @@ steps:
                   return
               item = filtered[ui.sel]
               if platform.system() == 'Darwin':
-                  # macOS: check common log locations
                   log_path = os.path.expanduser(f'~/.npcsh/npc_team/logs/daemon_{item["name"]}.log')
                   ui.detail_lines = [
                       f"\033[1mLogs: {item['name']}\033[0m",
@@ -832,7 +799,6 @@ steps:
                           if k not in ('engine', 'name'):
                               params[k] = v
                       break
-              # Resolve template variables from inputs
               defaults = {}
               for inp in job['data'].get('inputs', []):
                   if isinstance(inp, dict):
@@ -902,14 +868,12 @@ steps:
                   ui.status = f'No command defined for {jname}'
                   return
 
-              # Execute the jinx command in-process
               jinx_cmd = cmd.lstrip('/')
               if state and hasattr(state, 'team') and state.team:
                   jinx_name = jinx_cmd.split()[0]
                   target_jinx = state.team.jinxes_dict.get(jinx_name)
                   if target_jinx:
                       try:
-                          # Parse any args from the command string
                           from npcpy.npc_compiler import extract_jinx_inputs
                           import shlex
                           try:
@@ -978,7 +942,6 @@ steps:
               ui.detail = True
               ui.detail_scroll = 0
 
-          # ── input handling ─────────────────────────────────────
           def handle(c):
               if ui.confirm_action:
                   return handle_confirm(c)
@@ -1011,7 +974,6 @@ steps:
                   ui.search_mode = True
                   ui.search_buf = ui.search_query
                   ui.status = ""
-              # Tab-specific keys
               elif ui.tab == 0:
                   handle_cron_key(c)
               elif ui.tab == 1:
@@ -1122,7 +1084,7 @@ steps:
                   ui.confirm_action = None
                   ui.status = "Cancelled"
               elif c in ('\r', '\n'):
-                  pass  # Ignore trailing Enter from the keypress that opened confirm
+                  pass
               else:
                   ui.status = f"Press y or n (got: {repr(c)})"
               return True
@@ -1194,7 +1156,7 @@ steps:
               _, H = term_size()
               body_h = max(1, H - 8)
               if ui.tab == 2:
-                  body_h -= 1  # account for header row
+                  body_h -= 1
               filtered = get_filtered()
               mx = max(0, len(filtered) - 1)
               if ui.sel < mx:
@@ -1223,12 +1185,11 @@ steps:
                   else:
                       show_daemon_detail()
 
-          # ── main loop ──────────────────────────────────────────
           load_tab_data()
 
           fd = sys.stdin.fileno()
           old_attrs = termios.tcgetattr(fd)
-          termios.tcflush(fd, termios.TCIFLUSH)  # Flush any stale input
+          termios.tcflush(fd, termios.TCIFLUSH)
 
           try:
               tty.setcbreak(fd)
@@ -1237,7 +1198,6 @@ steps:
               sys.stdout.flush()
               render()
               while True:
-                  # Auto-refresh on processes tab using select timeout
                   if ui.tab == 2 and not ui.detail and not ui.search_mode and not ui.input_mode and not ui.confirm_action:
                       ready, _, _ = select.select([fd], [], [], 2.0)
                       if not ready:

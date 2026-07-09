@@ -12,6 +12,7 @@ mod tui;
 mod cron;
 mod tutorial;
 mod cli_providers;
+mod version_check;
 
 use crate::cron::CronRegistry;
 use crate::cli_providers::{CLI_PROVIDERS, run_cli_provider};
@@ -135,7 +136,6 @@ impl NpcHelper {
                     });
                 }
             }
-            // If no command matches an absolute-looking token, try path completion.
             if !had_cmd {
                 matches.extend(complete_paths(word));
             }
@@ -148,10 +148,8 @@ impl NpcHelper {
                     });
                 }
             }
-            // Also complete filenames/paths for bare words (cd, ls, cat, ...).
             matches.extend(complete_paths(word));
         } else {
-            // Empty word: complete filenames in cwd (e.g. `ls <Tab>`).
             matches.extend(complete_paths(word));
         }
 
@@ -166,7 +164,6 @@ fn complete_paths(word: &str) -> Vec<Completion> {
 
     let expanded = shellexpand::tilde(word).to_string();
 
-    // Determine directory to search and the prefix inside it.
     let (search_dir, file_prefix, typed_dir_prefix): (String, String, String) =
         if word.ends_with('/') {
             let dir = if expanded.is_empty() { cwd.clone() } else { expanded.clone() };
@@ -205,7 +202,6 @@ fn complete_paths(word: &str) -> Vec<Completion> {
         out.push(Completion { display, replacement });
     }
 
-    // Offer . and .. when the typed prefix matches them (cd ../...).
     for (dot, dot_display) in [(".", "."), ("..", "..")] {
         if dot.starts_with(&file_prefix) {
             out.push(Completion {
@@ -269,23 +265,12 @@ impl std::fmt::Display for Mode {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Core slash-command registry
-//
-// Single source of truth for built-in slash commands.  /help, tab completion,
-// startup banner, and dispatch are all derived from this table so the list is
-// never maintained by hand.
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CoreCmd {
-    // Modes
     Agent,
     Chat,
     CmdMode,
-    // NPCs
     Kill,
-    // System / Config
     Clear,
     Config,
     Ctx,
@@ -296,10 +281,8 @@ enum CoreCmd {
     Set,
     Setup,
     Team,
-    // Tools
     Commit,
     Gitt,
-    // Loops
     Cron,
     Loop,
     LoopDemo,
@@ -307,9 +290,7 @@ enum CoreCmd {
     LoopOn,
     LoopRm,
     Loops,
-    // Jinx-backed system helpers  (string = jinx name to invoke)
     Jinx(&'static str),
-    // Info
     Exit,
     Help,
     Jinxes,
@@ -326,7 +307,6 @@ struct CommandDef {
 }
 
 const CORE_COMMANDS: &[CommandDef] = &[
-    // Info
     CommandDef { name: "exit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
     CommandDef { name: "quit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
     CommandDef { name: "/exit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
@@ -336,13 +316,10 @@ const CORE_COMMANDS: &[CommandDef] = &[
     CommandDef { name: "/quit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
     CommandDef { name: "/stats", category: "Info", description: "Kernel stats", cmd: CoreCmd::Stats },
     CommandDef { name: "/tutorial", category: "Info", description: "Run interactive tutorial", cmd: CoreCmd::Tutorial },
-    // Modes
     CommandDef { name: "/agent", category: "Modes", description: "Full agent mode (tools + bash + LLM)", cmd: CoreCmd::Agent },
     CommandDef { name: "/chat", category: "Modes", description: "Chat-only mode (LLM, no tools)", cmd: CoreCmd::Chat },
     CommandDef { name: "/cmd", category: "Modes", description: "Command mode (bash first, LLM fallback)", cmd: CoreCmd::CmdMode },
-    // NPCs
     CommandDef { name: "/kill", category: "NPCs", description: "Kill current process", cmd: CoreCmd::Kill },
-    // System / Config
     CommandDef { name: "/clear", category: "System / Config", description: "Clear conversation", cmd: CoreCmd::Clear },
     CommandDef { name: "/config", category: "System / Config", description: "Configuration TUI", cmd: CoreCmd::Config },
     CommandDef { name: "/ctx", category: "System / Config", description: "Browse and edit team context fields", cmd: CoreCmd::Ctx },
@@ -353,10 +330,8 @@ const CORE_COMMANDS: &[CommandDef] = &[
     CommandDef { name: "/set", category: "System / Config", description: "Set model, provider, or mode", cmd: CoreCmd::Set },
     CommandDef { name: "/setup", category: "System / Config", description: "First-time setup TUI", cmd: CoreCmd::Setup },
     CommandDef { name: "/team", category: "System / Config", description: "Team management TUI", cmd: CoreCmd::Team },
-    // Tools
     CommandDef { name: "/commit", category: "Tools", description: "Commit helper TUI", cmd: CoreCmd::Commit },
     CommandDef { name: "/gitt", category: "Tools", description: "Git TUI", cmd: CoreCmd::Gitt },
-    // Loops
     CommandDef { name: "/cron", category: "Loops", description: "Cron management", cmd: CoreCmd::Cron },
     CommandDef { name: "/loop", category: "Loops", description: "Create a loop", cmd: CoreCmd::Loop },
     CommandDef { name: "/loop_demo", category: "Loops", description: "Add a demo heartbeat loop", cmd: CoreCmd::LoopDemo },
@@ -364,7 +339,6 @@ const CORE_COMMANDS: &[CommandDef] = &[
     CommandDef { name: "/loopon", category: "Loops", description: "Enable a loop", cmd: CoreCmd::LoopOn },
     CommandDef { name: "/looprm", category: "Loops", description: "Remove a loop", cmd: CoreCmd::LoopRm },
     CommandDef { name: "/loops", category: "Loops", description: "List loops", cmd: CoreCmd::Loops },
-    // System Commands (backed by existing jinxes)
     CommandDef { name: "/doctor", category: "System Commands", description: "Diagnose and auto-fix common issues", cmd: CoreCmd::Jinx("doctor") },
     CommandDef { name: "/init", category: "System Commands", description: "Initialize / reinitialize npcsh", cmd: CoreCmd::Jinx("init") },
     CommandDef { name: "/nsync", category: "System Commands", description: "Sync npcsh state", cmd: CoreCmd::Jinx("nsync") },
@@ -500,7 +474,6 @@ async fn main() -> Result<()> {
     let mut current_pid: u32 = 0;
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
 
-    // Apply CLI overrides before starting the REPL.
     if let Some(name) = cli_npc.as_deref() {
         if let Some(proc) = kernel.find_by_name(name) {
             current_pid = proc.pid;
@@ -523,7 +496,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Cron registry for agent heartbeats and scheduled jinx tasks.
     let cron_file = shellexpand::tilde("~/.npcsh/loops.yaml").to_string();
     let cron_registry = Arc::new(Mutex::new(CronRegistry::with_file(cron_file)));
     cron_registry.lock().unwrap().load_from_jinxes(&team_dir);
@@ -531,6 +503,14 @@ async fn main() -> Result<()> {
     crate::cron::spawn_cron_ticker(cron_registry.clone(), cron_tx);
 
     print_welcome(&kernel);
+
+    let current_version = env!("NPCSH_VERSION").to_string();
+    let http_client_for_update = http_client.clone();
+    tokio::spawn(async move {
+        if let Some(info) = version_check::check_version(&http_client_for_update, &current_version).await {
+            eprintln!("{}", version_check::format_update_notice(&info));
+        }
+    });
 
     eprintln!("{DIM}  connected to npcpy server{RESET}");
 
@@ -615,8 +595,6 @@ async fn main() -> Result<()> {
             "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET}{usage_hint} {PURPLE}>{RESET} "
         );
 
-        // Collect cron output but do not print it into the active terminal session.
-        // Loop output is saved to disk and viewable from the agent dashboard.
         while let Ok(job) = cron_rx.try_recv() {
             let _ = execute_cron_job_and_capture(
                 &mut kernel, current_pid, &job, &http_client, &server_url,
@@ -662,8 +640,7 @@ async fn main() -> Result<()> {
 
         let cmd_token = input.split_whitespace().next().unwrap_or("");
 
-        // Resolve slash commands through the CORE_COMMANDS registry.
-        let maybe_core = CORE_COMMANDS.iter().find(|c| c.name == cmd_token).map(|c| c.cmd);
+            let maybe_core = CORE_COMMANDS.iter().find(|c| c.name == cmd_token).map(|c| c.cmd);
         if let Some(cmd) = maybe_core {
             let rest = input.strip_prefix(cmd_token).unwrap_or("").trim();
             match dispatch_core_command(
@@ -682,8 +659,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        // /set without a space (single token) isn't matched above; handle it here.
-        if input == "/set" {
+            if input == "/set" {
             eprintln!("Usage: /set key=value");
             eprintln!("  model=gpt-4o  provider=openai  mode=chat");
             continue;
@@ -734,7 +710,6 @@ async fn main() -> Result<()> {
                 }
                 continue;
             }
-            // If not a running process, maybe an NPC in another registered team.
             match spawn_npc_from_registered_teams(name, &mut kernel, current_pid).await {
                 Ok(new_pid) if new_pid != 0 => {
                     current_pid = new_pid;
@@ -997,10 +972,6 @@ async fn run_stream_turn_with_interrupt(
         "tool_agent".to_string()
     };
 
-    // -------------------------------------------------------------------------
-    // CLI provider routing (claude_code, opencode, codex, kimi, kilo, ...)
-    // Run local CLI tools directly, track usage, and persist session IDs.
-    // -------------------------------------------------------------------------
     if CLI_PROVIDERS.contains(&provider.as_str()) {
         let full_input = format!("{}\n\n{}", input, context_info);
         let session_id = cli_sessions().lock().unwrap().get(&current_pid).cloned();
@@ -1151,10 +1122,6 @@ async fn run_interactive_stream_turn(
     let running = Arc::new(AtomicBool::new(true));
     let listener_running = running.clone();
 
-    // Collect queued input in the background without drawing an input overlay on
-    // top of the streamed output.  Previous attempts to reserve the bottom line
-    // for input corrupted the stderr stream; just buffer keystrokes and replay
-    // them after the response finishes.
     let listener = tokio::task::spawn_blocking(move || {
         let mut buf = String::new();
         while listener_running.load(Ordering::Relaxed) {
@@ -1186,8 +1153,6 @@ async fn run_interactive_stream_turn(
                 }
             }
         }
-        // Any uncommitted buffered input is lost; the user will see their typed
-        // text appear on the next prompt because the terminal was in raw mode.
     });
 
     let result = run_stream_turn_with_interrupt(
@@ -1382,8 +1347,6 @@ fn ask_permission(prompt: &str) -> String {
         }
     };
 
-    // Drain any leftover key events (e.g. the Enter release) before returning
-    // to the main shell, so the next readline loop doesn't see them.
     while event::poll(std::time::Duration::from_millis(0)).unwrap_or(false) {
         let _ = event::read();
     }
@@ -2023,7 +1986,6 @@ async fn spawn_npc_from_registered_teams(
     kernel: &mut Kernel,
     current_pid: u32,
 ) -> Result<u32> {
-    // Avoid shadowing the currently-running process's NPC name.
     if kernel.find_by_name(name).is_some() {
         return Ok(0);
     }
@@ -2342,7 +2304,6 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
 
     terminal::enable_raw_mode().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
     let mut stdout = io::stdout();
-    // Enter alternate screen and hide cursor (vim-style).
     let _ = write!(stdout, "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H");
     let _ = stdout.flush();
 
@@ -2353,7 +2314,7 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
 
     let selected: std::cell::Cell<usize> = std::cell::Cell::new(0);
     let scroll: std::cell::Cell<usize> = std::cell::Cell::new(0);
-    let mode: std::cell::Cell<char> = std::cell::Cell::new('l'); // 'l' list, 'p' preview
+    let mode: std::cell::Cell<char> = std::cell::Cell::new('l');
     let preview_scroll: std::cell::Cell<usize> = std::cell::Cell::new(0);
     let preview_msgs: std::cell::RefCell<Vec<(std::string::String, std::string::String, std::string::String, Option<i64>, Option<i64>)>> = std::cell::RefCell::new(Vec::new());
 
@@ -2523,7 +2484,6 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
                                 p.messages.push(msg);
                             }
                             let _ = terminal::disable_raw_mode();
-                            // Exit alternate screen before printing reattach summary.
                             let _ = write!(stdout, "\x1b[2J\x1b[H\x1b[?1049l\x1b[?25h\r\n");
                             let _ = stdout.flush();
                             println!("{GREEN}Reattached to: {cid} ({} messages loaded)\x1b[0m", p.messages.len());
@@ -2915,7 +2875,6 @@ fn readline_raw(
                                 tab_matches = matches;
                                 tab_index = 0;
                                 print!("\r\n");
-                                // Compact multi-column listing, bash/readline style.
                                 let cols = terminal::size().map(|(c, _)| c as usize).unwrap_or(80);
                                 let max_len = tab_matches.iter().map(|m| m.display.len()).max().unwrap_or(0) + 2;
                                 let col_width = max_len.max(16);

@@ -68,7 +68,6 @@ steps:
       num_cycles = int(context.get('num_cycles', 3))
       output_format = context.get('format', 'report')
 
-      # Use the shell's current model/provider — NEVER let the LLM override these.
       model = None
       provider = None
       try:
@@ -82,7 +81,6 @@ steps:
           provider = npc.provider
       _alicanto_directive = (npc.primary_directive if npc and hasattr(npc, 'primary_directive') else "") or ""
 
-      # ========== Utility ==========
       def get_size():
           try:
               s = os.get_terminal_size()
@@ -102,7 +100,6 @@ steps:
       def clamp(val, lo, hi):
           return max(lo, min(val, hi))
 
-      # ========== Data Classes (matching original) ==========
       @dataclass
       class ResearchStep:
           step: int
@@ -128,7 +125,6 @@ steps:
           results: List[str] = field(default_factory=list)
           discussion: List[str] = field(default_factory=list)
 
-      # ========== Tool Definitions (matching original) ==========
       _work_dir = os.path.join(os.getcwd(), 'alicanto_output')
       os.makedirs(_work_dir, exist_ok=True)
       _orig_cwd = os.getcwd()
@@ -246,16 +242,13 @@ steps:
               "fields": "title,abstract,authors,year,citationCount,url,tldr,venue"
           }
           try:
-              # Try with API key first if available
               if _s2_api_key:
                   resp = _requests.get(s2_url, headers={"x-api-key": _s2_api_key}, params=params, timeout=30)
                   if resp.status_code == 403:
-                      # Key expired/revoked, fall back to unauthenticated
                       resp = _requests.get(s2_url, params=params, timeout=30)
               else:
                   resp = _requests.get(s2_url, params=params, timeout=30)
               if resp.status_code == 429:
-                  # Rate limited, wait and retry once
                   time.sleep(1.5)
                   resp = _requests.get(s2_url, params=params, timeout=30)
               resp.raise_for_status()
@@ -290,7 +283,6 @@ steps:
           except Exception as e:
               return f"Paper search error: {e}"
 
-      # ========== File Provenance (matching original) ==========
       @dataclass
       class FileProvenance:
           filename: str
@@ -358,7 +350,6 @@ steps:
               summary_data = {"summary": "Step completed.", "next_step": "Continue research."}
           return summary_data
 
-      # ========== Persona Generation (matching original) ==========
       def save_persona_to_csv(persona_data):
           csv_dir = os.path.expanduser("~/.npcsh/npc_team")
           os.makedirs(csv_dir, exist_ok=True)
@@ -434,13 +425,11 @@ steps:
               pass
           return persona_data
 
-      # ========== Sub-Agent Trace (matching original) ==========
       def run_sub_agent_trace(hypothesis, persona_data, user_query, _model, _provider, _max_steps, ui_state):
           """Run one sub-agent trace matching original algorithm."""
           agent_name = persona_data.get('name', 'Agent')
           agent_persona = persona_data.get('persona_text', '')
 
-          # wander wrapper for when agent is stuck
           def wander_wrapper(problem_description: str) -> str:
               """Get creative ideas when stuck using the wander exploration mode."""
               if not WANDER_AVAILABLE:
@@ -470,10 +459,9 @@ steps:
           created_files = set()
           summary = {}
           major_step = 0
-          stall_count = 0  # consecutive steps with no filesystem change
+          stall_count = 0
 
           while major_step < _max_steps:
-              # Check for skip/quit
               if ui_state.get('skip'):
                   ui_state['skip'] = False
                   ui_state['log'].append(f"\033[33m  Skipped by user\033[0m")
@@ -611,12 +599,10 @@ steps:
 
           return trace
 
-      # ========== Paper Writing (matching original) ==========
       def write_paper(all_traces, user_query, _model, _provider, coordinator, ui_state):
           """Iterative LaTeX paper building from compressed traces."""
           ui_state['log'].append(f"\n\033[1;36m--- Writing Paper ---\033[0m")
 
-          # Compress traces for synthesis
           compressed_summaries = []
           for trace in all_traces:
               steps_summary = []
@@ -636,7 +622,7 @@ steps:
           author_list = [trace.agent_name for trace in all_traces]
           author_string = ", ".join(author_list)
 
-          pct = chr(37)  # percent sign - avoid bare % in YAML
+          pct = chr(37)
           todo = lambda s: f"{pct} TODO: {s}"
           initial_latex = (
               "\\documentclass{article}\n"
@@ -714,7 +700,6 @@ steps:
           final_paper = read_file("paper.tex")
           return final_paper
 
-      # ========== Sub-Agent Review Cycle ==========
       def do_sub_agent_reviews(all_traces, paper_content, user_query, _model, _provider, cycle_num, ui_state):
           """Each sub-agent reviews the paper and provides suggestions."""
           ui_state['log'].append(f"\n\033[1;35m--- Cycle {cycle_num}: Sub-Agent Reviews ---\033[0m")
@@ -732,7 +717,6 @@ steps:
               agent_name = trace.agent_name
               ui_state['log'].append(f"\n\033[36m  Reviewer: {agent_name}\033[0m")
 
-              # Build context of what this agent found
               agent_findings = []
               for step in trace.steps:
                   if step.thought:
@@ -785,13 +769,11 @@ steps:
           """Coordinator revises the paper based on sub-agent suggestions."""
           ui_state['log'].append(f"\n\033[1;36m--- Cycle {cycle_num}: Revising Paper ---\033[0m")
 
-          # Format all suggestions
           suggestions_text = ""
           for s in suggestions:
               suggestions_text += f"\n--- Review by {s['agent']} (Hypothesis: {s['hypothesis'][:80]}) ---\n"
               suggestions_text += s['review'][:1500] + "\n"
 
-          # Write current paper to file for coordinator to edit
           paper_path = os.path.abspath("paper.tex")
           with open(paper_path, 'w') as f:
               f.write(paper_content)
@@ -846,7 +828,6 @@ steps:
           ui_state['log'].append(f"  \033[32mRevision cycle {cycle_num} complete\033[0m")
           return revised
 
-      # ========== Trace Saving (matching original) ==========
       def save_traces_csv(all_traces):
           timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
           trace_dir = os.path.join(_work_dir, "alicanto_traces")
@@ -873,32 +854,28 @@ steps:
                   writer.writerows(rows)
           return filepath
 
-      # ========== Global State ==========
       class AlicantoState:
           def __init__(self):
-              self.phase = 0          # 0=query, 1=hypotheses, 2=personas, 3=execution, 4=review
+              self.phase = 0
               self.auto_mode = False
               self.query = query or ""
-              self.hypotheses = []    # list of hypothesis strings
-              self.personas = []      # list of persona dicts
-              self.traces = []        # list of SubAgentTrace
+              self.hypotheses = []
+              self.personas = []
+              self.traces = []
               self.current_agent = -1
-              # UI state
               self.sel = 0
               self.scroll = 0
-              self.mode = 'normal'    # normal, edit
+              self.mode = 'normal'
               self.input_buf = ""
               self.input_target = ""
               self.status = ""
               self.generating = False
               self.error = ""
-              # Review state
-              self.review_tab = 0     # 0=agents, 1=insights, 2=files, 3=paper
+              self.review_tab = 0
               self.starred = set()
               self.paper = ""
               self.all_insights = []
-              self.all_files = []     # [{name, agent, content}]
-              # Execution display
+              self.all_files = []
               self.exec_log = []
               self.exec_scroll = 0
               self.exec_paused = False
@@ -906,7 +883,6 @@ steps:
               self.current_cycle = 0
               self.total_cycles = num_cycles
               self.end_cycles = False
-              # Shared state for sub-agent communication
               self.agent_ui = {'log': [], 'skip': False, 'paused': False}
 
           @property
@@ -915,7 +891,6 @@ steps:
 
       ui = AlicantoState()
 
-      # ========== Query Entry ==========
       if not ui.query:
           if sys.stdin.isatty():
               print("\033[1;36m ALICANTO - Multi-Agent Research System \033[0m")
@@ -944,7 +919,6 @@ steps:
               context['messages'] = messages
               exit()
 
-      # ========== Generation Functions ==========
       def do_generate_hypotheses():
           ui.status = "Generating hypotheses..."
           ui.generating = True
@@ -1026,7 +1000,6 @@ steps:
           ui.traces = []
           ui.agent_ui = {'log': ui.exec_log, 'skip': False, 'paused': False}
 
-          # Create coordinator NPC for paper writing
           def wander_wrapper_coord(problem_description: str) -> str:
               """Get creative ideas when stuck."""
               if not WANDER_AVAILABLE:
@@ -1049,7 +1022,6 @@ steps:
               tools=coord_tools
           )
 
-          # ===== Cycle 1: Sub-agent experimentation =====
           ui.current_cycle = 1
           ui.exec_log.append(f"\n\033[1;33m{'='*50}\033[0m")
           ui.exec_log.append(f"\033[1;33m  CYCLE 1/{num_cycles}: Sub-Agent Experimentation\033[0m")
@@ -1070,14 +1042,12 @@ steps:
               ui.traces.append(trace)
               ui.exec_log.append(f"  \033[1;32mCompleted: {'SUCCESS' if trace.was_successful else 'no files'}, {len(trace.steps)} steps\033[0m")
 
-          # Save traces
           try:
               trace_path = save_traces_csv(ui.traces)
               ui.exec_log.append(f"\n\033[90mTraces saved: {trace_path}\033[0m")
           except Exception as e:
               ui.exec_log.append(f"\n\033[31mTrace save error: {e}\033[0m")
 
-          # ===== Cycle 1: Coordinator writes initial paper =====
           ui.exec_log.append(f"\n\033[1;36m--- Coordinator: Writing Initial Paper ---\033[0m")
           try:
               ui.paper = write_paper(ui.traces, ui.query, model, provider, coordinator, ui.agent_ui)
@@ -1085,7 +1055,6 @@ steps:
               ui.paper = f"Paper writing error: {e}"
               ui.exec_log.append(f"  \033[31m{e}\033[0m")
 
-          # ===== Cycles 2..N: Review and revise =====
           for cycle in range(2, num_cycles + 1):
               if ui.end_cycles:
                   ui.exec_log.append(f"\n\033[33mCycles ended early by user at cycle {cycle-1}\033[0m")
@@ -1096,7 +1065,6 @@ steps:
               ui.exec_log.append(f"\033[1;33m  CYCLE {cycle}/{num_cycles}: Review & Revise\033[0m")
               ui.exec_log.append(f"\033[1;33m{'='*50}\033[0m")
 
-              # Sub-agents review the paper
               suggestions = do_sub_agent_reviews(
                   ui.traces, ui.paper, ui.query, model, provider, cycle, ui.agent_ui
               )
@@ -1108,7 +1076,6 @@ steps:
               if ui.end_cycles:
                   break
 
-              # Coordinator revises based on suggestions
               ui.paper = revise_paper(
                   ui.paper, suggestions, ui.query, coordinator, cycle, ui.agent_ui
               )
@@ -1117,7 +1084,6 @@ steps:
           ui.exec_log.append(f"\033[1;32m  All {ui.current_cycle} cycle(s) complete\033[0m")
           ui.exec_log.append(f"\033[1;32m{'='*50}\033[0m")
 
-          # Collect insights and files
           ui.all_insights = []
           ui.all_files = []
           for trace in ui.traces:
@@ -1133,7 +1099,6 @@ steps:
           ui.scroll = 0
           ui.status = f"Research complete ({ui.current_cycle} cycles). Review results."
 
-      # ========== TUI Rendering ==========
       def render_screen():
           width, height = get_size()
           out = []
@@ -1400,7 +1365,6 @@ steps:
           gen = " (generating...)" if ui.generating else ""
           out.append(f"\033[{height};1H\033[K\033[7m Tab/h/l:Tabs  j/k:Nav  s:Star  Enter:View  q:Quit{gen} \033[0m".ljust(width))
 
-      # ========== Input Handling ==========
       def handle_input(c, fd):
           if ui.mode == 'edit':
               return handle_edit_input(c, fd)
@@ -1641,7 +1605,6 @@ steps:
               time.sleep(0.5)
               advance_phase()
 
-      # ========== Main TUI Loop ==========
       if not sys.stdin.isatty():
           os.chdir(_orig_cwd)
           context['output'] = "Alicanto requires an interactive terminal."
@@ -1670,7 +1633,6 @@ steps:
                   if _sel.select([fd], [], [], 0.5)[0]:
                       c = os.read(fd, 1).decode('latin-1')
                       running = handle_input(c, fd)
-              # Sync agent_ui state
               ui.agent_ui['skip'] = ui.exec_skip
               ui.agent_ui['paused'] = ui.exec_paused
               render_screen()

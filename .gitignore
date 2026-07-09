@@ -1,4 +1,3 @@
-# IDE / editor
 .claude/
 .codex/
 .vscode/mcp.json
@@ -7,7 +6,6 @@
 *.swp
 .DS_Store
 
-# Python
 *.pyc
 __pycache__/
 *.egg-info
@@ -16,15 +14,12 @@ dist/
 .venv
 *.python-version
 
-# Rust build artifacts
 rust/target/
 rust/Cargo.lock
 
-# Platform-specific Rust binaries — downloaded at install time, never committed
 npcsh/bin/*
 !npcsh/bin/.gitkeep
 
-# Data / media (don't commit large files)
 *.png
 *.jpg
 *.jpeg
@@ -43,11 +38,9 @@ npcsh/bin/*
 *.tgz
 *.csv
 
-# Notebooks
 *.ipynb_checkpoints/
 *.ipynb
 
-# Logs / temp
 *.log
 *.tex
 *.bbl
@@ -55,23 +48,19 @@ npcsh/bin/*
 *.out
 jobs/
 
-# Env / secrets
 .env
 .env.*
 
-# npcsh runtime
 .npcsh_global
 .guac_global
 .build.py
 node_modules/
 
-# Experiment / scratch files
 *.exp
 *.undefined
 *.spy
 *.mapx
 *.xcf
 
-# Screenshots (generated)
 Screenshot*
 run_*.txt

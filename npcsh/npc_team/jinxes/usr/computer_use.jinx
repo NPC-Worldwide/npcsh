@@ -29,7 +29,6 @@ steps:
 
       from npcpy.llm_funcs import get_llm_response
 
-      # Helper to log jinx executions to DB
       def _log_jinx(trigger_id, npc_name, inputs, output, status="success", error_msg=None):
           try:
               if state and hasattr(state, 'command_history') and state.command_history is not None and hasattr(state.command_history, 'save_jinx_execution'):
@@ -78,14 +77,13 @@ steps:
 
       json_schema_example = '{"action":"click","x":50,"y":30,"reason":"Click the URL bar"}'
 
-      # ========== State ==========
       class PlonkState:
           def __init__(self):
-              self.tasks = []       # [{"text":str, "status":"pending|running|done|failed", "actions":[]}]
+              self.tasks = []
               self.sel = 0
               self.scroll = 0
-              self.panel = 0        # 0=tasks, 1=actions
-              self.mode = 'idle'    # idle, input, running, paused, step
+              self.panel = 0
+              self.mode = 'idle'
               self.input_buf = ""
               self.input_cursor = 0
               self.current_task = -1
@@ -97,7 +95,6 @@ steps:
 
       ui = PlonkState()
 
-      # ========== Helpers ==========
       def get_size():
           try:
               s = os.get_terminal_size()
@@ -121,7 +118,6 @@ steps:
               return ui.tasks[ui.current_task].get('actions', [])
           return []
 
-      # ========== Automation ==========
       def run_one_step():
           if ui.current_task < 0 or ui.current_task >= len(ui.tasks):
               ui.mode = 'idle'
@@ -169,7 +165,6 @@ steps:
                       if act.get('command'):
                           history_context += ' [' + act.get('command', '')[:30] + ']'
                       history_context += " - " + act.get('reason', '') + "\n"
-                  # Detect repetition: if last 3 actions are the same type, warn
                   recent = task['actions'][-3:]
                   if len(recent) == 3 and all(a.get('action') == recent[0].get('action') for a in recent):
                       history_context += "\n*** WARNING: You have repeated '" + recent[0].get('action', '?') + "' 3 times. "
@@ -252,7 +247,6 @@ steps:
                   advance_to_next_task()
                   return
 
-              # Execute the action
               act_record = {"action": action, "reason": reason}
 
               if action == 'click':
@@ -266,7 +260,6 @@ steps:
                   act_record['text'] = txt
               elif action == 'key':
                   key = action_response.get('text', 'enter')
-                  # Detect combo keys like ctrl+l, ctrl+a, shift+tab
                   if '+' in key:
                       parts = [k.strip() for k in key.split('+')]
                       perform_action({"type": "hotkey", "keys": parts})
@@ -285,7 +278,6 @@ steps:
 
               task['actions'].append(act_record)
               ui.status = action + " - " + reason[:40]
-              # Wait for UI to settle after state-changing actions
               if action in ('key', 'click'):
                   time.sleep(2.0)
               elif action == 'type':
@@ -306,12 +298,10 @@ steps:
               ui.status = "Error: " + str(e)[:40]
 
       def advance_to_next_task():
-          # Find next pending task
           for i in range(len(ui.tasks)):
               if ui.tasks[i]['status'] == 'pending':
                   start_task(i)
                   return
-          # All done
           ui.mode = 'idle'
           ui.current_task = -1
           done_count = sum(1 for t in ui.tasks if t['status'] == 'done')
@@ -340,19 +330,16 @@ steps:
               if t['status'] != 'done':
                   t['status'] = 'pending'
                   t['actions'] = []
-          # Find first pending
           for i, t in enumerate(ui.tasks):
               if t['status'] == 'pending':
                   start_task(i)
                   return
 
-      # ========== Rendering ==========
       def render_screen():
           width, height = get_size()
           out = []
           out.append("\033[H")
 
-          # Header
           mode_str = ui.mode.upper()
           if ui.mode == 'running' and ui.current_task >= 0:
               mode_str = "RUNNING [" + str(ui.iteration) + "/" + str(ui.max_iter) + "]"
@@ -361,12 +348,10 @@ steps:
           out.append("\033[1;1H\033[7;1m" + header.ljust(width) + "\033[0m")
           out.append("\033[1;" + str(width - len(mode_display) - 1) + "H\033[33;1m" + mode_display + "\033[0m")
 
-          # Split: top = tasks, bottom = actions
           split = max(6, (height - 4) // 2)
           task_h = split - 2
           action_h = height - split - 4
 
-          # ── Tasks panel ──
           task_label = " Tasks (" + str(len(ui.tasks)) + ") "
           if ui.panel == 0:
               out.append("\033[3;1H\033[36;1m" + task_label + "\033[90m" + ("-" * (width - len(task_label))) + "\033[0m")
@@ -374,7 +359,6 @@ steps:
               out.append("\033[3;1H\033[90m" + task_label + ("-" * (width - len(task_label))) + "\033[0m")
 
           if ui.mode == 'input':
-              # Show input line
               out.append("\033[4;1H\033[K  New task: \033[7m " + ui.input_buf + " \033[0m")
               for i in range(1, task_h):
                   out.append("\033[" + str(4+i) + ";1H\033[K")
@@ -408,7 +392,6 @@ steps:
                   else:
                       out.append(" " + line)
 
-          # ── Actions panel ──
           action_row = 3 + split
           acts = get_current_actions()
           act_label = " Actions (" + str(len(acts)) + ") "
@@ -456,12 +439,10 @@ steps:
                   else:
                       out.append(" " + line)
 
-          # ── Status bar ──
           out.append("\033[" + str(height-2) + ";1H\033[K\033[90m" + ("-" * width) + "\033[0m")
           status_line = " " + ui.status + "  |  Model: " + str(vision_model) + "  |  Max: " + str(ui.max_iter)
           out.append("\033[" + str(height-1) + ";1H\033[K" + status_line[:width])
 
-          # ── Footer ──
           if ui.mode == 'input':
               footer = " Type task, Enter:Confirm  Esc:Cancel "
           elif ui.mode in ('running', 'step'):
@@ -475,23 +456,20 @@ steps:
           sys.stdout.write(''.join(out))
           sys.stdout.flush()
 
-      # ========== Input Handling ==========
       def handle_input(c, fd):
           if ui.mode == 'input':
               return handle_input_mode(c, fd)
 
-          # Escape sequences
           if c == '\x1b':
               if select.select([fd], [], [], 0.05)[0]:
                   c2 = os.read(fd, 1).decode('latin-1')
                   if c2 == '[':
                       c3 = os.read(fd, 1).decode('latin-1')
-                      if c3 == 'A':    # Up
+                      if c3 == 'A':
                           nav_up()
-                      elif c3 == 'B':  # Down
+                      elif c3 == 'B':
                           nav_down()
               else:
-                  # Bare Esc
                   if ui.mode == 'paused':
                       ui.mode = 'idle'
                       ui.status = "Aborted"
@@ -503,7 +481,6 @@ steps:
           if c == 'q' and ui.mode == 'idle':
               return False
           if c == 'Q':
-              # Abort running
               if ui.mode in ('running', 'paused', 'step'):
                   ui.mode = 'idle'
                   if ui.current_task >= 0 and ui.current_task < len(ui.tasks):
@@ -549,9 +526,8 @@ steps:
 
       def handle_input_mode(c, fd):
           if c == '\x1b':
-              # Cancel input
               if select.select([fd], [], [], 0.05)[0]:
-                  os.read(fd, 2)  # consume rest of escape seq
+                  os.read(fd, 2)
               ui.mode = 'idle'
               ui.input_buf = ""
               return True
@@ -564,7 +540,7 @@ steps:
               ui.input_buf = ""
               return True
 
-          if c == '\x7f' or c == '\x08':  # Backspace
+          if c == '\x7f' or c == '\x08':
               if ui.input_cursor > 0:
                   ui.input_buf = ui.input_buf[:ui.input_cursor-1] + ui.input_buf[ui.input_cursor:]
                   ui.input_cursor -= 1
@@ -587,12 +563,10 @@ steps:
               acts = get_current_actions()
               ui.action_scroll = min(max(0, len(acts) - 1), ui.action_scroll + 1)
 
-      # ========== Auto-add task from CLI ==========
       task_arg = context.get('task')
       if task_arg:
           add_task(str(task_arg))
 
-      # ========== Main Loop ==========
       if not sys.stdin.isatty():
           context['output'] = "Plonk requires an interactive terminal."
       else:
@@ -608,14 +582,12 @@ steps:
               running = True
               while running:
                   if ui.mode in ('running', 'step'):
-                      # Non-blocking check for user input
                       if select.select([fd], [], [], 0.05)[0]:
                           c = os.read(fd, 1).decode('latin-1')
                           running = handle_input(c, fd)
                       else:
                           run_one_step()
                   else:
-                      # Blocking wait for input
                       c = os.read(fd, 1).decode('latin-1')
                       running = handle_input(c, fd)
 
@@ -627,7 +599,6 @@ steps:
               sys.stdout.write('\033[2J\033[H')
               sys.stdout.flush()
 
-          # Summary output
           if ui.tasks:
               lines = ["PLONK SESSION SUMMARY", "=" * 40]
               for i, t in enumerate(ui.tasks):

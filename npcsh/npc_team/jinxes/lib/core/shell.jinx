@@ -14,8 +14,6 @@ steps:
       cmd = {{ bash_command | tojson }}
       output = ""
 
-      # Pipe previous step output as stdin — commands that need it (cat, tee)
-      # read it; commands that don't (ls, mkdir) ignore it. Unix standard.
       stdin_data = context.get('previous_output') or None
 
       try:

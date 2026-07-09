@@ -29,12 +29,10 @@ steps:
           )
           return r.returncode, r.stdout, r.stderr
 
-      # Check gh is available
       rc, _, _ = run_gh('--version')
       if rc != 0:
           context['output'] = 'Error: gh CLI not found. Install from https://cli.github.com'
       else:
-          # Check if in a git repo
           rc, _, _ = run_git('rev-parse', '--is-inside-work-tree')
           if rc != 0:
               context['output'] = 'Not a git repository.'
@@ -45,7 +43,6 @@ steps:
               if branch in ('main', 'master'):
                   context['output'] = 'Cannot create PR from ' + branch + '. Switch to a feature branch first.'
               else:
-                  # Detect base branch
                   if not base:
                       for candidate in ('main', 'master'):
                           rc, _, _ = run_git('rev-parse', '--verify', candidate)
@@ -55,7 +52,6 @@ steps:
                       if not base:
                           base = 'main'
 
-                  # Push branch if needed
                   rc, _, _ = run_git('rev-parse', '--verify', 'origin/' + branch)
                   if rc != 0:
                       prc, _, perr = run_git('push', '-u', 'origin', branch)
@@ -63,7 +59,6 @@ steps:
                           context['output'] = 'Failed to push branch: ' + perr[:200]
 
                   if 'output' not in context:
-                      # Get diff and commit log
                       _, diff_stat, _ = run_git('diff', '--stat', base + '...' + branch)
                       _, diff_full, _ = run_git('diff', base + '...' + branch)
                       _, log, _ = run_git('log', '--oneline', base + '..' + branch)
@@ -104,7 +99,6 @@ steps:
                       resp = get_llm_response(prompt, model=_model, provider=_provider, npc=npc, temperature=0.3)
                       result = str(resp.get('response', ''))
 
-                      # Parse title and body
                       title = branch.replace('-', ' ').replace('_', ' ').title()
                       body = ''
                       if 'TITLE:' in result:
@@ -122,7 +116,6 @@ steps:
                       if not body:
                           body = result
 
-                      # Create PR
                       prc, pr_out, pr_err = run_gh(
                           'pr', 'create',
                           '--title', title,
@@ -132,7 +125,6 @@ steps:
                       if prc == 0:
                           context['output'] = 'PR created: ' + pr_out.strip()
                       else:
-                          # Maybe PR already exists
                           if 'already exists' in pr_err:
                               context['output'] = 'PR already exists for this branch.\n' + pr_err.strip()
                           else:
