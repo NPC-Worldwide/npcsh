@@ -81,8 +81,7 @@ def main():
                 file=sys.stderr,
             )
 
-    from npcsh.npc import main as python_main
-    python_main()
+    raise RuntimeError("Rust npcru binary not found")
 
 
 if __name__ == "__main__":
