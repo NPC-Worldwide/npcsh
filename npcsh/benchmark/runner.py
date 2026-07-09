@@ -512,8 +512,6 @@ Examples:
         if not all_good:
             print("\nTo install missing dependencies:")
             print("  pip install harbor terminal-bench")
-            print("\nOr install with npcsh:")
-            print("  pip install npcsh[bench]")
         else:
             print("\nAll dependencies installed!")
 

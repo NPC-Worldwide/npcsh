@@ -56,13 +56,13 @@ def _binary_matches_host(path: str) -> bool:
 
 
 def _find_rust_binary():
-    """Find a host-compatible npcrsh binary on PATH or in ~/.npcsh/bin."""
+    """Find a host-compatible npcsh binary on PATH or in ~/.npcsh/bin."""
     ext = ".exe" if platform.system() == "Windows" else ""
-    local_bin = os.path.expanduser(f"~/.npcsh/bin/npcrsh{ext}")
+    local_bin = os.path.expanduser(f"~/.npcsh/bin/npcsh{ext}")
     if os.path.isfile(local_bin) and _binary_matches_host(local_bin):
         return local_bin
 
-    found = shutil.which("npcrsh")
+    found = shutil.which("npcsh")
     if found and _binary_matches_host(found):
         return found
     return None
@@ -144,7 +144,7 @@ def main():
     rust_bin = _find_rust_binary()
 
     if not rust_bin:
-        print("ERROR: Rust npcrsh binary not found.", file=sys.stderr)
+        print("ERROR: Rust npcsh binary not found.", file=sys.stderr)
         sys.exit(1)
 
     teams_yaml = _ensure_teams_yaml()

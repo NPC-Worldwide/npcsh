@@ -34,7 +34,7 @@ NPCSH_SPECIFIC_CATEGORIES = frozenset({
     "delegation", "tool-chain", "image-gen", "audio-gen", "web-search",
 })
 
-NPCSH_BIN = os.path.expanduser("~/.npcsh/bin/npcrsh")
+NPCSH_BIN = os.path.expanduser("~/.npcsh/bin/npcsh")
 
 
 def _find_npcsh_bin(path: Optional[str] = None) -> str:
@@ -43,7 +43,7 @@ def _find_npcsh_bin(path: Optional[str] = None) -> str:
         return path
     if os.path.exists(NPCSH_BIN):
         return NPCSH_BIN
-    found = shutil.which("npcsh") or shutil.which("npcrsh")
+    found = shutil.which("npcsh")
     if found:
         return found
     raise FileNotFoundError("npcsh binary not found; build and install it first")
@@ -792,7 +792,7 @@ def main():
                         choices=list(SUPPORTED_FRAMEWORKS),
                         help="Which framework runs the task (default: npcsh)")
     parser.add_argument("--binary", default=NPCSH_BIN,
-                        help="Path to the npcsh binary (default: ~/.npcsh/bin/npcrsh)")
+                        help="Path to the npcsh binary (default: ~/.npcsh/bin/npcsh)")
 
     args = parser.parse_args()
 

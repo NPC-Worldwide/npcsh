@@ -519,35 +519,52 @@ This exposes your NPC team as a full agentic server with:
 
 ## Installation
 
-`npcsh` is available on PyPI and can be installed using pip. Before installing, make sure you have the necessary dependencies installed on your system.
+`npcsh` is distributed as pre-built Rust binaries, via crates.io, or from source.
+
+### Install script (recommended)
+
+```bash
+curl -fsSL https://enpisi.com/install-npcsh.sh | sh
+```
+
+This downloads the latest `npcsh` and `npc` binaries for your platform into `~/.npcsh/bin`. Add that directory to your PATH:
+
+```bash
+export PATH="$HOME/.npcsh/bin:$PATH"
+```
+
+### Cargo
+
+```bash
+cargo install npcsh
+```
+
+### System dependencies
 
 ### Linux
 ```bash
-# Audio dependencies (skip if you don't need TTS)
-sudo apt-get install espeak portaudio19-dev python3-pyaudio
-sudo apt-get install alsa-base alsa-utils libcairo2-dev libgirepository1.0-dev ffmpeg
-
-# Ollama
+# Ollama (for local models)
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen3.5:2b
-
-pip install 'npcsh[lite]'
 ```
 
 ### macOS
 ```bash
-brew install portaudio ffmpeg pygobject3 ollama
+brew install ollama
 brew services start ollama
 ollama pull qwen3.5:2b
-
-pip install 'npcsh[lite]'
 ```
 
 ### Windows
-Download and install [Ollama](https://ollama.com) and [ffmpeg](https://ffmpeg.org), then:
-```powershell
-ollama pull qwen3.5:2b
-pip install 'npcsh[lite]'
+Download and install [Ollama](https://ollama.com), then use the install script from PowerShell via WSL or install with cargo.
+
+### Rust build (development / latest)
+
+```bash
+cd rust
+cargo build --release
+cp target/release/npcsh ~/.npcsh/bin/npcsh
+cp target/release/npc ~/.npcsh/bin/npc
 ```
 
 ## Configuration

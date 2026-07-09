@@ -1,34 +1,38 @@
-:## Installation
+## Installation
 
-`npcsh` is available on PyPI and can be installed using pip. Before installing, make sure you have the necessary dependencies installed on your system. If you find any other dependencies that are needed, please let us know so we can update the installation instructions to be more accommodating.
+`npcsh` is distributed as pre-built Rust binaries and as a Rust crate. Pick the option that fits your workflow.
 
-## PyPI install (recommended)
+## Install script (recommended)
 
 ```bash
-pip install 'npcsh[lite]'        # API + Ollama providers
-pip install 'npcsh[local]'       # + local diffusers/transformers/torch
-pip install 'npcsh[yap]'         # + voice mode TTS/STT
-pip install 'npcsh[all]'         # everything
+curl -fsSL https://enpisi.com/install-npcsh.sh | sh
 ```
 
-What you get:
+The script downloads the latest `npcsh` and `npc` binaries for your platform into `~/.npcsh/bin`. Make sure that directory is on your PATH:
 
-- The `npcsh` Python launcher, which starts the NPCSH server and execs the Rust shell.
-- The `npc` and `npcsh-bench` CLI entry points.
-- A default global team in `~/.npcsh/npc_team/`.
+```bash
+export PATH="$HOME/.npcsh/bin:$PATH"
+```
+
+Then run:
+
+```bash
+npcsh
+```
+
+## Cargo
+
+```bash
+cargo install npcsh
+```
+
+This installs the `npcsh` and `npc` binaries via crates.io.
 
 ## System dependencies
 
 ### Linux
 
 ```bash
-# Audio / TTS / STT
-sudo apt-get install espeak portaudio19-dev python3-pyaudio
-sudo apt-get install alsa-base alsa-utils libcairo2-dev libgirepository1.0-dev ffmpeg
-
-# File-system triggers
-sudo apt install inotify-tools
-
 # Ollama (optional, for local models)
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen3.5:2b
@@ -39,7 +43,7 @@ ollama pull nomic-embed-text
 ### macOS
 
 ```bash
-brew install portaudio ffmpeg pygobject3 ollama
+brew install ollama
 brew services start ollama
 ollama pull qwen3.5:2b
 ollama pull llava:7b
@@ -48,41 +52,24 @@ ollama pull nomic-embed-text
 
 ### Windows
 
-Download and install [Ollama](https://ollama.com) and [ffmpeg](https://ffmpeg.org), then in PowerShell:
+Download and install [Ollama](https://ollama.com), then use the install script from PowerShell via WSL or install with cargo.
 
-```powershell
-ollama pull qwen3.5:2b
-ollama pull llava:7b
-ollama pull nomic-embed-text
-pip install 'npcsh[lite]'
-```
+## Rust build (development / latest)
 
-### Fedora notes
-
-- `python3-dev` — fixes hnswlib issues with ChromaDB
-- `xhost +` — required for pyautogui
-- `python-tkinter` — required for pyautogui
-
-## Rust edition (development / latest)
-
-`npcsh` ships as a Python launcher that starts the NPCSH server and then execs the Rust shell binary (`npcrsh`). By default the launcher looks for `npcrsh` at `~/.npcsh/bin/npcrsh`, then falls back to PATH.
-
-To build the Rust binary from source:
+To build the Rust binaries from source:
 
 ```bash
 cd npcsh/rust
 cargo build --release
-cp target/release/npcrsh ~/.npcsh/bin/npcrsh
-
-# macOS only: the copied binary must be ad-hoc re-signed or Gatekeeper will kill it
-codesign -s - -f ~/.npcsh/bin/npcrsh
+cp target/release/npcsh ~/.npcsh/bin/npcsh
+cp target/release/npc ~/.npcsh/bin/npc
 ```
 
-Both editions share `~/npcsh_history.db` and `~/.npcsh/npc_team/` and can be used interchangeably.
+For normal use, install the pre-built release via the install script or cargo. The source build is for development only.
 
 ## Startup and configuration
 
-After it has been pip installed, start the shell by typing:
+Start the shell by typing:
 
 ```bash
 npcsh

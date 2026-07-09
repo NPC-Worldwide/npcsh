@@ -3,7 +3,7 @@ import sys
 
 
 def _find_npc_binary():
-    """Find the Rust `npcru` binary without recursion risk.
+    """Find the Rust `npc` binary without recursion risk.
 
     If the active venv or PATH front has a Python script named `npc`, it is
     ignored: we need the compiled Rust binary. We scan PATH from the back
@@ -12,13 +12,13 @@ def _find_npc_binary():
     import platform
 
     ext = ".exe" if platform.system() == "Windows" else ""
-    local_bin = os.path.expanduser(f"~/.npcsh/bin/npcru{ext}")
+    local_bin = os.path.expanduser(f"~/.npcsh/bin/npc{ext}")
     if os.path.isfile(local_bin) and _looks_native_binary(local_bin):
         return local_bin
 
     path_dirs = os.environ.get("PATH", "").split(os.pathsep)
     for path_dir in reversed(path_dirs):
-        candidate = os.path.join(path_dir, f"npcru{ext}")
+        candidate = os.path.join(path_dir, f"npc{ext}")
         if os.path.isfile(candidate) and _looks_native_binary(candidate):
             return candidate
     return None
@@ -50,7 +50,7 @@ def _looks_native_binary(path: str) -> bool:
 def main():
     rust_bin = _find_npc_binary()
     if not rust_bin:
-        print("ERROR: Rust npcru binary not found.", file=sys.stderr)
+        print("ERROR: Rust npc binary not found.", file=sys.stderr)
         sys.exit(1)
 
     try:

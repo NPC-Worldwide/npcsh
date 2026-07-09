@@ -1,7 +1,7 @@
 """
 Benchmark runner using the Rust npcsh binary.
 
-Uses `npcsh -c` to execute each task instruction, then verifies with verify_cmd.
+Passes each task instruction to `npcsh` as a positional argument, then verifies with verify_cmd.
 
 Usage:
     python -m npcsh.benchmark.rust_runner
@@ -23,7 +23,7 @@ from typing import Optional
 import pandas as pd
 
 
-NPCSH_BIN = os.path.expanduser("~/.npcsh/bin/npcrsh")
+NPCSH_BIN = os.path.expanduser("~/.npcsh/bin/npcsh")
 
 def _set_binary(path):
     global NPCSH_BIN
@@ -107,7 +107,7 @@ def run_task(task, model, provider, timeout=120):
 
     try:
         result = subprocess.run(
-            [NPCSH_BIN, "-c", instruction],
+            [NPCSH_BIN, instruction],
             capture_output=True, text=True, timeout=timeout,
             env=env, cwd="/tmp",
         )
@@ -197,7 +197,8 @@ def main():
 
     if not os.path.exists(NPCSH_BIN):
         print(f"Error: npcsh binary not found at {NPCSH_BIN}")
-        print("Build it: cd npcsh/rust && cargo build --release")
+        print("Install it: curl -fsSL https://enpisi.com/install-npcsh.sh | sh")
+        print("Or build it: cd npcsh/rust && cargo build --release")
         return
 
     tasks = load_tasks(
