@@ -39,3 +39,4 @@ termimad = "0.34"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4.45", features = ["clock", "serde"] }
 uuid = { version = "1", features = ["v4"] }
+semver = "1"

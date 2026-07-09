@@ -172,9 +172,7 @@ jinx_entries = [f.stem for f in jinx_bin_dir.glob("*.jinx")] if jinx_bin_dir.exi
 
 jinx_entries = [name for name in jinx_entries if not conflicts_with_system(name)]
 
-npc_dynamic = [f"{name}=npcsh.npcsh:main" for name in npc_entries]
-jinx_dynamic = [f"{name}=npcsh.npc:jinx_main" for name in jinx_entries]
-dynamic_entries = npc_dynamic + jinx_dynamic
+dynamic_entries = []
 
 base_requirements = [
     'npcpy>=2.1.3',
