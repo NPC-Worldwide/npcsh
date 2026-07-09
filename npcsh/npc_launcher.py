@@ -30,7 +30,7 @@ def _find_npc_binary():
 
     path_dirs = os.environ.get("PATH", "").split(os.pathsep)
     for path_dir in reversed(path_dirs):
-        candidate = os.path.join(path_dir, f"npc{ext}")
+        candidate = os.path.join(path_dir, f"npcru{ext}")
         if os.path.isfile(candidate) and _looks_native_binary(candidate):
             return candidate
     return None
