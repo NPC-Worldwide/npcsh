@@ -23,7 +23,7 @@ from typing import Optional
 import pandas as pd
 
 
-NPCSH_BIN = os.path.expanduser("~/.local/bin/npcsh")
+NPCSH_BIN = os.path.expanduser("~/.npcsh/bin/npcrsh")
 
 def _set_binary(path):
     global NPCSH_BIN
