@@ -211,7 +211,6 @@ The NPC responds using their persona and available jinxes, then control returns 
 | `plonk` | Browser/GUI automation | browser_action, screenshot, click, key_press |
 | `alicanto` | Research and analysis | python, sh, load_file |
 | `frederic` | Math, physics, music | python, vixynt, roll, sample |
-| `guac` | General assistant | python, sh, edit_file, load_file |
 | `kadiefa` | Creative generation | vixynt |
 
 ## Capability Areas
