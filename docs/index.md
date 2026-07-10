@@ -19,7 +19,6 @@
 
 - [NPC Shell](npcsh.md)
 - [Alicanto](alicanto.md)
-- [Guac](guac.md)
 - [PTI](pti.md)
 - [Spool](spool.md)
 - [Wander](wander.md)

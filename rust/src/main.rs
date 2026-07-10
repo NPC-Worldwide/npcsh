@@ -518,60 +518,6 @@ const CORE_COMMANDS: &[CommandDef] = &[
         description: "List loops",
         cmd: CoreCmd::Loops,
     },
-    CommandDef {
-        name: "/doctor",
-        category: "System Commands",
-        description: "Diagnose and auto-fix common issues",
-        cmd: CoreCmd::Jinx("doctor"),
-    },
-    CommandDef {
-        name: "/init",
-        category: "System Commands",
-        description: "Initialize / reinitialize npcsh",
-        cmd: CoreCmd::Jinx("init"),
-    },
-    CommandDef {
-        name: "/nsync",
-        category: "System Commands",
-        description: "Sync npcsh state",
-        cmd: CoreCmd::Jinx("nsync"),
-    },
-    CommandDef {
-        name: "/refresh",
-        category: "System Commands",
-        description: "Refresh npcsh (alias of reload)",
-        cmd: CoreCmd::Jinx("reload"),
-    },
-    CommandDef {
-        name: "/reload",
-        category: "System Commands",
-        description: "Reload npcsh state",
-        cmd: CoreCmd::Jinx("reload"),
-    },
-    CommandDef {
-        name: "/shh",
-        category: "System Commands",
-        description: "Toggle quiet mode",
-        cmd: CoreCmd::Jinx("shh"),
-    },
-    CommandDef {
-        name: "/update",
-        category: "System Commands",
-        description: "Update npcsh",
-        cmd: CoreCmd::Jinx("update"),
-    },
-    CommandDef {
-        name: "/usage",
-        category: "System Commands",
-        description: "Show usage info",
-        cmd: CoreCmd::Jinx("usage"),
-    },
-    CommandDef {
-        name: "/verbose",
-        category: "System Commands",
-        description: "Toggle verbose mode",
-        cmd: CoreCmd::Jinx("verbose"),
-    },
 ];
 
 const COMMAND_CATEGORIES: &[&str] = &[

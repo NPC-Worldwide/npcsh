@@ -75,20 +75,6 @@ npcsh> /jinxes
 
 ---
 
-## System Commands
-
-| Command | Description |
-|---------|-------------|
-| `/doctor` | Diagnose and auto-fix common issues. |
-| `/init` | Initialize or reinitialize `npcsh`. |
-| `/nsync` | Sync `npcsh` state. |
-| `/refresh` | Refresh `npcsh` (alias of `/reload`). |
-| `/reload` | Reload `npcsh` state. |
-| `/shh` | Toggle quiet mode. |
-| `/update` | Update `npcsh`. |
-| `/usage` | Show usage info. |
-| `/verbose` | Toggle verbose mode. |
-
 ---
 
 ## Info
