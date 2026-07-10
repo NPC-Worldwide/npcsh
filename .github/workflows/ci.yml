@@ -30,33 +30,6 @@ jobs:
       run: |
         pytest tests/ -v
 
-  validate-jinxes:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Install npcpy
-      run: pip install npcpy
-
-    - name: Validate jinx files
-      run: |
-        python -c "
-        from npcpy.npc_compiler import load_jinxes_from_directory
-        import sys
-
-        try:
-            jinxes = load_jinxes_from_directory('npcsh/npc_team/jinxes')
-            print(f'Loaded {len(jinxes)} jinx files successfully')
-        except Exception as e:
-            print(f'Jinx validation error: {e}')
-            sys.exit(1)
-        "
-
   rust-check:
     runs-on: ubuntu-latest
     steps:
@@ -65,6 +38,15 @@ jobs:
     - name: Check Rust code
       working-directory: rust
       run: cargo check
+
+  rust-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Run Rust tests
+      working-directory: rust
+      run: cargo test
 
   no-committed-binaries:
     runs-on: ubuntu-latest

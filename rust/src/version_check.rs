@@ -2,9 +2,11 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CACHE_TTL_SECONDS: u64 = 86400;
-const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/NPC-Worldwide/npcsh/releases/latest";
+const GITHUB_RELEASES_URL: &str =
+    "https://api.github.com/repos/NPC-Worldwide/npcsh/releases/latest";
 const CRATES_URL: &str = "https://crates.io/api/v1/crates/npcsh";
-const BREW_FORMULA_URL: &str = "https://raw.githubusercontent.com/NPC-Worldwide/homebrew-npcsh/main/Formula/npcsh.rb";
+const BREW_FORMULA_URL: &str =
+    "https://raw.githubusercontent.com/NPC-Worldwide/homebrew-npcsh/main/Formula/npcsh.rb";
 
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
@@ -27,7 +29,10 @@ fn now_secs() -> u64 {
 
 fn detect_source() -> &'static str {
     let exe = std::env::current_exe().ok();
-    let exe_str = exe.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+    let exe_str = exe
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
 
     let brew_roots = ["/opt/homebrew", "/usr/local", "/home/linuxbrew"];
     for root in &brew_roots {
@@ -74,7 +79,9 @@ async fn fetch_github_latest(client: &reqwest::Client) -> Option<String> {
         .await
         .ok()?;
     let json: serde_json::Value = resp.json().await.ok()?;
-    json.get("tag_name")?.as_str().map(|t| t.trim_start_matches('v').to_string())
+    json.get("tag_name")?
+        .as_str()
+        .map(|t| t.trim_start_matches('v').to_string())
 }
 
 async fn fetch_crates_latest(client: &reqwest::Client) -> Option<String> {

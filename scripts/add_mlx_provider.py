@@ -34,7 +34,7 @@ def get_mlx_response(
         return {
             "response": "",
             "messages": messages or [],
-            "error": "mlx-lm not installed. Install with: pip install mlx-lm"
+            "error": "mlx-lm is not installed. Install mlx-lm to use the MLX provider."
         }
 
     result = {

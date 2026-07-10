@@ -106,15 +106,8 @@ curl -s http://localhost:5337/api/conversation/test123/messages | jq '.'
 
 ## Planned CLI Features
 
-
 *   **Scripting (Future):** `npc scripts` (details to be defined)
-    *   `npc run select +sql_model` (run migrations up)
-    *   `npc run select +sql_model+` (run migrations up and down)
-    *   `npc run select sql_model+` (run migrations down)
-*   **Assembly Line (Future):** `npc run line <assembly_line>` (execute a predefined sequence of operations)
 *   **Conjure (Future):** `npc conjure fabrication_plan.fab` (generate content based on a fabrication plan)
-
-
 
 # Macros
 

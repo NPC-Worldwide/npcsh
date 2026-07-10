@@ -35,7 +35,6 @@ nav:
   - Installation: installation.md
   - 'Using npcsh, the NPC Shell': npcsh.md
   - 'Using alicanto': alicanto.md
-  - 'Using guac': guac.md
   - 'Using pti': pti.md
   - 'Using spool': spool.md
   - 'Using wander': wander.md

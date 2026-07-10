@@ -35,7 +35,6 @@ primary_directive: |
 
   Agents:
   @corca — shell, code, debug, files, sysadmin
-  @guac — data analysis, pandas, SQL, CSV
   @alicanto — deep research, papers, literature review
   @kadiefa — exploratory thinking, unexpected connections
   @frederic — creative/math, unconventional solutions
