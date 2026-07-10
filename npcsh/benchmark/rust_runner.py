@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import argparse
 from pathlib import Path
@@ -86,7 +87,7 @@ def clean_task_artifacts(task):
                 pass
 
 
-def run_task(task, model, provider, timeout=120):
+def run_task(task, model, provider, timeout=120, verbose=False):
     task_id = task["id"]
     instruction = task["instruction"]
     verify_cmd = task["verify_cmd"]
@@ -104,18 +105,42 @@ def run_task(task, model, provider, timeout=120):
     env = os.environ.copy()
     env["NPCSH_CHAT_MODEL"] = model
     env["NPCSH_CHAT_PROVIDER"] = provider
+    if verbose:
+        env["NPCSH_DEBUG"] = "1"
 
+    script_dir = Path(tempfile.mkdtemp(prefix=f"npcsh_bench_{task_id}_"))
+    script_path = script_dir / "task.nsh"
+    script_path.write_text(instruction, encoding="utf-8")
+
+    log_dir = Path.home() / ".npcsh" / "benchmarks" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{task_id}.log"
+
+    output_lines = []
     try:
-        result = subprocess.run(
-            [NPCSH_BIN, instruction],
-            capture_output=True, text=True, timeout=timeout,
-            env=env, cwd="/tmp",
+        proc = subprocess.Popen(
+            [NPCSH_BIN, str(script_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, env=env, cwd="/tmp",
         )
-        output = result.stdout + result.stderr
-    except subprocess.TimeoutExpired:
-        output = f"TIMEOUT after {timeout}s"
+        with open(log_path, "w", encoding="utf-8") as log_f:
+            if proc.stdout:
+                for line in proc.stdout:
+                    output_lines.append(line)
+                    log_f.write(line)
+                    log_f.flush()
+                    if verbose:
+                        print(line, end="", flush=True)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            output_lines.append(f"TIMEOUT after {timeout}s\n")
+        output = "".join(output_lines)
     except Exception as e:
-        output = f"Error: {e}"
+        output = f"Error: {e}\n"
+    finally:
+        shutil.rmtree(script_dir, ignore_errors=True)
 
     duration = time.time() - start
 
@@ -123,6 +148,7 @@ def run_task(task, model, provider, timeout=120):
         verify = subprocess.run(
             ["bash", "-c", verify_cmd],
             capture_output=True, text=True, timeout=30,
+            cwd="/tmp",
         )
         passed = verify.returncode == 0
     except Exception:
@@ -138,7 +164,7 @@ def run_task(task, model, provider, timeout=120):
     )
 
 
-def run_benchmark(model, provider, tasks, timeout=120):
+def run_benchmark(model, provider, tasks, timeout=120, verbose=False):
     results = []
     passed = 0
     total = len(tasks)
@@ -146,17 +172,21 @@ def run_benchmark(model, provider, tasks, timeout=120):
     print(f"\n{'='*60}")
     print(f"  npcsh-rs benchmark: {model} ({provider})")
     print(f"  {total} tasks, timeout={timeout}s")
+    print(f"  logs: ~/.npcsh/benchmarks/logs/<task_id>.log")
     print(f"{'='*60}\n")
 
     for i, task in enumerate(tasks):
         task_id = task["id"]
         print(f"[{i+1}/{total}] {task_id} ({task['category']}/{task['difficulty']})...", end=" ", flush=True)
 
-        result = run_task(task, model, provider, timeout)
+        result = run_task(task, model, provider, timeout, verbose=verbose)
         results.append(result)
 
         status = "✓ PASS" if result.passed else "✗ FAIL"
         print(f"{status} ({result.duration:.1f}s)")
+        if not verbose:
+            log_path = Path.home() / ".npcsh" / "benchmarks" / "logs" / f"{task_id}.log"
+            print(f"         log: {log_path}")
 
         if result.passed:
             passed += 1
@@ -190,6 +220,8 @@ def main():
     parser.add_argument("--task-id", default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Stream npcsh output to stdout and enable NPCSH_DEBUG")
     parser.add_argument("--binary", default=NPCSH_BIN, help="Path to npcsh binary")
     args = parser.parse_args()
 
@@ -212,7 +244,7 @@ def main():
         print("No tasks matched the filters")
         return
 
-    run_benchmark(args.model, args.provider, tasks, args.timeout)
+    run_benchmark(args.model, args.provider, tasks, args.timeout, verbose=args.verbose)
 
 
 if __name__ == "__main__":
