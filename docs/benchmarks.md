@@ -1,6 +1,6 @@
 # npcsh Benchmarks
 
-The benchmark suite measures how well a model can drive `npcsh` as an agentic shell. It covers **100 tasks across 10 categories**: shell, file-ops, python, data, system, text, debug, git, multi-step, and scripting. Each task is scored pass/fail by an automated verifier. Jinx-specific capabilities (image generation, audio generation, web search, delegation, tool chaining) are tested separately via the `/jinx_test` jinx-level test harness.
+The benchmark suite measures how well a model can drive `npcsh` as an agentic shell. It covers 100 tasks across 10 categories: shell, file-ops, python, data, system, text, debug, git, multi-step, and scripting. Each task is scored pass/fail by an automated verifier. Jinx-specific capabilities (image generation, audio generation, web search, delegation, tool chaining) are tested separately via the `/jinx_test` jinx-level test harness.
 
 Run the benchmark yourself:
 
@@ -20,63 +20,63 @@ Results are written to `~/.npcsh/benchmarks/local/`.
 
 ## Overall Scores
 
-The current suite has **100 generic tasks**. Jinx-specific tests are tracked separately via `/jinx_test`.
+The current suite has 100 generic tasks. Jinx-specific tests are tracked separately via `/jinx_test`.
 
-### Rust runtime scores (110 tasks)
+### Rust runtime scores (100 tasks)
 
 | Family | Model | Version | Score |
 |--------|-------|---------|-------|
-| **Gemma4** | 31b-cloud | — | — |
+| Gemma4 | 31b-cloud | — | — |
 
 ### Historical Python runtime scores (125 tasks)
 
 | Family | Model | Score |
 |--------|-------|-------|
-| **Kimi** | k2.5 | **121/125 (97%)** |
-| **Qwen3.5** | 0.8b | 31/125 (24%) |
+| Kimi | k2.5 | 121/125 (97%) |
+| Qwen3.5 | 0.8b | 31/125 (24%) |
 | | 2b | 81/125 (65%) |
 | | 4b | 77/125 (62%) |
-| | 9b | **100/125 (80%)** |
-| | 35b | **111/125 (88%)** |
-| | 397b | **120/125 (96%)** |
-| **Qwen3** | 0.6b | — |
+| | 9b | 100/125 (80%) |
+| | 35b | 111/125 (88%) |
+| | 397b | 120/125 (96%) |
+| Qwen3 | 0.6b | — |
 | | 1.7b | 42/125 (34%) |
-| | 4b | **94/125 (75%)** |
+| | 4b | 94/125 (75%) |
 | | 8b | 85/125 (68%) |
-| | 30b | **103/125 (82%)** |
-| **Gemma4** | e4b | 34/125 (27%) |
-| | 31b | **105/125 (84%)** |
-| **Gemma3** | 1b | — |
+| | 30b | 103/125 (82%) |
+| Gemma4 | e4b | 34/125 (27%) |
+| | 31b | 105/125 (84%) |
+| Gemma3 | 1b | — |
 | | 4b | 37/125 (30%) |
 | | 12b | 77/125 (62%) |
 | | 27b | 73/125 (58%) |
-| **Llama** | 3.2:1b | — |
+| Llama | 3.2:1b | — |
 | | 3.2:3b | 26/125 (20%) |
 | | 3.1:8b | 60/125 (48%) |
-| **Mistral** | small3.2 | 72/125 (57%) |
+| Mistral | small3.2 | 72/125 (57%) |
 | | ministral-3 | 51/125 (40%) |
 | | large-3 | 59/125 (47%) |
-| **Devstral** | 2 | 60/125 (48%) |
-| **MiniMax** | M2.7 | **120/125 (96%)** |
-| **Phi** | phi4 | 58/125 (46%) |
-| **GPT-OSS** | 20b | 94/125 (75%) |
-| **OLMo2** | 7b | 13/125 (10%) |
+| Devstral | 2 | 60/125 (48%) |
+| MiniMax | M2.7 | 120/125 (96%) |
+| Phi | phi4 | 58/125 (46%) |
+| GPT-OSS | 20b | 94/125 (75%) |
+| OLMo2 | 7b | 13/125 (10%) |
 | | 13b | 47/125 (38%) |
-| **Cogito** | 3b | 10/125 (8%) |
-| **GLM** | 4.7-flash | **102/125 (82%)** |
-| | 5 | **120/125 (96%)** |
-| **Nemotron** | 3-super | 49/125 (39%) |
-| **Gemini** | 2.5-flash | — |
+| Cogito | 3b | 10/125 (8%) |
+| GLM | 4.7-flash | 102/125 (82%) |
+| | 5 | 120/125 (96%) |
+| Nemotron | 3-super | 49/125 (39%) |
+| Gemini | 2.5-flash | — |
 | | 3.1-flash | — |
 | | 3.1-pro | — |
-| **Claude** | 4.6-sonnet | — |
+| Claude | 4.6-sonnet | — |
 | | 4.5-haiku | — |
-| **GPT** | 5-mini | — |
-| **DeepSeek** | v4-flash | **99/125 (79%)** |
+| GPT | 5-mini | — |
+| DeepSeek | v4-flash | 99/125 (79%) |
 | | chat | — |
 | | reasoner | — |
 
-## Rust Category Breakdown (110 tasks)
+## Rust Category Breakdown (100 tasks)
 
 A per-category breakdown will be populated after each model run completes.
 
@@ -135,5 +135,5 @@ A per-category breakdown will be populated after each model run completes.
 <tr><td>web-search (5)</td><td>1</td><td>5</td><td>4</td><td>5</td><td>1</td><td>5</td><td>4</td><td>5</td><td>—</td><td>0</td><td>5</td><td>1</td><td>5</td><td>5</td><td>0</td><td>4</td><td>5</td><td>0</td><td>0</td><td>3</td><td>0</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>0</td><td>2</td><td>5</td></tr>
 <tr><td>delegation (5)</td><td>0</td><td>2</td><td>3</td><td>3</td><td>0</td><td>2</td><td>2</td><td>4</td><td>—</td><td>0</td><td>4</td><td>0</td><td>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>3</td><td>0</td><td>0</td><td>3</td><td>4</td><td>4</td><td>4</td><td>4</td><td>2</td><td>3</td><td>1</td></tr>
 <tr><td>tool-chain (5)</td><td>1</td><td>5</td><td>4</td><td>4</td><td>2</td><td>5</td><td>2</td><td>5</td><td>—</td><td>0</td><td>4</td><td>1</td><td>3</td><td>3</td><td>0</td><td>0</td><td>1</td><td>1</td><td>0</td><td>0</td><td>5</td><td>5</td><td>5</td><td>5</td><td>5</td><td>1</td><td>1</td><td>5</td></tr>
-<tr><td><b>Total (125)</b></td><td><b>31</b></td><td><b>81</b></td><td><b>100</b></td><td><b>111</b></td><td><b>42</b></td><td><b>94</b></td><td><b>76</b></td><td><b>103</b></td><td>—</td><td><b>34</b></td><td><b>105</b></td><td><b>37</b></td><td><b>77</b></td><td><b>73</b></td><td><b>26</b></td><td><b>72</b></td><td><b>51</b></td><td><b>59</b></td><td><b>58</b></td><td><b>94</b></td><td><b>10</b></td><td><b>102</b></td><td><b>120</b></td><td><b>121</b></td><td><b>120</b></td><td><b>120</b></td><td><b>60</b></td><td><b>49</b></td><td><b>99</b></td></tr>
+<tr><td>Total (125)</td><td>31</td><td>81</td><td>100</td><td>111</td><td>42</td><td>94</td><td>76</td><td>103</td><td>—</td><td>34</td><td>105</td><td>37</td><td>77</td><td>73</td><td>26</td><td>72</td><td>51</td><td>59</td><td>58</td><td>94</td><td>10</td><td>102</td><td>120</td><td>121</td><td>120</td><td>120</td><td>60</td><td>49</td><td>99</td></tr>
 </table>
