@@ -1534,6 +1534,14 @@ async fn save_conversation_turn(
 }
 
 fn ask_permission(prompt: &str) -> String {
+    if std::env::var("NPCSH_ACCEPT_PERMISSIONS")
+        .ok()
+        .filter(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes"))
+        .is_some()
+    {
+        return "Yes (session)".to_string();
+    }
+
     use crossterm::{
         ExecutableCommand,
         cursor::MoveTo,
