@@ -5,7 +5,7 @@
 
 # npcsh Documentation
 
-`npcsh` is an agentic shell built around a declarative data layer for AI teams. Agents, tools, context, and workflows are defined as plain files in an `npc_team/` directory; the shell compiles them into a live multi-agent system you can chat with, schedule, or serve over an API.
+`npcsh` is an agentic shell built around a declarative data layer for AI teams. Team context, agents, and tools are defined as plain files; the shell compiles them into a live multi-agent system you can chat with, schedule, or serve over an API.
 
 ## Quick Links
 
@@ -28,13 +28,15 @@
 
 ## The NPC Data Layer
 
-Everything customizable in `npcsh` lives as simple files. You can keep them inside `npc_team/`, or use a flat layout with `agents.md`/`agents/` at the project root.
+Everything customizable in `npcsh` lives as simple files across three layers:
 
-- **`.npc`** — agent definitions (persona, directive, model, provider, jinxes)
-- **`agents.md`** — multiple agents defined in one markdown file
-- **`agents/`** — one agent per `.md` file
-- **`.jinx`** — Jinja execution templates, i.e. tools and workflows
-- **`.ctx`** — team context (default model/provider, forenpc, MCP servers, env vars)
+| Layer | Files | Purpose |
+|-------|-------|---------|
+| **Team** | `.ctx` / `team.ctx` / `npc_team/*.ctx` | Shared context: default model/provider, forenpc, MCP servers, env vars |
+| **Agents** | `.npc`, `agents.md`, `agents/` | Agent definitions: name, persona, directive, model/provider, and jinxes they can use |
+| **Tools** | `.jinx`, `skills/` | Reusable tools and workflows that agents invoke by name |
+
+Files can live inside `npc_team/` or at the project root. The agent layer can use `.npc` files, a single `agents.md`, or an `agents/` directory — these are alternatives, not a required combination.
 
 Because these are ordinary files, you can version them in git, share them across projects, and drop in agent definitions from other ecosystems.
 

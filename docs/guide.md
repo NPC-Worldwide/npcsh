@@ -10,11 +10,11 @@ The core of npcsh's capabilities is powered by the NPC Data Layer. Upon initiali
 
 ### Creating Custom Components
 
-Users can extend NPC capabilities through simple YAML files:
+The data layer has three levels. Each is written as plain files and loaded by `npcsh` at startup:
 
-- **NPCs** (.npc): are defined with a name, primary directive, and optional model specifications. NPC files are executable — add `#!/usr/bin/env npc` as the first line and run them directly: `./myagent.npc "what's the weather?"`
-- **Jinxes** (.jinx): Jinja execution templates that provide function-like capabilities and scaleable extensibility through Jinja references to call other jinxes to build upon. Jinxes are executed through prompt-based flows, allowing them to be used by models regardless of their tool-calling capabilities, making it possible then to enable agents at the edge of computing through this simple methodology.
-- **Context** (.ctx): Specify contextual information, team preferences, MCP server paths, database connections, and other environment variables that are loaded for the team or for specific agents (e.g. `GUAC_FORENPC`). Teams are specified by their path and the team name in the `<team>.ctx` file. Teams organize collections of NPCs with shared context and specify a coordinator within the team context who is used whenever the team is called upon for orchestration.
+- **Team** (`.ctx`): context shared by the whole team — default model/provider, forenpc (orchestrator), MCP server paths, env vars, and shared memory. The team context is loaded first and used as defaults for the agents under it.
+- **Agents** (`.npc`, `agents.md`, `agents/`): agent definitions — name, persona, directive, model/provider overrides, and the jinxes they can use. `.npc` is one agent per YAML file, `agents.md` is many agents in one markdown file, and `agents/` is one agent per `.md` file. NPC files are executable: add `#!/usr/bin/env npc` as the first line and run them directly: `./myagent.npc "what's the weather?"`
+- **Tools** (`.jinx`, `skills/`): jinxes are Jinja execution templates that provide function-like capabilities to agents. They can call other jinxes, run shell or Python, query the local DB, or call an LLM. Skills are a special kind of jinx that expose instructional content progressively.
 
 The NPC Shell system integrates the capabilities of `npcpy` to maintain conversation history, track command execution, and provide intelligent autocomplete through an extensible command routing system. State is preserved between sessions, allowing for continuous knowledge building over time.
 
@@ -370,36 +370,49 @@ Individual NPCs can use different models and providers by setting `model` and `p
 
 ## Project Structure
 
-The global team lives in `~/.npcsh/npc_team/`. Project-specific teams can be:
+A project is team + agents + tools. The three layers can live at the project root or inside an `npc_team/` directory. The agent layer can be either `.npc` files, a single `agents.md`, or an `agents/` directory — those are alternatives, not requirements to use all at once.
 
-- an `npc_team/` directory at the project root (with `.npc` files), or
-- a flat `agents.md` file, or
-- an `agents/` folder with one `.md` file per agent.
+If both `npc_team/*.npc` and `agents.md`/`agents/` are present, npcsh asks which agent layout to use on first run and saves the choice in `.NPCSH_PREFERRED_TEAM_NAME`. Later runs use the preferred layout automatically.
 
-If both `npc_team/*.npc` and `agents.md`/`agents/` exist, npcsh asks which layout to use on first run and saves the choice in `.NPCSH_PREFERRED_TEAM_NAME`. Later runs use the preferred layout automatically.
-
-```
-npc_team/
-├── jinxes/               # .jinx tools and workflows
-│   ├── skills/           # skills — instructional jinxes
-│   │   └── debugging/
-│   │       └── SKILL.md
-│   ├── lib/
-│   │   └── core/         # core tools (python, sh, edit_file, web_search, etc.)
-│   └── my_tool.jinx
-├── sibiji.npc            # orchestrator
-├── corca.npc             # coding specialist
-├── ...
-└── npcsh.ctx             # team context
-```
-
-Or, as a flat layout:
+**Layout A: everything under `npc_team/`**
 
 ```
 myproject/
-├── agents.md             # bulk agent definitions
-├── agents/               # one agent per .md file
-└── jinxes/               # shared .jinx tools
+└── npc_team/
+    ├── npcsh.ctx           # team-level context
+    ├── sibiji.npc          # orchestrator
+    ├── corca.npc           # coding specialist
+    └── jinxes/             # tools
+        ├── skills/
+        │   └── debugging/
+        │       └── SKILL.md
+        ├── lib/
+        │   └── core/
+        │       ├── python.jinx
+        │       └── sh.jinx
+        └── my_tool.jinx
+```
+
+**Layout B: flat at project root**
+
+```
+myproject/
+├── team.ctx                # team-level context
+├── agents.md               # many agents in one file
+└── jinxes/
+    └── my_tool.jinx
+```
+
+**Layout C: flat agents directory**
+
+```
+myproject/
+├── team.ctx                # team-level context
+├── agents/                 # one agent per .md file
+│   ├── translator.md
+│   └── custom.md
+└── jinxes/
+    └── my_tool.jinx
 ```
 
 ## Environment Variables

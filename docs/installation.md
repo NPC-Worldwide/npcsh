@@ -109,17 +109,27 @@ Individual NPCs can override the default model/provider by setting `model` and `
 
 ## Project structure
 
-`npcsh` keeps per-project configuration in an `npc_team/` directory. Add one to any project:
+A project has three layers: team context, agents, and tools. You can keep them under an `npc_team/` directory or at the project root. The agent layer can be `.npc` files, a single `agents.md`, or an `agents/` directory — these are alternatives, not layers to combine.
 
 ```
 ./npc_team/
-├── team.ctx            # team config
-├── jinxes/             # project jinxes
-│   └── example.jinx
+├── team.ctx            # team-level context
 ├── example1.npc        # agent definition
-└── example2.npc
+├── example2.npc
+└── jinxes/             # tools
+    └── example.jinx
 ```
 
-Or keep agent definitions in `agents.md` or an `agents/` folder at the project root, alongside `npc_team/` for context and jinxes. `npcsh` detects the layout on startup and asks which to use if both are present.
+Or use a flat layout:
+
+```
+./
+├── team.ctx            # team-level context
+├── agents.md           # many agents in one file
+└── jinxes/             # tools
+    └── example.jinx
+```
+
+If both `npc_team/*.npc` and `agents.md`/`agents/` are present, `npcsh` asks which agent layout to use on first run and saves the choice in `.NPCSH_PREFERRED_TEAM_NAME`. Later runs use the preferred layout automatically.
 
 State such as conversation history, images, screenshots, jobs, and triggers is stored under `~/.npcsh/` (and in `~/npcsh_history.db` by default).
