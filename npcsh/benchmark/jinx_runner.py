@@ -66,7 +66,7 @@ def main(argv=None):
         print(f"Error: no jinxes directory found under {team_dir}", file=sys.stderr)
         return 1
 
-    from npcpy.jinx_tester import run_all_tests, print_report, write_report_csv
+    from npcsh.jinx_tester import run_all_tests, print_report, write_report_csv
 
     report = run_all_tests(
         team_dir=str(team_dir),

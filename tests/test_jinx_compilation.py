@@ -8,7 +8,7 @@ import os
 import glob
 import pytest
 
-from npcpy.jinx_tester import discover_jinx_tests, run_all_tests
+from npcsh.jinx_tester import discover_jinx_tests, run_all_tests
 
 
 TEAM_DIR = os.path.join(os.path.dirname(__file__), "..", "npcsh", "npc_team")
