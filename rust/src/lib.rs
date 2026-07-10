@@ -1,9 +1,9 @@
 pub mod markdown;
 pub mod stream_client;
 
+use npcrs::calculate_cost;
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
-use npcrs::calculate_cost;
 use std::io::IsTerminal;
 use std::sync::OnceLock;
 
@@ -243,8 +243,16 @@ pub async fn exec_npc_file(
         if !output.is_empty() {
             println!("{}", output);
         }
-        let in_tok = response.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0);
-        let out_tok = response.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0);
+        let in_tok = response
+            .usage
+            .as_ref()
+            .map(|u| u.prompt_tokens)
+            .unwrap_or(0);
+        let out_tok = response
+            .usage
+            .as_ref()
+            .map(|u| u.completion_tokens)
+            .unwrap_or(0);
         let cost = response
             .usage
             .as_ref()

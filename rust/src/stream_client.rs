@@ -230,9 +230,18 @@ fn apply_sse_event(
         match typ {
             "usage" => {
                 *usage = Some(Usage {
-                    prompt_tokens: json.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                    completion_tokens: json.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                    total_tokens: json.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                    prompt_tokens: json
+                        .get("input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    completion_tokens: json
+                        .get("output_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    total_tokens: json
+                        .get("total_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
                 });
             }
             "message_stop" | "stop" => {}
@@ -247,10 +256,7 @@ fn apply_sse_event(
                 }
             }
             "tool_start" => {
-                let name = json
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("tool");
+                let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
                 renderer.flush();
                 eprintln!("\x1b[36m⚡ {}:\x1b[0m", name);
                 renderer.clear();
@@ -258,17 +264,17 @@ fn apply_sse_event(
             }
             "tool_result" => {
                 renderer.flush();
-                let name = json
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("tool");
-                let result_text = json.get("result").map(|v| {
-                    if let Some(s) = v.as_str() {
-                        s.to_string()
-                    } else {
-                        serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())
-                    }
-                }).unwrap_or_default();
+                let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                let result_text = json
+                    .get("result")
+                    .map(|v| {
+                        if let Some(s) = v.as_str() {
+                            s.to_string()
+                        } else {
+                            serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())
+                        }
+                    })
+                    .unwrap_or_default();
                 let content_text = json.get("content").and_then(|v| v.as_str()).unwrap_or("");
                 let display = if !result_text.is_empty() {
                     result_text
@@ -291,15 +297,32 @@ fn apply_sse_event(
                 *saw_output = true;
             }
             "permission_request" => {
-                let request_id = json.get("request_id").and_then(|v| v.as_str()).unwrap_or("");
-                let command_key = json.get("command_key").and_then(|v| v.as_str()).unwrap_or("");
-                let args_preview = json.get("args_preview").and_then(|v| v.as_str()).unwrap_or("");
+                let request_id = json
+                    .get("request_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let command_key = json
+                    .get("command_key")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let args_preview = json
+                    .get("args_preview")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 renderer.flush();
                 eprintln!("");
-                let tool_name = json.get("tool_name").and_then(|v| v.as_str()).unwrap_or(command_key);
+                let tool_name = json
+                    .get("tool_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(command_key);
                 let decision = permission_prompt
-                    .map(|f| f(format!("Permission Required: {}\nCommand: {}\nArgs: {}",
-                                       tool_name, command_key, args_preview).as_str()))
+                    .map(|f| {
+                        f(format!(
+                            "Permission Required: {}\nCommand: {}\nArgs: {}",
+                            tool_name, command_key, args_preview
+                        )
+                        .as_str())
+                    })
                     .unwrap_or_else(|| "No".to_string());
                 let resp_url = format!("{}/api/permission_response", base_url);
                 let body = serde_json::json!({
@@ -316,10 +339,7 @@ fn apply_sse_event(
             }
             "tool_error" => {
                 renderer.flush();
-                let name = json
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("tool");
+                let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
                 let err = json
                     .get("error")
                     .and_then(|v| v.as_str())
@@ -337,11 +357,12 @@ fn apply_sse_event(
         for choice in choices {
             if let Some(delta) = choice.get("delta") {
                 if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
-                    let new_text = if content.len() > text.len() || !text.starts_with(content.as_str()) {
-                        text
-                    } else {
-                        &text[content.len()..]
-                    };
+                    let new_text =
+                        if content.len() > text.len() || !text.starts_with(content.as_str()) {
+                            text
+                        } else {
+                            &text[content.len()..]
+                        };
                     if !new_text.is_empty() {
                         content.push_str(new_text);
                         *saw_output = true;
@@ -401,19 +422,14 @@ fn apply_sse_event(
                 }
             }
             if let Some(finish) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-                if finish == "stop" || finish == "length" {
-                }
+                if finish == "stop" || finish == "length" {}
             }
         }
     }
     false
 }
 
-fn append_tool_call_json(
-    tc: &Value,
-    tool_calls: &mut Vec<ToolCall>,
-    saw_output: &mut bool,
-) {
+fn append_tool_call_json(tc: &Value, tool_calls: &mut Vec<ToolCall>, saw_output: &mut bool) {
     let id = tc
         .get("id")
         .and_then(|v| v.as_str())
@@ -435,7 +451,10 @@ fn append_tool_call_json(
         tool_calls.push(ToolCall {
             id,
             r#type: "function".to_string(),
-            function: ToolCallFunction { name, arguments: args },
+            function: ToolCallFunction {
+                name,
+                arguments: args,
+            },
         });
         *saw_output = true;
     }
