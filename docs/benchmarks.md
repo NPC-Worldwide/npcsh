@@ -1,26 +1,32 @@
 # npcsh Benchmarks
 
-The benchmark suite measures how well a model can drive `npcsh` as an agentic shell. It covers 135 tasks across 15 categories, from basic shell commands and file operations to multi-step workflows, debugging, tool chaining, delegation, web search, and media generation. Each task is scored pass/fail by an automated verifier.
+The benchmark suite measures how well a model can drive `npcsh` as an agentic shell. It covers **100 tasks across 10 categories**: shell, file-ops, python, data, system, text, debug, git, multi-step, and scripting. Each task is scored pass/fail by an automated verifier. Jinx-specific capabilities (image generation, audio generation, web search, delegation, tool chaining) are tested separately via the `/jinx_test` jinx-level test harness.
 
 Run the benchmark yourself:
 
 ```bash
 # Local model via Ollama
-python -m npcsh.benchmark.rust_runner --model qwen3.5:9b --provider ollama
+python -m npcsh.benchmark.local_runner --model qwen3.5:9b --provider ollama
 
 # API model
-python -m npcsh.benchmark.rust_runner --model gemini-2.5-flash --provider gemini
+python -m npcsh.benchmark.local_runner --model gemini-2.5-flash --provider gemini
 
 # Single category or task
-python -m npcsh.benchmark.rust_runner --category shell --limit 10
-python -m npcsh.benchmark.rust_runner --task-id shell-01
+python -m npcsh.benchmark.local_runner --category shell
+python -m npcsh.benchmark.local_runner --task-id shell-01
 ```
 
 Results are written to `~/.npcsh/benchmarks/local/`.
 
 ## Overall Scores
 
-The table below shows historical scores from the original Python runtime (125 tasks). Rust-based scores to come soon.
+The current suite has **100 generic tasks**. Jinx-specific tests are tracked separately via `/jinx_test`.
+
+### Rust runtime scores (110 tasks)
+
+| Family | Model | Version | Score |
+|--------|-------|---------|-------|
+| **Gemma4** | 31b-cloud | — | — |
 
 ### Historical Python runtime scores (125 tasks)
 
@@ -70,7 +76,11 @@ The table below shows historical scores from the original Python runtime (125 ta
 | | chat | — |
 | | reasoner | — |
 
-## Category Breakdown
+## Rust Category Breakdown (110 tasks)
+
+A per-category breakdown will be populated after each model run completes.
+
+## Historical Python Category Breakdown (125 tasks)
 
 <table>
 <tr>
