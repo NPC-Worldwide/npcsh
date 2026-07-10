@@ -140,7 +140,7 @@ def get_npc_mentions(state: Any) -> List[str]:
         npcs.add(f'@{state.team.forenpc.name}')
 
     if not npcs:
-        npcs.update(['@sibiji', '@guac', '@corca', '@kadiefa', '@plonk', '@forenpc'])
+        npcs.update(['@sibiji', '@corca', '@kadiefa', '@plonk', '@forenpc'])
 
     return sorted(npcs)
 

@@ -75,8 +75,6 @@ npcsh> /jinxes
 
 ---
 
----
-
 ## Info
 
 | Command | Description |
