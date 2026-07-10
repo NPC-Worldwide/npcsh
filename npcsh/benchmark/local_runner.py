@@ -224,6 +224,8 @@ def _run_npcsh_attempt(
     env["NPCSH_CHAT_PROVIDER"] = provider
     env["NPCSH_DEBUG"] = "1"
     env["NPCSH_STREAM_OUTPUT"] = "1"
+    env["NPCSH_ACCEPT_PERMISSIONS"] = "1"
+    env["NPCSH_CWD"] = work_dir
 
     # local_runner passes the instruction as a positional arg. The current Rust binary
     # expects either an .nsh script file or interactive input, so write a temp .nsh.
