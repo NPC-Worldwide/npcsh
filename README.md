@@ -222,18 +222,6 @@ All formats inherit the team's default model/provider from `team.ctx` when not s
 
 Full guides and API reference at [npc-shell.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/).
 
-## Links
-
-- **[npcpy](https://github.com/cagostino/npcpy)** — Python framework for building AI agents and teams
-- **[Incognide](https://github.com/npc-worldwide/incognide)** — Desktop workspace for the NPC Toolkit ([download](https://enpisi.com/incognide))
-- **[Newsletter](https://forms.gle/n1NzQmwjsV4xv1B2A)** — Stay in the loop
-
-## Research
-
-- Quantum-like nature of natural language interpretation: [arxiv](https://arxiv.org/abs/2506.10077), accepted at [QNLP 2025](https://qnlp.ai)
-- Simulating hormonal cycles for AI: [arxiv](https://arxiv.org/abs/2508.11829)
-- ALARA for Agents: [arxiv](https://arxiv.org/abs/2603.20380)
-
 ## Community & Support
 
 [Discord](https://discord.gg/XrjTFmDAna) | [Monthly donation](https://buymeacoffee.com/npcworldwide) | [Merch](https://enpisi.com/shop) | Consulting: info@npcworldwi.de
