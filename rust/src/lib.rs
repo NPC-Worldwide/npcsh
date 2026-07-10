@@ -162,7 +162,9 @@ pub fn resolve_team_layout() -> Option<String> {
 }
 
 pub async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
-    use npcrs::npc_compiler::{execute_jinx, load_jinx_from_file, Jinx};
+    use npcrs::npc_compiler::{
+        execute_jinx_with_npc, load_jinx_from_file, load_team_from_directory, Jinx,
+    };
 
     let jinx = load_jinx_from_file(jinx_file)?;
 
@@ -178,21 +180,39 @@ pub async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
         }
     }
 
+    // Boot the full team like npcpy does, so every sub-jinx and the lead NPC are available.
     let mut available_jinxes: std::collections::HashMap<String, Jinx> =
         std::collections::HashMap::new();
-    if let Some(parent) = std::path::Path::new(jinx_file).parent() {
-        if let Ok(entries) = std::fs::read_dir(parent) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("jinx") {
-                    if let Ok(sub) = load_jinx_from_file(&path) {
-                        available_jinxes.insert(sub.name.clone(), sub);
+    let mut npc: Option<npcrs::npc_compiler::NPC> = None;
+
+    if let Some(team_dir) = resolve_team_layout() {
+        if let Ok(team) = load_team_from_directory(&team_dir) {
+            available_jinxes = team.jinxes.clone();
+            if let Some(lead) = team.lead_npc().cloned() {
+                let mut lead = lead;
+                lead.team = Some(Box::new(team.clone()));
+                npc = Some(lead);
+            }
+        }
+    }
+
+    // Fallback: at least expose sibling .jinx files if no team was found.
+    if available_jinxes.is_empty() {
+        if let Some(parent) = std::path::Path::new(jinx_file).parent() {
+            if let Ok(entries) = std::fs::read_dir(parent) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("jinx") {
+                        if let Ok(sub) = load_jinx_from_file(&path) {
+                            available_jinxes.insert(sub.name.clone(), sub);
+                        }
                     }
                 }
             }
         }
     }
-    let result = execute_jinx(&jinx, &input_values, &available_jinxes).await?;
+
+    let result = execute_jinx_with_npc(&jinx, &input_values, &available_jinxes, npc.as_ref()).await?;
 
     if !result.output.is_empty() {
         println!("{}", result.output);
