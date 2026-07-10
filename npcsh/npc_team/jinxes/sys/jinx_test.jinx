@@ -13,7 +13,7 @@ steps:
     code: |
       import sys
       from pathlib import Path
-      from npcpy.jinx_tester import run_all_tests, print_report, write_report_csv
+      from npcsh.jinx_tester import run_all_tests, print_report, write_report_csv
 
       team_path = npc.team.team_path if npc and npc.team and npc.team.team_path else "~/.npcsh/npc_team"
       team_path = Path(team_path).expanduser()
