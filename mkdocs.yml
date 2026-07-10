@@ -34,9 +34,12 @@ nav:
   - Home: index.md
   - Installation: installation.md
   - 'Using npcsh, the NPC Shell': npcsh.md
+  - 'NPC CLI': npc_cli.md
   - 'Using alicanto': alicanto.md
   - 'Using pti': pti.md
   - 'Using spool': spool.md
   - 'Using wander': wander.md
   - 'Using yap': yap.md
+  - 'Skills': skills.md
+  - 'Benchmarks': benchmarks.md
   - TLDR Cheat Sheet: TLDR_Cheat_sheet.md
