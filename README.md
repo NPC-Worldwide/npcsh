@@ -17,109 +17,29 @@
 
 ---
 
-`npcsh` is an agentic shell for building, orchestrating, and interacting with teams of AI agents from the terminal. Instead of treating AI as a single chat window, `npcsh` gives you a **declarative data layer** for defining agents, tools, context, and workflows as plain files in a project directory. The shell then compiles that data into a live team you can chat with, delegate to, schedule, or serve over an API.
+`npcsh` makes the most of LLMs and agents through an interactive shell and one-off CLI. Build teams of agents, schedule them on jobs, engineer context, and design custom Jinja Execution templates (Jinxes) for your agents to invoke.
 
-The fastest way to try it:
+Install `npcsh`:
 
 ```bash
 curl -fsSL https://enpisi.com/install-npcsh.sh | sh
 npcsh
 ```
 
-Then ask for help, edit files, search the web, or just chat:
-
+Ask a question:
 ```bash
-npcsh> can you help me identify what process is listening on port 5337?
-npcsh> please read through the markdown files in the docs folder and suggest changes
+npcsh> what process is listening on port 5337?
 ```
 
----
-
-## The NPC Data Layer
-
-Everything in `npcsh` is built around a small set of file types in an `npc_team/` directory. This lets you treat agents, tools, and context as data that can be versioned, shared, and composed across projects.
-
-| File | Purpose |
-|------|---------|
-| **`.npc`** | Agent definitions (persona, directive, model, provider, available tools). Executable with a shebang. |
-| **`.jinx`** | Jinja execution templates — reusable tools/workflows that agents invoke like functions. |
-| **`.ctx`** | Team context: default model/provider, forenpc (orchestrator), MCP servers, env vars, shared memory. |
-
-A minimal project looks like this:
-
-```
-npc_team/
-├── team.ctx            # team config + forenpc
-├── sibiji.npc          # orchestrator
-├── corca.npc           # coding specialist
-├── agents.md           # optional bulk agent definitions
-├── agents/             # optional one-agent-per-file markdown
-├── jinxes/
-│   ├── skills/
-│   │   └── debugging/
-│   │       └── SKILL.md
-│   └── my_tool.jinx
-└── models/
-    └── daily_summary.sql
-```
-
-Because these are ordinary files, you can:
-
-- Check an entire agent team into git.
-- Share reusable jinxes/skills across projects.
-- Drop in `agents.md` or `agents/` folders from other tools (Claude Code, Codex, etc.) and `npcsh` picks them up.
-- Switch models, providers, or whole team configurations without touching code.
-
-## Build Your Own Tools
-
-Jinxes are the main extension point. A jinx is a YAML file that describes inputs, a prompt template, and one or more execution steps. They are invoked as slash commands and can call other jinxes, run Python or shell, query the local DB, or call LLMs.
-
-```yaml
-# jinxes/hello.jinx
-jinx_name: hello
-description: Greet someone by name.
-inputs:
-  - name
-steps:
-  - engine: llm
-    prompt: |
-      Say a warm, personalized hello to {{ name }}.
-```
-
-Use it inside `npcsh`:
-
+Delegate to a coding agent:
 ```bash
-/hello name=world
+npcsh> @corca refactor the auth module and add tests
 ```
 
-Or make it available to agents by adding it to an NPC:
-
-```yaml
-# corca.npc
-name: corca
-primary_directive: You are a coding specialist.
-jinxes:
-  - lib/core/python
-  - lib/core/sh
-  - lib/core/edit_file
-  - hello
+Open the Git TUI after changes:
+```bash
+npcsh> /gitt
 ```
-
-Skills are a special kind of jinx that serve instructional content progressively. A skill like `debugging` can expose sections (`reproduce`, `isolate`, `fix`) so agents only load the methodology they need, keeping token usage low.
-
-## Capabilities
-
-`npcsh` is not a command catalog — it is a runtime for capabilities you define and compose:
-
-- **Agentic shell** — Chat with individual NPCs or the team orchestrator. Switch agents with `/@corca` or invoke one directly.
-- **Custom tools** — Author jinxes and skills for your domain; agents use them automatically.
-- **Multi-agent orchestration** — The forenpc delegates tasks, convenes discussions, and runs review loops across specialized NPCs.
-- **Memory & knowledge graphs** — Conversations feed a memory lifecycle; approved memories can be synthesized into a queryable knowledge graph.
-- **NQL** — SQL models with embedded AI functions that run on SQLite locally and translate to native AI functions on Snowflake, Databricks, and BigQuery.
-- **Computer use** — GUI automation via vision, browser automation, screenshot analysis.
-- **API server** — Serve any NPC team via OpenAI-compatible endpoints (`/serve`).
-- **Scheduling** — Cron jobs, daemons, and triggered workflows.
-- **Model portability** — Switch between Ollama, OpenAI, Anthropic, Gemini, DeepSeek, and any LiteLLM-compatible provider.
 
 ---
 
@@ -260,7 +180,7 @@ export DEEPSEEK_API_KEY="your_key"
 
 ## Agent Formats
 
-`npcsh` supports three ways to define agents inside `npc_team/`. They can be mixed; `.npc` files take precedence if names collide.
+The agent layer can be written in three formats. They can be mixed; `.npc` files take precedence if names collide.
 
 **`.npc` files** — full-featured YAML agent definitions:
 
@@ -295,31 +215,6 @@ You translate content between languages while preserving tone and idiom.
 ```
 
 All formats inherit the team's default model/provider from `team.ctx` when not specified.
-
----
-
-## Launching External Coding Tools with NPC Teams
-
-Your `npc_team/` works beyond `npcsh`. The `npcpy` CLI launchers let you start Claude Code, Codex, Gemini CLI, Aider, Amp, and others as an NPC from your team, injecting that NPC's persona and team awareness.
-
-```bash
-pip install npcpy
-
-npc-claude
-npc-claude --npc corca
-npc-codex --npc researcher
-npc-gemini --npc analyst
-npc-opencode --npc coder
-npc-aider --npc reviewer
-npc-amp --npc writer
-```
-
-For deeper integration (jinxes as MCP tools, team switching), register the NPC plugin:
-
-```bash
-npc-plugin claude
-npc-plugin codex
-```
 
 ---
 

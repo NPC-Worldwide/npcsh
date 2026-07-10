@@ -1,8 +1,8 @@
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::terminal;
 use npcrs::kernel::Kernel;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use crossterm::terminal;
 
 const ONE_WEEK: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
 
@@ -56,11 +56,21 @@ pub fn header_line(out: &mut io::Stdout, cols: usize, text: &str) {
 
 pub fn footer_line(out: &mut io::Stdout, cols: usize, rows: usize, text: &str) {
     let text = text.chars().take(cols).collect::<String>();
-    let _ = write!(out, "\x1b[{};1H\x1b[K\x1b[7m{}\x1b[0m", rows, text.pad(cols));
+    let _ = write!(
+        out,
+        "\x1b[{};1H\x1b[K\x1b[7m{}\x1b[0m",
+        rows,
+        text.pad(cols)
+    );
 }
 
 pub fn hr(out: &mut io::Stdout, cols: usize, row: usize) {
-    let _ = write!(out, "\x1b[{};1H\x1b[K\x1b[90m{}\x1b[0m", row, "─".repeat(cols));
+    let _ = write!(
+        out,
+        "\x1b[{};1H\x1b[K\x1b[90m{}\x1b[0m",
+        row,
+        "─".repeat(cols)
+    );
 }
 
 trait StringPad {
@@ -76,7 +86,10 @@ impl StringPad for str {
     }
 }
 
-fn run_git<P: AsRef<Path>>(repo: P, args: &[&str]) -> std::result::Result<std::process::Output, std::io::Error> {
+fn run_git<P: AsRef<Path>>(
+    repo: P,
+    args: &[&str],
+) -> std::result::Result<std::process::Output, std::io::Error> {
     std::process::Command::new("git")
         .args(args)
         .current_dir(repo.as_ref())
@@ -84,7 +97,9 @@ fn run_git<P: AsRef<Path>>(repo: P, args: &[&str]) -> std::result::Result<std::p
 }
 
 fn git_ok<P: AsRef<Path>>(repo: P, args: &[&str]) -> bool {
-    run_git(repo, args).map(|o| o.status.success()).unwrap_or(false)
+    run_git(repo, args)
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn git_str(output: std::process::Output) -> String {
@@ -95,14 +110,17 @@ fn git_err(output: std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).to_string()
 }
 
-
 pub fn run_config_tui() -> Result<()> {
     let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
     let mut out = io::stdout();
 
     #[derive(Clone)]
-    enum ItemType { Text, Toggle, Choice }
+    enum ItemType {
+        Text,
+        Toggle,
+        Choice,
+    }
     struct Item {
         key: &'static str,
         label: &'static str,
@@ -111,18 +129,78 @@ pub fn run_config_tui() -> Result<()> {
     }
 
     let items: Vec<Item> = vec![
-        Item { key: "NPCSH_CHAT_MODEL", label: "Chat Model", ty: ItemType::Text, choices: &[] },
-        Item { key: "NPCSH_CHAT_PROVIDER", label: "Chat Provider", ty: ItemType::Text, choices: &[] },
-        Item { key: "NPCSH_VISION_MODEL", label: "Vision Model", ty: ItemType::Text, choices: &[] },
-        Item { key: "NPCSH_VISION_PROVIDER", label: "Vision Provider", ty: ItemType::Text, choices: &[] },
-        Item { key: "NPCSH_EMBEDDING_MODEL", label: "Embedding Model", ty: ItemType::Text, choices: &[] },
-        Item { key: "NPCSH_EMBEDDING_PROVIDER", label: "Embedding Provider", ty: ItemType::Text, choices: &[] },
-        Item { key: "NPCSH_REASONING_MODEL", label: "Reasoning Model", ty: ItemType::Text, choices: &[] },
-        Item { key: "NPCSH_REASONING_PROVIDER", label: "Reasoning Provider", ty: ItemType::Text, choices: &[] },
-        Item { key: "NPCSH_DEFAULT_MODE", label: "Default Mode", ty: ItemType::Choice, choices: &["agent", "chat", "cmd"] },
-        Item { key: "NPCSH_STREAM_OUTPUT", label: "Stream Output", ty: ItemType::Toggle, choices: &[] },
-        Item { key: "NPCSH_BUILD_KG", label: "Build Knowledge Graph", ty: ItemType::Toggle, choices: &[] },
-        Item { key: "NPCSH_SEARCH_PROVIDER", label: "Search Provider", ty: ItemType::Choice, choices: &["duckduckgo", "google", "bing", "perplexity"] },
+        Item {
+            key: "NPCSH_CHAT_MODEL",
+            label: "Chat Model",
+            ty: ItemType::Text,
+            choices: &[],
+        },
+        Item {
+            key: "NPCSH_CHAT_PROVIDER",
+            label: "Chat Provider",
+            ty: ItemType::Text,
+            choices: &[],
+        },
+        Item {
+            key: "NPCSH_VISION_MODEL",
+            label: "Vision Model",
+            ty: ItemType::Text,
+            choices: &[],
+        },
+        Item {
+            key: "NPCSH_VISION_PROVIDER",
+            label: "Vision Provider",
+            ty: ItemType::Text,
+            choices: &[],
+        },
+        Item {
+            key: "NPCSH_EMBEDDING_MODEL",
+            label: "Embedding Model",
+            ty: ItemType::Text,
+            choices: &[],
+        },
+        Item {
+            key: "NPCSH_EMBEDDING_PROVIDER",
+            label: "Embedding Provider",
+            ty: ItemType::Text,
+            choices: &[],
+        },
+        Item {
+            key: "NPCSH_REASONING_MODEL",
+            label: "Reasoning Model",
+            ty: ItemType::Text,
+            choices: &[],
+        },
+        Item {
+            key: "NPCSH_REASONING_PROVIDER",
+            label: "Reasoning Provider",
+            ty: ItemType::Text,
+            choices: &[],
+        },
+        Item {
+            key: "NPCSH_DEFAULT_MODE",
+            label: "Default Mode",
+            ty: ItemType::Choice,
+            choices: &["agent", "chat", "cmd"],
+        },
+        Item {
+            key: "NPCSH_STREAM_OUTPUT",
+            label: "Stream Output",
+            ty: ItemType::Toggle,
+            choices: &[],
+        },
+        Item {
+            key: "NPCSH_BUILD_KG",
+            label: "Build Knowledge Graph",
+            ty: ItemType::Toggle,
+            choices: &[],
+        },
+        Item {
+            key: "NPCSH_SEARCH_PROVIDER",
+            label: "Search Provider",
+            ty: ItemType::Choice,
+            choices: &["duckduckgo", "google", "bing", "perplexity"],
+        },
     ];
 
     let mut values = std::collections::HashMap::<String, String>::new();
@@ -130,12 +208,17 @@ pub fn run_config_tui() -> Result<()> {
         for line in content.lines() {
             let line = line.trim();
             if let Some((k, v)) = line.strip_prefix("export ").and_then(|l| l.split_once('=')) {
-                values.insert(k.to_string(), v.trim_matches('"').trim_matches('\'').to_string());
+                values.insert(
+                    k.to_string(),
+                    v.trim_matches('"').trim_matches('\'').to_string(),
+                );
             }
         }
     }
     for item in &items {
-        values.entry(item.key.to_string()).or_insert_with(|| String::new());
+        values
+            .entry(item.key.to_string())
+            .or_insert_with(|| String::new());
     }
 
     let mut sel: usize = 0;
@@ -151,15 +234,28 @@ pub fn run_config_tui() -> Result<()> {
 
         let start = 4;
         let visible = rows.saturating_sub(start + 3).max(1);
-        if sel >= items.len() { sel = items.len().saturating_sub(1); }
+        if sel >= items.len() {
+            sel = items.len().saturating_sub(1);
+        }
         let scroll = if sel < visible { 0 } else { sel - visible + 1 };
 
         for (i, item) in items.iter().enumerate() {
             let row = start + i.saturating_sub(scroll);
-            if i < scroll || row >= rows - 2 { continue; }
+            if i < scroll || row >= rows - 2 {
+                continue;
+            }
             let val = values.get(item.key).cloned().unwrap_or_default();
             let display_val = match item.ty {
-                ItemType::Toggle => if val == "1" || val.eq_ignore_ascii_case("true") || val.eq_ignore_ascii_case("yes") { "on" } else { "off" },
+                ItemType::Toggle => {
+                    if val == "1"
+                        || val.eq_ignore_ascii_case("true")
+                        || val.eq_ignore_ascii_case("yes")
+                    {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                }
                 _ => val.as_str(),
             };
             let marker = if i == sel { "> " } else { "  " };
@@ -176,22 +272,40 @@ pub fn run_config_tui() -> Result<()> {
             let prompt = format!("{}: ", items[sel].label);
             let mut full = format!("{}{}", prompt, edit_buf);
             let max_len = cols.saturating_sub(4);
-            let display = if full.len() > max_len { full.chars().skip(full.len() - max_len).collect::<String>() } else { full };
-            wline(&mut out, row, &format!("\x1b[90m{}\x1b[0m{}", prompt, display));
+            let display = if full.len() > max_len {
+                full.chars().skip(full.len() - max_len).collect::<String>()
+            } else {
+                full
+            };
+            wline(
+                &mut out,
+                row,
+                &format!("\x1b[90m{}\x1b[0m{}", prompt, display),
+            );
             if let Some(pos) = display.len().checked_sub(edit_buf.len() - edit_cursor + 1) {
                 let _ = write!(out, "\x1b[{};{}H", row, pos + prompt.len() + 1);
             }
         }
 
         hr(&mut out, cols, rows - 2);
-        let foot = if editing { " [Enter] Save  [Esc] Cancel " } else { " [j/k] Nav  [Enter] Edit/Toggle  [s] Save  [q] Quit " };
+        let foot = if editing {
+            " [Enter] Save  [Esc] Cancel "
+        } else {
+            " [j/k] Nav  [Enter] Edit/Toggle  [s] Save  [q] Quit "
+        };
         footer_line(&mut out, cols, rows, foot);
         let _ = out.flush();
 
         if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             match key.code {
-                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
                 KeyCode::Char('q') if !editing => break,
                 KeyCode::Esc => {
                     if editing {
@@ -203,26 +317,50 @@ pub fn run_config_tui() -> Result<()> {
                     }
                 }
                 KeyCode::Char('s') if !editing => {
-                    let mut lines: Vec<String> = items.iter().map(|item| {
-                        let val = values.get(item.key).cloned().unwrap_or_default();
-                        format!("export {}={}", item.key, val)
-                    }).collect();
+                    let mut lines: Vec<String> = items
+                        .iter()
+                        .map(|item| {
+                            let val = values.get(item.key).cloned().unwrap_or_default();
+                            format!("export {}={}", item.key, val)
+                        })
+                        .collect();
                     let extra = if let Ok(content) = std::fs::read_to_string(&rc_path) {
-                        content.lines().filter(|l| {
-                            let trimmed = l.trim();
-                            !trimmed.is_empty() && !items.iter().any(|item| trimmed.starts_with(&format!("export {}", item.key)))
-                        }).map(|l| l.to_string()).collect::<Vec<_>>()
-                    } else { Vec::new() };
+                        content
+                            .lines()
+                            .filter(|l| {
+                                let trimmed = l.trim();
+                                !trimmed.is_empty()
+                                    && !items.iter().any(|item| {
+                                        trimmed.starts_with(&format!("export {}", item.key))
+                                    })
+                            })
+                            .map(|l| l.to_string())
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    };
                     lines.extend(extra);
                     let _ = std::fs::write(&rc_path, lines.join("\n") + "\n");
                 }
-                KeyCode::Char('j') | KeyCode::Down if !editing => { if sel + 1 < items.len() { sel += 1; } }
-                KeyCode::Char('k') | KeyCode::Up if !editing => { if sel > 0 { sel -= 1; } }
+                KeyCode::Char('j') | KeyCode::Down if !editing => {
+                    if sel + 1 < items.len() {
+                        sel += 1;
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up if !editing => {
+                    if sel > 0 {
+                        sel -= 1;
+                    }
+                }
                 KeyCode::Enter => {
                     let item = &items[sel];
                     if matches!(item.ty, ItemType::Toggle) {
                         let current = values.get(item.key).cloned().unwrap_or_default();
-                        let next = if current == "1" || current.eq_ignore_ascii_case("true") { "0" } else { "1" };
+                        let next = if current == "1" || current.eq_ignore_ascii_case("true") {
+                            "0"
+                        } else {
+                            "1"
+                        };
                         values.insert(item.key.to_string(), next.to_string());
                     } else if matches!(item.ty, ItemType::Choice) {
                         let current = values.get(item.key).cloned().unwrap_or_default();
@@ -248,8 +386,12 @@ pub fn run_config_tui() -> Result<()> {
                     edit_cursor -= 1;
                     edit_buf.remove(edit_cursor);
                 }
-                KeyCode::Left if editing && edit_cursor > 0 => { edit_cursor -= 1; }
-                KeyCode::Right if editing && edit_cursor < edit_buf.len() => { edit_cursor += 1; }
+                KeyCode::Left if editing && edit_cursor > 0 => {
+                    edit_cursor -= 1;
+                }
+                KeyCode::Right if editing && edit_cursor < edit_buf.len() => {
+                    edit_cursor += 1;
+                }
                 _ => {}
             }
         }
@@ -257,18 +399,33 @@ pub fn run_config_tui() -> Result<()> {
     Ok(())
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum GitTab { Status, Log, Branches, Stash, Diff }
+enum GitTab {
+    Status,
+    Log,
+    Branches,
+    Stash,
+    Diff,
+}
 
 #[derive(Clone)]
-struct GitFile { path: String, staged: bool, modified: bool, untracked: bool }
+struct GitFile {
+    path: String,
+    staged: bool,
+    modified: bool,
+    untracked: bool,
+}
 
 pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
-    let repo = path.map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let repo = path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let repo_str = repo.to_string_lossy().to_string();
     if !git_ok(&repo, &["rev-parse", "--is-inside-work-tree"]) {
-        return Err(npcrs::NpcError::Other(format!("{} is not a git repository", repo_str)));
+        return Err(npcrs::NpcError::Other(format!(
+            "{} is not a git repository",
+            repo_str
+        )));
     }
 
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
@@ -287,45 +444,90 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
     let mut detail = false;
     let mut detail_scroll: usize = 0;
 
-    let refresh = |t: &GitTab, f: &mut Vec<GitFile>, b: &mut Vec<(String, bool)>, s: &mut Vec<String>, l: &mut Vec<String>, d: &mut Vec<String>, st: &mut String, repo: &PathBuf| {
+    let refresh = |t: &GitTab,
+                   f: &mut Vec<GitFile>,
+                   b: &mut Vec<(String, bool)>,
+                   s: &mut Vec<String>,
+                   l: &mut Vec<String>,
+                   d: &mut Vec<String>,
+                   st: &mut String,
+                   repo: &PathBuf| {
         match t {
             GitTab::Status => {
                 f.clear();
-                let out = run_git(repo, &["status", "--porcelain=v1", "-u"]).ok().map(git_str).unwrap_or_default();
+                let out = run_git(repo, &["status", "--porcelain=v1", "-u"])
+                    .ok()
+                    .map(git_str)
+                    .unwrap_or_default();
                 for line in out.lines() {
-                    if line.len() < 3 { continue; }
+                    if line.len() < 3 {
+                        continue;
+                    }
                     let idx = &line[..2];
                     let path = line[3..].to_string();
-                    f.push(GitFile { path, staged: idx.starts_with('A') || idx.starts_with('M') || idx.starts_with('D') || idx.starts_with('R'), modified: idx.chars().nth(1).map(|c| c == 'M' || c == 'D').unwrap_or(false), untracked: idx == "??" });
+                    f.push(GitFile {
+                        path,
+                        staged: idx.starts_with('A')
+                            || idx.starts_with('M')
+                            || idx.starts_with('D')
+                            || idx.starts_with('R'),
+                        modified: idx
+                            .chars()
+                            .nth(1)
+                            .map(|c| c == 'M' || c == 'D')
+                            .unwrap_or(false),
+                        untracked: idx == "??",
+                    });
                 }
                 *st = format!("{} files", f.len());
             }
             GitTab::Log => {
                 l.clear();
-                let out = run_git(repo, &["log", "--oneline", "--decorate", "-n", "100"]).ok().map(git_str).unwrap_or_default();
+                let out = run_git(repo, &["log", "--oneline", "--decorate", "-n", "100"])
+                    .ok()
+                    .map(git_str)
+                    .unwrap_or_default();
                 l.extend(out.lines().map(|s| s.to_string()));
                 *st = format!("{} commits", l.len());
             }
             GitTab::Branches => {
                 b.clear();
-                let out = run_git(repo, &["branch", "-vv"]).ok().map(git_str).unwrap_or_default();
+                let out = run_git(repo, &["branch", "-vv"])
+                    .ok()
+                    .map(git_str)
+                    .unwrap_or_default();
                 for line in out.lines() {
                     let current = line.starts_with('*');
-                    let name = line.trim_start_matches('*').trim_start().split_whitespace().next().unwrap_or("?").to_string();
+                    let name = line
+                        .trim_start_matches('*')
+                        .trim_start()
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("?")
+                        .to_string();
                     b.push((name, current));
                 }
                 *st = format!("{} branches", b.len());
             }
             GitTab::Stash => {
                 s.clear();
-                let out = run_git(repo, &["stash", "list"]).ok().map(git_str).unwrap_or_default();
+                let out = run_git(repo, &["stash", "list"])
+                    .ok()
+                    .map(git_str)
+                    .unwrap_or_default();
                 s.extend(out.lines().map(|s| s.to_string()));
                 *st = format!("{} stashes", s.len());
             }
             GitTab::Diff => {
                 d.clear();
-                let out = run_git(repo, &["diff", "--cached"]).ok().map(git_str).unwrap_or_default();
-                let out2 = run_git(repo, &["diff"]).ok().map(git_str).unwrap_or_default();
+                let out = run_git(repo, &["diff", "--cached"])
+                    .ok()
+                    .map(git_str)
+                    .unwrap_or_default();
+                let out2 = run_git(repo, &["diff"])
+                    .ok()
+                    .map(git_str)
+                    .unwrap_or_default();
                 let full = if out.is_empty() { out2 } else { out };
                 d.extend(full.lines().map(|s| s.to_string()));
                 *st = format!("{} lines", d.len());
@@ -333,7 +535,16 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
         }
     };
 
-    refresh(&tab, &mut files, &mut branches, &mut stash, &mut log, &mut diff_text, &mut status, &repo);
+    refresh(
+        &tab,
+        &mut files,
+        &mut branches,
+        &mut stash,
+        &mut log,
+        &mut diff_text,
+        &mut status,
+        &repo,
+    );
 
     loop {
         let (cols, rows) = term_size();
@@ -344,9 +555,20 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
                 GitTab::Status => {
                     let f = files.get(sel);
                     if let Some(f) = f {
-                        let diff = if f.staged { run_git(&repo, &["diff", "--cached", "--", &f.path]) } else { run_git(&repo, &["diff", "--", &f.path]) };
-                        diff.ok().map(git_str).unwrap_or_default().lines().map(|s| s.to_string()).collect()
-                    } else { Vec::new() }
+                        let diff = if f.staged {
+                            run_git(&repo, &["diff", "--cached", "--", &f.path])
+                        } else {
+                            run_git(&repo, &["diff", "--", &f.path])
+                        };
+                        diff.ok()
+                            .map(git_str)
+                            .unwrap_or_default()
+                            .lines()
+                            .map(|s| s.to_string())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
                 }
                 _ => diff_text.clone(),
             };
@@ -358,13 +580,19 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
             for r in 0..body_h {
                 let idx = detail_scroll + r;
                 let row = 5 + r;
-                if idx >= lines.len() { wline(&mut out, row, ""); }
-                else {
+                if idx >= lines.len() {
+                    wline(&mut out, row, "");
+                } else {
                     let line = &lines[idx];
-                    let rendered = if line.starts_with('+') { format!("\x1b[32m{}\x1b[0m", line) }
-                        else if line.starts_with('-') { format!("\x1b[31m{}\x1b[0m", line) }
-                        else if line.starts_with("@@") { format!("\x1b[36m{}\x1b[0m", line) }
-                        else { line.to_string() };
+                    let rendered = if line.starts_with('+') {
+                        format!("\x1b[32m{}\x1b[0m", line)
+                    } else if line.starts_with('-') {
+                        format!("\x1b[31m{}\x1b[0m", line)
+                    } else if line.starts_with("@@") {
+                        format!("\x1b[36m{}\x1b[0m", line)
+                    } else {
+                        line.to_string()
+                    };
                     let truncated = rendered.chars().take(cols).collect::<String>();
                     wline(&mut out, row, &format!("  {}", truncated));
                 }
@@ -379,9 +607,14 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
                 GitTab::Stash => stash.len(),
                 GitTab::Diff => diff_text.len(),
             };
-            if sel >= items && items > 0 { sel = items - 1; }
-            if sel < scroll { scroll = sel; }
-            else if sel >= scroll + body_h { scroll = sel.saturating_sub(body_h).saturating_add(1); }
+            if sel >= items && items > 0 {
+                sel = items - 1;
+            }
+            if sel < scroll {
+                scroll = sel;
+            } else if sel >= scroll + body_h {
+                scroll = sel.saturating_sub(body_h).saturating_add(1);
+            }
 
             clear_all(&mut out);
             header_line(&mut out, cols, " gitt ");
@@ -405,78 +638,189 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
                     }
                 })
                 .collect::<String>();
-            wline(&mut out, 3, &format!("  {} | {} |{}", repo_str, status, tabs));
+            wline(
+                &mut out,
+                3,
+                &format!("  {} | {} |{}", repo_str, status, tabs),
+            );
             hr(&mut out, cols, 4);
 
             for r in 0..body_h {
                 let idx = scroll + r;
                 let row = 5 + r;
-                if idx >= items { wline(&mut out, row, ""); continue; }
+                if idx >= items {
+                    wline(&mut out, row, "");
+                    continue;
+                }
                 let text = match tab {
                     GitTab::Status => {
                         let f = &files[idx];
-                        let marker = if f.staged { "A" } else if f.untracked { "?" } else { "M" };
+                        let marker = if f.staged {
+                            "A"
+                        } else if f.untracked {
+                            "?"
+                        } else {
+                            "M"
+                        };
                         format!("[{}] {}", marker, f.path)
                     }
                     GitTab::Log => log[idx].clone(),
                     GitTab::Branches => {
                         let (name, current) = &branches[idx];
-                        if *current { format!("* {}", name) } else { format!("  {}", name) }
+                        if *current {
+                            format!("* {}", name)
+                        } else {
+                            format!("  {}", name)
+                        }
                     }
                     GitTab::Stash => stash[idx].clone(),
                     GitTab::Diff => diff_text[idx].clone(),
                 };
-                let truncated = text.chars().take(cols.saturating_sub(4)).collect::<String>();
-                if idx == sel { wline(&mut out, row, &format!("\x1b[7m  > {}\x1b[0m", truncated).pad(cols)); }
-                else { wline(&mut out, row, &format!("    {}", truncated)); }
+                let truncated = text
+                    .chars()
+                    .take(cols.saturating_sub(4))
+                    .collect::<String>();
+                if idx == sel {
+                    wline(
+                        &mut out,
+                        row,
+                        &format!("\x1b[7m  > {}\x1b[0m", truncated).pad(cols),
+                    );
+                } else {
+                    wline(&mut out, row, &format!("    {}", truncated));
+                }
             }
             hr(&mut out, cols, rows - 2);
-            footer_line(&mut out, cols, rows, " [Tab] Switch  [j/k] Nav  [Enter] Diff/Stage  [s] Stage  [u] Unstage  [c] Commit  [q] Quit ");
+            footer_line(
+                &mut out,
+                cols,
+                rows,
+                " [Tab] Switch  [j/k] Nav  [Enter] Diff/Stage  [s] Stage  [u] Unstage  [c] Commit  [q] Quit ",
+            );
         }
 
         let _ = out.flush();
 
         if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             match key.code {
-                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
-                KeyCode::Esc => { if detail { detail = false; detail_scroll = 0; } else { break; } }
-                KeyCode::Char('q') => { if detail { detail = false; detail_scroll = 0; } else { break; } }
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
+                KeyCode::Esc => {
+                    if detail {
+                        detail = false;
+                        detail_scroll = 0;
+                    } else {
+                        break;
+                    }
+                }
+                KeyCode::Char('q') => {
+                    if detail {
+                        detail = false;
+                        detail_scroll = 0;
+                    } else {
+                        break;
+                    }
+                }
                 KeyCode::Tab => {
-                    let tabs = [GitTab::Status, GitTab::Log, GitTab::Branches, GitTab::Stash, GitTab::Diff];
+                    let tabs = [
+                        GitTab::Status,
+                        GitTab::Log,
+                        GitTab::Branches,
+                        GitTab::Stash,
+                        GitTab::Diff,
+                    ];
                     let idx = tabs.iter().position(|t| t == &tab).unwrap_or(0);
                     tab = tabs[(idx + 1) % tabs.len()];
-                    sel = 0; scroll = 0; detail = matches!(tab, GitTab::Diff);
-                    refresh(&tab, &mut files, &mut branches, &mut stash, &mut log, &mut diff_text, &mut status, &repo);
+                    sel = 0;
+                    scroll = 0;
+                    detail = matches!(tab, GitTab::Diff);
+                    refresh(
+                        &tab,
+                        &mut files,
+                        &mut branches,
+                        &mut stash,
+                        &mut log,
+                        &mut diff_text,
+                        &mut status,
+                        &repo,
+                    );
                 }
                 KeyCode::BackTab => {
-                    let tabs = [GitTab::Status, GitTab::Log, GitTab::Branches, GitTab::Stash, GitTab::Diff];
+                    let tabs = [
+                        GitTab::Status,
+                        GitTab::Log,
+                        GitTab::Branches,
+                        GitTab::Stash,
+                        GitTab::Diff,
+                    ];
                     let idx = tabs.iter().position(|t| t == &tab).unwrap_or(0);
                     tab = tabs[(idx + tabs.len() - 1) % tabs.len()];
-                    sel = 0; scroll = 0; detail = matches!(tab, GitTab::Diff);
-                    refresh(&tab, &mut files, &mut branches, &mut stash, &mut log, &mut diff_text, &mut status, &repo);
+                    sel = 0;
+                    scroll = 0;
+                    detail = matches!(tab, GitTab::Diff);
+                    refresh(
+                        &tab,
+                        &mut files,
+                        &mut branches,
+                        &mut stash,
+                        &mut log,
+                        &mut diff_text,
+                        &mut status,
+                        &repo,
+                    );
                 }
                 KeyCode::Char('j') | KeyCode::Down => {
                     if detail {
-                        let lines = match tab { GitTab::Diff => diff_text.len(), _ => files.get(sel).map(|_| 1000).unwrap_or(0) };
-                        if detail_scroll + 1 < lines { detail_scroll += 1; }
+                        let lines = match tab {
+                            GitTab::Diff => diff_text.len(),
+                            _ => files.get(sel).map(|_| 1000).unwrap_or(0),
+                        };
+                        if detail_scroll + 1 < lines {
+                            detail_scroll += 1;
+                        }
                     } else {
-                        let items = match tab { GitTab::Status => files.len(), GitTab::Log => log.len(), GitTab::Branches => branches.len(), GitTab::Stash => stash.len(), GitTab::Diff => diff_text.len() };
-                        if sel + 1 < items { sel += 1; }
+                        let items = match tab {
+                            GitTab::Status => files.len(),
+                            GitTab::Log => log.len(),
+                            GitTab::Branches => branches.len(),
+                            GitTab::Stash => stash.len(),
+                            GitTab::Diff => diff_text.len(),
+                        };
+                        if sel + 1 < items {
+                            sel += 1;
+                        }
                     }
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
-                    if detail { detail_scroll = detail_scroll.saturating_sub(1); }
-                    else if sel > 0 { sel -= 1; }
+                    if detail {
+                        detail_scroll = detail_scroll.saturating_sub(1);
+                    } else if sel > 0 {
+                        sel -= 1;
+                    }
                 }
                 KeyCode::Enter => {
                     if tab == GitTab::Status {
                         detail = !detail;
                         detail_scroll = 0;
                     } else if tab == GitTab::Log {
-                        let commit = log.get(sel).and_then(|l| l.split_whitespace().next()).map(|s| s.to_string());
+                        let commit = log
+                            .get(sel)
+                            .and_then(|l| l.split_whitespace().next())
+                            .map(|s| s.to_string());
                         if let Some(commit) = commit {
-                            diff_text = run_git(&repo, &["show", "--stat", &commit]).ok().map(git_str).unwrap_or_default().lines().map(|s| s.to_string()).collect();
+                            diff_text = run_git(&repo, &["show", "--stat", &commit])
+                                .ok()
+                                .map(git_str)
+                                .unwrap_or_default()
+                                .lines()
+                                .map(|s| s.to_string())
+                                .collect();
                             detail = true;
                             detail_scroll = 0;
                         }
@@ -486,7 +830,16 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
                     if tab == GitTab::Status {
                         if let Some(f) = files.get(sel) {
                             let _ = run_git(&repo, &["add", "--", &f.path]);
-                            refresh(&tab, &mut files, &mut branches, &mut stash, &mut log, &mut diff_text, &mut status, &repo);
+                            refresh(
+                                &tab,
+                                &mut files,
+                                &mut branches,
+                                &mut stash,
+                                &mut log,
+                                &mut diff_text,
+                                &mut status,
+                                &repo,
+                            );
                         }
                     }
                 }
@@ -494,7 +847,16 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
                     if tab == GitTab::Status {
                         if let Some(f) = files.get(sel) {
                             let _ = run_git(&repo, &["reset", "HEAD", "--", &f.path]);
-                            refresh(&tab, &mut files, &mut branches, &mut stash, &mut log, &mut diff_text, &mut status, &repo);
+                            refresh(
+                                &tab,
+                                &mut files,
+                                &mut branches,
+                                &mut stash,
+                                &mut log,
+                                &mut diff_text,
+                                &mut status,
+                                &repo,
+                            );
                         }
                     }
                 }
@@ -514,7 +876,16 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
                         let _ = terminal::enable_raw_mode();
                         let _ = io::stdout().write_all(b"\x1b[?1049h\x1b[?25l");
                         let _ = io::stdout().flush();
-                        refresh(&tab, &mut files, &mut branches, &mut stash, &mut log, &mut diff_text, &mut status, &repo);
+                        refresh(
+                            &tab,
+                            &mut files,
+                            &mut branches,
+                            &mut stash,
+                            &mut log,
+                            &mut diff_text,
+                            &mut status,
+                            &repo,
+                        );
                     }
                 }
                 _ => {}
@@ -524,20 +895,39 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-
 #[derive(Clone)]
-struct ModelEntry { provider: String, id: String, name: String }
+struct ModelEntry {
+    provider: String,
+    id: String,
+    name: String,
+}
 
 fn api_key_hash() -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let keys = [
-        "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY",
-        "GROQ_API_KEY", "MISTRAL_API_KEY", "XAI_API_KEY", "PERPLEXITY_API_KEY",
-        "TOGETHER_API_KEY", "FIREWORKS_API_KEY", "CEREBRAS_API_KEY", "AI21_API_KEY",
-        "AZURE_API_KEY", "COHERE_API_KEY", "OPENROUTER_API_KEY", "NOVITA_API_KEY",
-        "HYPERBOLIC_API_KEY", "SAMBANOVA_API_KEY", "NEBIUS_API_KEY", "MOONSHOT_API_KEY",
-        "OLLAMA_HOST", "GGUF_DIR",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "XAI_API_KEY",
+        "PERPLEXITY_API_KEY",
+        "TOGETHER_API_KEY",
+        "FIREWORKS_API_KEY",
+        "CEREBRAS_API_KEY",
+        "AI21_API_KEY",
+        "AZURE_API_KEY",
+        "COHERE_API_KEY",
+        "OPENROUTER_API_KEY",
+        "NOVITA_API_KEY",
+        "HYPERBOLIC_API_KEY",
+        "SAMBANOVA_API_KEY",
+        "NEBIUS_API_KEY",
+        "MOONSHOT_API_KEY",
+        "OLLAMA_HOST",
+        "GGUF_DIR",
     ];
     let mut hasher = DefaultHasher::new();
     for key in keys {
@@ -547,8 +937,12 @@ fn api_key_hash() -> String {
     format!("{:x}", hasher.finish())
 }
 
-fn detect_models(providers: &mut Vec<String>, models: &mut std::collections::HashMap<String, Vec<String>>) {
-    providers.clear(); models.clear();
+fn detect_models(
+    providers: &mut Vec<String>,
+    models: &mut std::collections::HashMap<String, Vec<String>>,
+) {
+    providers.clear();
+    models.clear();
 
     let cache_path = shellexpand::tilde("~/.npcsh/available_models.yaml").to_string();
     let key_hash = api_key_hash();
@@ -559,13 +953,16 @@ fn detect_models(providers: &mut Vec<String>, models: &mut std::collections::Has
         let cached_hash = parsed.get("key_hash")?.as_str()?.to_string();
         let ts = parsed.get("timestamp")?.as_u64()?;
         let arr = parsed.get("models")?.as_sequence()?;
-        let entries = arr.iter().filter_map(|v| {
-            Some(ModelEntry {
-                provider: v.get("provider")?.as_str()?.to_string(),
-                id: v.get("id")?.as_str()?.to_string(),
-                name: v.get("name")?.as_str()?.to_string(),
+        let entries = arr
+            .iter()
+            .filter_map(|v| {
+                Some(ModelEntry {
+                    provider: v.get("provider")?.as_str()?.to_string(),
+                    id: v.get("id")?.as_str()?.to_string(),
+                    name: v.get("name")?.as_str()?.to_string(),
+                })
             })
-        }).collect();
+            .collect();
         Some((entries, cached_hash, ts))
     })();
 
@@ -577,7 +974,9 @@ fn detect_models(providers: &mut Vec<String>, models: &mut std::collections::Has
         if cached_hash == key_hash && now.saturating_sub(ts) < ONE_WEEK.as_secs() {
             for e in entries {
                 models.entry(e.provider.clone()).or_default().push(e.id);
-                if !providers.contains(&e.provider) { providers.push(e.provider); }
+                if !providers.contains(&e.provider) {
+                    providers.push(e.provider);
+                }
             }
             sort_providers_and_models(providers, models);
             return;
@@ -620,10 +1019,15 @@ print(json.dumps(out))
         .output()
     {
         if output.status.success() {
-            if let Ok(parsed) = serde_json::from_slice::<std::collections::HashMap<String, Vec<String>>>(&output.stdout) {
+            if let Ok(parsed) = serde_json::from_slice::<
+                std::collections::HashMap<String, Vec<String>>,
+            >(&output.stdout)
+            {
                 for (p, ms) in parsed {
                     models.entry(p.clone()).or_default().extend(ms);
-                    if !providers.contains(&p) { providers.push(p); }
+                    if !providers.contains(&p) {
+                        providers.push(p);
+                    }
                 }
             }
         }
@@ -653,21 +1057,35 @@ print(json.dumps(out))
         .collect();
     cache_yaml.insert("models".into(), models_yaml);
     let _ = std::fs::create_dir_all(Path::new(&cache_path).parent().unwrap_or(Path::new(".")));
-    let _ = std::fs::write(&cache_path, serde_yaml::to_string(&cache_yaml).unwrap_or_default());
+    let _ = std::fs::write(
+        &cache_path,
+        serde_yaml::to_string(&cache_yaml).unwrap_or_default(),
+    );
 }
 
-fn sort_providers_and_models(providers: &mut Vec<String>, models: &mut std::collections::HashMap<String, Vec<String>>) {
+fn sort_providers_and_models(
+    providers: &mut Vec<String>,
+    models: &mut std::collections::HashMap<String, Vec<String>>,
+) {
     providers.sort_by_key(|p| {
-        if is_local_provider(p) { (0, p.clone()) }
-        else if is_cli_provider(p) { (1, p.clone()) }
-        else { (2, p.clone()) }
+        if is_local_provider(p) {
+            (0, p.clone())
+        } else if is_cli_provider(p) {
+            (1, p.clone())
+        } else {
+            (2, p.clone())
+        }
     });
-    for ms in models.values_mut() { ms.sort(); ms.dedup(); }
+    for ms in models.values_mut() {
+        ms.sort();
+        ms.dedup();
+    }
 }
 
 fn detect_models_list() -> Vec<ModelEntry> {
     let mut providers: Vec<String> = Vec::new();
-    let mut models: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut models: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     detect_models(&mut providers, &mut models);
     providers
         .into_iter()
@@ -675,7 +1093,11 @@ fn detect_models_list() -> Vec<ModelEntry> {
             let ms = models.remove(&p).unwrap_or_default();
             ms.into_iter().map(move |m| {
                 let name = m.split('/').last().unwrap_or(&m).to_string();
-                ModelEntry { provider: p.clone(), id: m, name }
+                ModelEntry {
+                    provider: p.clone(),
+                    id: m,
+                    name,
+                }
             })
         })
         .collect()
@@ -686,7 +1108,8 @@ pub fn run_model_tui() -> Result<()> {
     let mut out = io::stdout();
 
     let mut providers: Vec<String> = Vec::new();
-    let mut provider_models: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut provider_models: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     let mut chat_model = std::env::var("NPCSH_CHAT_MODEL").unwrap_or_default();
     let mut chat_provider = std::env::var("NPCSH_CHAT_PROVIDER").unwrap_or_default();
     let mut level = 0;
@@ -698,7 +1121,8 @@ pub fn run_model_tui() -> Result<()> {
     let (detect_tx, detect_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut providers: Vec<String> = Vec::new();
-        let mut models: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        let mut models: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         detect_models(&mut providers, &mut models);
         let _ = detect_tx.send((providers, models));
     });
@@ -713,17 +1137,36 @@ pub fn run_model_tui() -> Result<()> {
                 providers = p;
                 provider_models = m;
                 detected = true;
-                if providers.is_empty() { status = "No providers detected.".to_string(); }
-                else { status = format!("Found {} providers, {} models", providers.len(), provider_models.values().map(|v| v.len()).sum::<usize>()); }
+                if providers.is_empty() {
+                    status = "No providers detected.".to_string();
+                } else {
+                    status = format!(
+                        "Found {} providers, {} models",
+                        providers.len(),
+                        provider_models.values().map(|v| v.len()).sum::<usize>()
+                    );
+                }
             }
         }
         let (cols, rows) = term_size();
         let body_h = rows.saturating_sub(6).max(1);
-        if sel < scroll { scroll = sel; }
-        else {
-            let items_len = if level == 0 { providers.len() } else { provider_models.get(&active_provider).map(|v| v.len()).unwrap_or(0) };
-            if items_len > 0 && sel >= items_len { sel = items_len - 1; }
-            if sel >= scroll + body_h { scroll = sel - body_h + 1; }
+        if sel < scroll {
+            scroll = sel;
+        } else {
+            let items_len = if level == 0 {
+                providers.len()
+            } else {
+                provider_models
+                    .get(&active_provider)
+                    .map(|v| v.len())
+                    .unwrap_or(0)
+            };
+            if items_len > 0 && sel >= items_len {
+                sel = items_len - 1;
+            }
+            if sel >= scroll + body_h {
+                scroll = sel - body_h + 1;
+            }
         }
 
         clear_all(&mut out);
@@ -734,7 +1177,11 @@ pub fn run_model_tui() -> Result<()> {
             let spinner = ["|", "/", "-", "\\"];
             let msg = format!("Detecting models {} ", spinner[frame % spinner.len()]);
             let start = (cols.saturating_sub(msg.len())) / 2;
-            wline(&mut out, rows / 2, &format!("\x1b[{};{}H\x1b[90m{}\x1b[0m", rows / 2, start + 1, msg));
+            wline(
+                &mut out,
+                rows / 2,
+                &format!("\x1b[{};{}H\x1b[90m{}\x1b[0m", rows / 2, start + 1, msg),
+            );
             let _ = out.flush();
             frame += 1;
 
@@ -750,70 +1197,197 @@ pub fn run_model_tui() -> Result<()> {
         } else {
             format!("  {} → Models  |  {}", active_provider, status)
         };
-        wline(&mut out, 3, &format!("\x1b[1m{}\x1b[0m", breadcrumb.chars().take(cols).collect::<String>()));
+        wline(
+            &mut out,
+            3,
+            &format!(
+                "\x1b[1m{}\x1b[0m",
+                breadcrumb.chars().take(cols).collect::<String>()
+            ),
+        );
 
         if level == 0 {
             for r in 0..body_h {
-                let idx = scroll + r; let row = 4 + r;
-                if idx >= providers.len() { wline(&mut out, row, ""); continue; }
+                let idx = scroll + r;
+                let row = 4 + r;
+                if idx >= providers.len() {
+                    wline(&mut out, row, "");
+                    continue;
+                }
                 let p = &providers[idx];
                 let count = provider_models.get(p).map(|v| v.len()).unwrap_or(0);
                 let icon = provider_icon(p);
                 let color = provider_color(p);
                 let line = format!("  ▶ {} {}  ({} models)", icon, p, count);
-                if idx == sel { wline(&mut out, row, &format!("\x1b[7m> {}\x1b[0m", line.chars().take(cols - 2).collect::<String>().pad(cols - 2))); }
-                else { wline(&mut out, row, &format!("\x1b[{}m{}\x1b[0m", color, line.chars().take(cols).collect::<String>())); }
+                if idx == sel {
+                    wline(
+                        &mut out,
+                        row,
+                        &format!(
+                            "\x1b[7m> {}\x1b[0m",
+                            line.chars()
+                                .take(cols - 2)
+                                .collect::<String>()
+                                .pad(cols - 2)
+                        ),
+                    );
+                } else {
+                    wline(
+                        &mut out,
+                        row,
+                        &format!(
+                            "\x1b[{}m{}\x1b[0m",
+                            color,
+                            line.chars().take(cols).collect::<String>()
+                        ),
+                    );
+                }
             }
-            if providers.is_empty() { wline(&mut out, 4, "  \x1b[90mNo providers found. Press [d] to refresh.\x1b[0m"); }
+            if providers.is_empty() {
+                wline(
+                    &mut out,
+                    4,
+                    "  \x1b[90mNo providers found. Press [d] to refresh.\x1b[0m",
+                );
+            }
         } else {
-            let models = provider_models.get(&active_provider).cloned().unwrap_or_default();
+            let models = provider_models
+                .get(&active_provider)
+                .cloned()
+                .unwrap_or_default();
             for r in 0..body_h {
-                let idx = scroll + r; let row = 4 + r;
-                if idx >= models.len() { wline(&mut out, row, ""); continue; }
+                let idx = scroll + r;
+                let row = 4 + r;
+                if idx >= models.len() {
+                    wline(&mut out, row, "");
+                    continue;
+                }
                 let m = &models[idx];
                 let active = m == &chat_model && active_provider == chat_provider;
-                if idx == sel { wline(&mut out, row, &format!("\x1b[7m {} {}\x1b[0m", if active { ">" } else { " " }, m.chars().take(cols - 4).collect::<String>().pad(cols - 4))); }
-                else { wline(&mut out, row, &format!("{} {}", if active { "  *" } else { "   " }, m.chars().take(cols - 4).collect::<String>())); }
+                if idx == sel {
+                    wline(
+                        &mut out,
+                        row,
+                        &format!(
+                            "\x1b[7m {} {}\x1b[0m",
+                            if active { ">" } else { " " },
+                            m.chars().take(cols - 4).collect::<String>().pad(cols - 4)
+                        ),
+                    );
+                } else {
+                    wline(
+                        &mut out,
+                        row,
+                        &format!(
+                            "{} {}",
+                            if active { "  *" } else { "   " },
+                            m.chars().take(cols - 4).collect::<String>()
+                        ),
+                    );
+                }
             }
         }
 
-        let active_line = if chat_model.is_empty() { "  \x1b[90mNo active model set.\x1b[0m".to_string() } else { format!("  Active: {} / {}", chat_model, chat_provider) };
+        let active_line = if chat_model.is_empty() {
+            "  \x1b[90mNo active model set.\x1b[0m".to_string()
+        } else {
+            format!("  Active: {} / {}", chat_model, chat_provider)
+        };
         hr(&mut out, cols, rows - 2);
-        wline(&mut out, rows - 1, &format!("\x1b[33m{}\x1b[0m", active_line.chars().take(cols - 2).collect::<String>()));
-        let foot = if level == 0 { " [j/k] Nav  [Enter] Expand  [q] Quit  [d] Refresh " } else { " [j/k] Nav  [Enter] Set  [h/Esc] Back  [q] Quit " };
+        wline(
+            &mut out,
+            rows - 1,
+            &format!(
+                "\x1b[33m{}\x1b[0m",
+                active_line.chars().take(cols - 2).collect::<String>()
+            ),
+        );
+        let foot = if level == 0 {
+            " [j/k] Nav  [Enter] Expand  [q] Quit  [d] Refresh "
+        } else {
+            " [j/k] Nav  [Enter] Set  [h/Esc] Back  [q] Quit "
+        };
         footer_line(&mut out, cols, rows, foot);
         let _ = out.flush();
 
         if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             let c = key.code;
             match c {
-                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
                 KeyCode::Char('q') => break,
                 KeyCode::Char('d') if level == 0 => {
-                    let cache_path = shellexpand::tilde("~/.npcsh/available_models.yaml").to_string();
+                    let cache_path =
+                        shellexpand::tilde("~/.npcsh/available_models.yaml").to_string();
                     let _ = std::fs::remove_file(&cache_path);
                     detect_models(&mut providers, &mut provider_models);
-                    status = if providers.is_empty() { "No providers detected.".to_string() } else { format!("Found {} providers, {} models", providers.len(), provider_models.values().map(|v| v.len()).sum::<usize>()) };
+                    status = if providers.is_empty() {
+                        "No providers detected.".to_string()
+                    } else {
+                        format!(
+                            "Found {} providers, {} models",
+                            providers.len(),
+                            provider_models.values().map(|v| v.len()).sum::<usize>()
+                        )
+                    };
                 }
-                KeyCode::Char('h') | KeyCode::Esc if level == 1 => { level = 0; sel = providers.iter().position(|p| p == &active_provider).unwrap_or(0); scroll = 0; }
+                KeyCode::Char('h') | KeyCode::Esc if level == 1 => {
+                    level = 0;
+                    sel = providers
+                        .iter()
+                        .position(|p| p == &active_provider)
+                        .unwrap_or(0);
+                    scroll = 0;
+                }
                 KeyCode::Char('j') | KeyCode::Down => {
-                    let mx = if level == 0 { providers.len() } else { provider_models.get(&active_provider).map(|v| v.len()).unwrap_or(0) };
-                    if sel + 1 < mx { sel += 1; }
+                    let mx = if level == 0 {
+                        providers.len()
+                    } else {
+                        provider_models
+                            .get(&active_provider)
+                            .map(|v| v.len())
+                            .unwrap_or(0)
+                    };
+                    if sel + 1 < mx {
+                        sel += 1;
+                    }
                 }
-                KeyCode::Char('k') | KeyCode::Up => { if sel > 0 { sel -= 1; } }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if sel > 0 {
+                        sel -= 1;
+                    }
+                }
                 KeyCode::Enter => {
                     if level == 0 {
                         if let Some(p) = providers.get(sel) {
-                            if provider_models.get(p).map(|v| !v.is_empty()).unwrap_or(false) {
-                                active_provider = p.clone(); level = 1; sel = 0; scroll = 0;
-                            } else { status = format!("{} has no models", p); }
+                            if provider_models
+                                .get(p)
+                                .map(|v| !v.is_empty())
+                                .unwrap_or(false)
+                            {
+                                active_provider = p.clone();
+                                level = 1;
+                                sel = 0;
+                                scroll = 0;
+                            } else {
+                                status = format!("{} has no models", p);
+                            }
                         }
                     } else {
-                        if let Some(m) = provider_models.get(&active_provider).and_then(|v| v.get(sel)) {
+                        if let Some(m) = provider_models
+                            .get(&active_provider)
+                            .and_then(|v| v.get(sel))
+                        {
                             set_npcsh_config_value("NPCSH_CHAT_MODEL", m);
                             set_npcsh_config_value("NPCSH_CHAT_PROVIDER", &active_provider);
-                            chat_model = m.clone(); chat_provider = active_provider.clone();
+                            chat_model = m.clone();
+                            chat_provider = active_provider.clone();
                             status = format!("Set to {} / {}", m, active_provider);
                         }
                     }
@@ -826,13 +1400,32 @@ pub fn run_model_tui() -> Result<()> {
 }
 
 fn provider_color(p: &str) -> u8 {
-    if is_cli_provider(p) { 33 } else if is_local_provider(p) { 36 } else { 35 }
+    if is_cli_provider(p) {
+        33
+    } else if is_local_provider(p) {
+        36
+    } else {
+        35
+    }
 }
 fn provider_icon(p: &str) -> &'static str {
-    if is_cli_provider(p) { "[CLI]" } else if is_local_provider(p) { "[LOC]" } else { "[CLD]" }
+    if is_cli_provider(p) {
+        "[CLI]"
+    } else if is_local_provider(p) {
+        "[LOC]"
+    } else {
+        "[CLD]"
+    }
 }
-fn is_local_provider(p: &str) -> bool { matches!(p, "ollama" | "llamacpp" | "lmstudio" | "mlx" | "lora") }
-fn is_cli_provider(p: &str) -> bool { matches!(p, "claude_code" | "opencode" | "codex" | "kimi_code" | "kilo") }
+fn is_local_provider(p: &str) -> bool {
+    matches!(p, "ollama" | "llamacpp" | "lmstudio" | "mlx" | "lora")
+}
+fn is_cli_provider(p: &str) -> bool {
+    matches!(
+        p,
+        "claude_code" | "opencode" | "codex" | "kimi_code" | "kilo"
+    )
+}
 
 fn set_npcsh_config_value(key: &str, value: &str) {
     let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
@@ -841,24 +1434,37 @@ fn set_npcsh_config_value(key: &str, value: &str) {
     if let Ok(content) = std::fs::read_to_string(&rc_path) {
         for line in content.lines() {
             let trimmed = line.trim();
-            if let Some((k, _)) = trimmed.strip_prefix("export ").and_then(|s| s.split_once('=')) {
-                if k.trim() == key { lines.push(format!("export {}={}", key, value)); found = true; continue; }
+            if let Some((k, _)) = trimmed
+                .strip_prefix("export ")
+                .and_then(|s| s.split_once('='))
+            {
+                if k.trim() == key {
+                    lines.push(format!("export {}={}", key, value));
+                    found = true;
+                    continue;
+                }
             }
             lines.push(line.to_string());
         }
     }
-    if !found { lines.push(format!("export {}={}", key, value)); }
+    if !found {
+        lines.push(format!("export {}={}", key, value));
+    }
     let _ = std::fs::write(rc_path, lines.join("\n") + "\n");
-    unsafe { std::env::set_var(key, value); }
+    unsafe {
+        std::env::set_var(key, value);
+    }
 }
-
 
 pub fn run_setup_tui() -> Result<()> {
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
     let mut out = io::stdout();
 
     let steps = vec![
-        ("Welcome", "npcsh setup wizard. Detecting models and API keys."),
+        (
+            "Welcome",
+            "npcsh setup wizard. Detecting models and API keys.",
+        ),
         ("Chat Model", "Choose your default chat model."),
         ("API Keys", "Verify required API keys are set."),
         ("Done", "Setup complete. Press q to exit."),
@@ -868,10 +1474,14 @@ pub fn run_setup_tui() -> Result<()> {
     let mut sel: usize = 0;
 
     let (detect_tx, detect_rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || { detect_tx.send(detect_models_list()).ok(); });
+    std::thread::spawn(move || {
+        detect_tx.send(detect_models_list()).ok();
+    });
 
     loop {
-        if let Ok(found) = detect_rx.try_recv() { models = found; }
+        if let Ok(found) = detect_rx.try_recv() {
+            models = found;
+        }
 
         let (cols, rows) = term_size();
         clear_all(&mut out);
@@ -879,54 +1489,122 @@ pub fn run_setup_tui() -> Result<()> {
         hr(&mut out, cols, 2);
 
         let (title, desc) = steps[step];
-        wline(&mut out, 3, &format!("  Step {} of {}: {} - {}", step + 1, steps.len(), title, desc));
+        wline(
+            &mut out,
+            3,
+            &format!(
+                "  Step {} of {}: {} - {}",
+                step + 1,
+                steps.len(),
+                title,
+                desc
+            ),
+        );
         hr(&mut out, cols, 4);
 
         let body_h = rows.saturating_sub(6).max(1);
         match step {
             0 => {
-                wline(&mut out, 6, "  npcsh needs a running Python server and a chosen model.");
-                wline(&mut out, 8, "  This wizard detects available models from API keys.");
+                wline(
+                    &mut out,
+                    6,
+                    "  npcsh needs a running Python server and a chosen model.",
+                );
+                wline(
+                    &mut out,
+                    8,
+                    "  This wizard detects available models from API keys.",
+                );
             }
             1 => {
                 for r in 0..body_h {
                     let idx = r;
                     let row = 5 + r;
-                    if idx >= models.len() { wline(&mut out, row, ""); continue; }
+                    if idx >= models.len() {
+                        wline(&mut out, row, "");
+                        continue;
+                    }
                     let m = &models[idx];
                     let text = format!("{} / {} ({})", m.provider, m.id, m.name);
-                    if idx == sel { wline(&mut out, row, &format!("\x1b[7m  > {}\x1b[0m", text).pad(cols)); }
-                    else { wline(&mut out, row, &format!("    {}", text)); }
+                    if idx == sel {
+                        wline(
+                            &mut out,
+                            row,
+                            &format!("\x1b[7m  > {}\x1b[0m", text).pad(cols),
+                        );
+                    } else {
+                        wline(&mut out, row, &format!("    {}", text));
+                    }
                 }
             }
             2 => {
-                let keys = [("OPENAI_API_KEY", "OpenAI"), ("ANTHROPIC_API_KEY", "Anthropic"), ("GEMINI_API_KEY", "Gemini"), ("PERPLEXITY_API_KEY", "Perplexity")];
+                let keys = [
+                    ("OPENAI_API_KEY", "OpenAI"),
+                    ("ANTHROPIC_API_KEY", "Anthropic"),
+                    ("GEMINI_API_KEY", "Gemini"),
+                    ("PERPLEXITY_API_KEY", "Perplexity"),
+                ];
                 for (i, (key, label)) in keys.iter().enumerate() {
                     let set = std::env::var(key).is_ok();
-                    let status = if set { "\x1b[32mset\x1b[0m" } else { "\x1b[31mnot set\x1b[0m" };
+                    let status = if set {
+                        "\x1b[32mset\x1b[0m"
+                    } else {
+                        "\x1b[31mnot set\x1b[0m"
+                    };
                     wline(&mut out, 6 + i, &format!("  {}: {}", label, status));
                 }
             }
             3 => {
-                wline(&mut out, 6, "  Setup complete. ~/.npcshrc has been updated.");
+                wline(
+                    &mut out,
+                    6,
+                    "  Setup complete. ~/.npcshrc has been updated.",
+                );
                 wline(&mut out, 8, "  Start chatting by typing at the prompt.");
             }
             _ => {}
         }
 
         hr(&mut out, cols, rows - 2);
-        footer_line(&mut out, cols, rows, " [n] Next  [p] Prev  [Enter] Select  [q] Quit ");
+        footer_line(
+            &mut out,
+            cols,
+            rows,
+            " [n] Next  [p] Prev  [Enter] Select  [q] Quit ",
+        );
         let _ = out.flush();
 
         if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             match key.code {
-                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
                 KeyCode::Esc | KeyCode::Char('q') => break,
-                KeyCode::Char('n') => { if step + 1 < steps.len() { step += 1; } }
-                KeyCode::Char('p') => { if step > 0 { step -= 1; } }
-                KeyCode::Char('j') | KeyCode::Down => { if step == 1 && sel + 1 < models.len() { sel += 1; } }
-                KeyCode::Char('k') | KeyCode::Up => { if step == 1 && sel > 0 { sel -= 1; } }
+                KeyCode::Char('n') => {
+                    if step + 1 < steps.len() {
+                        step += 1;
+                    }
+                }
+                KeyCode::Char('p') => {
+                    if step > 0 {
+                        step -= 1;
+                    }
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if step == 1 && sel + 1 < models.len() {
+                        sel += 1;
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if step == 1 && sel > 0 {
+                        sel -= 1;
+                    }
+                }
                 KeyCode::Enter => {
                     if step == 1 {
                         if let Some(m) = models.get(sel) {
@@ -942,7 +1620,6 @@ pub fn run_setup_tui() -> Result<()> {
     Ok(())
 }
 
-
 pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
     let mut out = io::stdout();
@@ -952,7 +1629,11 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
     let team_dir = kernel.team.source_dir.clone().unwrap_or_default();
 
     #[derive(Clone, Copy, PartialEq)]
-    enum Tab { NPCs, Jinxes, Context }
+    enum Tab {
+        NPCs,
+        Jinxes,
+        Context,
+    }
     let mut tab = Tab::NPCs;
     let mut sel: usize = 0;
     let mut scroll: usize = 0;
@@ -963,7 +1644,21 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
         clear_all(&mut out);
         header_line(&mut out, cols, " Team ");
         hr(&mut out, cols, 2);
-        wline(&mut out, 3, &format!("  {} | [{}] NPCs  [{}] Jinxes  [{}] Context", team_dir, if matches!(tab, Tab::NPCs) { "1" } else { "_" }, if matches!(tab, Tab::Jinxes) { "2" } else { "_" }, if matches!(tab, Tab::Context) { "3" } else { "_" }));
+        wline(
+            &mut out,
+            3,
+            &format!(
+                "  {} | [{}] NPCs  [{}] Jinxes  [{}] Context",
+                team_dir,
+                if matches!(tab, Tab::NPCs) { "1" } else { "_" },
+                if matches!(tab, Tab::Jinxes) { "2" } else { "_" },
+                if matches!(tab, Tab::Context) {
+                    "3"
+                } else {
+                    "_"
+                }
+            ),
+        );
         hr(&mut out, cols, 4);
 
         let items = match tab {
@@ -971,22 +1666,44 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
             Tab::Jinxes => jinx_names.len(),
             Tab::Context => 1,
         };
-        if sel >= items && items > 0 { sel = items - 1; }
-        if sel < scroll { scroll = sel; }
-        else if sel >= scroll + body_h { scroll = sel.saturating_sub(body_h) + 1; }
+        if sel >= items && items > 0 {
+            sel = items - 1;
+        }
+        if sel < scroll {
+            scroll = sel;
+        } else if sel >= scroll + body_h {
+            scroll = sel.saturating_sub(body_h) + 1;
+        }
 
         for r in 0..body_h {
             let idx = scroll + r;
             let row = 5 + r;
-            if idx >= items { wline(&mut out, row, ""); continue; }
+            if idx >= items {
+                wline(&mut out, row, "");
+                continue;
+            }
             let text = match tab {
                 Tab::NPCs => format!("@{}", npcs[idx]),
                 Tab::Jinxes => format!("/{}", jinx_names[idx]),
-                Tab::Context => kernel.team.context.clone().unwrap_or_else(|| "(none)".to_string()),
+                Tab::Context => kernel
+                    .team
+                    .context
+                    .clone()
+                    .unwrap_or_else(|| "(none)".to_string()),
             };
-            let truncated = text.chars().take(cols.saturating_sub(6)).collect::<String>();
-            if idx == sel { wline(&mut out, row, &format!("\x1b[7m  > {}\x1b[0m", truncated).pad(cols)); }
-            else { wline(&mut out, row, &format!("    {}", truncated)); }
+            let truncated = text
+                .chars()
+                .take(cols.saturating_sub(6))
+                .collect::<String>();
+            if idx == sel {
+                wline(
+                    &mut out,
+                    row,
+                    &format!("\x1b[7m  > {}\x1b[0m", truncated).pad(cols),
+                );
+            } else {
+                wline(&mut out, row, &format!("    {}", truncated));
+            }
         }
 
         hr(&mut out, cols, rows - 2);
@@ -994,24 +1711,40 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<()> {
         let _ = out.flush();
 
         if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             match key.code {
-                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
                 KeyCode::Esc | KeyCode::Char('q') => break,
                 KeyCode::Tab => {
                     let tabs = [Tab::NPCs, Tab::Jinxes, Tab::Context];
                     let idx = tabs.iter().position(|t| t == &tab).unwrap_or(0);
                     tab = tabs[(idx + 1) % tabs.len()];
-                    sel = 0; scroll = 0;
+                    sel = 0;
+                    scroll = 0;
                 }
                 KeyCode::BackTab => {
                     let tabs = [Tab::NPCs, Tab::Jinxes, Tab::Context];
                     let idx = tabs.iter().position(|t| t == &tab).unwrap_or(0);
                     tab = tabs[(idx + tabs.len() - 1) % tabs.len()];
-                    sel = 0; scroll = 0;
+                    sel = 0;
+                    scroll = 0;
                 }
-                KeyCode::Char('j') | KeyCode::Down => { if sel + 1 < items { sel += 1; } }
-                KeyCode::Char('k') | KeyCode::Up => { if sel > 0 { sel -= 1; } }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if sel + 1 < items {
+                        sel += 1;
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if sel > 0 {
+                        sel -= 1;
+                    }
+                }
                 _ => {}
             }
         }
@@ -1024,22 +1757,32 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     for para in text.split('\n') {
         let mut cur = String::new();
         for word in para.split_whitespace() {
-            if cur.is_empty() { cur.push_str(word); }
-            else if cur.len() + 1 + word.len() <= width { cur.push(' '); cur.push_str(word); }
-            else { lines.push(cur); cur = word.to_string(); }
+            if cur.is_empty() {
+                cur.push_str(word);
+            } else if cur.len() + 1 + word.len() <= width {
+                cur.push(' ');
+                cur.push_str(word);
+            } else {
+                lines.push(cur);
+                cur = word.to_string();
+            }
         }
-        if !cur.is_empty() { lines.push(cur); }
+        if !cur.is_empty() {
+            lines.push(cur);
+        }
     }
     lines
 }
-
 
 pub fn run_commit_tui() -> Result<()> {
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
     let mut out = io::stdout();
 
     let repo = std::env::current_dir().unwrap_or_default();
-    let status_out = run_git(&repo, &["status", "--short"]).ok().map(git_str).unwrap_or_default();
+    let status_out = run_git(&repo, &["status", "--short"])
+        .ok()
+        .map(git_str)
+        .unwrap_or_default();
     let mut files: Vec<String> = status_out.lines().map(|l| l[3..].to_string()).collect();
 
     let mut sel: usize = 0;
@@ -1053,20 +1796,39 @@ pub fn run_commit_tui() -> Result<()> {
         hr(&mut out, cols, 2);
 
         if stage == 0 {
-            wline(&mut out, 3, "  Select files to stage (Space toggles, Enter commits all shown):");
+            wline(
+                &mut out,
+                3,
+                "  Select files to stage (Space toggles, Enter commits all shown):",
+            );
             hr(&mut out, cols, 4);
             let body_h = rows.saturating_sub(6).max(1);
             for r in 0..body_h {
                 let idx = r;
                 let row = 5 + r;
-                if idx >= files.len() { wline(&mut out, row, ""); continue; }
+                if idx >= files.len() {
+                    wline(&mut out, row, "");
+                    continue;
+                }
                 let marker = "[x]";
                 let text = format!("{} {}", marker, files[idx]);
-                if idx == sel { wline(&mut out, row, &format!("\x1b[7m  > {}\x1b[0m", text).pad(cols)); }
-                else { wline(&mut out, row, &format!("    {}", text)); }
+                if idx == sel {
+                    wline(
+                        &mut out,
+                        row,
+                        &format!("\x1b[7m  > {}\x1b[0m", text).pad(cols),
+                    );
+                } else {
+                    wline(&mut out, row, &format!("    {}", text));
+                }
             }
             hr(&mut out, cols, rows - 2);
-            footer_line(&mut out, cols, rows, " [j/k] Nav  [Enter] Message  [q] Quit ");
+            footer_line(
+                &mut out,
+                cols,
+                rows,
+                " [j/k] Nav  [Enter] Message  [q] Quit ",
+            );
         } else {
             wline(&mut out, 3, "  Commit message:");
             wline(&mut out, 5, &format!("  > {}", msg));
@@ -1078,15 +1840,36 @@ pub fn run_commit_tui() -> Result<()> {
         let _ = out.flush();
 
         if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             match key.code {
-                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
-                KeyCode::Esc => { if stage == 1 { stage = 0; } else { break; } }
-                KeyCode::Char('j') | KeyCode::Down if stage == 0 => { if sel + 1 < files.len() { sel += 1; } }
-                KeyCode::Char('k') | KeyCode::Up if stage == 0 => { if sel > 0 { sel -= 1; } }
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
+                KeyCode::Esc => {
+                    if stage == 1 {
+                        stage = 0;
+                    } else {
+                        break;
+                    }
+                }
+                KeyCode::Char('j') | KeyCode::Down if stage == 0 => {
+                    if sel + 1 < files.len() {
+                        sel += 1;
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up if stage == 0 => {
+                    if sel > 0 {
+                        sel -= 1;
+                    }
+                }
                 KeyCode::Enter => {
-                    if stage == 0 { stage = 1; }
-                    else {
+                    if stage == 0 {
+                        stage = 1;
+                    } else {
                         let _ = run_git(&repo, &["add", "-A"]);
                         if !msg.is_empty() {
                             let _ = run_git(&repo, &["commit", "-m", &msg]);
@@ -1095,7 +1878,9 @@ pub fn run_commit_tui() -> Result<()> {
                     }
                 }
                 KeyCode::Char(c) if stage == 1 => msg.push(c),
-                KeyCode::Backspace if stage == 1 && !msg.is_empty() => { msg.pop(); }
+                KeyCode::Backspace if stage == 1 && !msg.is_empty() => {
+                    msg.pop();
+                }
                 _ => {}
             }
         }
@@ -1103,13 +1888,14 @@ pub fn run_commit_tui() -> Result<()> {
     Ok(())
 }
 
-
 pub fn run_jinxes_tui(kernel: &mut Kernel) -> Result<()> {
     let mut all: Vec<(String, String, String, String)> = Vec::new();
     let team_dir = kernel.team.source_dir.clone();
     let global_dir = shellexpand::tilde("~/.npcsh/npc_team").to_string();
     scan_jinxes(&team_dir, "team", &mut all);
-    if global_dir != team_dir.clone().unwrap_or_default() { scan_jinxes(&Some(global_dir), "global", &mut all); }
+    if global_dir != team_dir.clone().unwrap_or_default() {
+        scan_jinxes(&Some(global_dir), "global", &mut all);
+    }
     all.sort_by(|a, b| a.2.cmp(&b.2));
 
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
@@ -1123,9 +1909,13 @@ pub fn run_jinxes_tui(kernel: &mut Kernel) -> Result<()> {
     loop {
         let (cols, rows) = term_size();
         let body_h = rows.saturating_sub(6).max(1);
-        if sel < scroll { scroll = sel; }
-        else if !all.is_empty() && sel >= all.len() { sel = all.len() - 1; }
-        else if sel >= scroll + body_h { scroll = sel - body_h + 1; }
+        if sel < scroll {
+            scroll = sel;
+        } else if !all.is_empty() && sel >= all.len() {
+            sel = all.len() - 1;
+        } else if sel >= scroll + body_h {
+            scroll = sel - body_h + 1;
+        }
 
         clear_all(&mut out);
         header_line(&mut out, cols, " Jinxes ");
@@ -1136,48 +1926,112 @@ pub fn run_jinxes_tui(kernel: &mut Kernel) -> Result<()> {
         if detail {
             if let Some(item) = all.get(sel) {
                 let desc = item.3.clone();
-                let lines: Vec<String> = desc.split('\n').flat_map(|para| {
-                    let mut out = Vec::new();
-                    let mut cur = String::new();
-                    for word in para.split_whitespace() {
-                        if cur.is_empty() { cur.push_str(word); }
-                        else if cur.len() + 1 + word.len() <= cols.saturating_sub(4) { cur.push(' '); cur.push_str(word); }
-                        else { out.push(cur); cur = word.to_string(); }
-                    }
-                    if !cur.is_empty() { out.push(cur); }
-                    out
-                }).collect();
+                let lines: Vec<String> = desc
+                    .split('\n')
+                    .flat_map(|para| {
+                        let mut out = Vec::new();
+                        let mut cur = String::new();
+                        for word in para.split_whitespace() {
+                            if cur.is_empty() {
+                                cur.push_str(word);
+                            } else if cur.len() + 1 + word.len() <= cols.saturating_sub(4) {
+                                cur.push(' ');
+                                cur.push_str(word);
+                            } else {
+                                out.push(cur);
+                                cur = word.to_string();
+                            }
+                        }
+                        if !cur.is_empty() {
+                            out.push(cur);
+                        }
+                        out
+                    })
+                    .collect();
                 for r in 0..body_h {
-                    let idx = detail_scroll + r; let row = 5 + r;
-                    if idx >= lines.len() { wline(&mut out, row, ""); }
-                    else { wline(&mut out, row, &format!("  {}", lines[idx])); }
+                    let idx = detail_scroll + r;
+                    let row = 5 + r;
+                    if idx >= lines.len() {
+                        wline(&mut out, row, "");
+                    } else {
+                        wline(&mut out, row, &format!("  {}", lines[idx]));
+                    }
                 }
             }
         } else {
             for r in 0..body_h {
-                let idx = scroll + r; let row = 5 + r;
-                if idx >= all.len() { wline(&mut out, row, ""); continue; }
+                let idx = scroll + r;
+                let row = 5 + r;
+                if idx >= all.len() {
+                    wline(&mut out, row, "");
+                    continue;
+                }
                 let (src, folder, name, desc) = &all[idx];
                 let label = format!("{}/{}", folder, name);
                 let d = desc.chars().take(cols - 28).collect::<String>();
-                if idx == sel { wline(&mut out, row, &format!("\x1b[7m  > {:<22} [{}] {}\x1b[0m", label, src, d).pad(cols)); }
-                else { wline(&mut out, row, &format!("    {:<22} \x1b[90m[{}]\x1b[0m {}", label, src, d)); }
+                if idx == sel {
+                    wline(
+                        &mut out,
+                        row,
+                        &format!("\x1b[7m  > {:<22} [{}] {}\x1b[0m", label, src, d).pad(cols),
+                    );
+                } else {
+                    wline(
+                        &mut out,
+                        row,
+                        &format!("    {:<22} \x1b[90m[{}]\x1b[0m {}", label, src, d),
+                    );
+                }
             }
         }
 
         hr(&mut out, cols, rows - 2);
-        let foot = if detail { " [j/k] Scroll  [q/Esc] Back " } else { " [j/k] Nav  [Enter] Detail  [q] Quit " };
+        let foot = if detail {
+            " [j/k] Scroll  [q/Esc] Back "
+        } else {
+            " [j/k] Nav  [Enter] Detail  [q] Quit "
+        };
         footer_line(&mut out, cols, rows, foot);
         let _ = out.flush();
 
         if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             match key.code {
-                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
-                KeyCode::Char('q') | KeyCode::Esc => { if detail { detail = false; detail_scroll = 0; } else { break; } }
-                KeyCode::Char('j') | KeyCode::Down => { if detail { detail_scroll += 1; } else if sel + 1 < all.len() { sel += 1; } }
-                KeyCode::Char('k') | KeyCode::Up => { if detail { detail_scroll = detail_scroll.saturating_sub(1); } else if sel > 0 { sel -= 1; } }
-                KeyCode::Enter => { if !detail { detail = true; detail_scroll = 0; } }
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    if detail {
+                        detail = false;
+                        detail_scroll = 0;
+                    } else {
+                        break;
+                    }
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if detail {
+                        detail_scroll += 1;
+                    } else if sel + 1 < all.len() {
+                        sel += 1;
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if detail {
+                        detail_scroll = detail_scroll.saturating_sub(1);
+                    } else if sel > 0 {
+                        sel -= 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    if !detail {
+                        detail = true;
+                        detail_scroll = 0;
+                    }
+                }
                 _ => {}
             }
         }
@@ -1185,24 +2039,44 @@ pub fn run_jinxes_tui(kernel: &mut Kernel) -> Result<()> {
     Ok(())
 }
 
-fn scan_jinxes(dir: &Option<String>, source: &str, out: &mut Vec<(String, String, String, String)>) {
+fn scan_jinxes(
+    dir: &Option<String>,
+    source: &str,
+    out: &mut Vec<(String, String, String, String)>,
+) {
     let Some(d) = dir else { return };
     let jdir = PathBuf::from(d).join("jinxes");
     if let Ok(entries) = std::fs::read_dir(&jdir) {
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {
-                let folder = p.file_name().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+                let folder = p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("?")
+                    .to_string();
                 if let Ok(files) = std::fs::read_dir(&p) {
                     for f in files.flatten() {
                         let fp = f.path();
                         if fp.extension().and_then(|s| s.to_str()) == Some("jinx") {
-                            let name = fp.file_stem().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+                            let name = fp
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("?")
+                                .to_string();
                             let desc = if let Ok(content) = std::fs::read_to_string(&fp) {
-                                content.lines().find(|l| l.trim_start().starts_with("description:"))
-                                    .map(|l| l.split_once(':').map(|(_, v)| v.trim().to_string()).unwrap_or_default())
+                                content
+                                    .lines()
+                                    .find(|l| l.trim_start().starts_with("description:"))
+                                    .map(|l| {
+                                        l.split_once(':')
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default()
+                                    })
                                     .unwrap_or_default()
-                            } else { String::new() };
+                            } else {
+                                String::new()
+                            };
                             out.push((source.to_string(), folder.clone(), name, desc));
                         }
                     }
@@ -1211,7 +2085,6 @@ fn scan_jinxes(dir: &Option<String>, source: &str, out: &mut Vec<(String, String
         }
     }
 }
-
 
 use std::sync::{Arc, Mutex};
 
@@ -1233,7 +2106,11 @@ fn load_agent_logs(kernel: &Kernel, npc_name: &str, limit: usize) -> Vec<AgentLo
                 timestamp: String::new(),
                 role: m.role.clone(),
                 content: m.content.unwrap_or_default(),
-                source: format!("{} / {}", m.model.unwrap_or_default(), m.provider.unwrap_or_default()),
+                source: format!(
+                    "{} / {}",
+                    m.model.unwrap_or_default(),
+                    m.provider.unwrap_or_default()
+                ),
                 cost: m.cost.and_then(|c| c.parse::<f64>().ok()),
             });
         }
@@ -1276,10 +2153,26 @@ fn load_agent_logs(kernel: &Kernel, npc_name: &str, limit: usize) -> Vec<AgentLo
 
     if let Ok(rows) = kernel.history.get_npc_executions(npc_name, limit) {
         for row in rows {
-            let input = row.get("input").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let timestamp = row.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let model = row.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let provider = row.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let input = row
+                .get("input")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let timestamp = row
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let model = row
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let provider = row
+                .get("provider")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             logs.push(AgentLog {
                 timestamp,
                 role: "execution".to_string(),
@@ -1297,7 +2190,11 @@ fn load_agent_logs(kernel: &Kernel, npc_name: &str, limit: usize) -> Vec<AgentLo
 }
 
 fn task_slug(task: &str, is_jinx: bool) -> String {
-    let base = if is_jinx { format!("jinx_{}", task) } else { task.to_string() };
+    let base = if is_jinx {
+        format!("jinx_{}", task)
+    } else {
+        task.to_string()
+    };
     base.to_lowercase()
         .replace(|c: char| !c.is_alphanumeric(), "_")
         .replace("__", "_")
@@ -1313,13 +2210,23 @@ fn load_task_runs(npc: &str, task: &str, is_jinx: bool) -> Vec<(String, String)>
         .join(npc)
         .join(slug)
         .join("runs");
-    if !base.is_dir() { return Vec::new(); }
+    if !base.is_dir() {
+        return Vec::new();
+    }
     let mut runs = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&base) {
-        let mut files: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().and_then(|s| s.to_str()) == Some("txt")).collect();
+        let mut files: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("txt"))
+            .collect();
         files.sort();
         for f in files.iter().rev().take(50) {
-            let ts = f.file_stem().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+            let ts = f
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?")
+                .to_string();
             let content = std::fs::read_to_string(f).unwrap_or_default();
             runs.push((ts, content));
         }
@@ -1342,9 +2249,13 @@ fn show_run_view(content: &str) -> Result<()> {
         for r in 0..body_h {
             let idx = scroll + r;
             let row = 3 + r;
-            if idx >= lines.len() { wline(&mut out, row, ""); }
-            else {
-                let line = lines[idx].chars().take(cols.saturating_sub(2)).collect::<String>();
+            if idx >= lines.len() {
+                wline(&mut out, row, "");
+            } else {
+                let line = lines[idx]
+                    .chars()
+                    .take(cols.saturating_sub(2))
+                    .collect::<String>();
                 wline(&mut out, row, &format!("  {}", line));
             }
         }
@@ -1352,11 +2263,25 @@ fn show_run_view(content: &str) -> Result<()> {
         footer_line(&mut out, cols, rows, " [j/k] Scroll  [q/Esc] Back ");
         let _ = out.flush();
         if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             match key.code {
-                KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
-                KeyCode::Char('j') | KeyCode::Down => { if scroll + 1 < lines.len() { scroll += 1; } }
-                KeyCode::Char('k') | KeyCode::Up => { if scroll > 0 { scroll -= 1; } }
+                KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if scroll + 1 < lines.len() {
+                        scroll += 1;
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if scroll > 0 {
+                        scroll -= 1;
+                    }
+                }
                 _ => {}
             }
         }
@@ -1373,12 +2298,20 @@ pub fn run_agent_dashboard_tui(
     let mut out = io::stdout();
 
     let Some(proc) = kernel.find_by_name(npc_name).map(|p| p.pid) else {
-        return Err(npcrs::NpcError::Other(format!("NPC '{}' not found", npc_name)));
+        return Err(npcrs::NpcError::Other(format!(
+            "NPC '{}' not found",
+            npc_name
+        )));
     };
     let pid = proc;
 
     #[derive(Clone, PartialEq)]
-    enum AgentTab { Tasks, TaskRuns, Logs, Details }
+    enum AgentTab {
+        Tasks,
+        TaskRuns,
+        Logs,
+        Details,
+    }
     impl AgentTab {
         fn next(&self) -> AgentTab {
             match self {
@@ -1412,7 +2345,11 @@ pub fn run_agent_dashboard_tui(
         let tabs = format!(
             "  {} Tasks    {} Runs    {} Logs    {} Details",
             if tab == AgentTab::Tasks { "▸" } else { " " },
-            if tab == AgentTab::TaskRuns { "▸" } else { " " },
+            if tab == AgentTab::TaskRuns {
+                "▸"
+            } else {
+                " "
+            },
             if tab == AgentTab::Logs { "▸" } else { " " },
             if tab == AgentTab::Details { "▸" } else { " " }
         );
@@ -1420,7 +2357,12 @@ pub fn run_agent_dashboard_tui(
         hr(&mut out, cols, 4);
 
         let reg = registry.lock().unwrap();
-        let jobs: Vec<crate::cron::CronJob> = reg.list().iter().filter(|j| j.npc == npc_name).cloned().collect();
+        let jobs: Vec<crate::cron::CronJob> = reg
+            .list()
+            .iter()
+            .filter(|j| j.npc == npc_name)
+            .cloned()
+            .collect();
         let logs = load_agent_logs(kernel, npc_name, 200);
         drop(reg);
 
@@ -1429,27 +2371,52 @@ pub fn run_agent_dashboard_tui(
             AgentTab::TaskRuns => {
                 if runs.is_empty() && selected_job.is_some() {
                     let j = selected_job.as_ref().unwrap();
-                    runs = load_task_runs(&j.npc, &j.task, j.kind == crate::cron::CronJobKind::Jinx);
+                    runs =
+                        load_task_runs(&j.npc, &j.task, j.kind == crate::cron::CronJobKind::Jinx);
                 }
                 runs.len()
             }
             AgentTab::Logs => logs.len(),
             AgentTab::Details => 1,
         };
-        if sel >= items && items > 0 { sel = items - 1; }
-        if sel < scroll { scroll = sel; }
-        else if sel >= scroll + body_h { scroll = sel.saturating_sub(body_h) + 1; }
+        if sel >= items && items > 0 {
+            sel = items - 1;
+        }
+        if sel < scroll {
+            scroll = sel;
+        } else if sel >= scroll + body_h {
+            scroll = sel.saturating_sub(body_h) + 1;
+        }
 
         for r in 0..body_h {
             let idx = scroll + r;
             let row = 5 + r;
-            if idx >= items { wline(&mut out, row, ""); continue; }
+            if idx >= items {
+                wline(&mut out, row, "");
+                continue;
+            }
             let text = match tab {
                 AgentTab::Tasks => {
                     let j = &jobs[idx];
-                    let kind = if j.kind == crate::cron::CronJobKind::Jinx { "jinx" } else { "chat" };
-                    let status = if j.enabled { "\x1b[32menabled\x1b[0m" } else { "\x1b[31mdisabled\x1b[0m" };
-                    format!("[{}] every {} [{}] {} ({}) {}", j.id, crate::cron::format_duration(j.interval_secs), kind, j.task, if j.last_run.is_some() { "ran" } else { "never" }, status)
+                    let kind = if j.kind == crate::cron::CronJobKind::Jinx {
+                        "jinx"
+                    } else {
+                        "chat"
+                    };
+                    let status = if j.enabled {
+                        "\x1b[32menabled\x1b[0m"
+                    } else {
+                        "\x1b[31mdisabled\x1b[0m"
+                    };
+                    format!(
+                        "[{}] every {} [{}] {} ({}) {}",
+                        j.id,
+                        crate::cron::format_duration(j.interval_secs),
+                        kind,
+                        j.task,
+                        if j.last_run.is_some() { "ran" } else { "never" },
+                        status
+                    )
                 }
                 AgentTab::TaskRuns => {
                     let (ts, _) = &runs[idx];
@@ -1457,26 +2424,55 @@ pub fn run_agent_dashboard_tui(
                 }
                 AgentTab::Logs => {
                     let log = &logs[idx];
-                    let preview = log.content.chars().take(cols.saturating_sub(28)).collect::<String>();
+                    let preview = log
+                        .content
+                        .chars()
+                        .take(cols.saturating_sub(28))
+                        .collect::<String>();
                     let cost_str = log.cost.map(|c| format!(" ${:.4}", c)).unwrap_or_default();
-                    let ts = if log.timestamp.is_empty() { String::new() } else { format!("{} ", log.timestamp) };
-                    format!("{}{}{}{}{}", ts, log.role, if log.source.is_empty() { "" } else { ":" }, log.source, cost_str)
+                    let ts = if log.timestamp.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{} ", log.timestamp)
+                    };
+                    format!(
+                        "{}{}{}{}{}",
+                        ts,
+                        log.role,
+                        if log.source.is_empty() { "" } else { ":" },
+                        log.source,
+                        cost_str
+                    )
                 }
                 AgentTab::Details => {
                     if let Some(p) = kernel.get_process(pid) {
-                        format!("model={} provider={} tokens={}/{} cost=${:.4} turns={}",
+                        format!(
+                            "model={} provider={} tokens={}/{} cost=${:.4} turns={}",
                             p.npc.resolved_model(),
                             p.npc.resolved_provider(),
                             p.usage.total_input_tokens,
                             p.usage.total_output_tokens,
                             p.usage.total_cost_usd,
-                            p.usage.total_turns)
-                    } else { "(process not found)".to_string() }
+                            p.usage.total_turns
+                        )
+                    } else {
+                        "(process not found)".to_string()
+                    }
                 }
             };
-            let truncated = text.chars().take(cols.saturating_sub(4)).collect::<String>();
-            if idx == sel { wline(&mut out, row, &format!("\x1b[7m  > {}\x1b[0m", truncated).pad(cols)); }
-            else { wline(&mut out, row, &format!("    {}", truncated)); }
+            let truncated = text
+                .chars()
+                .take(cols.saturating_sub(4))
+                .collect::<String>();
+            if idx == sel {
+                wline(
+                    &mut out,
+                    row,
+                    &format!("\x1b[7m  > {}\x1b[0m", truncated).pad(cols),
+                );
+            } else {
+                wline(&mut out, row, &format!("    {}", truncated));
+            }
         }
 
         hr(&mut out, cols, rows - 2);
@@ -1491,26 +2487,53 @@ pub fn run_agent_dashboard_tui(
         let _ = out.flush();
 
         if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             match key.code {
-                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
                 KeyCode::Esc | KeyCode::Char('q') => break,
                 KeyCode::Tab => {
                     if key.modifiers.contains(KeyModifiers::SHIFT) {
-                        tab = tab.prev(); sel = 0; scroll = 0;
+                        tab = tab.prev();
+                        sel = 0;
+                        scroll = 0;
                     } else {
-                        tab = tab.next(); sel = 0; scroll = 0;
+                        tab = tab.next();
+                        sel = 0;
+                        scroll = 0;
                     }
                 }
-                KeyCode::BackTab => { tab = tab.prev(); sel = 0; scroll = 0; }
-                KeyCode::Char('j') | KeyCode::Down => { if sel + 1 < items { sel += 1; } }
-                KeyCode::Char('k') | KeyCode::Up => { if sel > 0 { sel -= 1; } }
+                KeyCode::BackTab => {
+                    tab = tab.prev();
+                    sel = 0;
+                    scroll = 0;
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if sel + 1 < items {
+                        sel += 1;
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if sel > 0 {
+                        sel -= 1;
+                    }
+                }
                 KeyCode::Enter => {
                     if tab == AgentTab::Tasks && !jobs.is_empty() {
                         selected_job = Some(jobs[sel].clone());
-                        runs = load_task_runs(&jobs[sel].npc, &jobs[sel].task, jobs[sel].kind == crate::cron::CronJobKind::Jinx);
+                        runs = load_task_runs(
+                            &jobs[sel].npc,
+                            &jobs[sel].task,
+                            jobs[sel].kind == crate::cron::CronJobKind::Jinx,
+                        );
                         tab = AgentTab::TaskRuns;
-                        sel = 0; scroll = 0;
+                        sel = 0;
+                        scroll = 0;
                     } else if tab == AgentTab::TaskRuns && !runs.is_empty() {
                         show_run_view(&runs[sel].1)?;
                     }
@@ -1520,10 +2543,14 @@ pub fn run_agent_dashboard_tui(
                     let new_state = !jobs[sel].enabled;
                     let _ = registry.lock().unwrap().enable(id, new_state);
                 }
-                KeyCode::Char('d') | KeyCode::Char('D') if tab == AgentTab::Tasks && !jobs.is_empty() => {
+                KeyCode::Char('d') | KeyCode::Char('D')
+                    if tab == AgentTab::Tasks && !jobs.is_empty() =>
+                {
                     let id = jobs[sel].id;
                     registry.lock().unwrap().remove(id);
-                    if sel >= jobs.len().saturating_sub(1) { sel = jobs.len().saturating_sub(2); }
+                    if sel >= jobs.len().saturating_sub(1) {
+                        sel = jobs.len().saturating_sub(2);
+                    }
                 }
                 _ => {}
             }
@@ -1531,7 +2558,6 @@ pub fn run_agent_dashboard_tui(
     }
     Ok(())
 }
-
 
 pub fn run_memories_tui() -> Result<()> {
     use rusqlite::params;
@@ -1550,7 +2576,9 @@ pub fn run_memories_tui() -> Result<()> {
 
     impl Memory {
         fn content(&self) -> String {
-            self.final_mem.clone().unwrap_or_else(|| self.original.clone())
+            self.final_mem
+                .clone()
+                .unwrap_or_else(|| self.original.clone())
         }
     }
 
@@ -1564,25 +2592,39 @@ pub fn run_memories_tui() -> Result<()> {
     let conn = match rusqlite::Connection::open(&db_path) {
         Ok(c) => c,
         Err(e) => {
-            return Err(npcrs::NpcError::Other(format!("Could not open memory DB: {e}")));
+            return Err(npcrs::NpcError::Other(format!(
+                "Could not open memory DB: {e}"
+            )));
         }
     };
 
     fn status_icon(s: &str) -> &'static str {
         let s = s.to_lowercase();
-        if s.contains("approved") { "\x1b[1;32m+\x1b[0m" }
-        else if s.contains("edited") { "\x1b[1;36m~\x1b[0m" }
-        else if s.contains("rejected") { "\x1b[1;31m-\x1b[0m" }
-        else if s.contains("pending") { "\x1b[1;33m*\x1b[0m" }
-        else { "\x1b[90m?\x1b[0m" }
+        if s.contains("approved") {
+            "\x1b[1;32m+\x1b[0m"
+        } else if s.contains("edited") {
+            "\x1b[1;36m~\x1b[0m"
+        } else if s.contains("rejected") {
+            "\x1b[1;31m-\x1b[0m"
+        } else if s.contains("pending") {
+            "\x1b[1;33m*\x1b[0m"
+        } else {
+            "\x1b[90m?\x1b[0m"
+        }
     }
     fn status_color(s: &str) -> &'static str {
         let s = s.to_lowercase();
-        if s.contains("approved") { "32" }
-        else if s.contains("edited") { "36" }
-        else if s.contains("rejected") { "31" }
-        else if s.contains("pending") { "33" }
-        else { "0" }
+        if s.contains("approved") {
+            "32"
+        } else if s.contains("edited") {
+            "36"
+        } else if s.contains("rejected") {
+            "31"
+        } else if s.contains("pending") {
+            "33"
+        } else {
+            "0"
+        }
     }
     fn format_date(dt: &str) -> String {
         dt.chars().take(16).collect()
@@ -1590,10 +2632,11 @@ pub fn run_memories_tui() -> Result<()> {
 
     fn fetch_statuses(conn: &rusqlite::Connection) -> Vec<String> {
         let mut out = Vec::new();
-        let mut stmt = match conn.prepare("SELECT DISTINCT status FROM memory_lifecycle ORDER BY status") {
-            Ok(s) => s,
-            Err(_) => return out,
-        };
+        let mut stmt =
+            match conn.prepare("SELECT DISTINCT status FROM memory_lifecycle ORDER BY status") {
+                Ok(s) => s,
+                Err(_) => return out,
+            };
         let rows = stmt.query_map(params![], |row| row.get::<_, String>(0));
         if let Ok(r) = rows {
             out.extend(r.flatten());
@@ -1653,11 +2696,18 @@ pub fn run_memories_tui() -> Result<()> {
     let mut db_statuses = fetch_statuses(&conn);
     let mut tabs: Vec<Option<String>> = vec![None];
     tabs.extend(db_statuses.iter().cloned().map(Some));
-    if let Some(idx) = tabs.iter().position(|t| t.as_deref().map(|s| s.to_lowercase().contains("pending")).unwrap_or(false)) {
+    if let Some(idx) = tabs.iter().position(|t| {
+        t.as_deref()
+            .map(|s| s.to_lowercase().contains("pending"))
+            .unwrap_or(false)
+    }) {
         let pending = tabs.remove(idx);
         tabs.insert(1, pending);
     }
-    let tab_names: Vec<String> = tabs.iter().map(|t| t.clone().unwrap_or_else(|| "All".to_string())).collect();
+    let tab_names: Vec<String> = tabs
+        .iter()
+        .map(|t| t.clone().unwrap_or_else(|| "All".to_string()))
+        .collect();
 
     let mut tab: usize = 0;
     let mut sel: usize = 0;
@@ -1675,9 +2725,14 @@ pub fn run_memories_tui() -> Result<()> {
             *scroll = 0;
             return;
         }
-        if *sel >= count { *sel = count - 1; }
-        if *sel < *scroll { *scroll = *sel; }
-        else if *sel >= *scroll + visible { *scroll = sel.saturating_sub(visible) + 1; }
+        if *sel >= count {
+            *sel = count - 1;
+        }
+        if *sel < *scroll {
+            *scroll = *sel;
+        } else if *sel >= *scroll + visible {
+            *scroll = sel.saturating_sub(visible) + 1;
+        }
     }
 
     fn wrap(text: &str, width: usize) -> Vec<String> {
@@ -1713,7 +2768,11 @@ pub fn run_memories_tui() -> Result<()> {
         } else {
             String::new()
         };
-        header_line(&mut out, cols, &format!(" MEMORIES ({}){} ", memories.len(), stats));
+        header_line(
+            &mut out,
+            cols,
+            &format!(" MEMORIES ({}){} ", memories.len(), stats),
+        );
 
         let mut tab_str = String::new();
         for (i, name) in tab_names.iter().enumerate() {
@@ -1729,19 +2788,52 @@ pub fn run_memories_tui() -> Result<()> {
         if preview {
             if let Some(mem) = memories.get(sel) {
                 let sc = status_color(&mem.status);
-                wline(&mut out, 5, &format!("\x1b[1m Memory #{}  \x1b[{}m[{}]\x1b[0m", mem.id, sc, mem.status));
-                wline(&mut out, 6, &format!("\x1b[90m Date: {}  NPC: {}  Team: {}\x1b[0m",
-                    format_date(&mem.created_at), mem.npc, mem.team));
-                wline(&mut out, 7, &format!("\x1b[90m Scope: {}\x1b[0m", mem.scope.chars().take(60).collect::<String>()));
+                wline(
+                    &mut out,
+                    5,
+                    &format!(
+                        "\x1b[1m Memory #{}  \x1b[{}m[{}]\x1b[0m",
+                        mem.id, sc, mem.status
+                    ),
+                );
+                wline(
+                    &mut out,
+                    6,
+                    &format!(
+                        "\x1b[90m Date: {}  NPC: {}  Team: {}\x1b[0m",
+                        format_date(&mem.created_at),
+                        mem.npc,
+                        mem.team
+                    ),
+                );
+                wline(
+                    &mut out,
+                    7,
+                    &format!(
+                        "\x1b[90m Scope: {}\x1b[0m",
+                        mem.scope.chars().take(60).collect::<String>()
+                    ),
+                );
                 wline(&mut out, 9, "\x1b[1m Content:\x1b[0m");
                 let content = mem.content();
                 let mut r = 11;
                 for line in wrap(&content, cols.saturating_sub(5)) {
-                    if r >= rows - 3 { break; }
-                    wline(&mut out, r, &format!("   {}", line.chars().take(cols - 5).collect::<String>()));
+                    if r >= rows - 3 {
+                        break;
+                    }
+                    wline(
+                        &mut out,
+                        r,
+                        &format!("   {}", line.chars().take(cols - 5).collect::<String>()),
+                    );
                     r += 1;
                 }
-                if mem.final_mem.as_ref().map(|f| f != &mem.original).unwrap_or(false) {
+                if mem
+                    .final_mem
+                    .as_ref()
+                    .map(|f| f != &mem.original)
+                    .unwrap_or(false)
+                {
                     if r < rows - 3 {
                         wline(&mut out, r, "");
                         r += 1;
@@ -1751,8 +2843,17 @@ pub fn run_memories_tui() -> Result<()> {
                         r += 1;
                     }
                     for line in wrap(&mem.original, cols.saturating_sub(5)).iter().take(3) {
-                        if r >= rows - 3 { break; }
-                        wline(&mut out, r, &format!("\x1b[90m   {}\x1b[0m", line.chars().take(cols - 5).collect::<String>()));
+                        if r >= rows - 3 {
+                            break;
+                        }
+                        wline(
+                            &mut out,
+                            r,
+                            &format!(
+                                "\x1b[90m   {}\x1b[0m",
+                                line.chars().take(cols - 5).collect::<String>()
+                            ),
+                        );
                         r += 1;
                     }
                 }
@@ -1769,27 +2870,60 @@ pub fn run_memories_tui() -> Result<()> {
                 let icon = status_icon(&mem.status);
                 let date = format_date(&mem.created_at);
                 let npc = &mem.npc;
-                let content = mem.content().replace('\n', " ").chars().take(cols.saturating_sub(35)).collect::<String>();
-                let line = format!("{} {} {} {} {}", icon, date, npc.chars().take(8).collect::<String>(), " ".repeat(9usize.saturating_sub(npc.chars().take(8).count())), content);
+                let content = mem
+                    .content()
+                    .replace('\n', " ")
+                    .chars()
+                    .take(cols.saturating_sub(35))
+                    .collect::<String>();
+                let line = format!(
+                    "{} {} {} {} {}",
+                    icon,
+                    date,
+                    npc.chars().take(8).collect::<String>(),
+                    " ".repeat(9usize.saturating_sub(npc.chars().take(8).count())),
+                    content
+                );
                 if idx == sel {
-                    wline(&mut out, row, &format!("\x1b[7m {} \x1b[0m", line.pad(cols)));
+                    wline(
+                        &mut out,
+                        row,
+                        &format!("\x1b[7m {} \x1b[0m", line.pad(cols)),
+                    );
                 } else {
                     wline(&mut out, row, &format!(" {}", line));
                 }
             }
             if memories.is_empty() {
-                wline(&mut out, rows / 2, "  \x1b[90mNo memories found for this filter.\x1b[0m");
+                wline(
+                    &mut out,
+                    rows / 2,
+                    "  \x1b[90mNo memories found for this filter.\x1b[0m",
+                );
             }
         }
 
         if memories.len() > body_h && !preview {
             let total = (memories.len() - body_h).max(1);
             let pct = ((scroll as f64) / (total as f64) * 100.0) as usize;
-            let _ = write!(out, "\x1b[4;{}H\x1b[90m[{}%]\x1b[0m", cols.saturating_sub(6), pct);
+            let _ = write!(
+                out,
+                "\x1b[4;{}H\x1b[90m[{}%]\x1b[0m",
+                cols.saturating_sub(6),
+                pct
+            );
         }
 
         hr(&mut out, cols, rows - 2);
-        wline(&mut out, rows - 1, &format!(" \x1b[{};1m{}\x1b[0m", msg_color, msg.chars().take(cols - 2).collect::<String>()));
+        wline(
+            &mut out,
+            rows - 1,
+            &format!(
+                " \x1b[{};1m{}\x1b[0m",
+                msg_color,
+                msg.chars().take(cols - 2).collect::<String>()
+            ),
+        );
         let foot = if preview {
             " [Esc] Back  [a] Approve  [x] Reject  [j/k] Prev/Next  [q] Quit "
         } else {
@@ -1799,35 +2933,59 @@ pub fn run_memories_tui() -> Result<()> {
         let _ = out.flush();
 
         if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             match key.code {
-                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
                 KeyCode::Esc | KeyCode::Char('q') => {
-                    if preview { preview = false; msg.clear(); }
-                    else { break; }
+                    if preview {
+                        preview = false;
+                        msg.clear();
+                    } else {
+                        break;
+                    }
                 }
                 KeyCode::Tab => {
                     tab = (tab + 1) % tabs.len();
-                    sel = 0; scroll = 0; preview = false; msg.clear();
+                    sel = 0;
+                    scroll = 0;
+                    preview = false;
+                    msg.clear();
                     memories = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
                 }
                 KeyCode::BackTab => {
                     tab = if tab == 0 { tabs.len() - 1 } else { tab - 1 };
-                    sel = 0; scroll = 0; preview = false; msg.clear();
+                    sel = 0;
+                    scroll = 0;
+                    preview = false;
+                    msg.clear();
                     memories = load_memories(&conn, tabs.get(tab).and_then(|t| t.as_deref()));
                 }
                 KeyCode::Char('j') | KeyCode::Down => {
                     if preview {
-                        if sel + 1 < memories.len() { sel += 1; }
+                        if sel + 1 < memories.len() {
+                            sel += 1;
+                        }
                     } else {
-                        if sel + 1 < memories.len() { sel += 1; }
+                        if sel + 1 < memories.len() {
+                            sel += 1;
+                        }
                         clamp_selection(&mut sel, &mut scroll, memories.len(), body_h);
                     }
                     msg.clear();
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
-                    if sel > 0 { sel -= 1; }
-                    if !preview { clamp_selection(&mut sel, &mut scroll, memories.len(), body_h); }
+                    if sel > 0 {
+                        sel -= 1;
+                    }
+                    if !preview {
+                        clamp_selection(&mut sel, &mut scroll, memories.len(), body_h);
+                    }
                     msg.clear();
                 }
                 KeyCode::Enter => {
@@ -1864,7 +3022,6 @@ pub fn run_memories_tui() -> Result<()> {
     Ok(())
 }
 
-
 pub fn run_ctx_tui(kernel: &mut Kernel, current_pid: &mut u32) -> Result<()> {
     use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
     use npcrs::process::Capabilities;
@@ -1872,7 +3029,11 @@ pub fn run_ctx_tui(kernel: &mut Kernel, current_pid: &mut u32) -> Result<()> {
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
     let mut out = io::stdout();
 
-    let team_dir = kernel.team.source_dir.clone().unwrap_or_else(|| find_team_dir_fallback());
+    let team_dir = kernel
+        .team
+        .source_dir
+        .clone()
+        .unwrap_or_else(|| find_team_dir_fallback());
     let team_name = kernel.team.name.clone();
 
     let ctx_path = find_ctx_file(&team_dir, &team_name);
@@ -1901,12 +3062,24 @@ pub fn run_ctx_tui(kernel: &mut Kernel, current_pid: &mut u32) -> Result<()> {
         match value {
             serde_yaml::Value::Sequence(seq) => seq
                 .iter()
-                .map(|v| v.as_str().map(|s| s.to_string()).unwrap_or_else(|| serde_yaml::to_string(v).unwrap_or_default().trim().to_string()))
+                .map(|v| {
+                    v.as_str().map(|s| s.to_string()).unwrap_or_else(|| {
+                        serde_yaml::to_string(v)
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string()
+                    })
+                })
                 .collect::<Vec<_>>()
                 .join("\n"),
             serde_yaml::Value::Bool(b) => (if *b { "true" } else { "false" }).to_string(),
             serde_yaml::Value::Null => String::new(),
-            _ => value.as_str().map(|s| s.to_string()).unwrap_or_else(|| serde_yaml::to_string(value).unwrap_or_default().trim().to_string()),
+            _ => value.as_str().map(|s| s.to_string()).unwrap_or_else(|| {
+                serde_yaml::to_string(value)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            }),
         }
     }
 
@@ -1921,9 +3094,9 @@ pub fn run_ctx_tui(kernel: &mut Kernel, current_pid: &mut u32) -> Result<()> {
                     .collect();
                 serde_yaml::Value::Sequence(items)
             }
-            serde_yaml::Value::Bool(_) => {
-                serde_yaml::Value::Bool(text.trim().to_lowercase() == "true" || text.trim() == "1" || text.trim() == "yes")
-            }
+            serde_yaml::Value::Bool(_) => serde_yaml::Value::Bool(
+                text.trim().to_lowercase() == "true" || text.trim() == "1" || text.trim() == "yes",
+            ),
             serde_yaml::Value::Null => serde_yaml::Value::String(text),
             _ => serde_yaml::Value::String(text),
         }
@@ -1943,9 +3116,14 @@ pub fn run_ctx_tui(kernel: &mut Kernel, current_pid: &mut u32) -> Result<()> {
         let (cols, rows) = term_size();
         let body_h = rows.saturating_sub(6).max(1);
         let keys = keys_in_order(&ctx_data);
-        if sel >= keys.len() && !keys.is_empty() { sel = keys.len() - 1; }
-        if sel < scroll { scroll = sel; }
-        else if sel >= scroll + body_h && !keys.is_empty() { scroll = sel.saturating_sub(body_h) + 1; }
+        if sel >= keys.len() && !keys.is_empty() {
+            sel = keys.len() - 1;
+        }
+        if sel < scroll {
+            scroll = sel;
+        } else if sel >= scroll + body_h && !keys.is_empty() {
+            scroll = sel.saturating_sub(body_h) + 1;
+        }
 
         clear_all(&mut out);
         header_line(&mut out, cols, " Context ");
@@ -1976,32 +3154,64 @@ pub fn run_ctx_tui(kernel: &mut Kernel, current_pid: &mut u32) -> Result<()> {
         }
 
         if keys.is_empty() {
-            wline(&mut out, rows / 2, "  \x1b[90mNo fields. Press 'a' to add one.\x1b[0m");
+            wline(
+                &mut out,
+                rows / 2,
+                "  \x1b[90mNo fields. Press 'a' to add one.\x1b[0m",
+            );
         }
 
         hr(&mut out, cols, rows - 2);
         let dirty_marker = if dirty { "  [unsaved]" } else { "" };
-        wline(&mut out, rows - 1, &format!(" \x1b[{};1m{}\x1b[0m\x1b[90m{} fields{}\x1b[0m", msg_color, msg.chars().take(cols - 2).collect::<String>(), keys.len(), dirty_marker));
-        footer_line(&mut out, cols, rows, " [j/k] Nav  [Enter] Edit field  [a] Add  [d] Delete  [s] Save  [q] Quit ");
+        wline(
+            &mut out,
+            rows - 1,
+            &format!(
+                " \x1b[{};1m{}\x1b[0m\x1b[90m{} fields{}\x1b[0m",
+                msg_color,
+                msg.chars().take(cols - 2).collect::<String>(),
+                keys.len(),
+                dirty_marker
+            ),
+        );
+        footer_line(
+            &mut out,
+            cols,
+            rows,
+            " [j/k] Nav  [Enter] Edit field  [a] Add  [d] Delete  [s] Save  [q] Quit ",
+        );
         let _ = out.flush();
 
         if let Ok(Event::Key(key)) = event::read() {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             match key.code {
-                KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
                 KeyCode::Esc | KeyCode::Char('q') => break,
                 KeyCode::Char('j') | KeyCode::Down => {
-                    if sel + 1 < keys.len() { sel += 1; }
+                    if sel + 1 < keys.len() {
+                        sel += 1;
+                    }
                     msg.clear();
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
-                    if sel > 0 { sel -= 1; }
+                    if sel > 0 {
+                        sel -= 1;
+                    }
                     msg.clear();
                 }
                 KeyCode::Enter => {
                     if let Some(key) = keys.get(sel) {
                         let key_str = key.as_str().unwrap_or("").to_string();
-                        let original = ctx_data.get(key).cloned().unwrap_or(serde_yaml::Value::Null);
+                        let original = ctx_data
+                            .get(key)
+                            .cloned()
+                            .unwrap_or(serde_yaml::Value::Null);
                         let text = value_to_edit_string(&original);
                         if let Some(result) = edit_in_editor(&text, &key_str) {
                             ctx_data.insert(key.clone(), parse_edited_string(&original, result));
@@ -2024,7 +3234,10 @@ pub fn run_ctx_tui(kernel: &mut Kernel, current_pid: &mut u32) -> Result<()> {
                     let _ = io::stdout().write_all(b"\x1b[?1049h\x1b[?25l");
                     let _ = io::stdout().flush();
                     if !name.is_empty() {
-                        ctx_data.insert(serde_yaml::Value::String(name.to_string()), serde_yaml::Value::String(String::new()));
+                        ctx_data.insert(
+                            serde_yaml::Value::String(name.to_string()),
+                            serde_yaml::Value::String(String::new()),
+                        );
                         sel = keys.len();
                         dirty = true;
                         msg = format!("Added {} — press Enter to edit", name);
@@ -2035,39 +3248,47 @@ pub fn run_ctx_tui(kernel: &mut Kernel, current_pid: &mut u32) -> Result<()> {
                     if let Some(key) = keys.get(sel) {
                         let removed = key.as_str().unwrap_or("").to_string();
                         ctx_data.remove(key);
-                        if sel >= keys.len().saturating_sub(1) && sel > 0 { sel -= 1; }
+                        if sel >= keys.len().saturating_sub(1) && sel > 0 {
+                            sel -= 1;
+                        }
                         dirty = true;
                         msg = format!("Deleted {}", removed);
                         msg_color = "33";
                     }
                 }
-                KeyCode::Char('s') => {
-                    match save_ctx_mapping(&ctx_path, &ctx_data) {
-                        Ok(_) => {
-                            dirty = false;
-                            msg = format!("Saved {}", ctx_path.file_name().unwrap_or_default().to_string_lossy());
-                            msg_color = "32";
-                            if let Some(forenpc) = ctx_data.get("forenpc").and_then(|v| v.as_str()) {
-                                if kernel.team.npcs.contains_key(forenpc) {
-                                    kernel.team.forenpc = Some(forenpc.to_string());
-                                    let existing = kernel.ps().iter().find(|p| p.npc.name == forenpc).map(|p| p.pid);
-                                    if let Some(pid) = existing {
+                KeyCode::Char('s') => match save_ctx_mapping(&ctx_path, &ctx_data) {
+                    Ok(_) => {
+                        dirty = false;
+                        msg = format!(
+                            "Saved {}",
+                            ctx_path.file_name().unwrap_or_default().to_string_lossy()
+                        );
+                        msg_color = "32";
+                        if let Some(forenpc) = ctx_data.get("forenpc").and_then(|v| v.as_str()) {
+                            if kernel.team.npcs.contains_key(forenpc) {
+                                kernel.team.forenpc = Some(forenpc.to_string());
+                                let existing = kernel
+                                    .ps()
+                                    .iter()
+                                    .find(|p| p.npc.name == forenpc)
+                                    .map(|p| p.pid);
+                                if let Some(pid) = existing {
+                                    *current_pid = pid;
+                                } else if let Some(npc) = kernel.team.get_npc(forenpc).cloned() {
+                                    let pid =
+                                        kernel.spawn(npc, *current_pid, Capabilities::default());
+                                    if pid != 0 {
                                         *current_pid = pid;
-                                    } else if let Some(npc) = kernel.team.get_npc(forenpc).cloned() {
-                                        let pid = kernel.spawn(npc, *current_pid, Capabilities::default());
-                                        if pid != 0 {
-                                            *current_pid = pid;
-                                        }
                                     }
                                 }
                             }
                         }
-                        Err(e) => {
-                            msg = format!("Save error: {}", e);
-                            msg_color = "31";
-                        }
                     }
-                }
+                    Err(e) => {
+                        msg = format!("Save error: {}", e);
+                        msg_color = "31";
+                    }
+                },
                 _ => {}
             }
         }
@@ -2106,9 +3327,16 @@ fn edit_in_editor(text: &str, suffix: &str) -> Option<String> {
     let _ = io::stdout().flush();
     let result = (|| {
         let mut temp = std::env::temp_dir();
-        temp.push(format!("npcsh_ctx_{}_{}.txt", suffix.replace(' ', "_"), std::process::id()));
+        temp.push(format!(
+            "npcsh_ctx_{}_{}.txt",
+            suffix.replace(' ', "_"),
+            std::process::id()
+        ));
         std::fs::write(&temp, text).ok()?;
-        let status = std::process::Command::new(&editor).arg(&temp).status().ok()?;
+        let status = std::process::Command::new(&editor)
+            .arg(&temp)
+            .status()
+            .ok()?;
         if !status.success() {
             return None;
         }
@@ -2121,6 +3349,7 @@ fn edit_in_editor(text: &str, suffix: &str) -> Option<String> {
 }
 
 fn save_ctx_mapping(path: &std::path::Path, data: &serde_yaml::Mapping) -> std::io::Result<()> {
-    let yaml = serde_yaml::to_string(data).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let yaml = serde_yaml::to_string(data)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     std::fs::write(path, yaml)
 }

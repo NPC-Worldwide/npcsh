@@ -109,33 +109,27 @@ Individual NPCs can override the default model/provider by setting `model` and `
 
 ## Project structure
 
-On startup, `npcsh` will generate a folder at `~/.npcsh/` that contains the default global NPCs and jinxes if there is no `npc_team` in the current directory. It also records interactions in a local SQLite database at the path specified by `NPCSH_DB_PATH` (default `~/npcsh_history.db`).
-
-```
-~/.npcsh/
-├── images/              # images created or uploaded during conversations
-├── jobs/                # scheduled jobs
-├── logs/                # logs for triggers and jobs
-├── npc_team/            # global NPC team
-│   ├── jinxes/          # global jinxes
-│   └── assembly_lines/  # workflow pipelines
-├── screenshots/         # taken with screenshot jinx or /ots
-└── triggers/            # condition-triggered jobs
-```
-
-For project-specific teams, add an `npc_team/` directory to your project:
+A project has three layers: team context, agents, and tools. You can keep them under an `npc_team/` directory or at the project root. The agent layer can be `.npc` files, a single `agents.md`, or an `agents/` directory — these are alternatives, not layers to combine.
 
 ```
 ./npc_team/
-├── team.ctx            # team config
-├── jinxes/             # project jinxes
-│   └── example.jinx
-├── assembly_lines/     # project workflows
-│   └── example.pipe
-├── models/             # NQL SQL models
-│   └── example.sql
+├── team.ctx            # team-level context
 ├── example1.npc        # agent definition
-└── example2.npc
+├── example2.npc
+└── jinxes/             # tools
+    └── example.jinx
 ```
 
-`npcsh` automatically detects the local `npc_team/` and overlays it on the global team.
+Or use a flat layout:
+
+```
+./
+├── team.ctx            # team-level context
+├── agents.md           # many agents in one file
+└── jinxes/             # tools
+    └── example.jinx
+```
+
+If both `npc_team/*.npc` and `agents.md`/`agents/` are present, `npcsh` asks which agent layout to use on first run and saves the choice in `.NPCSH_PREFERRED_TEAM_NAME`. Later runs use the preferred layout automatically.
+
+State such as conversation history, images, screenshots, jobs, and triggers is stored under `~/.npcsh/` (and in `~/npcsh_history.db` by default).

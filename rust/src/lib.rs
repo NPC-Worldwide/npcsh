@@ -1,11 +1,22 @@
 pub mod markdown;
 pub mod stream_client;
 
+use npcrs::calculate_cost;
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
-use npcrs::{calculate_cost, Message};
+use std::io::IsTerminal;
+use std::sync::OnceLock;
+
+const PREF_FILE: &str = ".NPCSH_PREFERRED_TEAM_NAME";
+const AGENTS_TEAM_DIR: &str = ".npcsh_team";
+
+static RESOLVED_TEAM_DIR: OnceLock<String> = OnceLock::new();
 
 pub fn find_team_dir() -> String {
+    if let Some(resolved) = RESOLVED_TEAM_DIR.get() {
+        return resolved.clone();
+    }
+
     let args: Vec<String> = std::env::args().collect();
     if let Some(pos) = args.iter().position(|a| a == "--team") {
         if let Some(dir) = args.get(pos + 1) {
@@ -23,6 +34,131 @@ pub fn find_team_dir() -> String {
     }
 
     ".".to_string()
+}
+
+fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir(&path, &dest)?;
+        } else {
+            std::fs::copy(&path, &dest)?;
+        }
+    }
+    Ok(())
+}
+
+fn build_agents_team_dir(cwd: &std::path::Path) -> String {
+    let team = cwd.join(AGENTS_TEAM_DIR);
+    let _ = std::fs::remove_dir_all(&team);
+    let _ = std::fs::create_dir_all(team.join("jinxes"));
+
+    // Copy any .ctx file from the project root into the synthetic team dir.
+    if let Ok(entries) = std::fs::read_dir(cwd) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("ctx") {
+                let dest = team.join(path.file_name().unwrap_or_default());
+                let _ = std::fs::copy(&path, &dest);
+            }
+        }
+    }
+
+    // Copy the jinxes directory from the project root if present.
+    let jinxes_src = cwd.join("jinxes");
+    if jinxes_src.is_dir() {
+        let _ = copy_dir(&jinxes_src, &team.join("jinxes"));
+    }
+
+    team.to_string_lossy().to_string()
+}
+
+fn prompt_for_layout(cwd: &std::path::Path) -> Option<String> {
+    use std::io;
+
+    eprintln!(
+        "Found both npc_team/ and agents.md/agents/ in {}.",
+        cwd.display()
+    );
+    eprintln!("Which layout should npcsh use?");
+    eprintln!("  1) npc_team");
+    eprintln!("  2) agents");
+
+    loop {
+        eprint!("Enter 1 or 2: ");
+        let _ = io::Write::flush(&mut io::stderr());
+        let mut buf = String::new();
+        if io::stdin().read_line(&mut buf).is_err() {
+            return None;
+        }
+        match buf.trim() {
+            "1" | "npc_team" => return Some("npc_team".to_string()),
+            "2" | "agents" => return Some("agents".to_string()),
+            _ => eprintln!("Invalid choice. Enter 1 or 2."),
+        }
+    }
+}
+
+#[doc(hidden)]
+pub fn resolve_team_layout_at(cwd: &std::path::Path) -> Option<String> {
+    let has_npc_team = cwd.join("npc_team").is_dir();
+    let has_agents = cwd.join("agents.md").is_file() || cwd.join("agents").is_dir();
+
+    let pref_path = cwd.join(PREF_FILE);
+    let pref = if pref_path.exists() {
+        std::fs::read_to_string(&pref_path)
+            .ok()
+            .map(|s| s.trim().to_lowercase())
+    } else {
+        None
+    };
+
+    let mode = match (has_npc_team, has_agents) {
+        (true, false) => Some("npc_team".to_string()),
+        (false, true) => Some("agents".to_string()),
+        (true, true) => pref.or_else(|| {
+            if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
+                prompt_for_layout(cwd)
+            } else {
+                eprintln!(
+                    "Warning: both npc_team/ and agents layout found; defaulting to npc_team. \
+                     Set {} to choose.",
+                    PREF_FILE
+                );
+                Some("npc_team".to_string())
+            }
+        }),
+        (false, false) => None,
+    };
+
+    let mode = mode?;
+
+    // Persist the choice so the user is not asked again.
+    if !pref_path.exists() {
+        let _ = std::fs::write(&pref_path, &mode);
+    }
+
+    let team_dir = if mode == "agents" {
+        build_agents_team_dir(cwd)
+    } else {
+        cwd.join("npc_team").to_string_lossy().to_string()
+    };
+
+    RESOLVED_TEAM_DIR.set(team_dir.clone()).ok();
+    Some(team_dir)
+}
+
+/// Detect the project layout before booting the kernel.
+///
+/// If both `npc_team/` and `agents.md`/`agents/` exist, the user is prompted
+/// (in interactive terminals) and the choice is saved in `.NPCSH_PREFERRED_TEAM_NAME`.
+/// The resolved team directory is cached for `find_team_dir()` to use.
+pub fn resolve_team_layout() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    resolve_team_layout_at(&cwd)
 }
 
 pub async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
@@ -107,8 +243,16 @@ pub async fn exec_npc_file(
         if !output.is_empty() {
             println!("{}", output);
         }
-        let in_tok = response.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0);
-        let out_tok = response.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0);
+        let in_tok = response
+            .usage
+            .as_ref()
+            .map(|u| u.prompt_tokens)
+            .unwrap_or(0);
+        let out_tok = response
+            .usage
+            .as_ref()
+            .map(|u| u.completion_tokens)
+            .unwrap_or(0);
         let cost = response
             .usage
             .as_ref()

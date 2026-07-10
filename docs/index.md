@@ -5,12 +5,12 @@
 
 # npcsh Documentation
 
-`npcsh` is an agentic shell built around a declarative data layer for AI teams. Agents, tools, context, and workflows are defined as plain files in an `npc_team/` directory; the shell compiles them into a live multi-agent system you can chat with, schedule, or serve over an API.
+`npcsh` is an agentic shell built around a declarative data layer for AI teams. Team context, agents, and tools are defined as plain files; the shell compiles them into a live multi-agent system you can chat with, schedule, or serve over an API.
 
 ## Quick Links
 
 - [Installation Guide](installation.md)
-- [Full Guide](guide.md) — agents, jinxes, orchestration, NQL, knowledge graphs, and more
+- [Full Guide](guide.md) — agents, jinxes, orchestration, knowledge graphs, and more
 - [Benchmarks](benchmarks.md) — pass/fail results across 125 agentic-shell tasks
 - [NPC CLI](npc_cli.md)
 - [Skills](skills.md) — knowledge-content jinxes with progressive section disclosure
@@ -19,7 +19,6 @@
 
 - [NPC Shell](npcsh.md)
 - [Alicanto](alicanto.md)
-- [Guac](guac.md)
 - [PTI](pti.md)
 - [Spool](spool.md)
 - [Wander](wander.md)
@@ -28,13 +27,15 @@
 
 ## The NPC Data Layer
 
-Everything customizable in `npcsh` lives in `npc_team/` as simple files:
+Everything customizable in `npcsh` lives as simple files across three layers:
 
-- **`.npc`** — agent definitions (persona, directive, model, provider, jinxes)
-- **`.jinx`** — Jinja execution templates, i.e. tools and workflows
-- **`.ctx`** — team context (default model/provider, forenpc, MCP servers, env vars)
-- **`.sql`** — NQL models: SQL with embedded AI functions
-- **`.pipe`** — assembly-line workflow pipelines
+| Layer | Files | Purpose |
+|-------|-------|---------|
+| **Team** | `.ctx` / `team.ctx` / `npc_team/*.ctx` | Shared context: default model/provider, forenpc, MCP servers, env vars |
+| **Agents** | `.npc`, `agents.md`, `agents/` | Agent definitions: name, persona, directive, model/provider, and jinxes they can use |
+| **Tools** | `.jinx`, `skills/` | Reusable tools and workflows that agents invoke by name |
+
+Files can live inside `npc_team/` or at the project root. The agent layer can use `.npc` files, a single `agents.md`, or an `agents/` directory — these are alternatives, not a required combination.
 
 Because these are ordinary files, you can version them in git, share them across projects, and drop in agent definitions from other ecosystems.
 

@@ -1,25 +1,23 @@
-
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
 use npcrs::process::{Capabilities, ProcessState};
-use npcrs::{calculate_cost, Message};
-use std::io::{self, Write};
-use std::sync::{Arc, Mutex, OnceLock};
+use npcrs::{Message, calculate_cost};
 use std::collections::{HashMap, VecDeque};
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
-mod tui;
-mod cron;
-mod tutorial;
 mod cli_providers;
+mod cron;
+mod tui;
+mod tutorial;
 mod version_check;
 
-use crate::cron::CronRegistry;
 use crate::cli_providers::{CLI_PROVIDERS, run_cli_provider};
+use crate::cron::CronRegistry;
 use npcsh::markdown::render_block;
 use npcsh::{
-    exec_jinx_file, exec_npc_file, find_team_dir, init_team,
-    stream_client,
+    exec_jinx_file, exec_npc_file, find_team_dir, init_team, resolve_team_layout, stream_client,
 };
 
 fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
@@ -45,7 +43,11 @@ fn handle_paste_input(raw: &str) -> (String, Option<String>) {
             || (bytes[0] == b'B' && bytes[1] == b'M')
             || raw.starts_with("data:image/")
             || {
-                let non_printable = bytes.iter().take(100).filter(|&&b| b < 32 && b != b'\n' && b != b'\r' && b != b'\t').count();
+                let non_printable = bytes
+                    .iter()
+                    .take(100)
+                    .filter(|&&b| b < 32 && b != b'\n' && b != b'\r' && b != b'\t')
+                    .count();
                 non_printable > 10
             }
     } else {
@@ -53,18 +55,26 @@ fn handle_paste_input(raw: &str) -> (String, Option<String>) {
     };
 
     if is_binary {
-        let ext = if bytes.len() > 4 && bytes[0] == 0x89 { ".png" }
-            else if bytes.len() > 2 && bytes[0] == 0xFF && bytes[1] == 0xD8 { ".jpg" }
-            else if raw.starts_with("data:image/png") { ".png" }
-            else if raw.starts_with("data:image/jpeg") || raw.starts_with("data:image/jpg") { ".jpg" }
-            else { ".bin" };
+        let ext = if bytes.len() > 4 && bytes[0] == 0x89 {
+            ".png"
+        } else if bytes.len() > 2 && bytes[0] == 0xFF && bytes[1] == 0xD8 {
+            ".jpg"
+        } else if raw.starts_with("data:image/png") {
+            ".png"
+        } else if raw.starts_with("data:image/jpeg") || raw.starts_with("data:image/jpg") {
+            ".jpg"
+        } else {
+            ".bin"
+        };
 
         let temp_dir = std::env::temp_dir();
         let temp_path = temp_dir.join(format!("npcsh_paste_{}{}", std::process::id(), ext));
         let write_data = if raw.starts_with("data:image/") {
             if let Some((_, data)) = raw.split_once(',') {
                 use base64::Engine;
-                base64::engine::general_purpose::STANDARD.decode(data).unwrap_or_default()
+                base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .unwrap_or_default()
             } else {
                 raw.as_bytes().to_vec()
             }
@@ -80,7 +90,10 @@ fn handle_paste_input(raw: &str) -> (String, Option<String>) {
     let line_count = raw.lines().count();
     let char_count = raw.len();
     if line_count > 3 || char_count > 500 {
-        eprintln!("\x1b[90m[pasted: {} lines, {} chars]\x1b[0m", line_count, char_count);
+        eprintln!(
+            "\x1b[90m[pasted: {} lines, {} chars]\x1b[0m",
+            line_count, char_count
+        );
         return (raw.to_string(), Some(raw.to_string()));
     }
 
@@ -106,7 +119,11 @@ impl NpcHelper {
             .filter(|c| c.name.starts_with('/'))
             .map(|c| c.name.to_string())
             .collect();
-        Self { npc_names, commands, jinx_names }
+        Self {
+            npc_names,
+            commands,
+            jinx_names,
+        }
     }
 
     fn complete(&self, line: &str, pos: usize) -> (usize, Vec<Completion>) {
@@ -166,7 +183,11 @@ fn complete_paths(word: &str) -> Vec<Completion> {
 
     let (search_dir, file_prefix, typed_dir_prefix): (String, String, String) =
         if word.ends_with('/') {
-            let dir = if expanded.is_empty() { cwd.clone() } else { expanded.clone() };
+            let dir = if expanded.is_empty() {
+                cwd.clone()
+            } else {
+                expanded.clone()
+            };
             (dir, String::new(), word.to_string())
         } else if let Some(idx) = expanded.rfind('/') {
             let dir = expanded[..idx + 1].to_string();
@@ -199,7 +220,10 @@ fn complete_paths(word: &str) -> Vec<Completion> {
         } else {
             format!("{}{} ", typed_dir_prefix, name)
         };
-        out.push(Completion { display, replacement });
+        out.push(Completion {
+            display,
+            replacement,
+        });
     }
 
     for (dot, dot_display) in [(".", "."), ("..", "..")] {
@@ -215,12 +239,7 @@ fn complete_paths(word: &str) -> Vec<Completion> {
     out
 }
 
-async fn run_jinx_command(
-    kernel: &mut Kernel,
-    current_pid: u32,
-    cmd_name: &str,
-    args_str: &str,
-) {
+async fn run_jinx_command(kernel: &mut Kernel, current_pid: u32, cmd_name: &str, args_str: &str) {
     let mut args = HashMap::new();
 
     if !args_str.is_empty() {
@@ -307,47 +326,198 @@ struct CommandDef {
 }
 
 const CORE_COMMANDS: &[CommandDef] = &[
-    CommandDef { name: "exit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
-    CommandDef { name: "quit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
-    CommandDef { name: "/exit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
-    CommandDef { name: "/help", category: "Info", description: "Show this help", cmd: CoreCmd::Help },
-    CommandDef { name: "/jinxes", category: "Info", description: "List available jinxes", cmd: CoreCmd::Jinxes },
-    CommandDef { name: "/ps", category: "Info", description: "List processes", cmd: CoreCmd::Ps },
-    CommandDef { name: "/quit", category: "Info", description: "Exit npcsh", cmd: CoreCmd::Exit },
-    CommandDef { name: "/stats", category: "Info", description: "Kernel stats", cmd: CoreCmd::Stats },
-    CommandDef { name: "/tutorial", category: "Info", description: "Run interactive tutorial", cmd: CoreCmd::Tutorial },
-    CommandDef { name: "/agent", category: "Modes", description: "Full agent mode (tools + bash + LLM)", cmd: CoreCmd::Agent },
-    CommandDef { name: "/chat", category: "Modes", description: "Chat-only mode (LLM, no tools)", cmd: CoreCmd::Chat },
-    CommandDef { name: "/cmd", category: "Modes", description: "Command mode (bash first, LLM fallback)", cmd: CoreCmd::CmdMode },
-    CommandDef { name: "/kill", category: "NPCs", description: "Kill current process", cmd: CoreCmd::Kill },
-    CommandDef { name: "/clear", category: "System / Config", description: "Clear conversation", cmd: CoreCmd::Clear },
-    CommandDef { name: "/config", category: "System / Config", description: "Configuration TUI", cmd: CoreCmd::Config },
-    CommandDef { name: "/ctx", category: "System / Config", description: "Browse and edit team context fields", cmd: CoreCmd::Ctx },
-    CommandDef { name: "/history", category: "System / Config", description: "Show conversation history", cmd: CoreCmd::History },
-    CommandDef { name: "/memories", category: "System / Config", description: "Browse memory lifecycle TUI", cmd: CoreCmd::Memories },
-    CommandDef { name: "/model", category: "System / Config", description: "Model selection TUI", cmd: CoreCmd::Model },
-    CommandDef { name: "/reattach", category: "System / Config", description: "Reattach to files/sessions", cmd: CoreCmd::Reattach },
-    CommandDef { name: "/set", category: "System / Config", description: "Set model, provider, or mode", cmd: CoreCmd::Set },
-    CommandDef { name: "/setup", category: "System / Config", description: "First-time setup TUI", cmd: CoreCmd::Setup },
-    CommandDef { name: "/team", category: "System / Config", description: "Team management TUI", cmd: CoreCmd::Team },
-    CommandDef { name: "/commit", category: "Tools", description: "Commit helper TUI", cmd: CoreCmd::Commit },
-    CommandDef { name: "/gitt", category: "Tools", description: "Git TUI", cmd: CoreCmd::Gitt },
-    CommandDef { name: "/cron", category: "Loops", description: "Cron management", cmd: CoreCmd::Cron },
-    CommandDef { name: "/loop", category: "Loops", description: "Create a loop", cmd: CoreCmd::Loop },
-    CommandDef { name: "/loop_demo", category: "Loops", description: "Add a demo heartbeat loop", cmd: CoreCmd::LoopDemo },
-    CommandDef { name: "/loopoff", category: "Loops", description: "Disable a loop", cmd: CoreCmd::LoopOff },
-    CommandDef { name: "/loopon", category: "Loops", description: "Enable a loop", cmd: CoreCmd::LoopOn },
-    CommandDef { name: "/looprm", category: "Loops", description: "Remove a loop", cmd: CoreCmd::LoopRm },
-    CommandDef { name: "/loops", category: "Loops", description: "List loops", cmd: CoreCmd::Loops },
-    CommandDef { name: "/doctor", category: "System Commands", description: "Diagnose and auto-fix common issues", cmd: CoreCmd::Jinx("doctor") },
-    CommandDef { name: "/init", category: "System Commands", description: "Initialize / reinitialize npcsh", cmd: CoreCmd::Jinx("init") },
-    CommandDef { name: "/nsync", category: "System Commands", description: "Sync npcsh state", cmd: CoreCmd::Jinx("nsync") },
-    CommandDef { name: "/refresh", category: "System Commands", description: "Refresh npcsh (alias of reload)", cmd: CoreCmd::Jinx("reload") },
-    CommandDef { name: "/reload", category: "System Commands", description: "Reload npcsh state", cmd: CoreCmd::Jinx("reload") },
-    CommandDef { name: "/shh", category: "System Commands", description: "Toggle quiet mode", cmd: CoreCmd::Jinx("shh") },
-    CommandDef { name: "/update", category: "System Commands", description: "Update npcsh", cmd: CoreCmd::Jinx("update") },
-    CommandDef { name: "/usage", category: "System Commands", description: "Show usage info", cmd: CoreCmd::Jinx("usage") },
-    CommandDef { name: "/verbose", category: "System Commands", description: "Toggle verbose mode", cmd: CoreCmd::Jinx("verbose") },
+    CommandDef {
+        name: "exit",
+        category: "Info",
+        description: "Exit npcsh",
+        cmd: CoreCmd::Exit,
+    },
+    CommandDef {
+        name: "quit",
+        category: "Info",
+        description: "Exit npcsh",
+        cmd: CoreCmd::Exit,
+    },
+    CommandDef {
+        name: "/exit",
+        category: "Info",
+        description: "Exit npcsh",
+        cmd: CoreCmd::Exit,
+    },
+    CommandDef {
+        name: "/help",
+        category: "Info",
+        description: "Show this help",
+        cmd: CoreCmd::Help,
+    },
+    CommandDef {
+        name: "/jinxes",
+        category: "Info",
+        description: "List available jinxes",
+        cmd: CoreCmd::Jinxes,
+    },
+    CommandDef {
+        name: "/ps",
+        category: "Info",
+        description: "List processes",
+        cmd: CoreCmd::Ps,
+    },
+    CommandDef {
+        name: "/quit",
+        category: "Info",
+        description: "Exit npcsh",
+        cmd: CoreCmd::Exit,
+    },
+    CommandDef {
+        name: "/stats",
+        category: "Info",
+        description: "Kernel stats",
+        cmd: CoreCmd::Stats,
+    },
+    CommandDef {
+        name: "/tutorial",
+        category: "Info",
+        description: "Run interactive tutorial",
+        cmd: CoreCmd::Tutorial,
+    },
+    CommandDef {
+        name: "/agent",
+        category: "Modes",
+        description: "Full agent mode (tools + bash + LLM)",
+        cmd: CoreCmd::Agent,
+    },
+    CommandDef {
+        name: "/chat",
+        category: "Modes",
+        description: "Chat-only mode (LLM, no tools)",
+        cmd: CoreCmd::Chat,
+    },
+    CommandDef {
+        name: "/cmd",
+        category: "Modes",
+        description: "Command mode (bash first, LLM fallback)",
+        cmd: CoreCmd::CmdMode,
+    },
+    CommandDef {
+        name: "/kill",
+        category: "NPCs",
+        description: "Kill current process",
+        cmd: CoreCmd::Kill,
+    },
+    CommandDef {
+        name: "/clear",
+        category: "System / Config",
+        description: "Clear conversation",
+        cmd: CoreCmd::Clear,
+    },
+    CommandDef {
+        name: "/config",
+        category: "System / Config",
+        description: "Configuration TUI",
+        cmd: CoreCmd::Config,
+    },
+    CommandDef {
+        name: "/ctx",
+        category: "System / Config",
+        description: "Browse and edit team context fields",
+        cmd: CoreCmd::Ctx,
+    },
+    CommandDef {
+        name: "/history",
+        category: "System / Config",
+        description: "Show conversation history",
+        cmd: CoreCmd::History,
+    },
+    CommandDef {
+        name: "/memories",
+        category: "System / Config",
+        description: "Browse memory lifecycle TUI",
+        cmd: CoreCmd::Memories,
+    },
+    CommandDef {
+        name: "/model",
+        category: "System / Config",
+        description: "Model selection TUI",
+        cmd: CoreCmd::Model,
+    },
+    CommandDef {
+        name: "/reattach",
+        category: "System / Config",
+        description: "Reattach to files/sessions",
+        cmd: CoreCmd::Reattach,
+    },
+    CommandDef {
+        name: "/set",
+        category: "System / Config",
+        description: "Set model, provider, or mode",
+        cmd: CoreCmd::Set,
+    },
+    CommandDef {
+        name: "/setup",
+        category: "System / Config",
+        description: "First-time setup TUI",
+        cmd: CoreCmd::Setup,
+    },
+    CommandDef {
+        name: "/team",
+        category: "System / Config",
+        description: "Team management TUI",
+        cmd: CoreCmd::Team,
+    },
+    CommandDef {
+        name: "/commit",
+        category: "Tools",
+        description: "Commit helper TUI",
+        cmd: CoreCmd::Commit,
+    },
+    CommandDef {
+        name: "/gitt",
+        category: "Tools",
+        description: "Git TUI",
+        cmd: CoreCmd::Gitt,
+    },
+    CommandDef {
+        name: "/cron",
+        category: "Loops",
+        description: "Cron management",
+        cmd: CoreCmd::Cron,
+    },
+    CommandDef {
+        name: "/loop",
+        category: "Loops",
+        description: "Create a loop",
+        cmd: CoreCmd::Loop,
+    },
+    CommandDef {
+        name: "/loop_demo",
+        category: "Loops",
+        description: "Add a demo heartbeat loop",
+        cmd: CoreCmd::LoopDemo,
+    },
+    CommandDef {
+        name: "/loopoff",
+        category: "Loops",
+        description: "Disable a loop",
+        cmd: CoreCmd::LoopOff,
+    },
+    CommandDef {
+        name: "/loopon",
+        category: "Loops",
+        description: "Enable a loop",
+        cmd: CoreCmd::LoopOn,
+    },
+    CommandDef {
+        name: "/looprm",
+        category: "Loops",
+        description: "Remove a loop",
+        cmd: CoreCmd::LoopRm,
+    },
+    CommandDef {
+        name: "/loops",
+        category: "Loops",
+        description: "List loops",
+        cmd: CoreCmd::Loops,
+    },
 ];
 
 const COMMAND_CATEGORIES: &[&str] = &[
@@ -381,47 +551,15 @@ async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
     load_npcshrc();
 
-    let server_url = std::env::var("NPCSH_SERVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:5237".to_string());
+    resolve_team_layout();
+
+    let server_url =
+        std::env::var("NPCSH_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:5237".to_string());
     let http_client = reqwest::Client::new();
 
     if let Some(file) = args.get(1) {
         if file.ends_with(".nsh") && !file.starts_with('-') {
             return exec_nsh_file(file, &http_client, &server_url).await;
-        }
-    }
-
-    if let Some(pos) = args.iter().position(|a| a == "-c" || a == "--command") {
-        if let Some(command) = args.get(pos + 1) {
-            let team_dir = find_team_dir();
-            let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
-            let mut kernel = Kernel::boot(&team_dir, &db_path)?;
-            match run_stream_turn(
-                &mut kernel,
-                0,
-                command,
-                Mode::Agent,
-                &http_client,
-                &server_url,
-                true,
-            )
-            .await
-            {
-                Ok(output) => {
-                    let streamed = kernel
-                        .get_process(0)
-                        .map(|p| p.last_streamed)
-                        .unwrap_or(false);
-                    if !streamed && !output.is_empty() {
-                        println!("{}", render_block(&output));
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
-            }
-            return Ok(());
         }
     }
 
@@ -460,11 +598,7 @@ async fn main() -> Result<()> {
     let has_npcs = match std::fs::read_dir(team_path) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
-            .any(|e| {
-                e.path()
-                    .extension()
-                    .map_or(false, |ext| ext == "npc")
-            }),
+            .any(|e| e.path().extension().map_or(false, |ext| ext == "npc")),
         Err(_) => false,
     };
     if !jinxes_dir.exists() || !has_npcs {
@@ -507,7 +641,9 @@ async fn main() -> Result<()> {
     let current_version = env!("NPCSH_VERSION").to_string();
     let http_client_for_update = http_client.clone();
     tokio::spawn(async move {
-        if let Some(info) = version_check::check_version(&http_client_for_update, &current_version).await {
+        if let Some(info) =
+            version_check::check_version(&http_client_for_update, &current_version).await
+        {
             eprintln!("{}", version_check::format_update_notice(&info));
         }
     });
@@ -597,9 +733,16 @@ async fn main() -> Result<()> {
 
         while let Ok(job) = cron_rx.try_recv() {
             let _ = execute_cron_job_and_capture(
-                &mut kernel, current_pid, &job, &http_client, &server_url,
-                &mut session_input_tokens, &mut session_output_tokens, &mut session_cost,
-            ).await;
+                &mut kernel,
+                current_pid,
+                &job,
+                &http_client,
+                &server_url,
+                &mut session_input_tokens,
+                &mut session_output_tokens,
+                &mut session_cost,
+            )
+            .await;
         }
 
         let input = if let Some(queued) = input_queue.pop_front() {
@@ -637,10 +780,12 @@ async fn main() -> Result<()> {
             continue;
         }
 
-
         let cmd_token = input.split_whitespace().next().unwrap_or("");
 
-            let maybe_core = CORE_COMMANDS.iter().find(|c| c.name == cmd_token).map(|c| c.cmd);
+        let maybe_core = CORE_COMMANDS
+            .iter()
+            .find(|c| c.name == cmd_token)
+            .map(|c| c.cmd);
         if let Some(cmd) = maybe_core {
             let rest = input.strip_prefix(cmd_token).unwrap_or("").trim();
             match dispatch_core_command(
@@ -659,7 +804,7 @@ async fn main() -> Result<()> {
             }
         }
 
-            if input == "/set" {
+        if input == "/set" {
             eprintln!("Usage: /set key=value");
             eprintln!("  model=gpt-4o  provider=openai  mode=chat");
             continue;
@@ -765,18 +910,29 @@ async fn main() -> Result<()> {
 
         let (npc_name_str, team_name_str, model_str, provider_str, conv_id) = {
             let p = kernel.get_process(current_pid);
-            let npc_name = p.map(|p| p.npc.name.clone()).unwrap_or_else(|| "npcsh".to_string());
-            let team_name = kernel.team.source_dir.as_deref()
+            let npc_name = p
+                .map(|p| p.npc.name.clone())
+                .unwrap_or_else(|| "npcsh".to_string());
+            let team_name = kernel
+                .team
+                .source_dir
+                .as_deref()
                 .and_then(|d| std::path::Path::new(d).file_name())
                 .and_then(|n| n.to_str())
                 .unwrap_or("npcsh")
                 .to_string();
-            let model = p.map(|p| p.npc.resolved_model()).unwrap_or_else(|| "qwen3.5:2b".to_string());
-            let provider = p.map(|p| p.npc.resolved_provider()).unwrap_or_else(|| "ollama".to_string());
+            let model = p
+                .map(|p| p.npc.resolved_model())
+                .unwrap_or_else(|| "qwen3.5:2b".to_string());
+            let provider = p
+                .map(|p| p.npc.resolved_provider())
+                .unwrap_or_else(|| "ollama".to_string());
             let conv_id = p.map(|p| p.conversation_id.clone()).unwrap_or_default();
             (npc_name, team_name, model, provider, conv_id)
         };
-        let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".to_string());
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".to_string());
 
         let cli_intercepted = false;
 
@@ -834,24 +990,48 @@ async fn main() -> Result<()> {
                     }
 
                     let p = kernel.get_process(current_pid);
-                    let (in_tok, out_tok, cost) = p.map(|p| {
-                        (p.usage.total_input_tokens, p.usage.total_output_tokens, p.usage.total_cost_usd)
-                    }).unwrap_or((0, 0, 0.0));
+                    let (in_tok, out_tok, cost) = p
+                        .map(|p| {
+                            (
+                                p.usage.total_input_tokens,
+                                p.usage.total_output_tokens,
+                                p.usage.total_cost_usd,
+                            )
+                        })
+                        .unwrap_or((0, 0, 0.0));
 
                     let _ = kernel.history.save_conversation_message(
-                        &conv_id, "user", &input, &cwd,
-                        Some(&model_str), Some(&provider_str),
-                        Some(&npc_name_str), Some(&team_name_str),
-                        None, None, None,
-                        Some(in_tok), None, None,
+                        &conv_id,
+                        "user",
+                        &input,
+                        &cwd,
+                        Some(&model_str),
+                        Some(&provider_str),
+                        Some(&npc_name_str),
+                        Some(&team_name_str),
+                        None,
+                        None,
+                        None,
+                        Some(in_tok),
+                        None,
+                        None,
                     );
 
                     let _ = kernel.history.save_conversation_message(
-                        &conv_id, "assistant", &output, &cwd,
-                        Some(&model_str), Some(&provider_str),
-                        Some(&npc_name_str), Some(&team_name_str),
-                        None, None, None,
-                        Some(in_tok), Some(out_tok), Some(cost),
+                        &conv_id,
+                        "assistant",
+                        &output,
+                        &cwd,
+                        Some(&model_str),
+                        Some(&provider_str),
+                        Some(&npc_name_str),
+                        Some(&team_name_str),
+                        None,
+                        None,
+                        None,
+                        Some(in_tok),
+                        Some(out_tok),
+                        Some(cost),
                     );
                 }
                 Err(e) => {
@@ -986,7 +1166,11 @@ async fn run_stream_turn_with_interrupt(
 
         if let Some(result) = cli_result {
             let in_tok = result.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0);
-            let out_tok = result.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0);
+            let out_tok = result
+                .usage
+                .as_ref()
+                .map(|u| u.completion_tokens)
+                .unwrap_or(0);
             let cost = result.cost_usd;
 
             {
@@ -996,7 +1180,11 @@ async fn run_stream_turn_with_interrupt(
                 process.messages.push(Message::user(input));
                 let msg = Message {
                     role: "assistant".to_string(),
-                    content: if result.text.is_empty() { None } else { Some(result.text.clone()) },
+                    content: if result.text.is_empty() {
+                        None
+                    } else {
+                        Some(result.text.clone())
+                    },
                     tool_calls: None,
                     tool_call_id: None,
                     name: None,
@@ -1008,11 +1196,24 @@ async fn run_stream_turn_with_interrupt(
             }
 
             if let Some(sid) = result.session_id {
-                cli_sessions().lock().unwrap().insert(current_pid, sid.clone());
+                cli_sessions()
+                    .lock()
+                    .unwrap()
+                    .insert(current_pid, sid.clone());
             }
 
             if save_history {
-                save_conversation_turn(kernel, current_pid, input, &result.text, in_tok, out_tok, cost, &cwd).await;
+                save_conversation_turn(
+                    kernel,
+                    current_pid,
+                    input,
+                    &result.text,
+                    in_tok,
+                    out_tok,
+                    cost,
+                    &cwd,
+                )
+                .await;
             }
 
             return Ok(result.text);
@@ -1072,10 +1273,32 @@ async fn run_stream_turn_with_interrupt(
     let output = response.message.content.clone().unwrap_or_default();
 
     if save_history {
-        let in_tok = response.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0);
-        let out_tok = response.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0);
-        let cost = response.usage.as_ref().map(|u| calculate_cost(&request.model, u.prompt_tokens, u.completion_tokens)).unwrap_or(0.0);
-        save_conversation_turn(kernel, current_pid, input, &output, in_tok, out_tok, cost, &cwd).await;
+        let in_tok = response
+            .usage
+            .as_ref()
+            .map(|u| u.prompt_tokens)
+            .unwrap_or(0);
+        let out_tok = response
+            .usage
+            .as_ref()
+            .map(|u| u.completion_tokens)
+            .unwrap_or(0);
+        let cost = response
+            .usage
+            .as_ref()
+            .map(|u| calculate_cost(&request.model, u.prompt_tokens, u.completion_tokens))
+            .unwrap_or(0.0);
+        save_conversation_turn(
+            kernel,
+            current_pid,
+            input,
+            &output,
+            in_tok,
+            out_tok,
+            cost,
+            &cwd,
+        )
+        .await;
     }
 
     let process = kernel.get_process_mut(current_pid).unwrap();
@@ -1188,51 +1411,70 @@ async fn save_conversation_turn(
     cost: f64,
     cwd: &str,
 ) {
-    let Some(process) = kernel.get_process(current_pid) else { return };
+    let Some(process) = kernel.get_process(current_pid) else {
+        return;
+    };
     let model = process.npc.resolved_model();
     let provider = process.npc.resolved_provider();
     let npc_name = process.npc.name.clone();
     let conv_id = process.conversation_id.clone();
-    if conv_id.is_empty() { return; }
-    let team_name_str = kernel.team.source_dir.as_deref()
+    if conv_id.is_empty() {
+        return;
+    }
+    let team_name_str = kernel
+        .team
+        .source_dir
+        .as_deref()
         .and_then(|d| std::path::Path::new(d).file_name())
         .and_then(|n| n.to_str())
         .unwrap_or("npcsh")
         .to_string();
 
     let _ = kernel.history.save_conversation_message(
-        &conv_id, "user", input, cwd,
-        Some(&model), Some(&provider),
-        Some(&npc_name), Some(&team_name_str),
-        None, None, None,
-        Some(in_tok), None, None,
+        &conv_id,
+        "user",
+        input,
+        cwd,
+        Some(&model),
+        Some(&provider),
+        Some(&npc_name),
+        Some(&team_name_str),
+        None,
+        None,
+        None,
+        Some(in_tok),
+        None,
+        None,
     );
     let _ = kernel.history.save_conversation_message(
-        &conv_id, "assistant", output, cwd,
-        Some(&model), Some(&provider),
-        Some(&npc_name), Some(&team_name_str),
-        None, None, None,
-        None, Some(out_tok), Some(cost),
+        &conv_id,
+        "assistant",
+        output,
+        cwd,
+        Some(&model),
+        Some(&provider),
+        Some(&npc_name),
+        Some(&team_name_str),
+        None,
+        None,
+        None,
+        None,
+        Some(out_tok),
+        Some(cost),
     );
 }
 
 fn ask_permission(prompt: &str) -> String {
     use crossterm::{
+        ExecutableCommand,
         cursor::MoveTo,
         event::{self, Event, KeyCode, KeyEventKind},
         style::Print,
         terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
-        ExecutableCommand,
     };
     use std::io::{self, Write};
 
-    let options = vec![
-        "Yes",
-        "Yes (session)",
-        "Yes (always)",
-        "No",
-        "No (never)",
-    ];
+    let options = vec!["Yes", "Yes (session)", "Yes (always)", "No", "No (never)"];
 
     let wrap_lines = |text: &str, width: usize| -> Vec<String> {
         let mut lines = Vec::new();
@@ -1293,7 +1535,8 @@ fn ask_permission(prompt: &str) -> String {
         out.execute(Clear(ClearType::All))?;
 
         let prompt_lines = wrap_lines(prompt, width);
-        let total_rows = prompt_lines.len()
+        let total_rows = prompt_lines
+            .len()
             .saturating_add(1)
             .saturating_add(options.len())
             .saturating_add(1);
@@ -1432,7 +1675,10 @@ async fn dispatch_core_command(
                 let name = kernel.get_process(*current_pid).map(|p| p.npc.name.clone());
                 kernel.kill(*current_pid, 0).ok();
                 *current_pid = 0;
-                eprintln!("{YELLOW}Killed @{} — switched to init{RESET}", name.unwrap_or_default());
+                eprintln!(
+                    "{YELLOW}Killed @{} — switched to init{RESET}",
+                    name.unwrap_or_default()
+                );
             }
             CoreDispatch::Handled
         }
@@ -1474,7 +1720,11 @@ async fn dispatch_core_command(
             let filter = if show_all {
                 None
             } else if rest.is_empty() {
-                Some(std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".to_string()))
+                Some(
+                    std::env::current_dir()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|_| ".".to_string()),
+                )
             } else {
                 Some(shellexpand::tilde(rest).to_string())
             };
@@ -1551,9 +1801,13 @@ async fn dispatch_core_command(
                 };
                 println!(
                     "  {CYAN}@{:<12}{RESET} pid:{:<3} {state_color}{:?}{RESET}  tokens:{}/{} cost:${:.4} turns:{}",
-                    p.npc.name, p.pid, p.state,
-                    p.usage.total_input_tokens, p.usage.total_output_tokens,
-                    p.usage.total_cost_usd, p.usage.total_turns,
+                    p.npc.name,
+                    p.pid,
+                    p.state,
+                    p.usage.total_input_tokens,
+                    p.usage.total_output_tokens,
+                    p.usage.total_cost_usd,
+                    p.usage.total_turns,
                 );
             }
             CoreDispatch::Handled
@@ -1563,8 +1817,14 @@ async fn dispatch_core_command(
             let s = kernel.stats();
             println!(
                 "{BOLD}Kernel Stats{RESET}\n  uptime: {}s\n  processes: {} (run:{} blk:{} dead:{})\n  tokens: {} (in+out)\n  cost: ${:.4}\n  jinxes: {}",
-                s.uptime_secs, s.total_processes, s.running, s.blocked, s.dead,
-                s.total_tokens, s.total_cost_usd, s.jinx_count,
+                s.uptime_secs,
+                s.total_processes,
+                s.running,
+                s.blocked,
+                s.dead,
+                s.total_tokens,
+                s.total_cost_usd,
+                s.jinx_count,
             );
             CoreDispatch::Handled
         }
@@ -1648,7 +1908,10 @@ async fn dispatch_core_command(
 }
 
 fn print_core_help() {
-    println!("{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n", env!("NPCSH_VERSION"));
+    println!(
+        "{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n",
+        env!("NPCSH_VERSION")
+    );
     println!("{BOLD}Modes:{RESET}");
     println!("  {CYAN}@npc{RESET}            Switch to NPC process (across all registered teams)");
     println!("  {CYAN}@npc command{RESET}    Delegate command to NPC");
@@ -1668,11 +1931,7 @@ fn print_core_help() {
         }
         println!("{BOLD}{}:{RESET}", category);
         for c in cmds {
-            println!(
-                "  {CYAN}{:<14}{RESET} {}",
-                c.name,
-                c.description
-            );
+            println!("  {CYAN}{:<14}{RESET} {}", c.name, c.description);
         }
         println!();
     }
@@ -1700,16 +1959,27 @@ async fn handle_cron_command(
             let reg = registry.lock().unwrap();
             let jobs = reg.list();
             if jobs.is_empty() {
-                eprintln!("{DIM}No cron jobs. Use /loop <npc> <interval> <task> or /cron add ...{RESET}");
+                eprintln!(
+                    "{DIM}No cron jobs. Use /loop <npc> <interval> <task> or /cron add ...{RESET}"
+                );
             } else {
                 eprintln!("{BOLD}Cron jobs:{RESET}");
                 for j in jobs {
                     let status = if j.enabled { GREEN } else { RED };
-                    let kind = if j.kind == crate::cron::CronJobKind::Jinx { "jinx" } else { "chat" };
+                    let kind = if j.kind == crate::cron::CronJobKind::Jinx {
+                        "jinx"
+                    } else {
+                        "chat"
+                    };
                     let last = j.last_run.map(|_| "ran").unwrap_or("never");
                     eprintln!(
                         "  [{status}{:>3}{RESET}] @{:<12} every {:<5} [{:<4}] {} (last: {})",
-                        j.id, j.npc, crate::cron::format_duration(j.interval_secs), kind, j.task, last
+                        j.id,
+                        j.npc,
+                        crate::cron::format_duration(j.interval_secs),
+                        kind,
+                        j.task,
+                        last
                     );
                 }
             }
@@ -1730,7 +2000,10 @@ async fn handle_cron_command(
                 (crate::cron::CronJobKind::Chat, task)
             };
             let secs = crate::cron::parse_duration(interval);
-            let id = registry.lock().unwrap().add(npc.clone(), secs, task.clone(), kind);
+            let id = registry
+                .lock()
+                .unwrap()
+                .add(npc.clone(), secs, task.clone(), kind);
             eprintln!("{GREEN}Added cron job {id}: @{npc} every {interval} -> {task}{RESET}");
         }
         "remove" | "rm" => {
@@ -1773,9 +2046,26 @@ async fn handle_cron_command(
         "run" => {
             if let Some(id_str) = parts.get(1) {
                 if let Ok(id) = id_str.parse::<u32>() {
-                    let job = registry.lock().unwrap().list().iter().find(|j| j.id == id).cloned();
+                    let job = registry
+                        .lock()
+                        .unwrap()
+                        .list()
+                        .iter()
+                        .find(|j| j.id == id)
+                        .cloned();
                     if let Some(job) = job {
-                        if let Some(out) = execute_cron_job_and_capture(kernel, current_pid, &job, &reqwest::Client::new(), "http://127.0.0.1:5237", &mut 0, &mut 0, &mut 0.0).await {
+                        if let Some(out) = execute_cron_job_and_capture(
+                            kernel,
+                            current_pid,
+                            &job,
+                            &reqwest::Client::new(),
+                            "http://127.0.0.1:5237",
+                            &mut 0,
+                            &mut 0,
+                            &mut 0.0,
+                        )
+                        .await
+                        {
                             println!("{}", out);
                         }
                     } else {
@@ -1796,9 +2086,16 @@ async fn handle_jobs_command(
 ) {
     let reg = registry.lock().unwrap();
     let jobs = reg.list();
-    let mut filtered: Vec<&crate::cron::CronJob> = jobs.iter().filter(|j| {
-        if target.is_empty() { true } else { j.npc == target || target == "all" }
-    }).collect();
+    let mut filtered: Vec<&crate::cron::CronJob> = jobs
+        .iter()
+        .filter(|j| {
+            if target.is_empty() {
+                true
+            } else {
+                j.npc == target || target == "all"
+            }
+        })
+        .collect();
     if filtered.is_empty() {
         if target.is_empty() {
             eprintln!("{DIM}No loops. Use /loop <npc> <interval> <task>{RESET}");
@@ -1809,7 +2106,14 @@ async fn handle_jobs_command(
     }
     filtered.sort_by(|a, b| a.npc.cmp(&b.npc).then(a.id.cmp(&b.id)));
 
-    eprintln!("{BOLD}Loops{RESET} {}", if target.is_empty() { "(all NPCs)".to_string() } else { format!("for @{target}") });
+    eprintln!(
+        "{BOLD}Loops{RESET} {}",
+        if target.is_empty() {
+            "(all NPCs)".to_string()
+        } else {
+            format!("for @{target}")
+        }
+    );
     eprintln!("  {DIM}Use /looprm <id>, /loopoff <id>, /loopon <id>{RESET}");
     let mut last_npc = String::new();
     for j in filtered {
@@ -1818,9 +2122,16 @@ async fn handle_jobs_command(
             last_npc = j.npc.clone();
         }
         let status = if j.enabled { GREEN } else { RED };
-        let kind = if j.kind == crate::cron::CronJobKind::Jinx { "jinx" } else { "chat" };
+        let kind = if j.kind == crate::cron::CronJobKind::Jinx {
+            "jinx"
+        } else {
+            "chat"
+        };
         let last = j.last_run.map(|_| "ran").unwrap_or("never");
-        let next_secs = j.next_run.duration_since(std::time::Instant::now()).as_secs();
+        let next_secs = j
+            .next_run
+            .duration_since(std::time::Instant::now())
+            .as_secs();
         eprintln!(
             "    [{status}{:>3}{RESET}] every {:<6} [{:<4}] next in {:<6} | {} (last: {})",
             j.id,
@@ -1857,8 +2168,15 @@ async fn handle_loop_command(
         (crate::cron::CronJobKind::Chat, task)
     };
     let is_jinx = kind == crate::cron::CronJobKind::Jinx;
-    let label = if is_jinx { format!("jinx:{task}") } else { task.clone() };
-    let id = registry.lock().unwrap().add(npc.clone(), secs, task.clone(), kind);
+    let label = if is_jinx {
+        format!("jinx:{task}")
+    } else {
+        task.clone()
+    };
+    let id = registry
+        .lock()
+        .unwrap()
+        .add(npc.clone(), secs, task.clone(), kind);
     eprintln!("{GREEN}Loop {id} added: @{npc} every {interval} -> {label}{RESET}");
 }
 
@@ -1885,7 +2203,9 @@ async fn execute_cron_job_and_capture(
             let mut pieces = job.task.splitn(2, ' ');
             let jinx_name = pieces.next().unwrap_or(&job.task).to_string();
             if let Some(rest) = pieces.next() {
-                if let Some(first_input) = kernel.jinxes.get(&jinx_name).and_then(|j| j.inputs.first()) {
+                if let Some(first_input) =
+                    kernel.jinxes.get(&jinx_name).and_then(|j| j.inputs.first())
+                {
                     args.insert(first_input.name.clone(), rest.to_string());
                 }
             }
@@ -1899,8 +2219,21 @@ async fn execute_cron_job_and_capture(
             }
         }
         crate::cron::CronJobKind::Chat => {
-            out.push(format!("{CYAN}{label}{RESET} {DIM}{task}{RESET}", task = job.task));
-            match run_stream_turn(kernel, pid, &job.task, Mode::Agent, client, server_url, false).await {
+            out.push(format!(
+                "{CYAN}{label}{RESET} {DIM}{task}{RESET}",
+                task = job.task
+            ));
+            match run_stream_turn(
+                kernel,
+                pid,
+                &job.task,
+                Mode::Agent,
+                client,
+                server_url,
+                false,
+            )
+            .await
+            {
                 Ok(output) => {
                     if let Some(p) = kernel.get_process(pid) {
                         *session_input_tokens += p.usage.total_input_tokens;
@@ -1915,9 +2248,15 @@ async fn execute_cron_job_and_capture(
             }
         }
     }
-    let full = if out.is_empty() { None } else { Some(out.join("\n")) };
+    let full = if out.is_empty() {
+        None
+    } else {
+        Some(out.join("\n"))
+    };
     if let Some(ref text) = full {
-        let _ = save_loop_run(&job.npc,&job.task,
+        let _ = save_loop_run(
+            &job.npc,
+            &job.task,
             job.kind == crate::cron::CronJobKind::Jinx,
             text,
         );
@@ -1926,7 +2265,11 @@ async fn execute_cron_job_and_capture(
 }
 
 fn task_slug(task: &str, is_jinx: bool) -> String {
-    let base = if is_jinx { format!("jinx_{}", task) } else { task.to_string() };
+    let base = if is_jinx {
+        format!("jinx_{}", task)
+    } else {
+        task.to_string()
+    };
     base.to_lowercase()
         .replace(|c: char| !c.is_alphanumeric(), "_")
         .replace("__", "_")
@@ -2022,18 +2365,30 @@ fn print_welcome(kernel: &Kernel) {
     eprintln!("  {BLUE}       ██║              {RESET}");
     eprintln!("  {BLUE}       ╚═╝              {RESET}");
     eprintln!();
-    eprintln!("  {BOLD}npcsh{RESET} v{} {DIM}(rust){RESET}", env!("NPCSH_VERSION"));
-    eprintln!("  {DIM}{} processes | {} jinxes | /help for commands{RESET}", s.total_processes, s.jinx_count);
+    eprintln!(
+        "  {BOLD}npcsh{RESET} v{} {DIM}(rust){RESET}",
+        env!("NPCSH_VERSION")
+    );
+    eprintln!(
+        "  {DIM}{} processes | {} jinxes | /help for commands{RESET}",
+        s.total_processes, s.jinx_count
+    );
     eprintln!();
 
     eprintln!("  {DIM}mode:{RESET} {BOLD}agent{RESET}");
     eprint!("  {DIM}npcs:{RESET} ");
-    let names: Vec<String> = kernel.ps().iter().map(|p| format!("{BLUE}@{}{RESET}", p.npc.name)).collect();
+    let names: Vec<String> = kernel
+        .ps()
+        .iter()
+        .map(|p| format!("{BLUE}@{}{RESET}", p.npc.name))
+        .collect();
     eprintln!("{}", names.join("  "));
     eprintln!();
 
-    let mut groups: std::collections::BTreeMap<String, std::collections::BTreeMap<Option<String>, Vec<String>>> =
-        std::collections::BTreeMap::new();
+    let mut groups: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<Option<String>, Vec<String>>,
+    > = std::collections::BTreeMap::new();
 
     for (jname, jinx) in &kernel.jinxes {
         let (group, subdir) = if let Some(ref sp) = jinx.source_path {
@@ -2053,14 +2408,17 @@ fn print_welcome(kernel: &Kernel) {
         } else {
             ("other".to_string(), None)
         };
-        groups.entry(group).or_default().entry(subdir).or_default().push(jname.clone());
+        groups
+            .entry(group)
+            .or_default()
+            .entry(subdir)
+            .or_default()
+            .push(jname.clone());
     }
 
     let group_order = ["bin", "lib", "skills", "etc", "sys", "usr", "root", "other"];
     let mut sorted_groups: Vec<_> = groups.keys().cloned().collect();
-    sorted_groups.sort_by_key(|g| {
-        group_order.iter().position(|o| o == g).unwrap_or(99)
-    });
+    sorted_groups.sort_by_key(|g| group_order.iter().position(|o| o == g).unwrap_or(99));
 
     for group in &sorted_groups {
         if let Some(subdirs) = groups.get(group) {
@@ -2141,22 +2499,34 @@ fn load_npcshrc() {
     }
 }
 
-
-const TERMINAL_EDITORS: &[&str] = &[
-    "vim", "nvim", "nano", "vi", "emacs", "less", "more", "man",
-];
+const TERMINAL_EDITORS: &[&str] = &["vim", "nvim", "nano", "vi", "emacs", "less", "more", "man"];
 
 const INTERACTIVE_COMMANDS: &[&str] = &[
-    "ipython", "python", "python3", "node", "irb", "ghci",
-    "mysql", "psql", "sqlite3", "redis-cli", "mongo",
-    "ssh", "telnet", "ftp", "sftp", "top", "htop", "watch", "r",
+    "ipython",
+    "python",
+    "python3",
+    "node",
+    "irb",
+    "ghci",
+    "mysql",
+    "psql",
+    "sqlite3",
+    "redis-cli",
+    "mongo",
+    "ssh",
+    "telnet",
+    "ftp",
+    "sftp",
+    "top",
+    "htop",
+    "watch",
+    "r",
 ];
 
 const SHELL_BUILTINS: &[&str] = &[
-    "cd", "pwd", "echo", "export", "source", "alias", "unalias",
-    "history", "set", "unset", "read", "eval", "exec", "exit",
-    "return", "shift", "trap", "wait", "jobs", "fg", "bg",
-    "kill", "ulimit", "umask", "type", "hash", "true", "false",
+    "cd", "pwd", "echo", "export", "source", "alias", "unalias", "history", "set", "unset", "read",
+    "eval", "exec", "exit", "return", "shift", "trap", "wait", "jobs", "fg", "bg", "kill",
+    "ulimit", "umask", "type", "hash", "true", "false",
 ];
 
 fn is_bash_command(input: &str) -> bool {
@@ -2171,10 +2541,7 @@ fn is_bash_command(input: &str) -> bool {
         return true;
     }
 
-    if let Ok(output) = std::process::Command::new("which")
-        .arg(cmd)
-        .output()
-    {
+    if let Ok(output) = std::process::Command::new("which").arg(cmd).output() {
         return output.status.success();
     }
 
@@ -2219,7 +2586,7 @@ fn run_interactive(input: &str) {
 }
 
 fn format_ts(ts: &str) -> String {
-    use std::time::{SystemTime, Duration};
+    use std::time::{Duration, SystemTime};
     let now = SystemTime::now();
     let dt: Option<chrono::DateTime<chrono::Utc>> = if ts.contains('T') {
         ts.parse::<chrono::DateTime<chrono::Utc>>().ok()
@@ -2231,7 +2598,9 @@ fn format_ts(ts: &str) -> String {
     if let Some(dt) = dt {
         let local = dt.with_timezone(&chrono::Local);
         let utc_dt: chrono::DateTime<chrono::Utc> = dt;
-        let diff = now.duration_since(SystemTime::from(utc_dt)).unwrap_or(Duration::ZERO);
+        let diff = now
+            .duration_since(SystemTime::from(utc_dt))
+            .unwrap_or(Duration::ZERO);
         let days = diff.as_secs() / 86400;
         if days == 0 {
             format!("Today {}", local.format("%H:%M"))
@@ -2258,7 +2627,18 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
     let conn = Connection::open(&db_path)
         .map_err(|e| npcrs::NpcError::Other(format!("failed to open history db: {e}")))?;
 
-    type ConvoRow = (std::string::String, std::string::String, std::string::String, std::string::String, i64, std::string::String, std::string::String, i64, i64, f64);
+    type ConvoRow = (
+        std::string::String,
+        std::string::String,
+        std::string::String,
+        std::string::String,
+        i64,
+        std::string::String,
+        std::string::String,
+        i64,
+        i64,
+        f64,
+    );
 
     let convos: Vec<ConvoRow> = if let Some(path) = filter {
         let path_slash = format!("{path}/");
@@ -2273,7 +2653,18 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
              ORDER BY last_msg DESC"
         ).map_err(|e| npcrs::NpcError::Other(format!("query failed: {e}")))?;
         stmt.query_map([path, &path_slash], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+                row.get(9)?,
+            ))
         })
         .map_err(|e| npcrs::NpcError::Other(format!("query failed: {e}")))?
         .filter_map(|r| r.ok())
@@ -2289,7 +2680,18 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
              ORDER BY last_msg DESC"
         ).map_err(|e| npcrs::NpcError::Other(format!("query failed: {e}")))?;
         stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+                row.get(9)?,
+            ))
         })
         .map_err(|e| npcrs::NpcError::Other(format!("query failed: {e}")))?
         .filter_map(|r| r.ok())
@@ -2316,42 +2718,90 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
     let scroll: std::cell::Cell<usize> = std::cell::Cell::new(0);
     let mode: std::cell::Cell<char> = std::cell::Cell::new('l');
     let preview_scroll: std::cell::Cell<usize> = std::cell::Cell::new(0);
-    let preview_msgs: std::cell::RefCell<Vec<(std::string::String, std::string::String, std::string::String, Option<i64>, Option<i64>)>> = std::cell::RefCell::new(Vec::new());
+    let preview_msgs: std::cell::RefCell<
+        Vec<(
+            std::string::String,
+            std::string::String,
+            std::string::String,
+            Option<i64>,
+            Option<i64>,
+        )>,
+    > = std::cell::RefCell::new(Vec::new());
 
     fn short_model(model: &str) -> &str {
-        if model.contains("gpt-4") { return "gpt4"; }
-        if model.contains("gpt-3") { return "gpt3"; }
-        if model.contains("claude-3-5-sonnet") { return "sonnet"; }
-        if model.contains("claude-3-5-haiku") { return "haiku"; }
-        if model.contains("claude-3-opus") { return "opus"; }
-        if model.contains("claude") { return "claude"; }
-        if model.contains("gemini") { return "gemini"; }
-        if model.is_empty() { return "-"; }
+        if model.contains("gpt-4") {
+            return "gpt4";
+        }
+        if model.contains("gpt-3") {
+            return "gpt3";
+        }
+        if model.contains("claude-3-5-sonnet") {
+            return "sonnet";
+        }
+        if model.contains("claude-3-5-haiku") {
+            return "haiku";
+        }
+        if model.contains("claude-3-opus") {
+            return "opus";
+        }
+        if model.contains("claude") {
+            return "claude";
+        }
+        if model.contains("gemini") {
+            return "gemini";
+        }
+        if model.is_empty() {
+            return "-";
+        }
         &model[..model.len().min(8)]
     }
 
-    let target = filter.map(|s| s.to_string()).unwrap_or_else(|| "ALL PATHS".to_string());
+    let target = filter
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "ALL PATHS".to_string());
     let (rows_static, cols_static) = (rows, cols);
 
     let draw_list = |stdout: &mut std::io::Stdout| {
         let sel_idx = selected.get();
         let scr = scroll.get();
-        let header = format!(" REATTACH ({} convos): {} ", convos.len(), &target[..target.len().min(cols_static.saturating_sub(30))]);
-        let _ = write!(stdout, "\x1b[H\x1b[7;1m{}\x1b[0m\n", header.chars().take(cols_static).collect::<String>().pad_right(cols_static));
+        let header = format!(
+            " REATTACH ({} convos): {} ",
+            convos.len(),
+            &target[..target.len().min(cols_static.saturating_sub(30))]
+        );
+        let _ = write!(
+            stdout,
+            "\x1b[H\x1b[7;1m{}\x1b[0m\n",
+            header
+                .chars()
+                .take(cols_static)
+                .collect::<String>()
+                .pad_right(cols_static)
+        );
         let _ = write!(stdout, "\x1b[90m{}\x1b[0m\n", "─".repeat(cols_static));
         for i in 0..list_height {
             let idx = scr + i;
             let _ = write!(stdout, "\x1b[{};1H\x1b[K", 3 + i);
-            if idx >= convos.len() { continue; }
+            if idx >= convos.len() {
+                continue;
+            }
             let c = &convos[idx];
             let cid = &c.0[..c.0.len().min(12)];
             let npcs = c.5.as_str();
             let npcs = &npcs[..npcs.len().min(10)];
             let models = short_model(c.6.as_str());
-            let line = format!(" {cid:<14} {:>3} msgs  {} {npcs:<10} {models:<12}", c.4, format_ts(&c.3));
+            let line = format!(
+                " {cid:<14} {:>3} msgs  {} {npcs:<10} {models:<12}",
+                c.4,
+                format_ts(&c.3)
+            );
             let line = &line[..line.len().min(cols_static.saturating_sub(2))];
             if idx == sel_idx {
-                let _ = write!(stdout, "\x1b[7;1m>{}\x1b[0m", line.pad_right(cols_static.saturating_sub(1)));
+                let _ = write!(
+                    stdout,
+                    "\x1b[7;1m>{}\x1b[0m",
+                    line.pad_right(cols_static.saturating_sub(1))
+                );
             } else {
                 let _ = write!(stdout, " {}", line.pad_right(cols_static.saturating_sub(1)));
             }
@@ -2360,12 +2810,46 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
         let in_tok = sel.7;
         let out_tok = sel.8;
         let cost = sel.9;
-        let cost_str = if cost > 0.0 { format!("${cost:.4}") } else { "-".to_string() };
-        let tok_str = if in_tok > 0 || out_tok > 0 { format!("{in_tok}in/{out_tok}out") } else { "-".to_string() };
-        let footer = format!(" {}  {}  tokens:{}  cost:{}", &sel.0[..sel.0.len().min(16)], short_model(sel.6.as_str()), tok_str, cost_str);
-        let _ = write!(stdout, "\x1b[{};1H\x1b[K\x1b[90m{}\x1b[0m", rows_static - 2, "─".repeat(cols_static));
-        let _ = write!(stdout, "\x1b[{};1H\x1b[K{}", rows_static - 1, footer.chars().take(cols_static).collect::<String>().pad_right(cols_static));
-        let _ = write!(stdout, "\x1b[{};1H\x1b[K\x1b[7m j/k:Nav  Enter:Select  p:Preview  q:Quit  [{}/{}] \x1b[0m", rows_static, sel_idx + 1, convos.len());
+        let cost_str = if cost > 0.0 {
+            format!("${cost:.4}")
+        } else {
+            "-".to_string()
+        };
+        let tok_str = if in_tok > 0 || out_tok > 0 {
+            format!("{in_tok}in/{out_tok}out")
+        } else {
+            "-".to_string()
+        };
+        let footer = format!(
+            " {}  {}  tokens:{}  cost:{}",
+            &sel.0[..sel.0.len().min(16)],
+            short_model(sel.6.as_str()),
+            tok_str,
+            cost_str
+        );
+        let _ = write!(
+            stdout,
+            "\x1b[{};1H\x1b[K\x1b[90m{}\x1b[0m",
+            rows_static - 2,
+            "─".repeat(cols_static)
+        );
+        let _ = write!(
+            stdout,
+            "\x1b[{};1H\x1b[K{}",
+            rows_static - 1,
+            footer
+                .chars()
+                .take(cols_static)
+                .collect::<String>()
+                .pad_right(cols_static)
+        );
+        let _ = write!(
+            stdout,
+            "\x1b[{};1H\x1b[K\x1b[7m j/k:Nav  Enter:Select  p:Preview  q:Quit  [{}/{}] \x1b[0m",
+            rows_static,
+            sel_idx + 1,
+            convos.len()
+        );
         let _ = stdout.flush();
     };
 
@@ -2373,33 +2857,71 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
         let sel_idx = selected.get();
         let scr = preview_scroll.get();
         let cid = &convos[sel_idx].0;
-        let header = format!(" PREVIEW: {} ", &cid[..cid.len().min(cols_static.saturating_sub(12))]);
-        let _ = write!(stdout, "\x1b[H\x1b[7;1m{}\x1b[0m\n", header.chars().take(cols_static).collect::<String>().pad_right(cols_static));
+        let header = format!(
+            " PREVIEW: {} ",
+            &cid[..cid.len().min(cols_static.saturating_sub(12))]
+        );
+        let _ = write!(
+            stdout,
+            "\x1b[H\x1b[7;1m{}\x1b[0m\n",
+            header
+                .chars()
+                .take(cols_static)
+                .collect::<String>()
+                .pad_right(cols_static)
+        );
         let _ = write!(stdout, "\x1b[90m{}\x1b[0m\n", "─".repeat(cols_static));
         let msgs = preview_msgs.borrow();
         for i in 0..list_height {
             let idx = scr + i;
             let _ = write!(stdout, "\x1b[{};1H\x1b[K", 3 + i);
-            if idx >= msgs.len() { continue; }
+            if idx >= msgs.len() {
+                continue;
+            }
             let (role, content, model, in_tok, out_tok) = &msgs[idx];
-            let content = content.replace('\n', " ").chars().take(200).collect::<String>();
+            let content = content
+                .replace('\n', " ")
+                .chars()
+                .take(200)
+                .collect::<String>();
             let prefix = match role.as_str() {
                 "user" => format!("{GREEN};1mYou:\x1b[0m "),
                 "assistant" => {
                     let m = short_model(model);
                     let tok_info = if in_tok.is_some() || out_tok.is_some() {
                         format!(" [{}|{}]", in_tok.unwrap_or(0), out_tok.unwrap_or(0))
-                    } else { String::new() };
+                    } else {
+                        String::new()
+                    };
                     format!("\x1b[34;1mAI({m}{tok_info}):\x1b[0m ")
                 }
                 _ => format!("\x1b[90m{role}:\x1b[0m "),
             };
             let max_content = cols_static.saturating_sub(prefix.len());
-            let _ = write!(stdout, "{}{}", prefix, content.chars().take(max_content).collect::<String>());
+            let _ = write!(
+                stdout,
+                "{}{}",
+                prefix,
+                content.chars().take(max_content).collect::<String>()
+            );
         }
-        let _ = write!(stdout, "\x1b[{};1H\x1b[K\x1b[90m{}\x1b[0m", rows_static - 2, "─".repeat(cols_static));
-        let _ = write!(stdout, "\x1b[{};1H\x1b[K {} messages", rows_static - 1, msgs.len());
-        let _ = write!(stdout, "\x1b[{};1H\x1b[K\x1b[7m j/k:Scroll  b:Back  Enter:Select  q:Quit \x1b[0m", rows_static);
+        let _ = write!(
+            stdout,
+            "\x1b[{};1H\x1b[K\x1b[90m{}\x1b[0m",
+            rows_static - 2,
+            "─".repeat(cols_static)
+        );
+        let _ = write!(
+            stdout,
+            "\x1b[{};1H\x1b[K {} messages",
+            rows_static - 1,
+            msgs.len()
+        );
+        let _ = write!(
+            stdout,
+            "\x1b[{};1H\x1b[K\x1b[7m j/k:Scroll  b:Back  Enter:Select  q:Quit \x1b[0m",
+            rows_static
+        );
         let _ = stdout.flush();
     };
 
@@ -2408,15 +2930,22 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
     }
     impl PadRight for str {
         fn pad_right(&self, n: usize) -> String {
-            if self.len() >= n { self.to_string() } else { format!("{}{}", self, " ".repeat(n - self.len())) }
+            if self.len() >= n {
+                self.to_string()
+            } else {
+                format!("{}{}", self, " ".repeat(n - self.len()))
+            }
         }
     }
 
     loop {
         let sel = selected.get();
         let scr = scroll.get();
-        if sel < scr { scroll.set(sel); }
-        else if sel >= scr + list_height { scroll.set(sel - list_height + 1); }
+        if sel < scr {
+            scroll.set(sel);
+        } else if sel >= scr + list_height {
+            scroll.set(sel - list_height + 1);
+        }
 
         if mode.get() == 'l' {
             draw_list(&mut stdout);
@@ -2427,17 +2956,29 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
         if let Ok(true) = event::poll(std::time::Duration::from_millis(50)) {
             if let Ok(Event::Key(key)) = event::read() {
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Char('c') if key.modifiers == crossterm::event::KeyModifiers::CONTROL => {
+                    KeyCode::Char('q') | KeyCode::Char('c')
+                        if key.modifiers == crossterm::event::KeyModifiers::CONTROL =>
+                    {
                         break;
                     }
-                    KeyCode::Char('q') => { break; }
+                    KeyCode::Char('q') => {
+                        break;
+                    }
                     KeyCode::Char('j') | KeyCode::Down => {
-                        if mode.get() == 'l' && selected.get() < convos.len() - 1 { selected.set(selected.get() + 1); }
-                        else if mode.get() == 'p' && preview_scroll.get() + list_height < preview_msgs.borrow().len() { preview_scroll.set(preview_scroll.get() + 1); }
+                        if mode.get() == 'l' && selected.get() < convos.len() - 1 {
+                            selected.set(selected.get() + 1);
+                        } else if mode.get() == 'p'
+                            && preview_scroll.get() + list_height < preview_msgs.borrow().len()
+                        {
+                            preview_scroll.set(preview_scroll.get() + 1);
+                        }
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
-                        if mode.get() == 'l' && selected.get() > 0 { selected.set(selected.get() - 1); }
-                        else if mode.get() == 'p' && preview_scroll.get() > 0 { preview_scroll.set(preview_scroll.get() - 1); }
+                        if mode.get() == 'l' && selected.get() > 0 {
+                            selected.set(selected.get() - 1);
+                        } else if mode.get() == 'p' && preview_scroll.get() > 0 {
+                            preview_scroll.set(preview_scroll.get() - 1);
+                        }
                     }
                     KeyCode::Char('p') if mode.get() == 'l' => {
                         let cid = convos[selected.get()].0.clone();
@@ -2445,13 +2986,21 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
                             "SELECT role, content, model, input_tokens, output_tokens FROM conversation_history \
                              WHERE conversation_id = ?1 ORDER BY timestamp ASC"
                         ).map_err(|e| npcrs::NpcError::Other(format!("preview query failed: {e}")))?;
-                        let loaded: Vec<(String, String, String, Option<i64>, Option<i64>)> = stmt.query_map([&cid
-                        ], |row| {
-                            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
-                        })
-                        .map_err(|e| npcrs::NpcError::Other(format!("preview query failed: {e}")))?
-                        .filter_map(|r| r.ok())
-                        .collect();
+                        let loaded: Vec<(String, String, String, Option<i64>, Option<i64>)> = stmt
+                            .query_map([&cid], |row| {
+                                Ok((
+                                    row.get(0)?,
+                                    row.get(1)?,
+                                    row.get(2)?,
+                                    row.get(3)?,
+                                    row.get(4)?,
+                                ))
+                            })
+                            .map_err(|e| {
+                                npcrs::NpcError::Other(format!("preview query failed: {e}"))
+                            })?
+                            .filter_map(|r| r.ok())
+                            .collect();
                         preview_msgs.replace(loaded);
                         preview_scroll.set(0);
                         mode.set('p');
@@ -2467,12 +3016,14 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
                             let mut stmt = conn.prepare(
                                 "SELECT role, content FROM conversation_history WHERE conversation_id = ?1 ORDER BY timestamp ASC"
                             ).map_err(|e| npcrs::NpcError::Other(format!("load query failed: {e}")))?;
-                            let rows = stmt.query_map([&cid
-                            ], |row| {
-                                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                            })
-                            .map_err(|e| npcrs::NpcError::Other(format!("load query failed: {e}")))?
-                            .filter_map(|r| r.ok());
+                            let rows = stmt
+                                .query_map([&cid], |row| {
+                                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                                })
+                                .map_err(|e| {
+                                    npcrs::NpcError::Other(format!("load query failed: {e}"))
+                                })?
+                                .filter_map(|r| r.ok());
                             for (role, content) in rows {
                                 let msg = match role.as_str() {
                                     "user" => Message::user(content.clone()),
@@ -2486,9 +3037,20 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
                             let _ = terminal::disable_raw_mode();
                             let _ = write!(stdout, "\x1b[2J\x1b[H\x1b[?1049l\x1b[?25h\r\n");
                             let _ = stdout.flush();
-                            println!("{GREEN}Reattached to: {cid} ({} messages loaded)\x1b[0m", p.messages.len());
+                            println!(
+                                "{GREEN}Reattached to: {cid} ({} messages loaded)\x1b[0m",
+                                p.messages.len()
+                            );
                             let mut n = 0;
-                            for msg in p.messages.iter().rev().take(10).collect::<Vec<_>>().into_iter().rev() {
+                            for msg in p
+                                .messages
+                                .iter()
+                                .rev()
+                                .take(10)
+                                .collect::<Vec<_>>()
+                                .into_iter()
+                                .rev()
+                            {
                                 let role = msg.role.as_str();
                                 let content = msg.content.as_deref().unwrap_or("");
                                 if role == "user" {
@@ -2501,7 +3063,10 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
                                 n += 1;
                             }
                             if p.messages.len() > n {
-                                println!("{DIM}... and {} older messages\x1b[0m", p.messages.len() - n);
+                                println!(
+                                    "{DIM}... and {} older messages\x1b[0m",
+                                    p.messages.len() - n
+                                );
                             }
                             println!();
                         } else {
@@ -2568,7 +3133,8 @@ async fn exec_nsh_file(
     let content = std::fs::read_to_string(script_path)?;
 
     let raw_lines: Vec<&str> = content.lines().collect();
-    let lines: Vec<&str> = raw_lines.into_iter()
+    let lines: Vec<&str> = raw_lines
+        .into_iter()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .collect();
@@ -2579,16 +3145,17 @@ async fn exec_nsh_file(
     for (i, line) in lines.iter().enumerate() {
         let line = line.to_string();
 
-        let cmd_to_exec = if let Some((var_name, var_expr)) = line.trim().strip_prefix('$').and_then(|rest| {
-            if let Some(eq_pos) = rest.find('=') {
-                let vname = rest[..eq_pos].trim().to_string();
-                let expr = rest[eq_pos + 1..].trim().to_string();
-                if !vname.is_empty() && vname.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    return Some((vname, expr));
+        let cmd_to_exec = if let Some((var_name, var_expr)) =
+            line.trim().strip_prefix('$').and_then(|rest| {
+                if let Some(eq_pos) = rest.find('=') {
+                    let vname = rest[..eq_pos].trim().to_string();
+                    let expr = rest[eq_pos + 1..].trim().to_string();
+                    if !vname.is_empty() && vname.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                        return Some((vname, expr));
+                    }
                 }
-            }
-            None
-        }) {
+                None
+            }) {
             Some((var_name, var_expr))
         } else {
             None
@@ -2611,17 +3178,7 @@ async fn exec_nsh_file(
             substituted
         };
 
-        match run_stream_turn(
-            &mut kernel,
-            0,
-            &cmd,
-            Mode::Agent,
-            client,
-            server_url,
-            true,
-        )
-        .await
-        {
+        match run_stream_turn(&mut kernel, 0, &cmd, Mode::Agent, client, server_url, true).await {
             Ok(output) => {
                 last_output = output.clone();
                 if !output.is_empty() {
@@ -2640,8 +3197,6 @@ async fn exec_nsh_file(
 
     Ok(())
 }
-
-
 
 enum ReadlineResult {
     Input(String),
@@ -2694,8 +3249,7 @@ fn readline_raw(
                     io::stdout().flush()?;
                     continue;
                 }
-                Event::Key(key) => {
-                    match key.code {
+                Event::Key(key) => match key.code {
                     KeyCode::Char(c) => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             match c {
@@ -2731,7 +3285,8 @@ fn readline_raw(
                                 'o' => {
                                     print!("\r\n");
                                     if let Some(p) = kernel.get_process(current_pid) {
-                                        let mut tool_calls: Vec<&npcrs::r#gen::ToolCall> = Vec::new();
+                                        let mut tool_calls: Vec<&npcrs::r#gen::ToolCall> =
+                                            Vec::new();
                                         for m in p.messages.iter().rev().take(10) {
                                             if let Some(ref tc) = m.tool_calls {
                                                 for t in tc.iter().rev() {
@@ -2740,12 +3295,23 @@ fn readline_raw(
                                             }
                                         }
                                         if tool_calls.is_empty() {
-                                            println!("{DIM}(no tool calls in recent messages){RESET}");
+                                            println!(
+                                                "{DIM}(no tool calls in recent messages){RESET}"
+                                            );
                                         } else {
                                             let total = tool_calls.len().min(5);
-                                            println!("{BOLD}═══ Last {} tool call{} ═══{RESET}", total, if total > 1 { "s" } else { "" });
+                                            println!(
+                                                "{BOLD}═══ Last {} tool call{} ═══{RESET}",
+                                                total,
+                                                if total > 1 { "s" } else { "" }
+                                            );
                                             for (i, tc) in tool_calls.iter().take(5).enumerate() {
-                                                println!("  [{}/{}] {CYAN}{}{RESET}", i + 1, total, tc.function.name);
+                                                println!(
+                                                    "  [{}/{}] {CYAN}{}{RESET}",
+                                                    i + 1,
+                                                    total,
+                                                    tc.function.name
+                                                );
                                                 let args = &tc.function.arguments;
                                                 let preview = if args.len() > 200 {
                                                     format!("{}…", &args[..200])
@@ -2866,7 +3432,8 @@ fn readline_raw(
                             let (word_start, matches) = helper.complete(&buf, pos);
                             if matches.len() == 1 {
                                 let replacement = &matches[0].replacement;
-                                let new_buf = format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
+                                let new_buf =
+                                    format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
                                 pos = word_start + replacement.len();
                                 buf = new_buf;
                                 redraw_prompt(prompt, &buf, pos);
@@ -2876,11 +3443,18 @@ fn readline_raw(
                                 tab_index = 0;
                                 print!("\r\n");
                                 let cols = terminal::size().map(|(c, _)| c as usize).unwrap_or(80);
-                                let max_len = tab_matches.iter().map(|m| m.display.len()).max().unwrap_or(0) + 2;
+                                let max_len = tab_matches
+                                    .iter()
+                                    .map(|m| m.display.len())
+                                    .max()
+                                    .unwrap_or(0)
+                                    + 2;
                                 let col_width = max_len.max(16);
                                 let ncols = (cols / col_width).max(1);
                                 for (i, m) in tab_matches.iter().enumerate() {
-                                    if i > 0 && i % ncols == 0 { print!("\r\n"); }
+                                    if i > 0 && i % ncols == 0 {
+                                        print!("\r\n");
+                                    }
                                     print!("{:<width$}", m.display, width = col_width);
                                 }
                                 print!("\r\n");
@@ -2891,7 +3465,8 @@ fn readline_raw(
                                 tab_index = (tab_index + 1) % tab_matches.len();
                                 let word_start = buf[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
                                 let replacement = &tab_matches[tab_index].replacement;
-                                let new_buf = format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
+                                let new_buf =
+                                    format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
                                 pos = word_start + replacement.len();
                                 buf = new_buf;
                                 redraw_prompt(prompt, &buf, pos);
@@ -2899,8 +3474,7 @@ fn readline_raw(
                         }
                     }
                     _ => {}
-                }
-            }
+                },
                 _ => {}
             }
         }

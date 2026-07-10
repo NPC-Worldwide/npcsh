@@ -1,6 +1,6 @@
 # yap
 
-`yap` is an agentic voice control interface that allows users to interact with NPCs and LLMs using voice commands. This tool represents the evolution of voice interaction in the npcpy framework, replacing the older `/whisper` functionality.
+`yap` is an agentic voice control interface that allows users to interact with NPCs and LLMs using voice commands. It replaces the older `/whisper` functionality.
 
 ## Overview
 
@@ -31,7 +31,7 @@ This starts a voice interaction session with the specified NPC.
 When using the NPC shell, you can switch to voice control mode:
 
 ```
-/yap
+yap
 ```
 
 ## How it Works
@@ -56,7 +56,7 @@ To use `yap`, you need:
 
 - A working microphone
 - The required audio dependencies installed (see the installation guide for your OS)
-- Python speech recognition libraries (installed with `pip install npcpy[yap]`)
+- Python speech recognition libraries (see the installation guide for your OS)
 
 ## Example Session
 

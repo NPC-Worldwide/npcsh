@@ -1,6 +1,6 @@
 # npcsh Guide
 
-`npcsh` is a runtime for AI teams defined as data. This guide covers the core concepts — the **NPC Data Layer**, agents, jinxes, team orchestration, memory/knowledge graphs, and NQL — and how to build your own tools on top of them.
+`npcsh` is a runtime for AI teams defined as data. This guide covers the core concepts — the **NPC Data Layer**, agents, jinxes, team orchestration, memory/knowledge graphs — and how to build your own tools on top of them.
 
 For a complete reference of individual slash commands, see [NPC Shell Commands](npcsh.md).
 
@@ -10,18 +10,17 @@ The core of npcsh's capabilities is powered by the NPC Data Layer. Upon initiali
 
 ### Creating Custom Components
 
-Users can extend NPC capabilities through simple YAML files:
+The data layer has three levels. Each is written as plain files and loaded by `npcsh` at startup:
 
-- **NPCs** (.npc): are defined with a name, primary directive, and optional model specifications. NPC files are executable — add `#!/usr/bin/env npc` as the first line and run them directly: `./myagent.npc "what's the weather?"`
-- **Jinxes** (.jinx): Jinja execution templates that provide function-like capabilities and scaleable extensibility through Jinja references to call other jinxes to build upon. Jinxes are also executable — add `#!/usr/bin/env npc` and run them directly: `./sh.jinx bash_command="echo hello"`. Jinxes are executed through prompt-based flows, allowing them to be used by models regardless of their tool-calling capabilities, making it possible then to enable agents at the edge of computing through this simple methodology.
-- **Context** (.ctx): Specify contextual information, team preferences, MCP server paths, database connections, and other environment variables that are loaded for the team or for specific agents (e.g. `GUAC_FORENPC`). Teams are specified by their path and the team name in the `<team>.ctx` file. Teams organize collections of NPCs with shared context and specify a coordinator within the team context who is used whenever the team is called upon for orchestration.
-- **SQL Models** (.sql): NQL (NPC Query Language) models combine SQL with AI-powered transformations. Place `.sql` files in `npc_team/models/` to create data pipelines with embedded LLM calls.
+- **Team** (`.ctx`): context shared by the whole team — default model/provider, forenpc (orchestrator), MCP server paths, env vars, and shared memory. The team context is loaded first and used as defaults for the agents under it.
+- **Agents** (`.npc`, `agents.md`, `agents/`): agent definitions — name, persona, directive, model/provider overrides, and the jinxes they can use. `.npc` is one agent per YAML file, `agents.md` is many agents in one markdown file, and `agents/` is one agent per `.md` file. NPC files are executable: add `#!/usr/bin/env npc` as the first line and run them directly: `./myagent.npc "what's the weather?"`
+- **Tools** (`.jinx`, `skills/`): jinxes are Jinja execution templates that provide function-like capabilities to agents. They can call other jinxes, run shell or Python, query the local DB, or call an LLM. Skills are a special kind of jinx that expose instructional content progressively.
 
 The NPC Shell system integrates the capabilities of `npcpy` to maintain conversation history, track command execution, and provide intelligent autocomplete through an extensible command routing system. State is preserved between sessions, allowing for continuous knowledge building over time.
 
 This architecture enables users to build complex AI workflows while maintaining a simple, declarative syntax that abstracts away implementation complexity. By organizing AI capabilities in composable data structures rather than code, `npcsh` creates a more accessible and adaptable framework for AI automation that can scale more intentionally. Within teams can be subteams, and these sub-teams may be called upon for orchestration, but importantly, when the orchestrator is deciding between using one of its own team's NPCs versus yielding to a sub-team, they see only the descriptions of the subteams rather than the full persona descriptions for each of the sub-team's agents, making it easier for the orchestrator to better delineate and keep their attention focused by restricting the number of options in each decisino step. Thus, they may yield to the sub-team's orchestrator, letting them decide which sub-team NPC to use based on their own team's agents.
 
-Importantly, users can switch easily between the NPCs they are chatting with by typing `/n npc_name` within the NPC shell. Likewise, they can create Jinxes and then use them from within the NPC shell by invoking the jinx name and the arguments required for the Jinx;  `/<jinx_name> arg1 arg2`
+Importantly, users can switch easily between the NPCs they are chatting with by typing `/<npc_name>` or `@<npc_name>` within the NPC shell. Likewise, NPCs use jinxes as tools when they need to take action.
 
 ## Team Orchestration
 
@@ -134,16 +133,7 @@ steps:
 
 #### Using Skills
 
-In npcsh, skills work as slash commands like any jinx:
-
-```bash
-/debugging                       # All sections
-/debugging -s reproduce          # Just the reproduce section
-/debugging -s list               # Available section names
-/code-review -s correctness      # Just the correctness section
-```
-
-In the agent loop, the agent calls skills automatically when relevant — requesting specific sections to minimize token usage (progressive disclosure).
+In npcsh, skills are jinxes that provide instructional content. Agents invoke them by name when relevant and can request specific sections to minimize token usage (progressive disclosure). For example, an agent might call the `debugging` skill and ask for only the `reproduce` section.
 
 #### Importing External Skills
 
@@ -160,37 +150,17 @@ All `SKILL.md` folders and `.jinx` skill files in that directory are loaded alon
 
 ### Delegation with Review Loop
 
-The `/delegate` jinx sends a task to another NPC with automatic review and feedback:
+The orchestrator can delegate a task to another NPC using the `delegate` jinx, which runs a review/feedback loop until the task is complete:
 
-```bash
-/delegate npc_name=corca task="Write a Python function to parse JSON files" max_iterations=5
-```
-
-**How it works:**
-1. The orchestrator sends the task to the target NPC (e.g., `corca`)
-2. The target NPC works on the task using their available jinxes
-3. The orchestrator **reviews** the output and decides: COMPLETE or needs more work
-4. If incomplete, the orchestrator provides feedback and the target NPC iterates
-5. This continues until complete or max iterations reached
-
-```
-┌─────────────────┐     task      ┌─────────────────┐
-│   Orchestrator  │ ────────────▶ │   Target NPC    │
-│    (sibiji)     │               │    (corca)      │
-│                 │ ◀──────────── │                 │
-│   Reviews work  │    output     │  Uses jinxes:    │
-│   Gives feedback│               │  - python       │
-└─────────────────┘               │  - sh           │
-        │                         │  - edit_file    │
-        │ feedback                └─────────────────┘
-        ▼
-   Iterate until
-   task complete
-```
+1. The orchestrator sends the task to the target NPC (e.g., `corca`).
+2. The target NPC works on the task using its available jinxes.
+3. The orchestrator reviews the output and decides: COMPLETE or needs more work.
+4. If incomplete, the orchestrator provides feedback and the target NPC iterates.
+5. This continues until complete or max iterations reached.
 
 ### Deep Research
 
-The `/deep_research` mode runs multi-agent deep research — generates hypotheses, assigns persona-based sub-agents, runs iterative tool-calling loops, and synthesizes findings.
+The `deep_research` jinx runs multi-agent research — generates hypotheses, assigns persona-based sub-agents, runs iterative tool-calling loops, and synthesizes findings.
 
 <p align="center">
     <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/alicanto.png" alt="Alicanto deep research mode", width=500>
@@ -199,115 +169,13 @@ The `/deep_research` mode runs multi-agent deep research — generates hypothese
 
 ### Convening Multi-NPC Discussions
 
-The `/convene` jinx brings multiple NPCs together for a structured discussion:
-
-```bash
-/convene "How should we architect the new API?" --npcs corca,guac,frederic --rounds 3
-```
-
-**How it works:**
-1. Each NPC contributes their perspective based on their persona
-2. NPCs respond to each other, building on or challenging ideas
-3. Random follow-ups create organic discussion flow
-4. After all rounds, the orchestrator synthesizes key points
+The `convene` jinx brings multiple NPCs together for a structured discussion. Each NPC contributes based on their persona, responds to each other, and the orchestrator synthesizes the result.
 
 ### Visualizing Team Structure
 
-Use `/teamviz` to see how your NPCs and jinxes are connected:
-
-```bash
-/teamviz save=team_structure.png
-```
-
-This generates two views:
-- **Network view**: Organic layout showing NPC-jinx relationships
-- **Ordered view**: NPCs on left, jinxes grouped by category on right
-
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/teamviz.png" alt="Team structure visualization", width=700>
-</p>
-
-## NQL - SQL Models with AI Functions
-
-NQL (NPC Query Language) enables AI-powered data transformations directly in SQL, similar to dbt but with embedded LLM calls. Create `.sql` files in `npc_team/models/` that combine standard SQL with `nql.*` AI function calls, then run them on a schedule to build analytical tables enriched with AI insights.
-
-### How It Works
-
-NQL models are SQL files with embedded AI function calls. When executed:
-
-1. **Model Discovery**: The compiler finds all `.sql` files in your `models/` directory
-2. **Dependency Resolution**: Models referencing other models via `{{ ref('model_name') }}` are sorted topologically
-3. **Jinja Processing**: Template expressions (`{% %}`) are evaluated with access to NPC/team/jinx context
-4. **Execution Path**:
-   - **Native AI databases** (Snowflake, Databricks, BigQuery): NQL calls are translated to native AI functions (e.g., `SNOWFLAKE.CORTEX.COMPLETE()`)
-   - **Standard databases** (SQLite, PostgreSQL, etc.): SQL executes first, then Python-based AI functions process each row
-5. **Materialization**: Results are written back to the database as tables or views
-
-### Example Model
-
-```sql
-{{ config(materialized='table') }}
-
-SELECT
-    command,
-    count(*) as exec_count,
-    nql.synthesize(
-        'Analyze "{command}" usage pattern with {exec_count} executions',
-        'sibiji',
-        'pattern_insight'
-    ) as insight
-FROM command_history
-GROUP BY command
-```
-
-### Enterprise Database Support
-
-NQL **automatically translates** your `nql.*` function calls to native database AI functions under the hood. You write portable NQL syntax once, and the compiler handles the translation:
-
-| Database | Auto-Translation | Your Code → Native SQL |
-|----------|------------------|------------------------|
-| **Snowflake** | Cortex AI | `nql.synthesize(...)` → `SNOWFLAKE.CORTEX.COMPLETE('llama3.1-8b', ...)` |
-| **Databricks** | ML Serving | `nql.generate_text(...)` → `ai_query('databricks-meta-llama...', ...)` |
-| **BigQuery** | Vertex AI | `nql.summarize(...)` → `ML.GENERATE_TEXT(MODEL 'gemini-pro', ...)` |
-| **SQLite/PostgreSQL** | Python Fallback | SQL executes first, then AI applied row-by-row via `npcpy` |
-
-Write models locally with SQLite, deploy to Snowflake/Databricks/BigQuery with zero code changes—the NQL compiler rewrites your AI calls to use native accelerated functions automatically.
-
-### NQL Functions
-
-**Built-in LLM functions** (from `npcpy.llm_funcs`):
-- `nql.synthesize(prompt, npc, alias)` - Synthesize insights from multiple perspectives
-- `nql.summarize(text, npc, alias)` - Summarize text content
-- `nql.criticize(text, npc, alias)` - Provide critical analysis
-- `nql.extract_entities(text, npc, alias)` - Extract named entities
-- `nql.generate_text(prompt, npc, alias)` - General text generation
-- `nql.translate(text, npc, alias)` - Translate between languages
-
-**Team jinxes as functions**: Any jinx in your team can be called as `nql.<jinx_name>(...)`:
-```sql
-nql.sample('Generate variations of: {text}', 'frederic', 'variations')
-```
-
-**Model references**: Use `{{ ref('other_model') }}` to create dependencies between models. The compiler ensures models run in the correct order.
-
-### Running Models
-
-```bash
-# List available models (shows [NQL] tag for models with AI functions)
-nql show=1
-
-# Run all models in dependency order
-nql
-
-# Run a specific model
-nql model=daily_summary
-
-# Use a different database
-nql db=~/analytics.db
-
-# Schedule with cron (runs daily at 6am)
-nql install_cron="0 6 * * *"
-```
+The `teamviz` jinx generates a view of how your NPCs and jinxes are connected:
+- **Network view**: Organic layout showing NPC-jinx relationships.
+- **Ordered view**: NPCs on left, jinxes grouped by category on right.
 
 ## Working with NPCs (Agents)
 
@@ -315,17 +183,11 @@ NPCs are AI agents with distinct personas, models, and tool sets. You can intera
 
 ### Switching to an NPC
 
-Use `/npc <name>` or `/n <name>` to switch your session to a different NPC. All subsequent messages will be handled by that NPC until you switch again:
+Use `/<npc_name>` or `@<npc_name>` to switch your session to a different NPC. All subsequent messages will be handled by that NPC until you switch again:
 
 ```bash
-/npc corca          # Switch to corca for coding tasks
-/n frederic         # Switch to frederic for math/music
-```
-
-You can also invoke an NPC directly as a slash command to switch to them:
-```bash
-/corca              # Same as /npc corca
-/guac               # Same as /npc guac
+/corca              # Switch to corca for coding tasks
+@frederic           # Switch to frederic for math/music
 ```
 
 ### One-Time Questions with @
@@ -347,9 +209,8 @@ The NPC responds using their persona and available jinxes, then control returns 
 | `sibiji` | Orchestrator/coordinator | delegate, convene, python, sh |
 | `corca` | Coding and development | python, sh, edit_file, load_file |
 | `plonk` | Browser/GUI automation | browser_action, screenshot, click, key_press |
-| `alicanto` | Research and analysis | python, sh, sql, load_file |
+| `alicanto` | Research and analysis | python, sh, load_file |
 | `frederic` | Math, physics, music | python, vixynt, roll, sample |
-| `guac` | General assistant | python, sh, edit_file, load_file |
 | `kadiefa` | Creative generation | vixynt |
 
 ## Capability Areas
@@ -361,95 +222,56 @@ Rather than memorizing a long command list, think of `npcsh` as a set of capabil
 | **Agent chat** | Talk to NPCs, switch between them, ask one-off questions. |
 | **Custom tools** | Author `.jinx` files and skills that agents use as tools. |
 | **Orchestration** | Delegate tasks with review loops, convene multi-NPC discussions, visualize team structure. |
-| **Memory & KG** | Extract, approve, and evolve memories into a queryable knowledge graph. |
-| **NQL** | Run SQL models with embedded AI functions locally or on enterprise warehouses. |
+| **Memory** | Extract and review memories. |
 | **Computer use** | GUI automation, browser automation, screenshot analysis. |
 | **Search** | Web, database, and file search across the local data layer. |
-| **Media** | Image generation/editing, video generation, voice chat. |
-| **System** | Cron jobs, daemons, process manager, config editor, model browser. |
-| **API** | Serve any NPC team via OpenAI-compatible endpoints. |
+| **Media** | Image generation via the `gen_image` jinx. |
+| **Scheduling** | Cron jobs and loops. |
+| **System / config** | Config editor, model browser, team browser, setup. |
+| **Git** | Git TUI and commit helper. |
 
-Most commands launch full-screen TUIs — just type and interact. For CLI usage with `npc`, common flags include `--model (-mo)`, `--provider (-pr)`, `--npc (-np)`, and `--temperature (-t)`. Run `npc --help` for the full list.
+Most built-in commands launch full-screen TUIs. For CLI usage with `npc`, common flags include `--model (-mo)`, `--provider (-pr)`, `--npc (-np)`, and `--temperature (-t)`. Run `npc --help` for the full list.
 
-### `/wander` — Creative Exploration
-Wander mode shifts the model's temperature up and down as it explores a problem, producing divergent ideas followed by convergent synthesis. The live TUI dashboard shows the current temperature, accumulated thoughts, and a running summary.
+### `/chat`, `/agent`, `/cmd` — Modes
 
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/wander.png" alt="Wander TUI", width=500>
-</p>
+- `/chat` — Chat-only mode (LLM, no tools).
+- `/agent` — Full agent mode (tools + bash + LLM).
+- `/cmd` — Bash first; if the command fails or is not understood, fall back to the LLM.
 
-### `/guac` — Interactive Python REPL
-Guac is an LLM-powered Python REPL with a live variable inspector, DataFrame viewer, and inline code execution. Describe what you want in natural language and the model writes and runs the code. Variables persist across turns. Drop file paths or type `run file.py` to load and execute scripts. Keys: Tab toggles natural language mode, Ctrl+P cycles panels.
+### `/<npc>` and `@<npc>` — Switching NPCs
 
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/guac_session.png" alt="Guac Python REPL", width=500>
-</p>
-
-### `/arxiv` — Paper Browser
-Browse, search, and read arXiv papers from the terminal. The TUI shows search results, full paper metadata, and rendered abstracts with j/k navigation and Enter to drill in.
-
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/arxiv_search.png" alt="ArXiv search", width=500>
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/arxiv_paper.png" alt="ArXiv paper view", width=500>
-</p>
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/arxiv_abs.png" alt="ArXiv abstract view", width=700>
-</p>
-
-### `/reattach` — Session Browser
-Resume previous conversation sessions. The TUI lists past sessions with timestamps and previews — select one to pick up where you left off.
-
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/Screenshot%20from%202026-01-29%2014-43-20.png" alt="Reattach session browser", width=500>
-</p>
-
-### `/models` — Model Browser
-Browse all available models across providers (Ollama, OpenAI, Anthropic, etc.), see which are currently active, and set new defaults interactively.
-
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/models.png" alt="Models browser", width=500>
-</p>
-
-### `/roll` — Video Creation Studio
-Interactive TUI for generating videos with parameter controls. Edit prompt, model, provider, dimensions, and frame count, then generate. Includes a gallery browser for previously generated videos.
-
-```bash
-/roll                    # Open interactive TUI
-/roll "a sunset"         # Generate video directly (one-shot mode)
-```
-
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/roll.png" alt="Roll Video Creation Studio" width=500>
-</p>
+Use `/<npc_name>` or `@<npc_name>` to switch your session to a different NPC. All subsequent messages go to that NPC until you switch again. Use `@<npc_name> <question>` to ask a one-off question without switching.
 
 ### `/config` — Configuration Editor
+
 Interactive TUI for editing `~/.npcshrc` settings — models, providers, modes, and toggles. Navigate with j/k, edit text fields, toggle booleans, and cycle choices.
 
 <p align="center">
     <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/config.png" alt="Config editor TUI" width=500>
 </p>
 
-### `/crond` — System Task Manager
-Multi-tab TUI for managing cron jobs, systemd user daemons, and system processes. Create new cron jobs and daemons using natural language, start/stop/restart services, kill processes, and monitor resource usage.
+### `/memories` — Memory Browser
 
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/crond.png" alt="Crond Cron tab" width=500>
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/crondaemon.png" alt="Crond Daemons tab" width=500>
-</p>
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/cron_processes.png" alt="Crond Processes tab" width=500>
-</p>
+Open an interactive TUI for browsing, approving, and managing memories extracted from conversations.
 
-## Memory & Knowledge Graph
+### `/cron` — Scheduling
 
-`npcsh` maintains a memory lifecycle system that allows agents to learn and grow from past interactions. Memories progress through stages and can be incorporated into a knowledge graph for advanced retrieval.
+Manage cron jobs and loops from the shell. Use `/loop <npc> <interval> <task>` to create a recurring task, `/loops` to list them, and `/loopon`, `/loopoff`, `/looprm` to enable, disable, or remove them.
 
-### Memory Lifecycle
+### `/gitt` — Git TUI
 
-Memories are extracted from conversations via the `/extract_memories` jinx and follow this lifecycle:
+Open the Git TUI to view status, stage changes, commit, and browse history.
+
+### `/commit` — Commit Helper
+
+Launch the commit-helper TUI to write a conventional commit message from staged changes.
+
+## Memory
+
+`npcsh` maintains a memory lifecycle system that allows agents to learn from past interactions. Memories are extracted by the `memory_extractor` jinx and follow these stages:
 
 1. **pending_approval** - New memories awaiting review
-2. **human-approved** - Approved and ready for KG integration
+2. **human-approved** - Approved and ready for use
 3. **human-rejected** - Rejected (used as negative examples)
 4. **human-edited** - Modified by user before approval
 5. **skipped** - Deferred for later review
@@ -471,51 +293,6 @@ The TUI provides:
 <p align="center">
     <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/Screenshot%20from%202026-01-29%2016-03-08.png" alt="Memory Browser TUI", width=700>
 </p>
-
-### Knowledge Graph
-
-The `/kg` command opens an interactive browser for exploring the knowledge graph:
-
-```bash
-/kg                     # Browse facts, concepts, links, search, graph view
-/kg sleep               # Evolve KG through consolidation
-/kg dream               # Creative synthesis across domains
-/kg evolve              # Alias for sleep
-/kg sleep backfill=true # Import approved memories first, then evolve
-/kg sleep ops=prune,deepen,abstract  # Specific operations
-```
-
-The TUI browser has 5 tabs: **Facts**, **Concepts**, **Links**, **Search**, and **Graph** — navigate with Tab, j/k, and Enter to drill into details.
-
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/kg_facts_viewer.png" alt="Knowledge Graph Facts", width=500>
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/kg_links.png" alt="Knowledge Graph Links", width=500>
-</p>
-<p align="center">
-    <img src="https://raw.githubusercontent.com/npc-worldwide/npcsh/main/gh_images/kg_viewer.png" alt="Knowledge Graph Viewer", width=700>
-</p>
-
-**Evolution operations** (via `/kg sleep` or `/sleep`):
-- **prune** — Remove redundant or low-value facts
-- **deepen** — Add detail to existing facts
-- **abstract** — Create higher-level generalizations
-- **link** — Connect related facts and concepts
-
-## Serving an NPC Team
-
-```bash
-/serve --port 5337 --cors='http://localhost:5137/'
-```
-
-This exposes your NPC team as a full agentic server with:
-- **OpenAI-compatible endpoints** for drop-in LLM replacement
-  - `POST /v1/chat/completions` - Chat with NPCs (use `agent` param to select NPC)
-  - `GET /v1/models` - List available NPCs as models
-- **NPC management**
-  - `GET /npcs` - List team NPCs with their capabilities
-  - `POST /chat` - Direct chat with NPC selection
-- **Jinx controls** - Execute jinxes remotely via API
-- **Team orchestration** - Delegate tasks and convene discussions programmatically
 
 ## Installation
 
@@ -592,39 +369,53 @@ Individual NPCs can use different models and providers by setting `model` and `p
 
 ## Project Structure
 
-The global team lives in `~/.npcsh/npc_team/`. You can also create a project-specific team by adding an `npc_team/` directory to any project — npcsh picks it up automatically and overlays it on the global team.
+A project is team + agents + tools. The three layers can live at the project root or inside an `npc_team/` directory. The agent layer can be either `.npc` files, a single `agents.md`, or an `agents/` directory — those are alternatives, not requirements to use all at once.
+
+If both `npc_team/*.npc` and `agents.md`/`agents/` are present, npcsh asks which agent layout to use on first run and saves the choice in `.NPCSH_PREFERRED_TEAM_NAME`. Later runs use the preferred layout automatically.
+
+**Layout A: everything under `npc_team/`**
 
 ```
-npc_team/
-├── jinxes/
-│   ├── modes/            # TUI modes (deep_research, mcp_shell, computer_use, guac, kg, yap, etc.)
-│   ├── skills/           # Skills — knowledge-content jinxes
-│   │   ├── code-review/  # SKILL.md folder format
-│   │   │   └── SKILL.md
-│   │   ├── debugging/
-│   │   │   └── SKILL.md
-│   │   └── git-workflow.jinx  # .jinx format
-│   ├── lib/
-│   │   ├── core/         # Core tools (python, sh, sql, skill, edit_file, delegate, etc.)
-│   │   │   └── search/   # Search tools (web_search, db_search, file_search)
-│   │   ├── utils/        # Utility jinxes (set, compile, serve, teamviz, etc.)
-│   │   ├── browser/      # Browser automation (browser_action, screenshot, etc.)
-│   │   └── computer_use/ # Computer use (click, key_press, screenshot, etc.)
-│   └── incognide/        # Incognide desktop workspace jinxes
-├── models/               # NQL SQL models
-│   ├── base/             # Base statistics models
-│   └── insights/         # Models with nql.* AI functions
-├── assembly_lines/       # Workflow pipelines
-├── sibiji.npc            # Orchestrator NPC
-├── corca.npc             # Coding specialist
-├── ...                   # Other NPCs
-├── mcp_server.py         # MCP server for tool integration
-└── npcsh.ctx             # Team context (sets forenpc, team name)
+myproject/
+└── npc_team/
+    ├── npcsh.ctx           # team-level context
+    ├── sibiji.npc          # orchestrator
+    ├── corca.npc           # coding specialist
+    └── jinxes/             # tools
+        ├── skills/
+        │   └── debugging/
+        │       └── SKILL.md
+        ├── lib/
+        │   └── core/
+        │       ├── python.jinx
+        │       └── sh.jinx
+        └── my_tool.jinx
+```
+
+**Layout B: flat at project root**
+
+```
+myproject/
+├── team.ctx                # team-level context
+├── agents.md               # many agents in one file
+└── jinxes/
+    └── my_tool.jinx
+```
+
+**Layout C: flat agents directory**
+
+```
+myproject/
+├── team.ctx                # team-level context
+├── agents/                 # one agent per .md file
+│   ├── translator.md
+│   └── custom.md
+└── jinxes/
+    └── my_tool.jinx
 ```
 
 ## Environment Variables
 
 ```bash
-export NPCSH_BUILD_KG=1              # Enable/disable automatic KG building
 export NPCSH_DB_PATH=~/npcsh_history.db  # Database path
 ```

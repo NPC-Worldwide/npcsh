@@ -4,7 +4,7 @@ jinx_name: convene
 description: Start a group discussion between multiple NPCs to get diverse perspectives on a topic.
 inputs:
   - topic: ""
-  - npcs: "alicanto,corca,guac"
+  - npcs: "alicanto,corca"
   - rounds: 3
 steps:
   - name: convene_tui
@@ -61,7 +61,7 @@ steps:
           provider = npc.provider
 
       topic = context.get('topic', '')
-      npcs_str = context.get('npcs', 'alicanto,corca,guac')
+      npcs_str = context.get('npcs', 'alicanto,corca')
       num_rounds = int(context.get('rounds', 3))
 
       if not topic:

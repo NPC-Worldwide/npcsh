@@ -1,5 +1,5 @@
 use npcrs::error::Result;
-use npcsh::{exec_jinx_file, exec_npc_file, find_team_dir, init_team};
+use npcsh::{exec_jinx_file, exec_npc_file, find_team_dir, init_team, resolve_team_layout};
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: &str = "5237";
@@ -35,6 +35,7 @@ fn resolve_npc_file(name: &str) -> Option<String> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
+    resolve_team_layout();
 
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--version" || a == "-v") {
