@@ -79,7 +79,7 @@ steps:
           '.git', '__pycache__', 'node_modules', '.tox', '.mypy_cache',
           '.pytest_cache', 'dist', 'build', '.eggs',
           '.venv', 'venv', 'env', '.env', '.idea', '.vscode',
-          '.guac', '.next', '.nuxt', 'coverage', '.coverage',
+          '.next', '.nuxt', 'coverage', '.coverage',
           'htmlcov', '.cache', 'logs', 'log',
       }
       BINARY_EXTS = {
