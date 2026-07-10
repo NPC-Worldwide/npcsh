@@ -99,10 +99,10 @@ steps:
       Say a warm, personalized hello to {{ name }}.
 ```
 
-Use it inside `npcsh`:
+Agents invoke it by name when they need it:
 
 ```bash
-/hello name=world
+hello name=world
 ```
 
 Or make it available to agents by adding it to an NPC:
@@ -124,7 +124,7 @@ Skills are a special kind of jinx that serve instructional content progressively
 
 `npcsh` is not a command catalog — it is a runtime for capabilities you define and compose:
 
-- **Agentic shell** — Chat with individual NPCs or the team orchestrator. Switch agents with `/@corca` or invoke one directly.
+- **Agentic shell** — Chat with individual NPCs or the team orchestrator. Switch agents with `/<npc>` or `@<npc>`, or invoke one directly.
 - **Custom tools** — Author jinxes and skills for your domain; agents use them automatically.
 - **Multi-agent orchestration** — The forenpc delegates tasks, convenes discussions, and runs review loops across specialized NPCs.
 - **Memory & knowledge graphs** — Conversations feed a memory lifecycle; approved memories can be synthesized into a queryable knowledge graph.
@@ -307,31 +307,6 @@ You translate content between languages while preserving tone and idiom.
 ```
 
 All formats inherit the team's default model/provider from `team.ctx` when not specified.
-
----
-
-## Launching External Coding Tools with NPC Teams
-
-Your `npc_team/` works beyond `npcsh`. The `npcpy` CLI launchers let you start Claude Code, Codex, Gemini CLI, Aider, Amp, and others as an NPC from your team, injecting that NPC's persona and team awareness.
-
-```bash
-pip install npcpy
-
-npc-claude
-npc-claude --npc corca
-npc-codex --npc researcher
-npc-gemini --npc analyst
-npc-opencode --npc coder
-npc-aider --npc reviewer
-npc-amp --npc writer
-```
-
-For deeper integration (jinxes as MCP tools, team switching), register the NPC plugin:
-
-```bash
-npc-plugin claude
-npc-plugin codex
-```
 
 ---
 

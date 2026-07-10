@@ -55,7 +55,10 @@ fn loads_agents_md() {
     fs::create_dir_all(&team_dir).unwrap();
     let db = root.join("history.db");
 
-    write(team_dir.join("team.ctx"), "model: qwen3.5:2b\nprovider: ollama\n");
+    write(
+        team_dir.join("team.ctx"),
+        "model: qwen3.5:2b\nprovider: ollama\n",
+    );
     write(
         root.join("agents.md"),
         "## summarizer\nYou summarize.\n\n## fact_checker\nYou check facts.\n",
@@ -76,7 +79,10 @@ fn loads_agents_dir() {
     fs::create_dir_all(&agents).unwrap();
     let db = root.join("history.db");
 
-    write(team_dir.join("team.ctx"), "model: qwen3.5:2b\nprovider: ollama\n");
+    write(
+        team_dir.join("team.ctx"),
+        "model: qwen3.5:2b\nprovider: ollama\n",
+    );
     write(
         agents.join("translator.md"),
         "---\nmodel: gemini-2.5-flash\nprovider: gemini\n---\nYou translate.\n",
@@ -97,4 +103,28 @@ fn loads_agents_dir() {
 
     let custom = kernel.team.get_npc("custom").unwrap();
     assert_eq!(custom.model.as_deref(), Some("qwen3.5:4b"));
+}
+
+#[test]
+fn loads_real_repo_team() {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let team_dir = std::path::Path::new(&manifest)
+        .join("..")
+        .join("npcsh")
+        .join("npc_team");
+    let db = std::env::temp_dir().join(format!("npcsh_real_team_test_{}.db", uuid::Uuid::new_v4()));
+
+    let kernel = npcrs::Kernel::boot(team_dir.to_str().unwrap(), db.to_str().unwrap()).unwrap();
+
+    let names: HashSet<_> = kernel.team.npc_names().into_iter().collect();
+    assert!(
+        names.contains("sibiji") || names.contains("corca"),
+        "expected at least sibiji or corca in the bundled team"
+    );
+
+    let jinxes: HashSet<_> = kernel.team.jinx_names().into_iter().collect();
+    assert!(
+        !jinxes.is_empty(),
+        "expected at least one jinx to load from the bundled team"
+    );
 }

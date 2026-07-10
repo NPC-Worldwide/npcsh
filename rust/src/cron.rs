@@ -47,15 +47,27 @@ struct CronFileJob {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 enum CronFileTask {
-    Chat { task: String },
-    Jinx { jinx: String, #[serde(default)] args: String },
+    Chat {
+        task: String,
+    },
+    Jinx {
+        jinx: String,
+        #[serde(default)]
+        args: String,
+    },
 }
 
-fn default_enabled() -> bool { true }
+fn default_enabled() -> bool {
+    true
+}
 
 impl CronRegistry {
     pub fn new() -> Self {
-        Self { next_id: 1, jobs: Vec::new(), cron_file: None }
+        Self {
+            next_id: 1,
+            jobs: Vec::new(),
+            cron_file: None,
+        }
     }
 
     pub fn with_file(path: impl Into<String>) -> Self {
@@ -66,11 +78,16 @@ impl CronRegistry {
     }
 
     fn cron_path(&self) -> Option<String> {
-        self.cron_file.as_ref().map(|p| shellexpand::tilde(p).to_string())
+        self.cron_file
+            .as_ref()
+            .map(|p| shellexpand::tilde(p).to_string())
     }
 
     fn load(&mut self) {
-        let path = match self.cron_path() { Some(p) => p, None => return };
+        let path = match self.cron_path() {
+            Some(p) => p,
+            None => return,
+        };
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(_) => return,
@@ -107,24 +124,39 @@ impl CronRegistry {
     }
 
     fn save(&self) {
-        let path = match self.cron_path() { Some(p) => p, None => return };
-        let mut jobs: Vec<CronFileJob> = self.jobs.iter().map(|j| {
-            let task = match j.kind {
-                CronJobKind::Chat => CronFileTask::Chat { task: j.task.clone() },
-                CronJobKind::Jinx => CronFileTask::Jinx { jinx: j.task.clone(), args: String::new() },
-            };
-            CronFileJob {
-                npc: j.npc.clone(),
-                interval: format_duration(j.interval_secs),
-                enabled: j.enabled,
-                task,
-            }
-        }).collect();
+        let path = match self.cron_path() {
+            Some(p) => p,
+            None => return,
+        };
+        let mut jobs: Vec<CronFileJob> = self
+            .jobs
+            .iter()
+            .map(|j| {
+                let task = match j.kind {
+                    CronJobKind::Chat => CronFileTask::Chat {
+                        task: j.task.clone(),
+                    },
+                    CronJobKind::Jinx => CronFileTask::Jinx {
+                        jinx: j.task.clone(),
+                        args: String::new(),
+                    },
+                };
+                CronFileJob {
+                    npc: j.npc.clone(),
+                    interval: format_duration(j.interval_secs),
+                    enabled: j.enabled,
+                    task,
+                }
+            })
+            .collect();
         jobs.sort_by(|a, b| a.npc.cmp(&b.npc).then(a.interval.cmp(&b.interval)));
         let file = CronFile { cron: jobs };
         let body = format!(
             "#!/usr/bin/env npc\njinx_name: cron\ndescription: Scheduled heartbeat tasks\ncron:\n{}\n",
-            serde_yaml::to_string(&file).unwrap_or_default().strip_prefix("cron:\n").unwrap_or("")
+            serde_yaml::to_string(&file)
+                .unwrap_or_default()
+                .strip_prefix("cron:\n")
+                .unwrap_or("")
         );
         let _ = std::fs::create_dir_all(Path::new(&path).parent().unwrap_or(Path::new(".")));
         let _ = std::fs::write(&path, body);
@@ -151,7 +183,9 @@ impl CronRegistry {
         let before = self.jobs.len();
         self.jobs.retain(|j| j.id != id);
         let removed = self.jobs.len() < before;
-        if removed { self.save(); }
+        if removed {
+            self.save();
+        }
         removed
     }
 
@@ -202,7 +236,8 @@ impl CronRegistry {
                 }
             }
         }
-        let global = std::path::PathBuf::from(shellexpand::tilde("~/.npcsh/npc_team").to_string()).join("jinxes");
+        let global = std::path::PathBuf::from(shellexpand::tilde("~/.npcsh/npc_team").to_string())
+            .join("jinxes");
         if global != jdir {
             if let Ok(entries) = std::fs::read_dir(&global) {
                 for e in entries.flatten() {
@@ -223,14 +258,33 @@ impl CronRegistry {
     }
 
     fn parse_jinx_cron(&mut self, path: &Path) {
-        let Ok(content) = std::fs::read_to_string(path) else { return };
-        let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&content) else { return };
-        let Some(cron_list) = value.get("cron") else { return };
-        let Some(items) = cron_list.as_sequence() else { return };
+        let Ok(content) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+            return;
+        };
+        let Some(cron_list) = value.get("cron") else {
+            return;
+        };
+        let Some(items) = cron_list.as_sequence() else {
+            return;
+        };
         for item in items {
-            let npc = item.get("npc").and_then(|v| v.as_str()).unwrap_or("sibiji").to_string();
-            let task = item.get("task").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let interval = item.get("interval").and_then(|v| v.as_str()).unwrap_or("60s");
+            let npc = item
+                .get("npc")
+                .and_then(|v| v.as_str())
+                .unwrap_or("sibiji")
+                .to_string();
+            let task = item
+                .get("task")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let interval = item
+                .get("interval")
+                .and_then(|v| v.as_str())
+                .unwrap_or("60s");
             let kind = match item.get("kind").and_then(|v| v.as_str()).unwrap_or("chat") {
                 "jinx" | "tool" => CronJobKind::Jinx,
                 _ => CronJobKind::Chat,
@@ -260,7 +314,10 @@ pub fn parse_duration(s: &str) -> u64 {
     }
 }
 
-pub fn spawn_cron_ticker(registry: Arc<Mutex<CronRegistry>>, tx: tokio::sync::mpsc::UnboundedSender<CronJob>) {
+pub fn spawn_cron_ticker(
+    registry: Arc<Mutex<CronRegistry>>,
+    tx: tokio::sync::mpsc::UnboundedSender<CronJob>,
+) {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_secs(1));
