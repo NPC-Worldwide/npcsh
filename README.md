@@ -19,28 +19,26 @@
 
 `npcsh` makes the most of LLMs and agents through an interactive shell and one-off CLI. Build teams of agents, schedule them on jobs, engineer context, and design custom Jinja Execution templates (Jinxes) for your agents to invoke.
 
+Install `npcsh`:
+
 ```bash
 curl -fsSL https://enpisi.com/install-npcsh.sh | sh
+npcsh
 ```
 
-Once installed, run `npcsh` to enter the NPC shell, or use `npc` for one-off commands.
-
+Ask a question:
 ```bash
-npcsh> find all TODOs in rust/src and summarize them
-npcsh> /corca refactor the auth module and add tests
-npcsh> @alicanto research the latest transformer architectures
+npcsh> what process is listening on port 5337?
 ```
 
+Delegate to a coding agent:
 ```bash
-npc "summarize this repo"
-npc --npc corca --path rust/src/main.rs "review this code"
+npcsh> @corca refactor the auth module and add tests
 ```
 
-`.npc` and `.jinx` files are directly executable with shebangs (`#!/usr/bin/env npc`):
-
+Open the Git TUI after changes:
 ```bash
-./myagent.npc "summarize this repo"
-./script.jinx bash_command="ls -la"
+npcsh> /gitt
 ```
 
 ---
