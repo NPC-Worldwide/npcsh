@@ -216,30 +216,46 @@ def _run_npcsh_attempt(
     provider: str,
     attempt_timeout: float,
     work_dir: str,
+    stream: bool = True,
 ) -> str:
     """Launch the Rust npcsh binary as a subprocess for one task attempt."""
     env = os.environ.copy()
     env["NPCSH_CHAT_MODEL"] = model
     env["NPCSH_CHAT_PROVIDER"] = provider
+    env["NPCSH_DEBUG"] = "1"
+    env["NPCSH_STREAM_OUTPUT"] = "1"
+
+    # local_runner passes the instruction as a positional arg. The current Rust binary
+    # expects either an .nsh script file or interactive input, so write a temp .nsh.
+    import tempfile as _tempfile
+    script_dir = Path(_tempfile.mkdtemp(prefix="npcsh_bench_"))
+    script_path = script_dir / "task.nsh"
+    script_path.write_text(instruction, encoding="utf-8")
 
     print(f"  [npcsh] {instruction[:80]}... (cwd={work_dir})", flush=True)
     try:
         proc = subprocess.Popen(
-            [binary, instruction],
+            [binary, str(script_path)],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             env=env,
             cwd=work_dir,
             start_new_session=True,
         )
     except FileNotFoundError:
+        shutil.rmtree(script_dir, ignore_errors=True)
         return f"Exception: npcsh binary not found at {binary}"
 
+    output_lines = []
     hard_deadline = time.time() + attempt_timeout + 5.0
     try:
-        stdout, stderr = proc.communicate(timeout=attempt_timeout)
-        return (stdout or "") + (stderr or "")
+        if proc.stdout:
+            for line in proc.stdout:
+                output_lines.append(line)
+                if stream:
+                    print(line, end="", flush=True)
+        proc.wait(timeout=attempt_timeout)
     except subprocess.TimeoutExpired:
         pass
 
@@ -256,10 +272,11 @@ def _run_npcsh_attempt(
     if proc.poll() is None:
         try:
             proc.stdout.close()
-            proc.stderr.close()
         except Exception:
             pass
-    return f"Timed out after {attempt_timeout:.0f}s"
+
+    shutil.rmtree(script_dir, ignore_errors=True)
+    return "".join(output_lines) if output_lines else f"Timed out after {attempt_timeout:.0f}s"
 
 
 def _build_external_command(framework: str, instruction: str, model: str,
