@@ -40,6 +40,7 @@ npcsh> /jinxes
 |---------|-------------|
 | `/clear` | Clear the current conversation. |
 | `/config` | Open the configuration TUI for `~/.npcshrc`. |
+| `/flush` | Flush the last N messages from the conversation. |
 | `/ctx` | Browse and edit team context fields. |
 | `/history` | Show the conversation history for the current process. |
 | `/memories` | Open the memory lifecycle TUI. |
@@ -73,6 +74,20 @@ npcsh> /jinxes
 | `/looprm` | Remove a loop. |
 | `/loops` | List active loops. |
 
+## System Commands
+
+| Command | Description |
+|---------|-------------|
+| `/doctor` | Diagnose and auto-fix common issues. |
+| `/init` | Initialize or reinitialize `npcsh`. |
+| `/nsync` | Sync `npcsh` state. |
+| `/refresh` | Refresh `npcsh` (alias of `/reload`). |
+| `/reload` | Reload `npcsh` state. |
+| `/shh` | Toggle quiet mode. |
+| `/update` | Update `npcsh`. |
+| `/usage` | Show usage info. |
+| `/verbose` | Toggle verbose mode. |
+
 ---
 
 ## Info
@@ -99,9 +114,8 @@ Common jinxes in the bundled team include:
 - `web_search`, `file_search`, `db_search` — search
 - `computer_use`, `screenshot` — GUI / browser automation
 - `gen_image` — image generation
-- `skill`, `git-workflow`, `pr_review` — skills and workflows
-- `memory_extractor` — memory extraction
-- `crond`, `loop_plan` — scheduling helpers
+- `skill`, `git-workflow` — skills and workflows
+- `loop_plan` — scheduling helpers
 
 The exact set depends on the team you have loaded. Use `/jinxes` inside `npcsh` to see the current list.
 

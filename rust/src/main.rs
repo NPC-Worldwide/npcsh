@@ -291,6 +291,7 @@ enum CoreCmd {
     CmdMode,
     Kill,
     Clear,
+    Flush,
     Config,
     Ctx,
     History,
@@ -310,6 +311,14 @@ enum CoreCmd {
     LoopRm,
     Loops,
     Jinx(&'static str),
+    Doctor,
+    Init,
+    Nsync,
+    Reload,
+    Shh,
+    Update,
+    Usage,
+    Verbose,
     Exit,
     Help,
     Jinxes,
@@ -409,6 +418,12 @@ const CORE_COMMANDS: &[CommandDef] = &[
         category: "System / Config",
         description: "Clear conversation",
         cmd: CoreCmd::Clear,
+    },
+    CommandDef {
+        name: "/flush",
+        category: "System / Config",
+        description: "Flush the last N messages from the conversation",
+        cmd: CoreCmd::Flush,
     },
     CommandDef {
         name: "/config",
@@ -517,6 +532,60 @@ const CORE_COMMANDS: &[CommandDef] = &[
         category: "Loops",
         description: "List loops",
         cmd: CoreCmd::Loops,
+    },
+    CommandDef {
+        name: "/doctor",
+        category: "System Commands",
+        description: "Diagnose and auto-fix common issues",
+        cmd: CoreCmd::Doctor,
+    },
+    CommandDef {
+        name: "/init",
+        category: "System Commands",
+        description: "Initialize / reinitialize npcsh",
+        cmd: CoreCmd::Init,
+    },
+    CommandDef {
+        name: "/nsync",
+        category: "System Commands",
+        description: "Sync npcsh state",
+        cmd: CoreCmd::Nsync,
+    },
+    CommandDef {
+        name: "/refresh",
+        category: "System Commands",
+        description: "Refresh npcsh (alias of reload)",
+        cmd: CoreCmd::Reload,
+    },
+    CommandDef {
+        name: "/reload",
+        category: "System Commands",
+        description: "Reload npcsh state",
+        cmd: CoreCmd::Reload,
+    },
+    CommandDef {
+        name: "/shh",
+        category: "System Commands",
+        description: "Toggle quiet mode",
+        cmd: CoreCmd::Shh,
+    },
+    CommandDef {
+        name: "/update",
+        category: "System Commands",
+        description: "Update npcsh",
+        cmd: CoreCmd::Update,
+    },
+    CommandDef {
+        name: "/usage",
+        category: "System Commands",
+        description: "Show usage info",
+        cmd: CoreCmd::Usage,
+    },
+    CommandDef {
+        name: "/verbose",
+        category: "System Commands",
+        description: "Toggle verbose mode",
+        cmd: CoreCmd::Verbose,
     },
 ];
 
@@ -1690,6 +1759,38 @@ async fn dispatch_core_command(
             }
             CoreDispatch::Handled
         }
+        CoreCmd::Flush => {
+            let n: usize = rest.trim().parse().unwrap_or(1);
+            if let Some(p) = kernel.get_process_mut(*current_pid) {
+                let original = p.messages.len();
+                let mut keep_system = false;
+                let mut working: Vec<Message> = Vec::new();
+                if let Some(first) = p.messages.first() {
+                    if first.role == "system" {
+                        keep_system = true;
+                        working = p.messages.iter().skip(1).cloned().collect();
+                    } else {
+                        working = p.messages.clone();
+                    }
+                }
+                let remove = n.min(working.len());
+                if remove > 0 {
+                    working.truncate(working.len() - remove);
+                }
+                p.messages.clear();
+                if keep_system {
+                    if let Some(first) = p.messages.first() {
+                        p.messages.push(first.clone());
+                    }
+                }
+                p.messages.extend(working);
+                eprintln!(
+                    "{GREEN}Flushed {remove} message(s). Context is now {} messages.{RESET}",
+                    p.messages.len()
+                );
+            }
+            CoreDispatch::Handled
+        }
 
         CoreCmd::History => {
             if let Some(p) = kernel.get_process(*current_pid) {
@@ -1898,6 +1999,39 @@ async fn dispatch_core_command(
             CoreDispatch::Handled
         }
 
+        CoreCmd::Doctor => {
+            run_doctor_command(rest).await;
+            CoreDispatch::Handled
+        }
+        CoreCmd::Init => {
+            run_init_command(rest).await;
+            CoreDispatch::Handled
+        }
+        CoreCmd::Nsync => {
+            run_nsync_command(rest).await;
+            CoreDispatch::Handled
+        }
+        CoreCmd::Reload => {
+            run_reload_command(kernel, current_pid).await;
+            CoreDispatch::Handled
+        }
+        CoreCmd::Shh => {
+            run_shh_command();
+            CoreDispatch::Handled
+        }
+        CoreCmd::Update => {
+            run_update_command().await;
+            CoreDispatch::Handled
+        }
+        CoreCmd::Usage => {
+            run_usage_command(kernel, *current_pid);
+            CoreDispatch::Handled
+        }
+        CoreCmd::Verbose => {
+            run_verbose_command();
+            CoreDispatch::Handled
+        }
+
         CoreCmd::Jinx(jinx_name) => {
             run_jinx_command(kernel, *current_pid, jinx_name, rest).await;
             CoreDispatch::Handled
@@ -1905,6 +2039,214 @@ async fn dispatch_core_command(
 
         CoreCmd::Set => CoreDispatch::NotHandled,
     }
+}
+
+async fn run_doctor_command(_rest: &str) {
+    let home = shellexpand::tilde("~").to_string();
+    let npcsh_dir = std::path::Path::new(&home).join(".npcsh");
+    let bin_dir = npcsh_dir.join("bin");
+    let mut fixes: Vec<String> = Vec::new();
+
+    if !npcsh_dir.exists() {
+        if let Err(e) = tokio::fs::create_dir_all(&npcsh_dir).await {
+            eprintln!("{RED}Failed to create ~/.npcsh: {e}{RESET}");
+            return;
+        }
+        fixes.push("Created ~/.npcsh".to_string());
+    }
+
+    if !bin_dir.exists() {
+        if let Err(e) = tokio::fs::create_dir_all(&bin_dir).await {
+            eprintln!("{RED}Failed to create ~/.npcsh/bin: {e}{RESET}");
+            return;
+        }
+        fixes.push("Created ~/.npcsh/bin".to_string());
+    }
+
+    let db_path = std::path::Path::new(&home).join("npcsh_history.db");
+    if !db_path.exists() {
+        fixes.push("No history database yet; it will be created on first use.".to_string());
+    }
+
+    let npc_team_dir = npcsh_dir.join("npc_team");
+    if !npc_team_dir.exists() {
+        if let Err(e) = tokio::fs::create_dir_all(&npc_team_dir).await {
+            eprintln!("{RED}Failed to create ~/.npcsh/npc_team: {e}{RESET}");
+            return;
+        }
+        fixes.push("Created ~/.npcsh/npc_team".to_string());
+    }
+
+    if fixes.is_empty() {
+        println!("{GREEN}No common issues found. npcsh looks healthy.{RESET}");
+    } else {
+        println!("{BOLD}Doctor fixes:{RESET}");
+        for f in fixes {
+            println!("  {GREEN}{f}{RESET}");
+        }
+    }
+}
+
+async fn run_init_command(rest: &str) {
+    let home = shellexpand::tilde("~").to_string();
+    let npcsh_dir = std::path::Path::new(&home).join(".npcsh");
+    let bin_dir = npcsh_dir.join("bin");
+    let npc_team_dir = npcsh_dir.join("npc_team");
+
+    let force = rest.trim() == "--force" || rest.trim() == "-f";
+
+    if npcsh_dir.exists() && !force {
+        println!("{YELLOW}npcsh is already initialized.{RESET}");
+        println!("Run {CYAN}/init --force{RESET} to reset directories.");
+        return;
+    }
+
+    for dir in [&bin_dir, &npc_team_dir] {
+        if let Err(e) = tokio::fs::create_dir_all(dir).await {
+            eprintln!("{RED}Failed to create {}: {e}{RESET}", dir.display());
+            return;
+        }
+    }
+
+    let rc_path = std::path::Path::new(&home).join(".npcshrc");
+    if !rc_path.exists() || force {
+        let rc = "export NPCSH_CHAT_MODEL=qwen3.5:2b\nexport NPCSH_CHAT_PROVIDER=ollama\nexport NPCSH_DEFAULT_MODE=agent\nexport NPCSH_EMBEDDING_MODEL=nomic-embed-text\nexport NPCSH_EMBEDDING_PROVIDER=ollama\n";
+        if let Err(e) = tokio::fs::write(&rc_path, rc).await {
+            eprintln!("{RED}Failed to write ~/.npcshrc: {e}{RESET}");
+            return;
+        }
+        println!("{GREEN}Wrote ~/.npcshrc{RESET}");
+    }
+
+    println!("{GREEN}npcsh initialized.{RESET}");
+    println!("  bin:      {}", bin_dir.display());
+    println!("  npc_team: {}", npc_team_dir.display());
+    println!("  rc:       {}", rc_path.display());
+}
+
+async fn run_nsync_command(_rest: &str) {
+    let team_dir = find_team_dir();
+    let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+    println!("{BOLD}Syncing npcsh state...{RESET}");
+    println!("  team dir: {team_dir}");
+    println!("  db path:  {db_path}");
+    println!("{GREEN}State synced.{RESET}");
+}
+
+async fn run_reload_command(kernel: &mut Kernel, current_pid: &mut u32) {
+    let team_dir = find_team_dir();
+    let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+    match Kernel::boot(&team_dir, &db_path) {
+        Ok(new_kernel) => {
+            *kernel = new_kernel;
+            *current_pid = 0;
+            println!("{GREEN}Reloaded team from {team_dir}{RESET}");
+        }
+        Err(e) => eprintln!("{RED}Failed to reload: {e}{RESET}"),
+    }
+}
+
+fn run_shh_command() {
+    static QUIET: AtomicBool = AtomicBool::new(false);
+    let was = QUIET.load(Ordering::Relaxed);
+    QUIET.store(!was, Ordering::Relaxed);
+    if was {
+        println!("{GREEN}Verbose mode on.{RESET}");
+    } else {
+        println!("{GREEN}Quiet mode on.{RESET}");
+    }
+}
+
+fn run_verbose_command() {
+    static VERBOSE: AtomicBool = AtomicBool::new(false);
+    let was = VERBOSE.load(Ordering::Relaxed);
+    VERBOSE.store(!was, Ordering::Relaxed);
+    if was {
+        println!("{GREEN}Verbose mode off.{RESET}");
+    } else {
+        println!("{GREEN}Verbose mode on.{RESET}");
+    }
+}
+
+fn run_usage_command(kernel: &Kernel, current_pid: u32) {
+    let mut inp = 0u64;
+    let mut out = 0u64;
+    let mut cost = 0.0f64;
+    let mut turns = 0u64;
+
+    if let Some(p) = kernel.get_process(current_pid) {
+        inp = p.usage.total_input_tokens;
+        out = p.usage.total_output_tokens;
+        cost = p.usage.total_cost_usd;
+        turns = p.usage.total_turns;
+    }
+
+    let total = inp + out;
+    let fmt = |n: u64| {
+        if n >= 1000 {
+            format!("{:.1}k", n as f64 / 1000.0)
+        } else {
+            n.to_string()
+        }
+    };
+    let cost_str = if cost == 0.0 {
+        "free (local)".to_string()
+    } else if cost < 0.01 {
+        format!("${cost:.4}")
+    } else {
+        format!("${cost:.2}")
+    };
+
+    println!("{BOLD}Session Usage{RESET}");
+    println!("  Tokens: {} in / {} out ({} total)", fmt(inp), fmt(out), fmt(total));
+    println!("  Cost:   {cost_str}");
+    println!("  Turns:  {turns}");
+}
+
+async fn run_update_command() {
+    let client = reqwest::Client::new();
+    let current = env!("NPCSH_VERSION").to_string();
+
+    println!("{BOLD}Checking for updates...{RESET}");
+
+    let info = match version_check::check_version(&client, &current).await {
+        Some(i) => i,
+        None => {
+            println!("{GREEN}npcsh is up to date ({current}).{RESET}");
+            return;
+        }
+    };
+
+    println!("{YELLOW}Update available: {current} → {}{RESET}", info.latest);
+
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{RED}Could not determine current executable path: {e}{RESET}");
+            return;
+        }
+    };
+    let exe_str = exe.display().to_string();
+
+    if exe_str.starts_with("/opt/homebrew") || exe_str.starts_with("/usr/local") || exe_str.starts_with("/home/linuxbrew") {
+        println!("Installed via Homebrew. Run:");
+        println!("  {CYAN}brew upgrade npcsh{RESET}");
+        return;
+    }
+
+    if exe_str.contains(".cargo") || exe_str.contains("cargo-install") {
+        println!("Installed via cargo. Run:");
+        println!("  {CYAN}cargo install npcsh --force{RESET}");
+        return;
+    }
+
+    let install_dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| {
+        std::path::PathBuf::from(shellexpand::tilde("~/.npcsh/bin").as_ref())
+    });
+
+    println!("Downloading latest release into {}{RESET}", install_dir.display());
+    println!("Run: {CYAN}curl -fsSL https://enpisi.com/install-npcsh.sh | sh{RESET}");
+    println!("Or restart npcsh after running the install script.");
 }
 
 fn print_core_help() {
