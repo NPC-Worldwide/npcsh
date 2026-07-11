@@ -521,43 +521,41 @@ def run_benchmark(
                        framework=framework)
     report = BenchmarkReport(model=model, provider=provider, total=len(tasks))
 
-    import csv as csv_mod
-    csv_mod.field_size_limit(10**7)
     report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
     safe_model = model.replace("/", "_")
     checkpoint_file = report_dir / f"{framework}_{provider}_{safe_model}_running.csv"
     completed_ids = set()
     if resume and checkpoint_file.exists():
-        with open(checkpoint_file) as f:
-            for row in csv_mod.DictReader(f):
-                completed_ids.add(row["task_id"])
-                report.results.append(TaskResult(
-                    task_id=row["task_id"],
-                    category=row["category"],
-                    difficulty=row["difficulty"],
-                    passed=row["passed"].lower() == "true",
-                    duration=float(row.get("duration", 0)),
-                    attempts=int(row.get("attempts", 1)),
-                    error=row.get("error") or None,
-                    npcsh_output=row.get("output", ""),
-                ))
-                if row["passed"].lower() == "true":
-                    report.passed += 1
-                else:
-                    report.failed += 1
-                report.duration += float(row.get("duration", 0))
-                cat = row["category"]
-                if cat not in report.by_category:
-                    report.by_category[cat] = {"total": 0, "passed": 0}
-                report.by_category[cat]["total"] += 1
-                if row["passed"].lower() == "true":
-                    report.by_category[cat]["passed"] += 1
-                diff = row["difficulty"]
-                if diff not in report.by_difficulty:
-                    report.by_difficulty[diff] = {"total": 0, "passed": 0}
-                report.by_difficulty[diff]["total"] += 1
-                if row["passed"].lower() == "true":
-                    report.by_difficulty[diff]["passed"] += 1
+        df = pd.read_csv(checkpoint_file, dtype={"error": str, "output": str})
+        for _, row in df.iterrows():
+            completed_ids.add(row["task_id"])
+            report.results.append(TaskResult(
+                task_id=row["task_id"],
+                category=row["category"],
+                difficulty=row["difficulty"],
+                passed=str(row["passed"]).lower() == "true",
+                duration=float(row.get("duration", 0)),
+                attempts=int(row.get("attempts", 1)),
+                error=(row.get("error") or None) if pd.notna(row.get("error")) else None,
+                npcsh_output=row.get("output", "") if pd.notna(row.get("output")) else "",
+            ))
+            if str(row["passed"]).lower() == "true":
+                report.passed += 1
+            else:
+                report.failed += 1
+            report.duration += float(row.get("duration", 0))
+            cat = row["category"]
+            if cat not in report.by_category:
+                report.by_category[cat] = {"total": 0, "passed": 0}
+            report.by_category[cat]["total"] += 1
+            if str(row["passed"]).lower() == "true":
+                report.by_category[cat]["passed"] += 1
+            diff = row["difficulty"]
+            if diff not in report.by_difficulty:
+                report.by_difficulty[diff] = {"total": 0, "passed": 0}
+            report.by_difficulty[diff]["total"] += 1
+            if str(row["passed"]).lower() == "true":
+                report.by_difficulty[diff]["passed"] += 1
         print(f"Resumed {len(completed_ids)} tasks from checkpoint", flush=True)
 
     print(f"\n{framework} benchmark: {provider}/{model} (timeout={timeout}s per task)", flush=True)
