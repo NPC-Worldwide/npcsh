@@ -1,0 +1,66 @@
+#!/usr/bin/env npc
+permissions:
+  default: ask
+jinx_name: jinx_test
+description: Run jinx-level tests and benchmarks for the current NPC team
+inputs:
+- jinx: ""
+- test: ""
+- integration: "false"
+steps:
+  - name: run_jinx_tests
+    engine: python
+    code: |
+      import sys
+      from pathlib import Path
+      from npcsh.jinx_tester import run_all_tests, print_report, write_report_csv
+
+      team_path = npc.team.team_path if npc and npc.team and npc.team.team_path else "~/.npcsh/npc_team"
+      team_path = Path(team_path).expanduser()
+
+      jinx_filter = ({{ jinx | default("") | tojson }}).strip() or None
+      test_filter = ({{ test | default("") | tojson }}).strip() or None
+      integration = str({{ integration | default("false") | tojson }}).strip().lower() in ("true", "1", "yes")
+
+      report = run_all_tests(
+          team_dir=str(team_path),
+          integration=integration,
+          jinx_filter=jinx_filter,
+          test_filter=test_filter,
+      )
+
+      lines = []
+      lines.append("## Jinx Test Results")
+      lines.append("")
+      lines.append(f"**Team:** {report.team_dir}")
+      lines.append(f"**Total:** {report.total}")
+      lines.append(f"**Passed:** {report.passed}")
+      lines.append(f"**Failed:** {report.failed}")
+      if report.total > 0:
+          lines.append(f"**Pass Rate:** {100 * report.passed / report.total:.1f}%")
+      lines.append("")
+
+      if report.by_jinx:
+          lines.append("### By Jinx")
+          for name, stats in sorted(report.by_jinx.items()):
+              lines.append(f"- **{name}:** {stats['passed']}/{stats['total']}")
+          lines.append("")
+
+      if report.by_type:
+          lines.append("### By Type")
+          for t, stats in sorted(report.by_type.items()):
+              lines.append(f"- **{t}:** {stats['passed']}/{stats['total']}")
+          lines.append("")
+
+      failed = [r for r in report.results if not r.passed and "skipped" not in r.output.lower()]
+      if failed:
+          lines.append("### Failed Tests")
+          for r in failed[:20]:
+              err = (r.error or "assertion failed").splitlines()[0]
+              lines.append(f"- **{r.jinx_name}::{r.test_id}** ({r.kind}/{r.test_type}): {err}")
+          lines.append("")
+
+      out_path = write_report_csv(report)
+      lines.append(f"CSV written to: `{out_path}`")
+
+      context['output'] = "\n".join(lines)
