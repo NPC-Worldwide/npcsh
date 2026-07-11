@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Run the npcsh 100-task benchmark across Ollama cloud models in parallel."""
+"""Run the npcsh 100-task benchmark across Ollama cloud models in parallel,
+resuming from any existing checkpoint or completed CSV."""
 
 import argparse
 import os
@@ -22,14 +23,36 @@ MODELS = [
 ]
 
 
-def safe_name(model: str) -> str:
-    return model.replace("/", "_").replace(":", "_")
+def _checkpoint_path(model: str, report_dir: Path) -> Path:
+    """Exact same filename local_runner uses for checkpoints."""
+    safe_model = model.replace("/", "_")
+    return report_dir / f"npcsh_ollama_{safe_model}_running.csv"
+
+
+def _final_csv_path(model: str, report_dir: Path) -> Path | None:
+    """Return the newest final CSV local_runner writes for this model."""
+    safe_model = model.replace("/", "_")
+    candidates = [
+        p for p in report_dir.glob("*.csv")
+        if p.stem.startswith(f"npcsh_ollama_{safe_model}_") and "_running" not in p.stem
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
 def run_model(model: str, timeout: int, binary: str, python: str) -> str:
-    log_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log = log_dir / f"{safe_name(model)}.log"
+    report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    log = report_dir / f"{model.replace('/', '_')}.log"
+
+    final_csv = _final_csv_path(model, report_dir)
+    if final_csv is not None:
+        msg = f"[SKIP]  {model} - already finished: {final_csv}"
+        print(msg, flush=True)
+        with open(log, "a", buffering=1) as f:
+            f.write(msg + "\n")
+        return msg
 
     cmd = [
         python,
@@ -43,6 +66,7 @@ def run_model(model: str, timeout: int, binary: str, python: str) -> str:
         binary,
         "--timeout",
         str(timeout),
+        "--resume",
     ]
 
     with open(log, "w", buffering=1) as f:
