@@ -10,6 +10,7 @@ steps:
     code: |
       import subprocess
       import os
+      import signal
 
       cmd = {{ bash_command | tojson }}
       output = ""
@@ -20,22 +21,36 @@ steps:
           cwd = state.current_path
       except (NameError, AttributeError):
           cwd = os.getcwd()
+      shell_timeout = context.get('timeout') or 60
       process = subprocess.Popen(
           cmd,
           shell=True,
           cwd=cwd,
           stdin=subprocess.PIPE if stdin_data else None,
           stdout=subprocess.PIPE,
-          stderr=subprocess.PIPE
+          stderr=subprocess.PIPE,
+          start_new_session=True,
       )
-      stdout, stderr = process.communicate(
-          input=stdin_data.encode('utf-8') if stdin_data else None
-      )
+      try:
+          stdout, stderr = process.communicate(
+              input=stdin_data.encode('utf-8') if stdin_data else None,
+              timeout=shell_timeout,
+          )
+      except subprocess.TimeoutExpired:
+          try:
+              os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+          except Exception:
+              process.kill()
+          stdout, stderr = b"", b"Timeout: shell command exceeded time limit"
+          process.returncode = -9
+
+      def _normalize_tmp(text):
+          return text.replace('/private/tmp/', '/tmp/').replace('/private/tmp\n', '/tmp\n')
 
       if process.returncode != 0 and stderr:
-          output = f"Error (exit {process.returncode}): {stderr.decode('utf-8')}"
+          output = _normalize_tmp(f"Error (exit {process.returncode}): {stderr.decode('utf-8')}")
       elif stdout.strip():
-          output = stdout.decode('utf-8')
+          output = _normalize_tmp(stdout.decode('utf-8'))
       else:
           output = "(no output)"
 

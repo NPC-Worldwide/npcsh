@@ -23,11 +23,12 @@ Usage:
 """
 
 import argparse
-import csv
 import json
 import tempfile
 import time
 from pathlib import Path
+
+import pandas as pd
 
 
 def evaluate_model(
@@ -214,25 +215,18 @@ def collect_teacher_traces(
 def save_traces_to_csv(traces: list, csv_path: str):
     """Append traces to a CSV file."""
     path = Path(csv_path)
-    exists = path.exists()
-    with open(path, "a", newline="") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=[
-                "task_id",
-                "category",
-                "difficulty",
-                "model",
-                "provider",
-                "passed",
-                "attempts",
-                "output",
-            ],
-        )
-        if not exists:
-            writer.writeheader()
-        for t in traces:
-            writer.writerow(t)
+    columns = [
+        "task_id",
+        "category",
+        "difficulty",
+        "model",
+        "provider",
+        "passed",
+        "attempts",
+        "output",
+    ]
+    df = pd.DataFrame(traces, columns=columns)
+    df.to_csv(path, mode="a", index=False, header=not path.exists())
     print(f"[SAVE] Appended {len(traces)} traces to {csv_path}")
 
 

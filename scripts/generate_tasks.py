@@ -11,12 +11,13 @@ Usage:
 """
 
 import argparse
-import csv
 import os
 import re
 import sqlite3
 from collections import defaultdict
 from difflib import SequenceMatcher
+
+import pandas as pd
 
 
 def normalize(s):
@@ -217,10 +218,8 @@ def main():
         print(f"  verify: {t['verify_cmd']}")
 
     if not args.dry_run and new_tasks:
-        with open(args.tasks_csv, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["id", "category", "difficulty", "setup_cmd", "instruction", "verify_cmd", "description"])
-            for task in new_tasks:
-                writer.writerow(task)
+        df = pd.DataFrame(new_tasks, columns=["id", "category", "difficulty", "setup_cmd", "instruction", "verify_cmd", "description"])
+        df.to_csv(args.tasks_csv, mode="a", index=False, header=False)
         print(f"\nAppended {len(new_tasks)} tasks to {args.tasks_csv}")
     elif args.dry_run:
         print("\nDry run - no changes written")

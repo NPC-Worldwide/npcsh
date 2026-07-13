@@ -25,6 +25,60 @@ fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
     LOCK.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+async fn ensure_server_running(client: &reqwest::Client, server_url: &str) -> std::result::Result<(), String> {
+    if client
+        .get(server_url)
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+        .is_ok()
+    {
+        return Ok(());
+    }
+
+    let python = std::env::var("BACKEND_PYTHON_PATH")
+        .or_else(|_| std::env::var("PYTHON_PATH"))
+        .unwrap_or_else(|_| "python3".to_string());
+
+    let teams_yaml = std::env::var("NPCSH_TEAM_YAML")
+        .unwrap_or_else(|_| shellexpand::tilde("~/.npcsh/teams.yaml").to_string());
+
+    let host = std::env::var("NPCSH_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = std::env::var("NPCSH_SERVER_PORT").unwrap_or_else(|_| "5237".to_string());
+
+    let mut cmd = tokio::process::Command::new(&python);
+    cmd.arg("-m")
+        .arg("npcpy.serve")
+        .arg("--host")
+        .arg(&host)
+        .arg("--port")
+        .arg(&port)
+        .arg("--teams-yaml")
+        .arg(&teams_yaml)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(false);
+
+    cmd.spawn()
+        .map_err(|e| format!("failed to spawn npcpy.serve: {e}"))?;
+
+    for _ in 0..30 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if client
+            .get(server_url)
+            .timeout(std::time::Duration::from_secs(1))
+            .send()
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+    }
+
+    Err("npcpy server did not become reachable after spawn".to_string())
+}
+
 const CYAN: &str = "\x1b[36m";
 const PURPLE: &str = "\x1b[35m";
 const DIM: &str = "\x1b[90m";
@@ -626,6 +680,11 @@ async fn main() -> Result<()> {
         std::env::var("NPCSH_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:5237".to_string());
     let http_client = reqwest::Client::new();
 
+    if let Err(e) = ensure_server_running(&http_client, &server_url).await {
+        eprintln!("{RED}Error: unable to reach or start npcpy server: {e}{RESET}");
+        std::process::exit(1);
+    }
+
     if let Some(file) = args.get(1) {
         if file.ends_with(".nsh") && !file.starts_with('-') {
             return exec_nsh_file(file, &http_client, &server_url).await;
@@ -635,6 +694,7 @@ async fn main() -> Result<()> {
     let cli_npc = arg_value(&args, &["-n", "--npc"]);
     let cli_model = arg_value(&args, &["-m", "--model"]);
     let cli_provider = arg_value(&args, &["-p", "--provider"]);
+    let cli_command = arg_value(&args, &["-c", "--command"]);
 
     if args.iter().any(|a| a == "--refresh") {
         let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
@@ -677,6 +737,17 @@ async fn main() -> Result<()> {
     let mut current_pid: u32 = 0;
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
 
+    // One-shot/benchmark mode: let the runner pin the conversation_id so it can
+    // later retrieve the exact transcript from npcsh_history.db.
+    if let Some(forced_conv_id) = std::env::var("NPCSH_CONVERSATION_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
+        if let Some(process) = kernel.get_process_mut(current_pid) {
+            process.conversation_id = forced_conv_id;
+        }
+    }
+
     if let Some(name) = cli_npc.as_deref() {
         if let Some(proc) = kernel.find_by_name(name) {
             current_pid = proc.pid;
@@ -697,6 +768,32 @@ async fn main() -> Result<()> {
         if let Some(p) = cli_provider.as_deref() {
             process.npc.provider = Some(p.to_string());
         }
+    }
+
+    // One-shot command mode: execute a single instruction and exit.
+    if let Some(cmd) = cli_command {
+        match run_stream_turn(
+            &mut kernel,
+            current_pid,
+            &cmd,
+            Mode::Agent,
+            &http_client,
+            &server_url,
+            true,
+        )
+        .await
+        {
+            Ok(output) => {
+                if !output.is_empty() {
+                    println!("{}", output);
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}Error: {e}{RESET}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
     }
 
     let cron_file = shellexpand::tilde("~/.npcsh/loops.yaml").to_string();
@@ -1155,7 +1252,10 @@ async fn run_stream_turn_with_interrupt(
     {
         let process = kernel.get_process_mut(current_pid).unwrap();
         if process.conversation_id.is_empty() {
-            process.conversation_id = uuid::Uuid::new_v4().to_string();
+            process.conversation_id = std::env::var("NPCSH_CONVERSATION_ID")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         }
     }
 
@@ -1174,12 +1274,20 @@ async fn run_stream_turn_with_interrupt(
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| ".".to_string());
+    // macOS /tmp is a symlink to /private/tmp. Task instructions reference /tmp
+    // explicitly and warn against /private/tmp, so keep the model context consistent.
+    let cwd = cwd.replacen("/private/tmp", "/tmp", 1);
     let path_cmd = format!("The current working directory is: {}", cwd);
     let ls_files = if let Ok(entries) = std::fs::read_dir(&cwd) {
         let files: Vec<String> = entries
             .flatten()
             .take(100)
-            .map(|e| e.path().to_string_lossy().to_string())
+            .map(|e| {
+                e.path()
+                    .to_string_lossy()
+                    .to_string()
+                    .replacen("/private/tmp", "/tmp", 1)
+            })
             .collect();
         let total = std::fs::read_dir(&cwd).map(|d| d.count()).unwrap_or(0);
         let mut listing = format!(
@@ -1272,11 +1380,25 @@ async fn run_stream_turn_with_interrupt(
             }
 
             if save_history {
+                let assistant_msg = Message {
+                    role: "assistant".to_string(),
+                    content: if result.text.is_empty() {
+                        None
+                    } else {
+                        Some(result.text.clone())
+                    },
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                    thinking: None,
+                    reasoning_content: None,
+                };
                 save_conversation_turn(
                     kernel,
                     current_pid,
                     input,
                     &result.text,
+                    &assistant_msg,
                     in_tok,
                     out_tok,
                     cost,
@@ -1324,6 +1446,7 @@ async fn run_stream_turn_with_interrupt(
     )
     .await
     .map_err(|e| npcrs::NpcError::Other(e))?;
+    let tool_results = response.tool_results;
 
     if let Some(ref usage) = response.usage {
         let cost = calculate_cost(&request.model, usage.prompt_tokens, usage.completion_tokens);
@@ -1337,6 +1460,9 @@ async fn run_stream_turn_with_interrupt(
         process.last_thinking = response.message.thinking.clone();
         process.messages.push(Message::user(input));
         process.messages.push(response.message.clone());
+        for tr in tool_results {
+            process.messages.push(tr);
+        }
     }
 
     let output = response.message.content.clone().unwrap_or_default();
@@ -1362,6 +1488,7 @@ async fn run_stream_turn_with_interrupt(
             current_pid,
             input,
             &output,
+            &response.message,
             in_tok,
             out_tok,
             cost,
@@ -1475,6 +1602,7 @@ async fn save_conversation_turn(
     current_pid: u32,
     input: &str,
     output: &str,
+    assistant_message: &Message,
     in_tok: u64,
     out_tok: u64,
     cost: f64,
@@ -1515,6 +1643,13 @@ async fn save_conversation_turn(
         None,
         None,
     );
+
+    let tool_calls_json = assistant_message
+        .tool_calls
+        .as_ref()
+        .map(|tcs| serde_json::to_string(tcs).unwrap_or_default())
+        .filter(|s| !s.is_empty());
+
     let _ = kernel.history.save_conversation_message(
         &conv_id,
         "assistant",
@@ -1524,13 +1659,41 @@ async fn save_conversation_turn(
         Some(&provider),
         Some(&npc_name),
         Some(&team_name_str),
-        None,
+        tool_calls_json.as_deref(),
         None,
         None,
         None,
         Some(out_tok),
         Some(cost),
     );
+
+    for msg in process.messages.iter().rev().take_while(|m| m.role == "tool") {
+        let tool_content = msg.content.as_deref().unwrap_or("");
+        if tool_content.is_empty() {
+            continue;
+        }
+        let tool_results_json = serde_json::json!({
+            "name": msg.name.as_deref().unwrap_or("tool"),
+            "tool_call_id": msg.tool_call_id.as_deref().unwrap_or(""),
+            "content": tool_content,
+        });
+        let _ = kernel.history.save_conversation_message(
+            &conv_id,
+            "tool",
+            tool_content,
+            cwd,
+            Some(&model),
+            Some(&provider),
+            Some(&npc_name),
+            Some(&team_name_str),
+            None,
+            Some(&tool_results_json.to_string()),
+            None,
+            None,
+            None,
+            None,
+        );
+    }
 }
 
 fn ask_permission(prompt: &str) -> String {

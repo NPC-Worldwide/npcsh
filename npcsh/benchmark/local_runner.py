@@ -12,11 +12,14 @@ Usage:
 """
 
 import os
+import queue
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
+import uuid
 import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,19 +37,14 @@ NPCSH_SPECIFIC_CATEGORIES = frozenset({
     "delegation", "tool-chain", "image-gen", "audio-gen", "web-search",
 })
 
-NPCSH_BIN = os.path.expanduser("~/.npcsh/bin/npcsh")
+DB_PATH = os.path.expanduser("~/npcsh_history.db")
 
 
-def _find_npcsh_bin(path: Optional[str] = None) -> str:
-    """Return the path to the npcsh binary, falling back to PATH lookup."""
-    if path:
-        return path
-    if os.path.exists(NPCSH_BIN):
-        return NPCSH_BIN
-    found = shutil.which("npcsh")
-    if found:
-        return found
-    raise FileNotFoundError("npcsh binary not found; build and install it first")
+def _find_npcsh_bin() -> str:
+    """Verify `npcsh` exists on PATH and return the resolved executable name."""
+    if shutil.which("npcsh"):
+        return "npcsh"
+    raise FileNotFoundError("npcsh binary not found on PATH; build and install it first")
 
 
 @dataclass
@@ -59,6 +57,7 @@ class TaskResult:
     attempts: int = 1
     error: Optional[str] = None
     npcsh_output: str = ""
+    conversation_dump: str = ""
 
 
 @dataclass
@@ -97,6 +96,9 @@ def load_tasks(
     if difficulty:
         tasks = [t for t in tasks if t["difficulty"] == difficulty]
 
+    # The shell tool now runs with cwd=/tmp, but models still need to be told to use
+    # absolute /tmp paths and never synthetic or relative paths. Insert that reminder
+    # into every task instruction so the agent has explicit context.
     return tasks
 
 
@@ -124,6 +126,71 @@ def setup_bench_env():
     if _NOSUDO_DIR not in current.split(os.pathsep):
         os.environ["PATH"] = _NOSUDO_DIR + os.pathsep + current
     atexit.register(_remove_sudo_trap)
+
+    # Wipe all /tmp paths that benchmark tasks create/use so a previous failed or
+    # partial run can never leak into the next attempt.
+    _bench_tmp_paths = [
+        "/tmp/Makefile", "/tmp/addresses.txt", "/tmp/analyze.py",
+        "/tmp/animal_results.txt", "/tmp/animals.txt", "/tmp/app.log",
+        "/tmp/averages.csv", "/tmp/averages.py", "/tmp/backup.sh",
+        "/tmp/backup.tar.gz", "/tmp/big_files.txt", "/tmp/bigtest",
+        "/tmp/books.json", "/tmp/broken.py", "/tmp/buggy.py", "/tmp/calc.py",
+        "/tmp/calc_result.txt", "/tmp/cities.txt", "/tmp/colors.txt",
+        "/tmp/comment_count.txt", "/tmp/comments.conf", "/tmp/config.ini",
+        "/tmp/contacts.json", "/tmp/convert.py", "/tmp/converted.json",
+        "/tmp/countdown.sh", "/tmp/countme", "/tmp/csv2json.sh",
+        "/tmp/csv_raw.txt", "/tmp/data.csv", "/tmp/dept_avg.py",
+        "/tmp/dirs.txt", "/tmp/dirtest", "/tmp/disk_free.txt",
+        "/tmp/disk_usage.txt", "/tmp/disktest", "/tmp/docker-compose.yml",
+        "/tmp/emails.txt", "/tmp/employees.csv", "/tmp/env.sh",
+        "/tmp/env_info.txt", "/tmp/errors.txt", "/tmp/even.py",
+        "/tmp/even_numbers.txt", "/tmp/even_odd.sh", "/tmp/ext_count.txt",
+        "/tmp/extdir", "/tmp/extension_count.sh", "/tmp/extracted_emails.txt",
+        "/tmp/exttest", "/tmp/fib.py", "/tmp/file_count.txt",
+        "/tmp/fileinfo.sh", "/tmp/fix_class.py", "/tmp/fix_dict.py",
+        "/tmp/fix_file.py", "/tmp/fix_import.py", "/tmp/fix_indent.py",
+        "/tmp/fix_loop.py", "/tmp/fix_recursion.py", "/tmp/fix_sort.py",
+        "/tmp/fizzbuzz.py", "/tmp/fruits.txt", "/tmp/git_history.txt",
+        "/tmp/gitbranch", "/tmp/gitdiff", "/tmp/gitignore", "/tmp/gitlog",
+        "/tmp/gitmerge", "/tmp/gitstash", "/tmp/gitstatus", "/tmp/gittag",
+        "/tmp/gittest", "/tmp/grades.csv", "/tmp/greet.sh", "/tmp/hello.txt",
+        "/tmp/home_var.txt", "/tmp/inventory.json", "/tmp/largest.txt",
+        "/tmp/largest_files.sh", "/tmp/lgtest", "/tmp/line_lengths.txt",
+        "/tmp/log.txt", "/tmp/log_analyzer.py", "/tmp/log_summary.json",
+        "/tmp/lower.txt", "/tmp/mathpkg", "/tmp/matrix.py", "/tmp/merge.py",
+        "/tmp/merged_users.json", "/tmp/mixed_case.txt", "/tmp/mock_passwd",
+        "/tmp/monitor.sh", "/tmp/monitor_log.txt", "/tmp/my_diff.txt",
+        "/tmp/mydir", "/tmp/myrepo", "/tmp/now.txt", "/tmp/numbers.txt",
+        "/tmp/nums.txt", "/tmp/palindrome.py", "/tmp/paragraph.txt",
+        "/tmp/path_vars.txt", "/tmp/person.json", "/tmp/poem.txt",
+        "/tmp/port_status.txt", "/tmp/proc_count.txt", "/tmp/project",
+        "/tmp/pydir", "/tmp/pyfiles.txt", "/tmp/rename_ext.sh", "/tmp/rentest",
+        "/tmp/report.txt", "/tmp/requirements.txt", "/tmp/result.txt",
+        "/tmp/rev.py", "/tmp/sales.csv", "/tmp/sample.txt", "/tmp/scores.csv",
+        "/tmp/semver.sh", "/tmp/server_check.sh", "/tmp/sizetest",
+        "/tmp/sorted_fruits.txt", "/tmp/stash_list.txt", "/tmp/stats.json",
+        "/tmp/stats.py", "/tmp/status_output.txt", "/tmp/sys_summary.txt",
+        "/tmp/sysinfo.txt", "/tmp/table.txt", "/tmp/temps.csv",
+        "/tmp/temps_f.csv", "/tmp/test_convert.csv", "/tmp/test_mathpkg.py",
+        "/tmp/testfile.txt", "/tmp/todo.py", "/tmp/todos.txt", "/tmp/top_mem.txt",
+        "/tmp/top_sales.py", "/tmp/total.py", "/tmp/tree.py", "/tmp/treetest",
+        "/tmp/uname.txt", "/tmp/unique_counts.txt", "/tmp/uptime.txt",
+        "/tmp/usernames.txt", "/tmp/users.json", "/tmp/users_a.json",
+        "/tmp/users_b.json", "/tmp/wc_result.json", "/tmp/weather.csv",
+        "/tmp/weather_report.py", "/tmp/weather_report.txt", "/tmp/webapp",
+        "/tmp/word_stats.txt", "/tmp/wordcount.py", "/tmp/words.txt",
+    ]
+    _real_tmp = os.path.realpath("/tmp")
+    for _path in _bench_tmp_paths:
+        _resolved = os.path.realpath(_path)
+        for _target in {_path, _resolved}:
+            try:
+                if os.path.isdir(_target):
+                    shutil.rmtree(_target, ignore_errors=True)
+                elif os.path.exists(_target):
+                    os.remove(_target)
+            except Exception:
+                pass
 
     os.environ["MPLBACKEND"] = "Agg"
     try:
@@ -156,10 +223,12 @@ def clean_task_artifacts(task: dict = None):
             for m in re.findall(r'/tmp/[\w.*/-]+', text):
                 clean = m.rstrip(")'\"`;,")
                 paths.add(clean)
+                paths.add(os.path.realpath(clean))
 
     for d in ["/tmp/mydir", "/tmp/myrepo", "/tmp/project", "/tmp/rentest",
               "/tmp/webapp", "/tmp/mathpkg"]:
-        shutil.rmtree(d, ignore_errors=True)
+        for _target in {d, os.path.realpath(d)}:
+            shutil.rmtree(_target, ignore_errors=True)
 
     for p in paths:
         if "*" in p:
@@ -211,33 +280,52 @@ def _kill_descendants(root_pid: int) -> None:
 
 def _run_npcsh_attempt(
     instruction: str,
-    binary: str,
     model: str,
     provider: str,
     attempt_timeout: float,
     work_dir: str,
     stream: bool = True,
-) -> str:
-    """Launch the Rust npcsh binary as a subprocess for one task attempt."""
+) -> tuple[str, str]:
+    """Launch the Rust npcsh binary as a subprocess for one task attempt.
+
+    Returns (stdout_text, conversation_id) so the caller can retrieve the
+    full conversation history from npcsh_history.db.
+    """
     env = os.environ.copy()
+    # Ensure the Rust npcsh binary in ~/.npcsh/bin wins over any Python shim.
+    bin_dir = os.path.expanduser("~/.npcsh/bin")
+    env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
     env["NPCSH_CHAT_MODEL"] = model
     env["NPCSH_CHAT_PROVIDER"] = provider
     env["NPCSH_DEBUG"] = "1"
     env["NPCSH_STREAM_OUTPUT"] = "1"
     env["NPCSH_ACCEPT_PERMISSIONS"] = "1"
-    env["NPCSH_CWD"] = work_dir
 
-    # local_runner passes the instruction as a positional arg. The current Rust binary
-    # expects either an .nsh script file or interactive input, so write a temp .nsh.
-    import tempfile as _tempfile
-    script_dir = Path(_tempfile.mkdtemp(prefix="npcsh_bench_"))
-    script_path = script_dir / "task.nsh"
-    script_path.write_text(instruction, encoding="utf-8")
+    # Isolate git configuration so a model running `git config --global` cannot
+    # mutate the user's real ~/.gitconfig. Use a temp copy of the current config
+    # (preserving user.name/email) and ignore the system config.
+    real_gitconfig = os.path.expanduser("~/.gitconfig")
+    gitconfig_fd, gitconfig_path = tempfile.mkstemp(prefix="npcsh_bench_gitconfig_", suffix=".ini")
+    try:
+        if os.path.exists(real_gitconfig):
+            with open(real_gitconfig, "r", encoding="utf-8") as src, os.fdopen(gitconfig_fd, "w", encoding="utf-8") as dst:
+                dst.write(src.read())
+        else:
+            os.close(gitconfig_fd)
+        env["GIT_CONFIG_GLOBAL"] = gitconfig_path
+        env["GIT_CONFIG_SYSTEM"] = "/dev/null"
+    except Exception:
+        pass
 
+    # The shell picks its own conversation_id and saves everything to
+    # npcsh_history.db. We do not impose one or complain when it uses its own.
+    conversation_id = ""
+
+    # Pass the instruction directly to the Rust binary via its -c / --command flag.
     print(f"  [npcsh] {instruction[:80]}... (cwd={work_dir})", flush=True)
     try:
         proc = subprocess.Popen(
-            [binary, str(script_path)],
+            ["npcsh", "-c", instruction],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -246,20 +334,35 @@ def _run_npcsh_attempt(
             start_new_session=True,
         )
     except FileNotFoundError:
-        shutil.rmtree(script_dir, ignore_errors=True)
-        return f"Exception: npcsh binary not found at {binary}"
+        shutil.rmtree(os.path.dirname(gitconfig_path), ignore_errors=True)
+        return "Exception: npcsh binary not found on PATH", conversation_id
+
+    def _drain_stdout():
+        try:
+            for line in proc.stdout:
+                stdout_queue.put(line)
+        finally:
+            stdout_queue.put(None)
+
+    stdout_queue = queue.Queue()
+    reader = threading.Thread(target=_drain_stdout, daemon=True)
+    reader.start()
 
     output_lines = []
     hard_deadline = time.time() + attempt_timeout + 5.0
-    try:
-        if proc.stdout:
-            for line in proc.stdout:
-                output_lines.append(line)
-                if stream:
-                    print(line, end="", flush=True)
-        proc.wait(timeout=attempt_timeout)
-    except subprocess.TimeoutExpired:
-        pass
+    while time.time() < hard_deadline:
+        remaining = hard_deadline - time.time()
+        try:
+            line = stdout_queue.get(timeout=min(remaining, 1.0))
+        except queue.Empty:
+            if proc.poll() is not None:
+                break
+            continue
+        if line is None:
+            break
+        output_lines.append(line)
+        if stream:
+            print(line, end="", flush=True)
 
     _kill_descendants(proc.pid)
     try:
@@ -277,8 +380,59 @@ def _run_npcsh_attempt(
         except Exception:
             pass
 
-    shutil.rmtree(script_dir, ignore_errors=True)
-    return "".join(output_lines) if output_lines else f"Timed out after {attempt_timeout:.0f}s"
+    output_text = "".join(output_lines) if output_lines else f"Timed out after {attempt_timeout:.0f}s"
+
+    try:
+        os.remove(gitconfig_path)
+    except Exception:
+        pass
+
+    return output_text, conversation_id
+
+
+def _load_conversation(conversation_id: str) -> list:
+    """Load the full conversation_history rows for a conversation_id."""
+    import sqlite3
+    rows = []
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT role, content, tool_calls, tool_results, input_tokens, output_tokens, cost, timestamp "
+            "FROM conversation_history WHERE conversation_id = ? ORDER BY id ASC",
+            (conversation_id,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+    except Exception as e:
+        rows.append({"error": str(e)})
+    return rows
+
+
+def _format_conversation(rows: list) -> str:
+    """Render conversation rows as a plain-text transcript with no truncation."""
+    parts = []
+    for r in rows:
+        role = r.get("role", "unknown")
+        content = r.get("content") or ""
+        tool_calls = r.get("tool_calls") or ""
+        tool_results = r.get("tool_results") or ""
+        tokens = ""
+        if r.get("input_tokens"):
+            tokens += f" in={r['input_tokens']}"
+        if r.get("output_tokens"):
+            tokens += f" out={r['output_tokens']}"
+        if r.get("cost"):
+            tokens += f" cost={r['cost']}"
+        parts.append(f"[{role}{tokens}]")
+        if content:
+            parts.append(content)
+        if tool_calls:
+            parts.append(f"tool_calls: {tool_calls}")
+        if tool_results:
+            parts.append(f"tool_results: {tool_results}")
+        parts.append("")
+    return "\n".join(parts)
 
 
 def _build_external_command(framework: str, instruction: str, model: str,
@@ -377,8 +531,7 @@ def run_task(task: dict,
              timeout: int = 120,
              max_attempts: int = 5,
              think=None,
-             framework: str = "npcsh",
-             binary: str = NPCSH_BIN) -> TaskResult:
+             framework: str = "npcsh") -> TaskResult:
     """Run a task with retries until it passes or the budget is exhausted."""
     task_id = task["id"]
     instruction = task["instruction"]
@@ -393,6 +546,7 @@ def run_task(task: dict,
     attempt = 0
     passed = False
     all_outputs: list = []
+    all_conversations: list = []
     last_output = ""
 
     task_dir = tempfile.mkdtemp(prefix=f"npcsh_bench_{task_id}_")
@@ -425,12 +579,10 @@ def run_task(task: dict,
         if attempt == 1:
             current_instruction = instruction
         else:
-            prev_summary = last_output
+            prev_summary = last_output[:500] if isinstance(last_output, str) else str(last_output)[:500]
             current_instruction = f"""{instruction}
 
-Your previous attempt did not produce the correct result. Here is what happened:
-{prev_summary}
-
+Your previous attempt did not produce the correct result.
 Try a different approach. Do not search the web about this."""
 
         attempt_timeout = remaining
@@ -443,10 +595,16 @@ Try a different approach. Do not search the web about this."""
 
         try:
             if framework == "npcsh":
-                output_str = _run_npcsh_attempt(
-                    current_instruction, binary, model, provider,
-                    attempt_timeout=attempt_timeout, work_dir=task_dir,
+                output_str, conversation_id = _run_npcsh_attempt(
+                    current_instruction, model, provider,
+                    attempt_timeout=attempt_timeout, work_dir="/tmp",
                 )
+                conv_rows = _load_conversation(conversation_id)
+                all_conversations.append({
+                    "attempt": attempt,
+                    "conversation_id": conversation_id,
+                    "transcript": _format_conversation(conv_rows),
+                })
             else:
                 output_str = _run_external_attempt(
                     current_instruction, framework, model,
@@ -492,6 +650,11 @@ Try a different approach. Do not search the web about this."""
 
     shutil.rmtree(task_dir, ignore_errors=True)
 
+    conversation_dump = "\n\n".join(
+        f"=== attempt {c['attempt']} | conversation_id: {c['conversation_id']} ===\n{c['transcript']}"
+        for c in all_conversations
+    )
+
     return TaskResult(
         task_id=task_id,
         category=task["category"],
@@ -500,6 +663,7 @@ Try a different approach. Do not search the web about this."""
         duration=duration,
         attempts=attempt,
         npcsh_output=" ||| ".join(all_outputs),
+        conversation_dump=conversation_dump,
     )
 
 
@@ -513,7 +677,6 @@ def run_benchmark(
     resume: bool = False,
     think=None,
     framework: str = "npcsh",
-    binary: str = NPCSH_BIN,
 ) -> BenchmarkReport:
 
     setup_bench_env()
@@ -522,7 +685,7 @@ def run_benchmark(
     report = BenchmarkReport(model=model, provider=provider, total=len(tasks))
 
     report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
-    safe_model = model.replace("/", "_")
+    safe_model = model.replace("/", "_").replace(":", "_")
     checkpoint_file = report_dir / f"{framework}_{provider}_{safe_model}_running.csv"
     completed_ids = set()
     if resume and checkpoint_file.exists():
@@ -538,6 +701,7 @@ def run_benchmark(
                 attempts=int(row.get("attempts", 1)),
                 error=(row.get("error") or None) if pd.notna(row.get("error")) else None,
                 npcsh_output=row.get("output", "") if pd.notna(row.get("output")) else "",
+                conversation_dump=row.get("conversation_file", "") if pd.notna(row.get("conversation_file")) else "",
             ))
             if str(row["passed"]).lower() == "true":
                 report.passed += 1
@@ -572,7 +736,7 @@ def run_benchmark(
         print(f"  {task['description']}", flush=True)
 
         result = run_task(task, model, provider, timeout, think=think,
-                          framework=framework, binary=binary)
+                          framework=framework)
         report.results.append(result)
 
         if result.passed:
@@ -604,13 +768,26 @@ def run_benchmark(
 
         report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
         report_dir.mkdir(parents=True, exist_ok=True)
-        safe_model = model.replace("/", "_")
+        safe_model = model.replace("/", "_").replace(":", "_")
+        conv_dir = report_dir / "conversations"
+        conv_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_file = report_dir / f"{framework}_{provider}_{safe_model}_running.csv"
+
+        # conversation_dump holds the raw transcript; write each to its own text file
+        # and record the file path in the CSV.
+        conv_files = []
+        for r in report.results:
+            safe_task_id = r.task_id.replace("/", "_").replace(":", "_")
+            conv_file = conv_dir / f"{framework}_{provider}_{safe_model}_{safe_task_id}.txt"
+            with open(conv_file, "w", encoding="utf-8") as f:
+                f.write(r.conversation_dump)
+            conv_files.append(str(conv_file))
+
         df = pd.DataFrame([
             {"task_id": r.task_id, "category": r.category, "difficulty": r.difficulty,
              "passed": r.passed, "attempts": r.attempts, "duration": round(r.duration, 1), "error": r.error or "",
-             "output": r.npcsh_output}
-            for r in report.results
+             "output": r.npcsh_output, "conversation_file": conv_files[i]}
+            for i, r in enumerate(report.results)
         ])
         df.to_csv(checkpoint_file, index=False)
 
@@ -632,18 +809,31 @@ def run_benchmark(
 
     report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
     report_dir.mkdir(parents=True, exist_ok=True)
-    ts = time.strftime("%Y%m%d_%H%M%S")
+    conv_dir = report_dir / "conversations"
+    conv_dir.mkdir(parents=True, exist_ok=True)
+
+    # Final pass: write/refresh conversation transcripts and build the final CSV.
     safe_model = model.replace("/", "_").replace(":", "_")
+    conv_files = []
+    for r in report.results:
+        safe_task_id = r.task_id.replace("/", "_").replace(":", "_")
+        conv_file = conv_dir / f"{framework}_{provider}_{safe_model}_{safe_task_id}.txt"
+        # conversation_dump is always the transcript here (resume loads the file content).
+        with open(conv_file, "w", encoding="utf-8") as f:
+            f.write(r.conversation_dump)
+        conv_files.append(str(conv_file))
+
+    ts = time.strftime("%Y%m%d_%H%M%S")
     report_file = report_dir / f"{framework}_{provider}_{safe_model}_{ts}.csv"
     df = pd.DataFrame([
         {"task_id": r.task_id, "category": r.category, "difficulty": r.difficulty,
          "passed": r.passed, "duration": round(r.duration, 1), "error": r.error or "",
-             "output": r.npcsh_output}
-        for r in report.results
+         "output": r.npcsh_output, "conversation_file": conv_files[i]}
+        for i, r in enumerate(report.results)
     ])
     df.to_csv(report_file, index=False)
 
-    safe_model = model.replace("/", "_")
+    safe_model = model.replace("/", "_").replace(":", "_")
     checkpoint = report_dir / f"{framework}_{provider}_{safe_model}_running.csv"
     if checkpoint.exists():
         checkpoint.unlink()
@@ -659,7 +849,6 @@ def compare_models(
     timeout: int = 120,
     think=None,
     framework: str = "npcsh",
-    binary: str = NPCSH_BIN,
 ) -> dict:
     """Run benchmark across multiple models and print comparison."""
     all_results = {}
@@ -677,7 +866,6 @@ def compare_models(
             timeout=timeout,
             think=think,
             framework=framework,
-            binary=binary,
         )
         all_results[key] = report
 
@@ -724,7 +912,7 @@ def compare_models(
 
 
 def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
-                 think=None, framework: str = "npcsh", binary: str = NPCSH_BIN):
+                 think=None, framework: str = "npcsh"):
     """Re-run only the failed tasks from an existing CSV and overwrite results in-place."""
     setup_bench_env()
     import csv as csv_mod
@@ -763,7 +951,7 @@ def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
         print(f"\n  [{j+1}/{len(failed_ids)}] {tid} ({task['category']}/{task['difficulty']})", flush=True)
 
         result = run_task(task, model, provider, timeout, think=think,
-                          framework=framework, binary=binary)
+                          framework=framework)
 
         if result.passed:
             print(f"    PASS ({result.duration:.1f}s) — upgraded!", flush=True)
@@ -778,6 +966,7 @@ def rerun_failed(csv_path: str, model: str, provider: str, timeout: int = 120,
         rows[idx]["duration"] = str(round(result.duration, 1))
         rows[idx]["error"] = result.error or ""
         rows[idx]["output"] = result.npcsh_output
+        rows[idx]["conversation_file"] = result.conversation_dump
 
         df = pd.DataFrame(rows)
         df.to_csv(csv_path, index=False)
@@ -808,12 +997,10 @@ def main():
     parser.add_argument("--framework", "-f", default="npcsh",
                         choices=list(SUPPORTED_FRAMEWORKS),
                         help="Which framework runs the task (default: npcsh)")
-    parser.add_argument("--binary", default=NPCSH_BIN,
-                        help="Path to the npcsh binary (default: ~/.npcsh/bin/npcsh)")
 
     args = parser.parse_args()
 
-    binary = _find_npcsh_bin(args.binary)
+    _find_npcsh_bin()
 
     think_val = None
     if args.think is not None:
@@ -832,7 +1019,6 @@ def main():
             timeout=args.timeout,
             think=think_val,
             framework=args.framework,
-            binary=binary,
         )
     elif args.compare:
         models = [
@@ -859,7 +1045,6 @@ def main():
             timeout=args.timeout,
             think=think_val,
             framework=args.framework,
-            binary=binary,
         )
     else:
         run_benchmark(
@@ -872,7 +1057,6 @@ def main():
             resume=args.resume,
             think=think_val,
             framework=args.framework,
-            binary=binary,
         )
 
 

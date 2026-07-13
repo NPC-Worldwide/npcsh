@@ -354,18 +354,15 @@ steps:
           csv_dir = os.path.expanduser("~/.npcsh/npc_team")
           os.makedirs(csv_dir, exist_ok=True)
           csv_path = os.path.join(csv_dir, "alicanto_personas.csv")
-          file_exists = os.path.exists(csv_path)
-          with open(csv_path, 'a', newline='') as csvfile:
-              fieldnames = ['name', 'birth_year', 'location', 'leader', 'interests',
-                           'worldview', 'approach', 'persona_text', 'created_at']
-              writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-              if not file_exists:
-                  writer.writeheader()
-              row = dict(persona_data)
-              if isinstance(row.get('interests'), list):
-                  row['interests'] = json.dumps(row['interests'])
-              row['created_at'] = datetime.now().isoformat()
-              writer.writerow(row)
+          import pandas as pd
+          row = dict(persona_data)
+          if isinstance(row.get('interests'), list):
+              row['interests'] = json.dumps(row['interests'])
+          row['created_at'] = datetime.now().isoformat()
+          columns = ['name', 'birth_year', 'location', 'leader', 'interests',
+                     'worldview', 'approach', 'persona_text', 'created_at']
+          df = pd.DataFrame([row], columns=columns)
+          df.to_csv(csv_path, mode='a', index=False, header=not os.path.exists(csv_path))
 
       def generate_one_persona(birth_year, _model, _provider, _npc):
           """Generate a single persona for a given birth year (original algorithm)."""
@@ -848,10 +845,9 @@ steps:
                       "final_files": json.dumps(list(trace.final_files.keys())),
                   })
           if rows:
-              with open(filepath, 'w', newline='') as f:
-                  writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-                  writer.writeheader()
-                  writer.writerows(rows)
+              import pandas as pd
+              df = pd.DataFrame(rows)
+              df.to_csv(filepath, index=False)
           return filepath
 
       class AlicantoState:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Append curated benchmark tasks to tasks.csv."""
 
-import csv
+import pandas as pd
 
 TASKS = [
     {
@@ -99,14 +99,11 @@ TASKS = [
 
 def main():
     path = "/Users/caug/npcww/npc-core/npcsh/npcsh/benchmark/tasks.csv"
-    with open(path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["id", "category", "difficulty", "setup_cmd", "instruction", "verify_cmd", "description"])
-        for task in TASKS:
-            writer.writerow(task)
+    df = pd.DataFrame(TASKS, columns=["id", "category", "difficulty", "setup_cmd", "instruction", "verify_cmd", "description"])
+    df.to_csv(path, mode="a", index=False, header=False)
     print(f"Appended {len(TASKS)} tasks to {path}")
-    with open(path, "r") as f:
-        count = sum(1 for _ in f) - 1
-    print(f"Total tasks: {count}")
+    existing = pd.read_csv(path)
+    print(f"Total tasks: {len(existing)}")
 
 
 if __name__ == "__main__":

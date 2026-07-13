@@ -4,10 +4,13 @@ resuming from any existing checkpoint or completed CSV."""
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+
+import pandas as pd
 
 
 MODELS = [
@@ -25,26 +28,33 @@ MODELS = [
 
 def _checkpoint_path(model: str, report_dir: Path) -> Path:
     """Exact same filename local_runner uses for checkpoints."""
-    safe_model = model.replace("/", "_")
+    safe_model = model.replace("/", "_").replace(":", "_")
     return report_dir / f"npcsh_ollama_{safe_model}_running.csv"
 
 
 def _final_csv_path(model: str, report_dir: Path) -> Path | None:
-    """Return the newest final CSV local_runner writes for this model."""
-    safe_model = model.replace("/", "_")
-    candidates = [
-        p for p in report_dir.glob("*.csv")
-        if p.stem.startswith(f"npcsh_ollama_{safe_model}_") and "_running" not in p.stem
-    ]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+    """Return the newest CSV local_runner has finished for this model."""
+    safe_model = model.replace("/", "_").replace(":", "_")
+    final_pattern = re.compile(rf"^npcsh_ollama_{re.escape(safe_model)}_\d{{8}}_\d{{6}}$")
+    running_pattern = re.compile(rf"^npcsh_ollama_{re.escape(safe_model)}_running$")
+    candidates = [p for p in report_dir.glob("*.csv") if final_pattern.match(p.stem) or running_pattern.match(p.stem)]
+    for p in sorted(candidates, key=lambda x: x.stat().st_mtime, reverse=True):
+        if "_running" in p.stem:
+            try:
+                df = pd.read_csv(p, dtype={"task_id": str})
+                if len(df) >= 100:
+                    return p
+            except Exception:
+                continue
+        else:
+            return p
+    return None
 
 
-def run_model(model: str, timeout: int, binary: str, python: str) -> str:
+def run_model(model: str, timeout: int, python: str) -> str:
     report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
     report_dir.mkdir(parents=True, exist_ok=True)
-    log = report_dir / f"{model.replace('/', '_')}.log"
+    log = report_dir / f"{model.replace('/', '_').replace(':', '_')}.log"
 
     final_csv = _final_csv_path(model, report_dir)
     if final_csv is not None:
@@ -62,8 +72,6 @@ def run_model(model: str, timeout: int, binary: str, python: str) -> str:
         model,
         "--provider",
         "ollama",
-        "--binary",
-        binary,
         "--timeout",
         str(timeout),
         "--resume",
@@ -93,15 +101,14 @@ def run_model(model: str, timeout: int, binary: str, python: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Run npcsh benchmark across Ollama cloud models")
-    parser.add_argument("timeout", nargs="?", type=int, default=120)
+    parser.add_argument("timeout", nargs="?", type=int, default=1200)
     parser.add_argument("--jobs", "-j", type=int, default=3)
-    parser.add_argument("--binary", default=os.environ.get("NPCSH_BIN", "/Users/caug/npcww/npc-core/npcsh/rust/target/release/npcsh"))
     parser.add_argument("--python", default=os.environ.get("NPCSH_PYTHON", "/Users/caug/.pyenv/versions/3.12.0/envs/npc/bin/python3"))
     args = parser.parse_args()
 
     with ProcessPoolExecutor(max_workers=args.jobs) as executor:
         futures = {
-            executor.submit(run_model, model, args.timeout, args.binary, args.python): model
+            executor.submit(run_model, model, args.timeout, args.python): model
             for model in MODELS
         }
         for future in as_completed(futures):
