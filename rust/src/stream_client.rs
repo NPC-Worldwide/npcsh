@@ -17,6 +17,7 @@ pub struct StreamRequest {
 
 pub struct StreamResponse {
     pub message: Message,
+    pub tool_results: Vec<Message>,
     pub usage: Option<Usage>,
     pub streamed: bool,
 }
@@ -67,6 +68,7 @@ pub async fn call_stream_with_interrupt(
     let mut reasoning = String::new();
     let mut thinking = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut tool_results: Vec<Message> = Vec::new();
     let mut usage: Option<Usage> = None;
     let mut saw_output = false;
     let mut renderer = StreamRenderer::new();
@@ -89,7 +91,8 @@ pub async fn call_stream_with_interrupt(
             Some(Err(e)) => return Err(format!("HTTP stream chunk: {}", e)),
             None => break,
         };
-        pending.push_str(&String::from_utf8_lossy(&chunk));
+        let chunk_text = String::from_utf8_lossy(&chunk);
+        pending.push_str(&chunk_text);
 
         while let Some(sep_pos) = pending.find("\n\n").or_else(|| pending.find("\r\n\r\n")) {
             let event_text = pending[..sep_pos].to_string();
@@ -121,6 +124,7 @@ pub async fn call_stream_with_interrupt(
                 &mut reasoning,
                 &mut thinking,
                 &mut tool_calls,
+                &mut tool_results,
                 &mut usage,
                 &mut saw_output,
                 &mut renderer,
@@ -144,6 +148,7 @@ pub async fn call_stream_with_interrupt(
                         &mut reasoning,
                         &mut thinking,
                         &mut tool_calls,
+                        &mut tool_results,
                         &mut usage,
                         &mut saw_output,
                         &mut renderer,
@@ -155,10 +160,6 @@ pub async fn call_stream_with_interrupt(
     }
 
     renderer.flush();
-    if saw_output {
-        eprintln!();
-        let _ = std::io::Write::flush(&mut std::io::stderr());
-    }
 
     tool_calls.retain(|tc| !tc.function.name.is_empty());
 
@@ -190,6 +191,7 @@ pub async fn call_stream_with_interrupt(
 
     Ok(StreamResponse {
         message,
+        tool_results,
         usage,
         streamed: saw_output,
     })
@@ -221,6 +223,7 @@ fn apply_sse_event(
     reasoning: &mut String,
     thinking: &mut String,
     tool_calls: &mut Vec<ToolCall>,
+    tool_results: &mut Vec<Message>,
     usage: &mut Option<Usage>,
     saw_output: &mut bool,
     renderer: &mut StreamRenderer,
@@ -265,6 +268,7 @@ fn apply_sse_event(
             "tool_result" => {
                 renderer.flush();
                 let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                let tool_id = json.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let result_text = json
                     .get("result")
                     .map(|v| {
@@ -286,7 +290,7 @@ fn apply_sse_event(
                 let preview = if display.len() > 500 {
                     format!("{}...\n[{} chars total]", &display[..500], display.len())
                 } else {
-                    display
+                    display.clone()
                 };
                 if !preview.is_empty() {
                     eprintln!("\x1b[36m  {} result:\x1b[0m\n{}", name, preview);
@@ -295,6 +299,17 @@ fn apply_sse_event(
                 }
                 renderer.clear();
                 *saw_output = true;
+                if !display.is_empty() {
+                    tool_results.push(Message {
+                        role: "tool".to_string(),
+                        content: Some(display),
+                        tool_calls: None,
+                        tool_call_id: if tool_id.is_empty() { None } else { Some(tool_id) },
+                        name: Some(name.to_string()),
+                        thinking: None,
+                        reasoning_content: None,
+                    });
+                }
             }
             "permission_request" => {
                 let request_id = json
@@ -379,6 +394,8 @@ fn apply_sse_event(
                 if let Some(r) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
                     reasoning.push_str(r);
                     *saw_output = true;
+                    eprint!("\x1b[90m{}\x1b[0m", r);
+                    let _ = std::io::Write::flush(&mut std::io::stderr());
                 }
                 if let Some(deltas) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                     for (i, d) in deltas.iter().enumerate() {
