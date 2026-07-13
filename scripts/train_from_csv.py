@@ -18,6 +18,8 @@ import re
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 
 def parse_trace(trace_str: str):
     if not trace_str or "---TRACE---" not in trace_str:
@@ -78,12 +80,78 @@ def load_csv_records(csv_dir: str, pattern: str = "*.csv"):
                     }
 
 
-def build_sft_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False):
+def load_ratings(ratings_path: str):
+    """Read ratings CSV file(s) produced by rate_traces.py into a DataFrame.
+    ratings_path may be a file or a glob/dir of CSVs. Returns None if none found."""
+    import glob
+    p = os.path.expanduser(ratings_path)
+    files = []
+    if os.path.isdir(p):
+        files = sorted(glob.glob(os.path.join(p, "*.csv")))
+    elif any(c in p for c in "*?["):
+        files = sorted(glob.glob(p))
+    elif os.path.exists(p):
+        files = [p]
+    if not files:
+        return None
+    df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
+    if "composite" in df.columns:
+        df["composite"] = pd.to_numeric(df["composite"], errors="coerce")
+    return df
+
+
+def _group_key(row):
+    """Stable per-trace grouping key: task_id for benchmark traces, else
+    conversation_id, else a hash of the instruction."""
+    tid = row.get("task_id")
+    if pd.notna(tid) and str(tid).strip():
+        return str(tid)
+    cid = row.get("conversation_id")
+    if pd.notna(cid) and str(cid).strip():
+        return str(cid)
+    return f"hist-{abs(hash(str(row.get('instruction', ''))))}"
+
+
+def load_rated_records(ratings_df):
+    """Yield training records straight from the ratings CSV, bypassing the
+    stale parse_trace path (current benchmark CSVs have no ---TRACE---)."""
+    for _, row in ratings_df.iterrows():
+        instruction = str(row.get("instruction", "") or "").strip()
+        response = str(row.get("response", "") or "").strip()
+        composite = row.get("composite")
+        if not instruction or not response or pd.isna(composite):
+            continue
+        passed = row.get("passed")
+        if isinstance(passed, str):
+            passed = passed.strip().lower() in ("true", "1")
+        yield {
+            "task_id": _group_key(row),
+            "instruction": instruction,
+            "response": response,
+            "passed": bool(passed) if pd.notna(passed) else None,
+            "attempts": 1,
+            "duration": 0.0,
+            "composite": float(composite),
+            "failure_mode": str(row.get("failure_mode", "") or ""),
+        }
+
+
+def _iter_records(csv_dir, pattern, ratings_df):
+    """Records from ratings if provided, else from raw benchmark CSVs."""
+    if ratings_df is not None:
+        yield from load_rated_records(ratings_df)
+    else:
+        yield from load_csv_records(csv_dir, pattern)
+
+
+def build_sft_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False,
+                   ratings_df=None, sft_threshold: float = 0.7):
     X, y = [], []
-    task_rates = _compute_task_difficulty(csv_dir, pattern)
+    task_rates = _compute_task_difficulty(csv_dir, pattern, ratings_df)
     count = 0
-    for rec in load_csv_records(csv_dir, pattern):
-        if not rec["passed"]:
+    for rec in _iter_records(csv_dir, pattern, ratings_df):
+        keep = rec["composite"] >= sft_threshold if ratings_df is not None else rec["passed"]
+        if not keep:
             continue
         tid = rec["task_id"]
         if hard_only and task_rates.get(tid, 0.5) >= 0.5:
@@ -91,66 +159,119 @@ def build_sft_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False
         X.append(f"<|im_start|>user\n{rec['instruction']}<|im_end|>\n<|im_start|>assistant\n")
         y.append(f"{rec['response']}<|im_end|>\n")
         count += 1
-    print(f"SFT: {count} passed traces" + (" (hard-only)" if hard_only else ""))
+    src = "rated" if ratings_df is not None else "passed"
+    print(f"SFT: {count} {src} traces" + (" (hard-only)" if hard_only else ""))
     return X, y
 
 
-def build_dpo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False):
-    from datasets import Dataset
-
-    task_rates = _compute_task_difficulty(csv_dir, pattern)
+def build_dpo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False,
+                   ratings_df=None, dpo_gap: float = 0.3, dpo_max_per_task: int = 4):
+    task_rates = _compute_task_difficulty(csv_dir, pattern, ratings_df)
     by_task = {}
-    for rec in load_csv_records(csv_dir, pattern):
+    for rec in _iter_records(csv_dir, pattern, ratings_df):
         tid = rec["task_id"]
         if hard_only and task_rates.get(tid, 0.5) >= 0.5:
             continue
         by_task.setdefault(tid, []).append(rec)
 
     pairs = []
-    for tid, traces in by_task.items():
-        passed = [t for t in traces if t["passed"]]
-        failed = [t for t in traces if not t["passed"]]
-        if not passed or not failed:
-            continue
-        for p in passed:
-            for f in failed:
-                pairs.append({
-                    "prompt": p["instruction"],
-                    "chosen": p["response"],
-                    "rejected": f["response"],
-                })
+    if ratings_df is not None:
+        # quality-ranked preferences: emit every gap-qualified pair per task
+        # (best-vs-worst alone wastes the multi-trace signal the 5-judge
+        # ensemble produces). Pair strongest traces against weakest, gated by
+        # dpo_gap, capped per task so one task can't dominate the split.
+        for tid, traces in by_task.items():
+            if len(traces) < 2:
+                continue
+            traces.sort(key=lambda t: t.get("composite", 0.0), reverse=True)
+            emitted = 0
+            for hi in traces:
+                if emitted >= dpo_max_per_task:
+                    break
+                for lo in reversed(traces):
+                    if lo is hi:
+                        break
+                    gap = hi.get("composite", 0.0) - lo.get("composite", 0.0)
+                    if gap >= dpo_gap:
+                        pairs.append({
+                            "prompt": hi["instruction"],
+                            "chosen": hi["response"],
+                            "rejected": lo["response"],
+                            "chosen_composite": hi["composite"],
+                            "rejected_composite": lo["composite"],
+                        })
+                        emitted += 1
+                        if emitted >= dpo_max_per_task:
+                            break
+        src = "rated"
+    else:
+        for tid, traces in by_task.items():
+            passed = [t for t in traces if t["passed"]]
+            failed = [t for t in traces if not t["passed"]]
+            if not passed or not failed:
+                continue
+            for p in passed:
+                for f in failed:
+                    pairs.append({
+                        "prompt": p["instruction"],
+                        "chosen": p["response"],
+                        "rejected": f["response"],
+                    })
+        src = "pass/fail"
 
-    print(f"DPO: {len(pairs)} pairs from {len(by_task)} tasks" + (" (hard-only)" if hard_only else ""))
+    print(f"DPO: {len(pairs)} {src} pairs from {len(by_task)} tasks" + (" (hard-only)" if hard_only else ""))
     if len(pairs) < 5:
         return None
-    return Dataset.from_list(pairs)
+    return pairs
 
 
-def _compute_task_difficulty(csv_dir: str, pattern: str = "*.csv"):
-    """Compute per-task success rate for difficulty weighting."""
+def _compute_task_difficulty(csv_dir: str, pattern: str = "*.csv", ratings_df=None):
+    """Per-task base rate for difficulty weighting: mean composite when ratings
+    are present, else empirical pass rate."""
     from collections import defaultdict
     by_task = defaultdict(list)
-    for rec in load_csv_records(csv_dir, pattern):
-        by_task[rec["task_id"]].append(rec["passed"])
+    for rec in _iter_records(csv_dir, pattern, ratings_df):
+        if ratings_df is not None:
+            by_task[rec["task_id"]].append(rec.get("composite", 0.5))
+        else:
+            by_task[rec["task_id"]].append(rec["passed"])
     rates = {}
     for tid, results in by_task.items():
         rates[tid] = sum(results) / len(results)
     return rates
 
 
-def build_grpo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False):
-    task_rates = _compute_task_difficulty(csv_dir, pattern)
+def _trace_reward(rec, base_rate, reward_mode):
+    """Continuous reward. Binary mode is byte-identical to the original formula;
+    judge mode uses the LLM composite; hybrid blends both."""
+    dw = 1.0 / (base_rate + 0.1)
+    passed = rec.get("passed")
+    composite = rec.get("composite", 0.0)
+    if reward_mode == "judge" or (reward_mode == "hybrid" and passed is None):
+        base = composite
+        success_signal = composite
+    elif reward_mode == "hybrid":
+        binary = 1.0 if passed else -0.5
+        base = 0.5 * binary + 0.5 * composite
+        success_signal = 0.5 * (1.0 if passed else 0.0) + 0.5 * composite
+    else:  # binary
+        base = 1.0 if passed else -0.5
+        success_signal = 1.0 if passed else 0.0
+    reward = base * dw
+    reward += max(0.0, 0.3 * (3 - rec.get("attempts", 1)) / 3) * success_signal * dw
+    return reward
+
+
+def build_grpo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False,
+                    ratings_df=None, reward_mode: str = "binary"):
+    task_rates = _compute_task_difficulty(csv_dir, pattern, ratings_df)
     by_task = {}
-    for rec in load_csv_records(csv_dir, pattern):
+    for rec in _iter_records(csv_dir, pattern, ratings_df):
         tid = rec["task_id"]
         base_rate = task_rates.get(tid, 0.5)
         if hard_only and base_rate >= 0.5:
             continue
-        difficulty_weight = 1.0 / (base_rate + 0.1)
-        reward = (1.0 if rec["passed"] else -0.5) * difficulty_weight
-        if rec["passed"]:
-            reward += max(0, 0.3 * (3 - rec["attempts"]) / 3) * difficulty_weight
-        rec["reward"] = reward
+        rec["reward"] = _trace_reward(rec, base_rate, reward_mode)
         by_task.setdefault(tid, []).append(rec)
 
     groups = []
@@ -161,26 +282,34 @@ def build_grpo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = Fals
         responses = [(t["response"], t["reward"]) for t in traces]
         groups.append({"prompt": prompt, "responses": responses})
 
-    print(f"GRPO: {len(groups)} groups" + (" (hard-only)" if hard_only else ""))
+    src = f" ({reward_mode})" if ratings_df is not None else ""
+    print(f"GRPO: {len(groups)} groups{src}" + (" (hard-only)" if hard_only else ""))
     return groups
 
 
-def build_ppo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False):
-    task_rates = _compute_task_difficulty(csv_dir, pattern)
+def build_ppo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False,
+                   ratings_df=None, reward_mode: str = "binary"):
+    task_rates = _compute_task_difficulty(csv_dir, pattern, ratings_df)
     records = []
-    for rec in load_csv_records(csv_dir, pattern):
+    for rec in _iter_records(csv_dir, pattern, ratings_df):
         tid = rec["task_id"]
         base_rate = task_rates.get(tid, 0.5)
         if hard_only and base_rate >= 0.5:
             continue
-        difficulty_weight = 1.0 / (base_rate + 0.1)
-        reward = (1.0 if rec["passed"] else -0.5) * difficulty_weight
-        if rec["passed"]:
-            reward += max(0, 0.3 * (3 - rec["attempts"]) / 3) * difficulty_weight
-        rec["reward"] = reward
+        rec["reward"] = _trace_reward(rec, base_rate, reward_mode)
         records.append(rec)
-    print(f"PPO: {len(records)} traces" + (" (hard-only)" if hard_only else ""))
+    src = f" ({reward_mode})" if ratings_df is not None else ""
+    print(f"PPO: {len(records)} traces{src}" + (" (hard-only)" if hard_only else ""))
     return records
+
+
+def _dump_groups(groups, path):
+    """Flatten GRPO groups [{prompt, responses:[(resp, reward),...]}] to CSV."""
+    rows = []
+    for g in groups:
+        for response, reward in g["responses"]:
+            rows.append({"prompt": g["prompt"], "response": response, "reward": reward})
+    pd.DataFrame(rows).to_csv(path, index=False)
 
 
 def main():
@@ -197,11 +326,25 @@ def main():
     common.add_argument("--lr", type=float, default=2e-5)
     common.add_argument("--lora-r", type=int, default=16)
     common.add_argument("--hard-only", action="store_true", help="Train only on tasks with <50% success rate")
+    common.add_argument("--ratings", default=None,
+                        help="Ratings CSV/dir/glob from rate_traces.py; enables graded rewards")
+    common.add_argument("--reward-mode", default="binary", choices=["binary", "judge", "hybrid"],
+                        help="Reward formula when --ratings is set")
+    common.add_argument("--dry-run", action="store_true",
+                        help="Build the dataset and dump to CSV, do not train")
+    common.add_argument("--dump-dir", default="~/.npcsh/benchmarks/datasets",
+                        help="Where --dry-run writes the built dataset CSV")
 
-    sub.add_parser("sft", parents=[common])
+    sft_p = sub.add_parser("sft", parents=[common])
+    sft_p.add_argument("--sft-threshold", type=float, default=0.7,
+                       help="Min composite to include a trace in SFT (with --ratings)")
 
     dpo_p = sub.add_parser("dpo", parents=[common])
     dpo_p.add_argument("--beta", type=float, default=0.5)
+    dpo_p.add_argument("--dpo-gap", type=float, default=0.3,
+                       help="Min composite gap to emit a DPO pair (with --ratings)")
+    dpo_p.add_argument("--dpo-max-per-task", type=int, default=4,
+                       help="Max DPO pairs emitted per task (with --ratings)")
 
     grpo_p = sub.add_parser("grpo", parents=[common])
     grpo_p.add_argument("--group-size", type=int, default=4)
@@ -213,14 +356,25 @@ def main():
 
     args = parser.parse_args()
     csv_dir = os.path.expanduser(args.csv_dir)
+    ratings_df = load_ratings(args.ratings) if args.ratings else None
+    if ratings_df is not None:
+        print(f"[ratings] loaded {len(ratings_df)} rated traces -> reward-mode={args.reward_mode}")
+    dump_dir = Path(os.path.expanduser(args.dump_dir))
+    if args.dry_run:
+        dump_dir.mkdir(parents=True, exist_ok=True)
 
     if args.cmd == "sft":
-        from npcpy.ft import run_sft, SFTConfig
-
-        X, y = build_sft_data(csv_dir, args.pattern, hard_only=args.hard_only)
+        X, y = build_sft_data(csv_dir, args.pattern, hard_only=args.hard_only,
+                              ratings_df=ratings_df, sft_threshold=args.sft_threshold)
         if len(X) < 5:
-            print("Need >= 5 passed traces.")
+            print("Need >= 5 traces.")
             sys.exit(1)
+        if args.dry_run:
+            pd.DataFrame({"prompt": X, "response": y}).to_csv(
+                dump_dir / "sft_data.csv", index=False)
+            print(f"[dry-run] dumped {len(X)} SFT rows -> {dump_dir/'sft_data.csv'}")
+            return
+        from npcpy.ft import run_sft, SFTConfig
         cfg = SFTConfig(
             base_model_name=args.model,
             output_model_path=args.output,
@@ -238,12 +392,17 @@ def main():
         print(f"SFT adapter: {adapter}")
 
     elif args.cmd == "dpo":
-        from npcpy.ft.rl import RLConfig, _train_dpo_mlx
-
-        pairs = build_dpo_data(csv_dir, args.pattern, hard_only=args.hard_only)
+        pairs = build_dpo_data(csv_dir, args.pattern, hard_only=args.hard_only,
+                               ratings_df=ratings_df, dpo_gap=args.dpo_gap,
+                               dpo_max_per_task=args.dpo_max_per_task)
         if pairs is None or len(pairs) < 5:
             print("Need >= 5 preference pairs.")
             sys.exit(1)
+        if args.dry_run:
+            pd.DataFrame(list(pairs)).to_csv(dump_dir / "dpo_pairs.csv", index=False)
+            print(f"[dry-run] dumped {len(pairs)} DPO pairs -> {dump_dir/'dpo_pairs.csv'}")
+            return
+        from npcpy.ft.rl import RLConfig, _train_dpo_mlx
         pair_list = [
             {"prompt": r["prompt"], "chosen": r["chosen"], "rejected": r["rejected"]}
             for r in pairs
@@ -264,12 +423,16 @@ def main():
         print(f"DPO adapter: {adapter}")
 
     elif args.cmd == "grpo":
-        from npcpy.ft.rl import RLConfig, train_with_grpo
-
-        groups = build_grpo_data(csv_dir, args.pattern, hard_only=args.hard_only)
+        groups = build_grpo_data(csv_dir, args.pattern, hard_only=args.hard_only,
+                                 ratings_df=ratings_df, reward_mode=args.reward_mode)
         if not groups:
             print("Need tasks with multiple traces for GRPO.")
             sys.exit(1)
+        if args.dry_run:
+            _dump_groups(groups, dump_dir / "grpo_groups.csv")
+            print(f"[dry-run] dumped {len(groups)} GRPO groups -> {dump_dir/'grpo_groups.csv'}")
+            return
+        from npcpy.ft.rl import RLConfig, train_with_grpo
         cfg = RLConfig(
             base_model_name=args.model,
             adapter_path=args.output,
@@ -286,12 +449,16 @@ def main():
         print(f"GRPO adapter: {adapter}")
 
     elif args.cmd == "ppo":
-        from npcpy.ft.rl import RLConfig, train_with_ppo
-
-        records = build_ppo_data(csv_dir, args.pattern, hard_only=args.hard_only)
+        records = build_ppo_data(csv_dir, args.pattern, hard_only=args.hard_only,
+                                 ratings_df=ratings_df, reward_mode=args.reward_mode)
         if len(records) < 10:
             print("Need >= 10 traces for PPO.")
             sys.exit(1)
+        if args.dry_run:
+            pd.DataFrame(records).to_csv(dump_dir / "ppo_records.csv", index=False)
+            print(f"[dry-run] dumped {len(records)} PPO records -> {dump_dir/'ppo_records.csv'}")
+            return
+        from npcpy.ft.rl import RLConfig, train_with_ppo
         cfg = RLConfig(
             base_model_name=args.model,
             adapter_path=args.output,

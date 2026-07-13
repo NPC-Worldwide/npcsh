@@ -21,13 +21,14 @@ Usage:
     python -m npcsh.benchmark.cross_framework_runner --task-id file-create-01
 """
 
-import csv
 import json
 import os
 import signal
 import subprocess
 import time
 from pathlib import Path
+
+import pandas as pd
 from typing import List, Optional
 
 
@@ -306,37 +307,34 @@ def run_comparison(
     ts = time.strftime("%Y%m%d_%H%M%S")
     csv_path = report_dir / f"{model}_{ts}.csv"
 
-    fieldnames = [
+    columns = [
         "framework", "task_id", "category", "difficulty",
         "passed", "action_type", "duration", "error", "output_preview",
     ]
 
     all_rows = []
 
-    with open(csv_path, "w", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
+    for fw in frameworks:
+        print(f"\n{'='*60}", flush=True)
+        print(f"  {fw} | {model} via ollama | {len(tasks)} tasks", flush=True)
+        print(f"{'='*60}", flush=True)
 
-        for fw in frameworks:
-            print(f"\n{'='*60}", flush=True)
-            print(f"  {fw} | {model} via ollama | {len(tasks)} tasks", flush=True)
-            print(f"{'='*60}", flush=True)
+        fw_pass = 0
+        fw_total = 0
 
-            fw_pass = 0
-            fw_total = 0
+        for i, task in enumerate(tasks):
+            tid = task["id"]
+            print(f"  [{i+1}/{len(tasks)}] {tid}", end="", flush=True)
 
-            for i, task in enumerate(tasks):
-                tid = task["id"]
-                print(f"  [{i+1}/{len(tasks)}] {tid}", end="", flush=True)
+            row = run_task(task, fw, model, timeout)
+            all_rows.append(row)
 
-                row = run_task(task, fw, model, timeout)
-                writer.writerow(row)
-                csvfile.flush()
-                all_rows.append(row)
+            # checkpoint after each task
+            pd.DataFrame(all_rows, columns=columns).to_csv(csv_path, index=False)
 
-                fw_total += 1
-                if row["passed"]:
-                    fw_pass += 1
+            fw_total += 1
+            if row["passed"]:
+                fw_pass += 1
 
                 status = "PASS" if row["passed"] else row["action_type"].upper()
                 print(f"  {status}  ({row['duration']}s)", flush=True)
