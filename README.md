@@ -45,78 +45,21 @@ npcsh> /gitt
 
 ## Benchmark Results
 
-The benchmark suite measures how well a model can drive `npcsh` as an agentic shell. It covers 135 tasks across 15 categories, from basic shell commands and file operations to multi-step workflows, debugging, git, tool chaining, delegation, web search, and media generation. Each task is scored pass/fail by an automated verifier.
+The benchmark suite measures how well a model can drive `npcsh` as an agentic shell. It covers 100 tasks across 10 categories, from basic shell commands and file operations to multi-step workflows, debugging, git, and scripting. Each task is scored pass/fail by an automated verifier.
 
-The table below shows scores for the new Rust runtime (100 tasks) and historical scores from the original Python runtime (125 tasks). For per-category breakdowns, see `docs/benchmarks.md`.
+The table below shows scores (100 tasks).
 
-### Rust runtime scores (100 tasks)
-
-Local Ollama runs executed with the Rust `npcsh` binary at `v2.1.2-33-g6b056cf`.
+### Scores (100 tasks)
 
 <table>
 <tr><th>Family</th><th>Model</th><th>Version</th><th>Score</th></tr>
-<tr><td rowspan="2"><b>Qwen3.5</b></td><td>35b</td><td>v2.1.2-33-g6b056cf</td><td><b>97/100 (97%)</b></td></tr>
-<tr><td>9b</td><td>v2.1.2-33-g6b056cf</td><td>in progress</td></tr>
-<tr><td><b>North</b></td><td>mini-code-1.0 latest</td><td>v2.1.2-33-g6b056cf</td><td>93/100 (93%)</td></tr>
-<tr><td rowspan="2"><b>Ornith</b></td><td>9b</td><td>v2.1.2-33-g6b056cf</td><td>57/100 (57%)</td></tr>
-<tr><td>35b</td><td>v2.1.2-33-g6b056cf</td><td>38/100 (38%)</td></tr>
-<tr><td><b>Laguna</b></td><td>xs-2.1 latest</td><td>v2.1.2-33-g6b056cf</td><td>24/100 (24%)</td></tr>
+<tr><td rowspan="2"><b>Qwen3.5</b></td><td>35b</td><td>v2.1.4</td><td><b>97/100 (97%)</b></td></tr>
+<tr><td>9b</td><td>v2.1.4</td><td><b>95/100 (95%)</b></td></tr>
+<tr><td><b>North</b></td><td>mini-code-1.0 latest</td><td>v2.1.4</td><td>93/100 (93%)</td></tr>
+<tr><td rowspan="2"><b>Ornith</b></td><td>9b</td><td>v2.1.4</td><td>57/100 (57%)</td></tr>
+<tr><td>35b</td><td>v2.1.4</td><td>38/100 (38%)</td></tr>
+<tr><td><b>Laguna</b></td><td>xs-2.1 latest</td><td>v2.1.4</td><td>24/100 (24%)</td></tr>
 </table>
-
-### Historical Python runtime scores (125 tasks)
-
-<table>
-<tr><th>Family</th><th>Model</th><th>Score</th></tr>
-<tr><td rowspan="6"><b>Qwen3.5</b></td><td>0.8b</td><td>31/125 (24%)</td></tr>
-<tr><td>2b</td><td>81/125 (65%)</td></tr>
-<tr><td>4b</td><td>77/125 (62%)</td></tr>
-<tr><td>9b</td><td><b>100/125 (80%)</b></td></tr>
-<tr><td>35b</td><td><b>111/125 (88%)</b></td></tr>
-<tr><td>397b</td><td><b>120/125 (96%)</b></td></tr>
-<tr><td rowspan="5"><b>Qwen3</b></td><td>0.6b</td><td>—</td></tr>
-<tr><td>1.7b</td><td>42/125 (34%)</td></tr>
-<tr><td>4b</td><td><b>94/125 (75%)</b></td></tr>
-<tr><td>8b</td><td>85/125 (68%)</td></tr>
-<tr><td>30b</td><td><b>103/125 (82%)</b></td></tr>
-<tr><td rowspan="2"><b>Gemma4</b></td><td>e4b</td><td>34/125 (27%)</td></tr>
-<tr><td>31b</td><td><b>105/125 (84%)</b></td></tr>
-<tr><td rowspan="4"><b>Gemma3</b></td><td>1b</td><td>—</td></tr>
-<tr><td>4b</td><td>37/125 (30%)</td></tr>
-<tr><td>12b</td><td>77/125 (62%)</td></tr>
-<tr><td>27b</td><td>73/125 (58%)</td></tr>
-<tr><td rowspan="3"><b>Llama</b></td><td>3.2:1b</td><td>—</td></tr>
-<tr><td>3.2:3b</td><td>26/125 (20%)</td></tr>
-<tr><td>3.1:8b</td><td>60/125 (48%)</td></tr>
-<tr><td rowspan="3"><b>Mistral</b></td><td>small3.2</td><td>72/125 (57%)</td></tr>
-<tr><td>ministral-3</td><td>51/125 (40%)</td></tr>
-<tr><td>large-3</td><td>59/125 (47%)</td></tr>
-<tr><td><b>Devstral</b></td><td>2</td><td>60/125 (48%)</td></tr>
-<tr><td><b>MiniMax</b></td><td>M2.7</td><td><b>120/125 (96%)</b></td></tr>
-<tr><td><b>Phi</b></td><td>phi4</td><td>58/125 (46%)</td></tr>
-<tr><td><b>GPT-OSS</b></td><td>20b</td><td>94/125 (75%)</td></tr>
-<tr><td rowspan="2"><b>OLMo2</b></td><td>7b</td><td>13/125 (10%)</td></tr>
-<tr><td>13b</td><td>47/125 (38%)</td></tr>
-<tr><td><b>Cogito</b></td><td>3b</td><td>10/125 (8%)</td></tr>
-<tr><td rowspan="2"><b>GLM</b></td><td>4.7-flash</td><td><b>102/125 (82%)</b></td></tr>
-<tr><td>5</td><td><b>120/125 (96%)</b></td></tr>
-<tr><td><b>Nemotron</b></td><td>3-super</td><td>49/125 (39%)</td></tr>
-<tr><td rowspan="3"><b>Gemini</b></td><td>2.5-flash</td><td>—</td></tr>
-<tr><td>3.1-flash</td><td>—</td></tr>
-<tr><td>3.1-pro</td><td>—</td></tr>
-<tr><td rowspan="2"><b>Claude</b></td><td>4.6-sonnet</td><td>—</td></tr>
-<tr><td>4.5-haiku</td><td>—</td></tr>
-<tr><td><b>GPT</b></td><td>5-mini</td><td>—</td></tr>
-<tr><td rowspan="3"><b>DeepSeek</b></td><td>v4-flash</td><td><b>99/125 (79%)</b></td></tr>
-<tr><td>v4-pro</td><td>—</td></tr>
-<tr><td>reasoner</td><td>—</td></tr>
-</table>
-
-Run the benchmark yourself against a local or remote model:
-
-```bash
-python -m npcsh.benchmark.rust_runner --model qwen3.5:9b --provider ollama
-python -m npcsh.benchmark.rust_runner --model deepseek-v4-pro --provider deepseek
-```
 
 For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).
 
