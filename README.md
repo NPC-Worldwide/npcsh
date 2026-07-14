@@ -45,7 +45,7 @@ npcsh> /gitt
 
 ## Benchmark Results
 
-The benchmark suite measures how well a model can drive `npcsh` as an agentic shell. It covers 135 tasks across 15 categories, from basic shell commands and file operations to multi-step workflows, debugging, git, tool chaining, delegation, web search, and media generation. Each task is scored pass/fail by an automated verifier.
+The benchmark suite measures how well a model can drive `npcsh` as an agentic shell. It covers 100 tasks across 10 categories, from basic shell commands and file operations to multi-step workflows, debugging, git, and scripting. Each task is scored pass/fail by an automated verifier.
 
 The table below shows scores (100 tasks).
 
@@ -54,19 +54,12 @@ The table below shows scores (100 tasks).
 <table>
 <tr><th>Family</th><th>Model</th><th>Version</th><th>Score</th></tr>
 <tr><td rowspan="2"><b>Qwen3.5</b></td><td>35b</td><td>v2.1.4</td><td><b>97/100 (97%)</b></td></tr>
-<tr><td>9b</td><td>v2.1.4</td><td>85/100 (85%)</td></tr>
+<tr><td>9b</td><td>v2.1.4</td><td><b>95/100 (95%)</b></td></tr>
 <tr><td><b>North</b></td><td>mini-code-1.0 latest</td><td>v2.1.4</td><td>93/100 (93%)</td></tr>
 <tr><td rowspan="2"><b>Ornith</b></td><td>9b</td><td>v2.1.4</td><td>57/100 (57%)</td></tr>
 <tr><td>35b</td><td>v2.1.4</td><td>38/100 (38%)</td></tr>
 <tr><td><b>Laguna</b></td><td>xs-2.1 latest</td><td>v2.1.4</td><td>24/100 (24%)</td></tr>
 </table>
-
-Run the benchmark yourself against a local or remote model:
-
-```bash
-python -m npcsh.benchmark.local_runner --model qwen3.5:9b --provider ollama
-python -m npcsh.benchmark.local_runner --model deepseek-v4-pro --provider deepseek
-```
 
 For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).
 
