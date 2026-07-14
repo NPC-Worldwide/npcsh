@@ -53,8 +53,9 @@ The table below shows scores (100 tasks).
 
 <table>
 <tr><th>Family</th><th>Model</th><th>Version</th><th>Score</th></tr>
-<tr><td rowspan="2"><b>Qwen3.5</b></td><td>35b</td><td>v2.1.4</td><td><b>97/100 (97%)</b></td></tr>
+<tr><td rowspan="3"><b>Qwen3.5</b></td><td>35b</td><td>v2.1.4</td><td><b>97/100 (97%)</b></td></tr>
 <tr><td>9b</td><td>v2.1.4</td><td><b>95/100 (95%)</b></td></tr>
+<tr><td>3.6:35b</td><td>v2.1.4</td><td><b>91/100 (91%)</b></td></tr>
 <tr><td><b>North</b></td><td>mini-code-1.0 latest</td><td>v2.1.4</td><td>93/100 (93%)</td></tr>
 <tr><td rowspan="2"><b>Ornith</b></td><td>9b</td><td>v2.1.4</td><td>57/100 (57%)</td></tr>
 <tr><td>35b</td><td>v2.1.4</td><td>38/100 (38%)</td></tr>
