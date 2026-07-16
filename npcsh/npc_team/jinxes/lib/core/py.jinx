@@ -1,7 +1,7 @@
 permissions:
   default: ask
 jinx_name: py
-description: Execute Python code directly. Code runs immediately — do NOT wrap in function definitions unless you also call them. To create a file, use open('/path', 'w') and write to it. To create a script file, write the script content to the file with open(). Set the "output" variable to a result string. Do not write print statements in your code. do not ever include bare backslashes preceding strings and do not include guides for usage in python scripts unless explicitly requested.
+description: Execute a short Python snippet. The code is passed verbatim to exec(). Set the "output" variable to a result string. Do not write print statements. Keep snippets simple and self-contained. Every opened block (if/for/while/try/except/def/with/class) must have a non-empty indented body, even if just `pass`. `try:` must be followed by `except:`. Match parentheses, brackets, and braces carefully. os.walk returns a 3-tuple `(root, dirs, files)`; unpack it as exactly three names or iterate without unpacking. Verify a value is iterable before looping over it. Use raw strings (r"...") or forward slashes for Windows-style paths.
 inputs:
 - code
 steps:

@@ -69,15 +69,12 @@ def _final_csv_path(model: str, report_dir: Path) -> Path | None:
         if final_pattern.match(p.stem) or running_pattern.match(p.stem)
     ]
     for p in sorted(candidates, key=lambda x: x.stat().st_mtime, reverse=True):
-        if "_running" in p.stem:
-            try:
-                df = pd.read_csv(p, dtype={"task_id": str})
-                if len(df) >= 100:
-                    return p
-            except Exception:
-                continue
-        else:
-            return p
+        try:
+            df = pd.read_csv(p, dtype={"task_id": str})
+            if len(df) >= 100:
+                return p
+        except Exception:
+            continue
     return None
 
 
