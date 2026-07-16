@@ -79,6 +79,48 @@ async fn ensure_server_running(client: &reqwest::Client, server_url: &str) -> st
     Err("npcpy server did not become reachable after spawn".to_string())
 }
 
+async fn restart_server(client: &reqwest::Client, server_url: &str) -> std::result::Result<(), String> {
+    let host = std::env::var("NPCSH_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = std::env::var("NPCSH_SERVER_PORT").unwrap_or_else(|_| "5237".to_string());
+
+    // Kill any existing process listening on the server port.
+    match tokio::process::Command::new("lsof")
+        .args(["-ti", &format!("tcp:{}", port)])
+        .output()
+        .await
+    {
+        Ok(output) if !output.stdout.is_empty() => {
+            let pids: Vec<u32> = String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .filter_map(|s| s.parse().ok())
+                .collect();
+            for pid in pids {
+                let _ = tokio::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output()
+                    .await;
+            }
+        }
+        _ => {}
+    }
+
+    // Wait for the port to be free.
+    for _ in 0..20 {
+        if client
+            .get(server_url)
+            .timeout(std::time::Duration::from_millis(200))
+            .send()
+            .await
+            .is_err()
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    ensure_server_running(client, server_url).await
+}
+
 const CYAN: &str = "\x1b[36m";
 const PURPLE: &str = "\x1b[35m";
 const DIM: &str = "\x1b[90m";
@@ -1454,12 +1496,17 @@ async fn run_stream_turn_with_interrupt(
         process.record_usage(usage.prompt_tokens, usage.completion_tokens, cost);
     }
 
+    let mut assistant_message = response.message.clone();
+    if !response.tool_calls.is_empty() {
+        assistant_message.tool_calls = Some(response.tool_calls.clone());
+    }
+
     {
         let process = kernel.get_process_mut(current_pid).unwrap();
         process.last_streamed = response.streamed || response.message.content.is_some();
         process.last_thinking = response.message.thinking.clone();
         process.messages.push(Message::user(input));
-        process.messages.push(response.message.clone());
+        process.messages.push(assistant_message.clone());
         for tr in tool_results {
             process.messages.push(tr);
         }
@@ -1502,6 +1549,13 @@ async fn run_stream_turn_with_interrupt(
     Ok(output)
 }
 
+fn is_server_error(e: &npcrs::NpcError) -> bool {
+    let msg = e.to_string();
+    msg.contains("HTTP stream returned 5")
+        || msg.contains("Internal Server Error")
+        || msg.contains("HTTP stream request failed")
+}
+
 async fn run_stream_turn(
     kernel: &mut Kernel,
     current_pid: u32,
@@ -1511,20 +1565,67 @@ async fn run_stream_turn(
     server_url: &str,
     save_history: bool,
 ) -> Result<String> {
-    run_stream_turn_with_interrupt(
-        kernel,
-        current_pid,
-        input,
-        mode,
-        client,
-        server_url,
-        save_history,
-        None,
-    )
-    .await
+    const MAX_ATTEMPTS: usize = 4;
+    let mut last_error: Option<npcrs::NpcError> = None;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        if attempt > 0 {
+            eprintln!(
+                "{YELLOW}npcpy server error; restarting server and retrying turn (attempt {}/{})...{RESET}",
+                attempt, MAX_ATTEMPTS - 1
+            );
+            if let Err(e) = restart_server(client, server_url).await {
+                last_error = Some(npcrs::NpcError::Other(format!("failed to restart server: {e}")));
+                continue;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if client
+                .get(server_url)
+                .timeout(std::time::Duration::from_secs(2))
+                .send()
+                .await
+                .is_err()
+            {
+                last_error = Some(npcrs::NpcError::Other(
+                    "npcpy server smoke test failed after restart".to_string(),
+                ));
+                continue;
+            }
+            // Reset turn state so the retry doesn't inherit a broken stream state.
+            if let Some(process) = kernel.get_process_mut(current_pid) {
+                process.new_turn();
+            }
+        }
+
+        match run_stream_turn_with_interrupt(
+            kernel,
+            current_pid,
+            input,
+            mode.clone(),
+            client,
+            server_url,
+            save_history,
+            None,
+        )
+        .await
+        {
+            Ok(output) => return Ok(output),
+            Err(e) => {
+                if is_server_error(&e) {
+                    last_error = Some(e);
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        npcrs::NpcError::Other("stream turn failed after server restart retries".to_string())
+    }))
 }
 
-async fn run_interactive_stream_turn(
+async fn run_interactive_stream_turn_once(
     kernel: &mut Kernel,
     current_pid: u32,
     input: &str,
@@ -1595,6 +1696,97 @@ async fn run_interactive_stream_turn(
     }
 
     (result, queued)
+}
+
+async fn run_interactive_stream_turn(
+    kernel: &mut Kernel,
+    current_pid: u32,
+    input: &str,
+    mode: Mode,
+    client: &reqwest::Client,
+    server_url: &str,
+) -> (Result<String>, Vec<String>) {
+    const MAX_ATTEMPTS: usize = 4;
+    let mut last_error: Option<npcrs::NpcError> = None;
+    let mut all_queued = Vec::new();
+
+    for attempt in 0..MAX_ATTEMPTS {
+        if attempt > 0 {
+            if attempt == 1 {
+                eprintln!(
+                    "{RED}npcpy server error: {}{RESET}",
+                    last_error.as_ref().map(|e| e.to_string()).unwrap_or_default()
+                );
+                eprintln!("{YELLOW}Restart the server and retry? [Y/n]{RESET}");
+                let mut line = String::new();
+                let _ = std::io::stdin().read_line(&mut line);
+                if line.trim().eq_ignore_ascii_case("n")
+                    || line.trim().eq_ignore_ascii_case("no")
+                {
+                    return (
+                        Err(last_error.unwrap_or_else(|| {
+                            npcrs::NpcError::Other("stream turn aborted".to_string())
+                        })),
+                        all_queued,
+                    );
+                }
+            }
+
+            eprintln!(
+                "{YELLOW}Restarting npcpy server (interactive attempt {}/{})...{RESET}",
+                attempt, MAX_ATTEMPTS - 1
+            );
+            if let Err(e) = restart_server(client, server_url).await {
+                last_error = Some(npcrs::NpcError::Other(format!("failed to restart server: {e}")));
+                continue;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if client
+                .get(server_url)
+                .timeout(std::time::Duration::from_secs(2))
+                .send()
+                .await
+                .is_err()
+            {
+                last_error = Some(npcrs::NpcError::Other(
+                    "npcpy server smoke test failed after restart".to_string(),
+                ));
+                continue;
+            }
+            if let Some(process) = kernel.get_process_mut(current_pid) {
+                process.new_turn();
+            }
+        }
+
+        let (result, queued) = run_interactive_stream_turn_once(
+            kernel,
+            current_pid,
+            input,
+            mode.clone(),
+            client,
+            server_url,
+        )
+        .await;
+        all_queued.extend(queued);
+
+        match result {
+            Ok(output) => return (Ok(output), all_queued),
+            Err(e) => {
+                if is_server_error(&e) {
+                    last_error = Some(e);
+                    continue;
+                }
+                return (Err(e), all_queued);
+            }
+        }
+    }
+
+    (
+        Err(last_error.unwrap_or_else(|| {
+            npcrs::NpcError::Other("stream turn failed after server restart retries".to_string())
+        })),
+        all_queued,
+    )
 }
 
 async fn save_conversation_turn(
