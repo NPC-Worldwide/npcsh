@@ -17,6 +17,7 @@ pub struct StreamRequest {
 
 pub struct StreamResponse {
     pub message: Message,
+    pub tool_calls: Vec<ToolCall>,
     pub tool_results: Vec<Message>,
     pub usage: Option<Usage>,
     pub streamed: bool,
@@ -173,7 +174,7 @@ pub async fn call_stream_with_interrupt(
         tool_calls: if tool_calls.is_empty() {
             None
         } else {
-            Some(tool_calls)
+            Some(tool_calls.clone())
         },
         tool_call_id: None,
         name: None,
@@ -191,6 +192,7 @@ pub async fn call_stream_with_interrupt(
 
     Ok(StreamResponse {
         message,
+        tool_calls,
         tool_results,
         usage,
         streamed: saw_output,
@@ -447,6 +449,12 @@ fn apply_sse_event(
 }
 
 fn append_tool_call_json(tc: &Value, tool_calls: &mut Vec<ToolCall>, saw_output: &mut bool) {
+    if let Some(arr) = tc.as_array() {
+        for item in arr {
+            append_tool_call_json(item, tool_calls, saw_output);
+        }
+        return;
+    }
     let id = tc
         .get("id")
         .and_then(|v| v.as_str())
@@ -455,15 +463,21 @@ fn append_tool_call_json(tc: &Value, tool_calls: &mut Vec<ToolCall>, saw_output:
     let name = tc
         .get("name")
         .or_else(|| tc.get("function_name"))
+        .or_else(|| tc.get("function").and_then(|f| f.get("name")))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
     let args = tc
         .get("arguments")
         .or_else(|| tc.get("function").and_then(|f| f.get("arguments")))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+        .and_then(|v| {
+            if let Some(s) = v.as_str() {
+                Some(s.to_string())
+            } else {
+                serde_json::to_string(v).ok()
+            }
+        })
+        .unwrap_or_default();
     if !name.is_empty() {
         tool_calls.push(ToolCall {
             id,

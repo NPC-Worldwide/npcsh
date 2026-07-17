@@ -301,21 +301,43 @@ def _run_npcsh_attempt(
     env["NPCSH_STREAM_OUTPUT"] = "1"
     env["NPCSH_ACCEPT_PERMISSIONS"] = "1"
 
-    # Isolate git configuration so a model running `git config --global` cannot
-    # mutate the user's real ~/.gitconfig. Use a temp copy of the current config
-    # (preserving user.name/email) and ignore the system config.
+    # Fully isolate git so a model running `git config` cannot mutate the user's
+    # real config or inherit a repo-local .git/config. We create a throwaway HOME
+    # containing a minimal gitconfig with the user's global name/email, then set
+    # GIT_AUTHOR_* / GIT_COMMITTER_* env vars so those override every config file.
     real_gitconfig = os.path.expanduser("~/.gitconfig")
-    gitconfig_fd, gitconfig_path = tempfile.mkstemp(prefix="npcsh_bench_gitconfig_", suffix=".ini")
-    try:
-        if os.path.exists(real_gitconfig):
-            with open(real_gitconfig, "r", encoding="utf-8") as src, os.fdopen(gitconfig_fd, "w", encoding="utf-8") as dst:
-                dst.write(src.read())
-        else:
-            os.close(gitconfig_fd)
-        env["GIT_CONFIG_GLOBAL"] = gitconfig_path
-        env["GIT_CONFIG_SYSTEM"] = "/dev/null"
-    except Exception:
-        pass
+    global_name, global_email = "", ""
+    if os.path.exists(real_gitconfig):
+        try:
+            import configparser
+            cfg = configparser.ConfigParser()
+            cfg.read(real_gitconfig)
+            if "user" in cfg:
+                global_name = cfg.get("user", "name", fallback="")
+                global_email = cfg.get("user", "email", fallback="")
+        except Exception:
+            pass
+
+    tmp_home = tempfile.mkdtemp(prefix="npcsh_bench_home_")
+    fake_gitconfig = os.path.join(tmp_home, ".gitconfig")
+    with open(fake_gitconfig, "w", encoding="utf-8") as f:
+        f.write("[user]\n")
+        if global_name:
+            f.write(f"\tname = {global_name}\n")
+        if global_email:
+            f.write(f"\temail = {global_email}\n")
+        f.write("[init]\n\tdefaultBranch = main\n")
+
+    env["HOME"] = tmp_home
+    env["XDG_CONFIG_HOME"] = os.path.join(tmp_home, ".config")
+    env["GIT_CONFIG_GLOBAL"] = fake_gitconfig
+    env["GIT_CONFIG_SYSTEM"] = "/dev/null"
+    if global_name:
+        env["GIT_AUTHOR_NAME"] = global_name
+        env["GIT_COMMITTER_NAME"] = global_name
+    if global_email:
+        env["GIT_AUTHOR_EMAIL"] = global_email
+        env["GIT_COMMITTER_EMAIL"] = global_email
 
     # The shell picks its own conversation_id and saves everything to
     # npcsh_history.db. We do not impose one or complain when it uses its own.
@@ -334,7 +356,7 @@ def _run_npcsh_attempt(
             start_new_session=True,
         )
     except FileNotFoundError:
-        shutil.rmtree(os.path.dirname(gitconfig_path), ignore_errors=True)
+        shutil.rmtree(tmp_home, ignore_errors=True)
         return "Exception: npcsh binary not found on PATH", conversation_id
 
     def _drain_stdout():
