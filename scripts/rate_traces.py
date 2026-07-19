@@ -60,7 +60,7 @@ DEFAULT_JUDGE_PANEL = [
     ("corca", "kimi-k2.7-code:cloud"),
     ("frederic", "deepseek-v4-pro:cloud"),
     ("kadiefa", "glm-5.2:cloud"),
-    ("alicanto", "qwen3-coder:480b-cloud"),
+    ("alicanto", "qwen3.5:cloud"),
     ("sibiji", "minimax-m3:cloud"),
 ]
 NPC_TEAM_DIR = Path("~/.npcsh/npc_team").expanduser()
@@ -358,10 +358,12 @@ def build_judge_prompt(trace):
     if passed is not None:
         verifier_line = f"Verifier (verify_cmd) result: {'PASSED' if passed else 'FAILED'}\nverify_cmd: {verify_cmd}\n"
     schema_example = (
-        "Return ONLY JSON like:\n"
-        + """{"correctness": 0.0-1.0, "effectiveness": 0.0-1.0, """
-        + """"tool_selection": 0.0-1.0, "efficiency": 0.0-1.0, "clarity": 0.0-1.0, """
-        + """"partial_credit": 0.0-1.0, "composite": 0.0-1.0, "rationale": "..."}\n"""
+        "Return ONLY JSON. Example of a mediocre trace that technically passed but wasted steps:\n"
+        + """{"correctness": 0.85, "effectiveness": 0.55, """
+        + """"tool_selection": 0.50, "efficiency": 0.40, "clarity": 0.60, """
+        + """"partial_credit": 0.90, "composite": 0.62, """
+        + """"rationale": "The file was created, but the agent ran three redundant ls commands and used a python one-liner where a simple cp would suffice."}\n\n"""
+        + "Now rate this trace. Return ONLY JSON with the same keys."
     )
     prompt = f"""{verifier_line}Instruction:
 {instruction}
@@ -489,21 +491,32 @@ def main():
     output_path = Path(args.output).expanduser() if args.output else RATINGS_DIR / f"ratings_{ts}.csv"
 
     traces = []
+    seen = load_seen(output_path) if (args.resume and not args.dry_run and output_path.exists()) else set()
     if args.csv_dir:
         csv_dir = Path(args.csv_dir).expanduser()
         if csv_dir.exists():
-            for t in load_csv_traces(csv_dir, limit=args.limit,
-                                     min_category_size=args.min_category_size):
-                traces.append(t)
-            print(f"[csv] loaded {len(traces)} benchmark traces from {csv_dir}")
+            loaded = list(load_csv_traces(csv_dir, limit=0,
+                                          min_category_size=args.min_category_size))
+            print(f"[csv] loaded {len(loaded)} benchmark traces from {csv_dir}")
+            if seen:
+                loaded = [t for t in loaded if trace_seen_key(t) not in seen]
+                print(f"[resume] {len(loaded)} benchmark traces remain after skipping seen")
+            if args.limit:
+                loaded = loaded[:args.limit]
+            traces.extend(loaded)
         else:
             print(f"[csv] dir not found: {csv_dir}")
     if args.db:
         db_path = Path(args.db).expanduser()
         if db_path.exists():
             conn = sqlite3.connect(str(db_path))
-            db_traces = fetch_conversation_traces(conn, args.since, args.limit)
+            db_limit = args.limit if not args.csv_dir else 0
+            db_traces = fetch_conversation_traces(conn, args.since, db_limit)
             conn.close()
+            if seen:
+                db_traces = [t for t in db_traces if trace_seen_key(t) not in seen]
+                if args.limit:
+                    db_traces = db_traces[:args.limit]
             print(f"[db] loaded {len(db_traces)} history traces from {db_path}")
             traces.extend(db_traces)
         else:
@@ -513,14 +526,8 @@ def main():
         print("No traces to rate.")
         return
 
-    seen = load_seen(output_path) if (args.resume and not args.dry_run and output_path.exists()) else set()
-    todo = [t for t in traces if trace_seen_key(t) not in seen]
-    skipped = len(traces) - len(todo)
-    if skipped:
-        print(f"[resume] skipping {skipped} already-rated traces")
-    if not todo:
-        print("Nothing new to rate.")
-        return
+    todo = traces
+    print(f"[batch] rating {len(todo)} traces")
     panel = []
     if args.judge_panel:
         for pair in args.judge_panel.split(","):
@@ -549,6 +556,7 @@ def main():
 
     records = []
     done = 0
+    total_written = 0
     _err_seen = [False]
     interrupted = False
     results = defaultdict(list)  # trace index -> list of judge result dicts
@@ -603,7 +611,8 @@ def main():
                       f"[{agg['judge_composites']}]")
                 # write EVERY row to disk as it completes — a crash only ever
                 # costs the in-flight trace, never anything already rated
-                _write_records(records, output_path)
+                total_written = _write_records(records, output_path)
+                records.clear()
     except KeyboardInterrupt:
         interrupted = True
         print("\n[interrupt] cancelling pending judge calls, saving complete traces...")
@@ -619,9 +628,10 @@ def main():
         print(f"\n[dry-run] rated {len(records)} traces; nothing written.")
         return
 
-    total = _write_records(records, output_path)
+    if records:
+        total_written = _write_records(records, output_path)
     tag = " [partial, interrupted]" if interrupted else ""
-    print(f"\nWrote {len(records)} ratings -> {output_path} ({total} total){tag}")
+    print(f"\nWrote {done} ratings -> {output_path} ({total_written} total){tag}")
     if interrupted:
         sys.exit(130)
 

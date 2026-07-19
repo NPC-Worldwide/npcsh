@@ -144,11 +144,45 @@ def _iter_records(csv_dir, pattern, ratings_df):
         yield from load_csv_records(csv_dir, pattern)
 
 
+def _chunk_trace(instruction: str, response: str, max_chars: int) -> list:
+    """Split a long tool-call trace into multiple SFT examples at natural
+    boundaries so we never truncate. Each chunk keeps the instruction prefix
+    so the model always has task context."""
+    # Rough token-to-char heuristic: ~4 chars/token.
+    if len(instruction) + len(response) <= max_chars:
+        return [(instruction, response)]
+    # Split on tool call boundaries, then double newlines, then single newlines.
+    splitters = ["</tool_call>", "\n\n", "\n"]
+    parts = [response]
+    for sep in splitters:
+        new_parts = []
+        for part in parts:
+            if len(part) > max_chars:
+                new_parts.extend([p.strip() for p in part.split(sep) if p.strip()])
+            else:
+                new_parts.append(part)
+        parts = new_parts
+        if all(len(p) + len(instruction) <= max_chars for p in parts):
+            break
+    chunks = []
+    prefix = instruction
+    for i, part in enumerate(parts):
+        if not part.strip():
+            continue
+        if i > 0:
+            prefix = "(continued from previous turn) " + instruction[:200]
+        chunks.append((prefix, part))
+    return chunks if chunks else [(instruction, response)]
+
+
 def build_sft_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False,
-                   ratings_df=None, sft_threshold: float = 0.7):
+                   ratings_df=None, sft_threshold: float = 0.7, max_length: int = 512):
+    # Heuristic: ~4 chars per token; leave headroom for chat template tokens.
+    max_chars = max(256, max_length * 4 - 64) if max_length else 0
     X, y = [], []
     task_rates = _compute_task_difficulty(csv_dir, pattern, ratings_df)
     count = 0
+    truncated = 0
     for rec in _iter_records(csv_dir, pattern, ratings_df):
         keep = rec["composite"] >= sft_threshold if ratings_df is not None else rec["passed"]
         if not keep:
@@ -156,16 +190,26 @@ def build_sft_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False
         tid = rec["task_id"]
         if hard_only and task_rates.get(tid, 0.5) >= 0.5:
             continue
-        X.append(f"<|im_start|>user\n{rec['instruction']}<|im_end|>\n<|im_start|>assistant\n")
-        y.append(f"{rec['response']}<|im_end|>\n")
-        count += 1
+        instruction = rec["instruction"]
+        response = rec["response"]
+        if max_length and len(instruction) + len(response) > max_chars:
+            chunks = _chunk_trace(instruction, response, max_chars)
+            truncated += max(0, len(chunks) - 1)
+        else:
+            chunks = [(instruction, response)]
+        for inst_chunk, resp_chunk in chunks:
+            X.append(f"<|im_start|>user\n{inst_chunk}<|im_end|>\n<|im_start|>assistant\n")
+            y.append(f"{resp_chunk}<|im_end|>\n")
+            count += 1
     src = "rated" if ratings_df is not None else "passed"
-    print(f"SFT: {count} {src} traces" + (" (hard-only)" if hard_only else ""))
+    extra = " (hard-only)" if hard_only else ""
+    extra += f", split {truncated} long traces into chunks" if truncated else ""
+    print(f"SFT: {count} {src} examples{extra}")
     return X, y
 
 
 def build_dpo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False,
-                   ratings_df=None, dpo_gap: float = 0.3, dpo_max_per_task: int = 4):
+                   ratings_df=None, dpo_gap: float = 0.0, dpo_max_per_task: int = 0):
     task_rates = _compute_task_difficulty(csv_dir, pattern, ratings_df)
     by_task = {}
     for rec in _iter_records(csv_dir, pattern, ratings_df):
@@ -176,33 +220,32 @@ def build_dpo_data(csv_dir: str, pattern: str = "*.csv", hard_only: bool = False
 
     pairs = []
     if ratings_df is not None:
-        # quality-ranked preferences: emit every gap-qualified pair per task
-        # (best-vs-worst alone wastes the multi-trace signal the 5-judge
-        # ensemble produces). Pair strongest traces against weakest, gated by
-        # dpo_gap, capped per task so one task can't dominate the split.
+        # Use ALL rated traces per task as pairwise preferences, not just a
+        # high-gap subset. With 5+ judge composites per task we get a real
+        # ranking signal; throwing away pairs via a gap filter is wasting data.
+        # dpo_max_per_task (if > 0) is a hard cap for quick experiments.
         for tid, traces in by_task.items():
             if len(traces) < 2:
                 continue
             traces.sort(key=lambda t: t.get("composite", 0.0), reverse=True)
             emitted = 0
-            for hi in traces:
-                if emitted >= dpo_max_per_task:
-                    break
-                for lo in reversed(traces):
-                    if lo is hi:
-                        break
+            for i, hi in enumerate(traces):
+                for lo in traces[i + 1:]:
                     gap = hi.get("composite", 0.0) - lo.get("composite", 0.0)
-                    if gap >= dpo_gap:
-                        pairs.append({
-                            "prompt": hi["instruction"],
-                            "chosen": hi["response"],
-                            "rejected": lo["response"],
-                            "chosen_composite": hi["composite"],
-                            "rejected_composite": lo["composite"],
-                        })
-                        emitted += 1
-                        if emitted >= dpo_max_per_task:
-                            break
+                    if gap < dpo_gap:
+                        continue
+                    pairs.append({
+                        "prompt": hi["instruction"],
+                        "chosen": hi["response"],
+                        "rejected": lo["response"],
+                        "chosen_composite": hi["composite"],
+                        "rejected_composite": lo["composite"],
+                    })
+                    emitted += 1
+                    if 0 < dpo_max_per_task <= emitted:
+                        break
+                if 0 < dpo_max_per_task <= emitted:
+                    break
         src = "rated"
     else:
         for tid, traces in by_task.items():
@@ -325,6 +368,8 @@ def main():
     common.add_argument("--epochs", type=int, default=3)
     common.add_argument("--lr", type=float, default=2e-5)
     common.add_argument("--lora-r", type=int, default=16)
+    common.add_argument("--batch-size", type=int, default=2)
+    common.add_argument("--max-length", type=int, default=512)
     common.add_argument("--hard-only", action="store_true", help="Train only on tasks with <50% success rate")
     common.add_argument("--ratings", default=None,
                         help="Ratings CSV/dir/glob from rate_traces.py; enables graded rewards")
@@ -341,10 +386,10 @@ def main():
 
     dpo_p = sub.add_parser("dpo", parents=[common])
     dpo_p.add_argument("--beta", type=float, default=0.5)
-    dpo_p.add_argument("--dpo-gap", type=float, default=0.3,
-                       help="Min composite gap to emit a DPO pair (with --ratings)")
-    dpo_p.add_argument("--dpo-max-per-task", type=int, default=4,
-                       help="Max DPO pairs emitted per task (with --ratings)")
+    dpo_p.add_argument("--dpo-gap", type=float, default=0.0,
+                       help="Min composite gap to emit a DPO pair, 0 = use all ordered pairs (with --ratings)")
+    dpo_p.add_argument("--dpo-max-per-task", type=int, default=0,
+                       help="Max DPO pairs per task, 0 = unlimited (with --ratings)")
 
     grpo_p = sub.add_parser("grpo", parents=[common])
     grpo_p.add_argument("--group-size", type=int, default=4)
@@ -365,7 +410,8 @@ def main():
 
     if args.cmd == "sft":
         X, y = build_sft_data(csv_dir, args.pattern, hard_only=args.hard_only,
-                              ratings_df=ratings_df, sft_threshold=args.sft_threshold)
+                              ratings_df=ratings_df, sft_threshold=args.sft_threshold,
+                              max_length=args.max_length)
         if len(X) < 5:
             print("Need >= 5 traces.")
             sys.exit(1)
@@ -382,9 +428,9 @@ def main():
             lora_r=args.lora_r,
             lora_alpha=args.lora_r * 2,
             num_train_epochs=args.epochs,
-            per_device_train_batch_size=2,
+            per_device_train_batch_size=args.batch_size,
             learning_rate=args.lr,
-            max_length=2048,
+            max_length=args.max_length,
             logging_steps=max(1, len(X) // 20),
             save_steps=max(1, len(X) // 5),
         )
@@ -416,6 +462,7 @@ def main():
             lora_r=args.lora_r,
             beta=args.beta,
             max_pairs=len(pair_list),
+            max_length=args.max_length,
             logging_steps=5,
             save_steps=20,
         )
@@ -441,7 +488,7 @@ def main():
             learning_rate=args.lr,
             lora_r=args.lora_r,
             group_size=args.group_size,
-            max_length=2048,
+            max_length=args.max_length,
             logging_steps=5,
             save_steps=20,
         )
@@ -469,7 +516,7 @@ def main():
             beta=args.beta,
             clip_eps=args.clip_eps,
             group_size=args.group_size,
-            max_length=2048,
+            max_length=args.max_length,
             logging_steps=5,
             save_steps=20,
         )

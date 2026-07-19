@@ -12,6 +12,30 @@ const AGENTS_TEAM_DIR: &str = ".npcsh_team";
 
 static RESOLVED_TEAM_DIR: OnceLock<String> = OnceLock::new();
 
+fn real_user_home() -> Option<String> {
+    // Do not trust the HOME environment variable: benchmark runners and other
+    // wrappers isolate HOME to a throwaway directory. Use the OS user database
+    // on Unix to get the real home directory, and fall back to HOME only on
+    // platforms where that is unavailable.
+    #[cfg(unix)]
+    unsafe {
+        let uid = libc::getuid();
+        let pw = libc::getpwuid(uid);
+        if !pw.is_null() {
+            let home_ptr = (*pw).pw_dir;
+            if !home_ptr.is_null() {
+                let home = std::ffi::CStr::from_ptr(home_ptr)
+                    .to_string_lossy()
+                    .to_string();
+                if !home.is_empty() {
+                    return Some(home);
+                }
+            }
+        }
+    }
+    std::env::var("HOME").ok().filter(|s| !s.is_empty())
+}
+
 pub fn find_team_dir() -> String {
     if let Some(resolved) = RESOLVED_TEAM_DIR.get() {
         return resolved.clone();
@@ -28,7 +52,16 @@ pub fn find_team_dir() -> String {
         return "./npc_team".to_string();
     }
 
-    let global = shellexpand::tilde("~/.npcsh/npc_team").to_string();
+    let home = real_user_home().unwrap_or_else(|| {
+        // Last resort: use whatever HOME says, but this is the path that breaks
+        // under benchmark isolation, so avoid it when possible.
+        shellexpand::tilde("~").to_string()
+    });
+    let global = std::path::Path::new(&home)
+        .join(".npcsh")
+        .join("npc_team")
+        .to_string_lossy()
+        .to_string();
     if std::path::Path::new(&global).exists() {
         return global;
     }
