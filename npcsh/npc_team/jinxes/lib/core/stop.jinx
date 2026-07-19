@@ -1,5 +1,4 @@
-permissions:
-  default: ask
+#!/usr/bin/env npc
 jinx_name: stop
 description: Signal that you are done and have no more actions to take. Call this when your task is complete.
 inputs:
@@ -17,4 +16,16 @@ steps:
       if stop_notes:
           context['output'] += f" - {stop_notes}"
 
-      state._stop_requested = True
+      context['stop_requested'] = True
+
+tests:
+  - id: stop_sets_flag
+    type: capability
+    description: "stop jinx sets stop_requested and returns a message"
+    inputs:
+      reason: "completeness"
+      notes: "done"
+    expected:
+      success: true
+      output_contains: "Stopping: completeness"
+      output_contains: "done"

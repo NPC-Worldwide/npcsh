@@ -1,5 +1,4 @@
-permissions:
-  default: ask
+#!/usr/bin/env npc
 jinx_name: gen_image
 description: Generate an image from a text prompt. Uses NPCSH_IMAGE_GEN_MODEL and NPCSH_IMAGE_GEN_PROVIDER from env by default. Supports ollama, diffusers, openai, gemini.
 inputs:
@@ -98,5 +97,14 @@ steps:
                   context['output'] = f"Generated: {', '.join(saved_files)}"
               else:
                   context['output'] = "No images generated."
-          elif not context.get('output'):
-              context['output'] = "No images generated."
+
+tests:
+  - id: requires_prompt
+    type: capability
+    description: "gen_image jinx returns an error when prompt is missing"
+    inputs:
+      prompt: ""
+    expected:
+      success: false
+      output_contains: "prompt is required"
+      max_duration_ms: 2000

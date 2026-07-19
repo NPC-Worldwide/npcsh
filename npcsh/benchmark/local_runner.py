@@ -331,11 +331,6 @@ def _run_npcsh_attempt(
     # Keep history in the real user DB even though HOME is isolated; otherwise
     # every benchmark run writes to a throwaway DB and the transcript is lost.
     env["NPCSH_HISTORY_DB"] = DB_PATH
-    # The npcsh Python init path needs build/lib/npcsh because the editable
-    # install points to a source tree that is missing core modules.
-    repo_build_lib = os.path.expanduser("~/npcww/npc-core/npcsh/build/lib")
-    if os.path.isdir(repo_build_lib):
-        env["PYTHONPATH"] = repo_build_lib + os.pathsep + env.get("PYTHONPATH", "")
     env["HOME"] = tmp_home
     env["XDG_CONFIG_HOME"] = os.path.join(tmp_home, ".config")
     env["GIT_CONFIG_GLOBAL"] = fake_gitconfig

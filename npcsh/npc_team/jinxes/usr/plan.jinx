@@ -94,7 +94,7 @@ steps:
 
       Break this into 3-10 concrete steps. Each step should be:
       - Clear and specific
-      - Include likely tools (sh, edit_file, web_search, etc.)
+      - Include likely tools (shell, edit_file, web_search, etc.)
       - Risk level: safe (read-only), moderate (edits), dangerous (destructive)
 
       Return ONLY JSON in this format:
@@ -102,8 +102,8 @@ steps:
         "goal": "brief restatement",
         "estimated_steps": 5,
         "steps": [
-          {{"id": 1, "description": "Check current state", "tools": ["sh"], "risk": "safe"}},
-          {{"id": 2, "description": "Create backup", "tools": ["sh"], "risk": "safe"}},
+          {{"id": 1, "description": "Check current state", "tools": ["shell"], "risk": "safe"}},
+          {{"id": 2, "description": "Create backup", "tools": ["shell"], "risk": "safe"}},
           {{"id": 3, "description": "Edit config", "tools": ["edit_file"], "risk": "moderate"}}
         ]
       }}
@@ -134,9 +134,9 @@ steps:
               "goal": goal,
               "estimated_steps": 3,
               "steps": [
-                  {"id": 1, "description": f"Analyze: {goal}", "tools": ["sh"], "risk": "safe", "status": "pending"},
-                  {"id": 2, "description": "Execute primary action", "tools": ["sh"], "risk": "moderate", "status": "pending"},
-                  {"id": 3, "description": "Verify results", "tools": ["sh"], "risk": "safe", "status": "pending"},
+                  {"id": 1, "description": f"Analyze: {goal}", "tools": ["shell"], "risk": "safe", "status": "pending"},
+                  {"id": 2, "description": "Execute primary action", "tools": ["shell"], "risk": "moderate", "status": "pending"},
+                  {"id": 3, "description": "Verify results", "tools": ["shell"], "risk": "safe", "status": "pending"},
               ],
           }
 
