@@ -74,9 +74,9 @@ For a more comprehensive view of npcsh's capabilities and the advantages of the 
 curl -fsSL https://enpisi.com/install-npcsh.sh | sh
 ```
 
-This downloads the latest `npcsh` and `npc` Rust binaries for your platform into `~/.npcsh/bin`. Add that directory to your PATH, then run `npcsh`.
+This downloads the latest `npcsh` and `npc` Rust binaries for your platform into `~/.npcsh/bin`, adds that directory to your PATH in your shell rc file, and walks you through installing the `npcpy` Python backend — offering any existing virtualenvs it finds, or a fresh one via `uv`, `pyenv`, or `python3 -m venv`. Then run `npcsh`.
 
-`npcsh` also requires Python 3.10+ with `npcpy` installed — see [Python backend (npcpy)](#python-backend-npcpy) below.
+See [Python backend (npcpy)](#python-backend-npcpy) below for details on that requirement.
 
 ### Cargo
 
