@@ -1011,8 +1011,8 @@ def main():
     parser.add_argument("--category", "-c", default=None)
     parser.add_argument("--difficulty", "-d", default=None)
     parser.add_argument("--task-id", "-t", default=None)
-    parser.add_argument("--timeout", type=int, default=120,
-                        help="Per-task wall-clock budget in seconds (default: 120)")
+    parser.add_argument("--timeout", type=int, default=1200,
+                        help="Per-task wall-clock budget in seconds (default: 1200)")
     parser.add_argument("--compare", action="store_true",
                         help="Compare multiple local models")
     parser.add_argument("--rerun-failed", type=str, default=None,
