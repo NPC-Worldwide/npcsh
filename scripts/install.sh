@@ -84,15 +84,187 @@ if [ "$OS" = "macos" ] && command -v codesign >/dev/null 2>&1; then
     done
 fi
 
-# Ensure ~/.npcsh/bin is on PATH.
+# Add ~/.npcsh/bin to PATH in the user's shell rc file (idempotent).
 case ":${PATH}:" in
     *":${INSTALL_DIR}:") ;;
     *)
-        echo ""
-        echo "Add ${INSTALL_DIR} to your PATH:"
-        echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+        SHELL_NAME="$(basename "${SHELL:-sh}")"
+        case "$SHELL_NAME" in
+            zsh) RC_FILE="$HOME/.zshrc" ;;
+            bash)
+                if [ "$OS" = "macos" ] && [ -f "$HOME/.bash_profile" ]; then
+                    RC_FILE="$HOME/.bash_profile"
+                else
+                    RC_FILE="$HOME/.bashrc"
+                fi
+                ;;
+            *) RC_FILE="$HOME/.profile" ;;
+        esac
+
+        if [ -f "$RC_FILE" ] && grep -q 'npcsh/bin' "$RC_FILE"; then
+            echo "  PATH for npcsh already configured in ${RC_FILE}"
+        else
+            touch "$RC_FILE"
+            printf '\n# npcsh binaries\nexport PATH="%s:$PATH"\n' "$INSTALL_DIR" >> "$RC_FILE"
+            echo "  added ${INSTALL_DIR} to PATH in ${RC_FILE}"
+            echo "  (open a new shell, or run: . ${RC_FILE})"
+        fi
         ;;
 esac
+
+# ---------------------------------------------------------------------------
+# npcpy Python backend (temporary requirement until the npcrs Rust-native
+# runner lands). npcsh spawns `python3 -m npcpy.serve` on startup, so some
+# Python >= 3.10 must have npcpy importable.
+# ---------------------------------------------------------------------------
+
+NPCSHRC="$HOME/.npcshrc"
+VENV_DIR="$HOME/.npcsh/venv"
+
+have_npcpy() {
+    "$1" -c "import npcpy" >/dev/null 2>&1
+}
+
+pin_backend_python() {
+    touch "$NPCSHRC"
+    if grep -q '^export BACKEND_PYTHON_PATH=' "$NPCSHRC" 2>/dev/null; then
+        TMP_RC="$(mktemp)"
+        sed "s|^export BACKEND_PYTHON_PATH=.*|export BACKEND_PYTHON_PATH=$1|" "$NPCSHRC" > "$TMP_RC"
+        mv "$TMP_RC" "$NPCSHRC"
+    else
+        printf 'export BACKEND_PYTHON_PATH=%s\n' "$1" >> "$NPCSHRC"
+    fi
+    echo "  pinned BACKEND_PYTHON_PATH=$1 in ~/.npcshrc"
+}
+
+echo ""
+echo "Setting up the npcpy Python backend..."
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "  WARNING: python3 not found. Install Python 3.10+, then run: python3 -m pip install npcpy"
+elif have_npcpy python3; then
+    echo "  npcpy is already installed for $(command -v python3)."
+else
+    PYVER_OK="$(python3 -c 'import sys; print(1 if sys.version_info >= (3, 10) else 0)' 2>/dev/null || echo 0)"
+    if [ "$PYVER_OK" != "1" ]; then
+        echo "  WARNING: $(python3 --version 2>&1) is older than 3.10; npcpy requires Python >= 3.10."
+    fi
+
+    # Build the list of install options.
+    set --
+    SEEN=":"
+    for CAND in "$VIRTUAL_ENV" "$VENV_DIR" "./.venv" "./venv"; do
+        if [ -n "$CAND" ] && [ -x "$CAND/bin/python" ]; then
+            CAND_ABS="$(cd "$CAND" 2>/dev/null && pwd)"
+            case "$SEEN" in
+                *":${CAND_ABS}:"*) ;;
+                *)
+                    SEEN="${SEEN}${CAND_ABS}:"
+                    set -- "$@" "venv|${CAND_ABS}"
+                    ;;
+            esac
+        fi
+    done
+    if command -v uv >/dev/null 2>&1; then set -- "$@" "uv|"; fi
+    if command -v pyenv >/dev/null 2>&1; then set -- "$@" "pyenv|"; fi
+    set -- "$@" "newvenv|" "system|" "skip|"
+    N=$#
+
+    echo "  npcpy is not installed for python3. Where should it go?"
+    i=1
+    for OPT in "$@"; do
+        case "$OPT" in
+            "venv|"*)    echo "    $i) Use existing virtualenv at ${OPT#venv|}" ;;
+            "uv|"*)      echo "    $i) Create a virtualenv with uv at ${VENV_DIR}" ;;
+            "pyenv|"*)   echo "    $i) Install into the active pyenv Python ($(pyenv version-name 2>/dev/null || echo '?'))" ;;
+            "newvenv|"*) echo "    $i) Create a virtualenv with python3 -m venv at ${VENV_DIR}" ;;
+            "system|"*)  echo "    $i) Install into the system python3 (pip install --user)" ;;
+            "skip|"*)    echo "    $i) Skip — I will install npcpy myself" ;;
+        esac
+        i=$((i + 1))
+    done
+
+    # Prompt via /dev/tty so this works under `curl | sh`. In CI or with
+    # NPCSH_NONINTERACTIVE set, auto-pick: uv if available, else a fresh venv.
+    CHOICE=""
+    if [ -z "${CI:-}" ] && [ -z "${NPCSH_NONINTERACTIVE:-}" ] && [ -e /dev/tty ]; then
+        printf "  Select an option [1]: " > /dev/tty
+        read -r CHOICE < /dev/tty || CHOICE=""
+        CHOICE="${CHOICE:-1}"
+    else
+        j=1
+        for OPT in "$@"; do
+            case "$OPT" in "uv|"*) CHOICE=$j; break ;; esac
+            j=$((j + 1))
+        done
+        if [ -z "$CHOICE" ]; then
+            j=1
+            for OPT in "$@"; do
+                case "$OPT" in "newvenv|"*) CHOICE=$j; break ;; esac
+                j=$((j + 1))
+            done
+        fi
+    fi
+
+    OPT=""
+    case "$CHOICE" in
+        ''|*[!0-9]*) ;;
+        *)
+            j=1
+            for O in "$@"; do
+                if [ "$j" = "$CHOICE" ]; then OPT="$O"; fi
+                j=$((j + 1))
+            done
+            ;;
+    esac
+    if [ -z "$OPT" ]; then
+        echo "  invalid choice; skipping npcpy setup."
+        OPT="skip|"
+    fi
+
+    PY=""
+    case "$OPT" in
+        "venv|"*)
+            PY="${OPT#venv|}/bin/python"
+            "$PY" -m pip install --quiet npcpy || true
+            ;;
+        "uv|"*)
+            if [ ! -x "$VENV_DIR/bin/python" ]; then
+                uv venv "$VENV_DIR" || true
+            fi
+            uv pip install --quiet --python "$VENV_DIR/bin/python" npcpy || true
+            PY="$VENV_DIR/bin/python"
+            ;;
+        "pyenv|"*)
+            PY="$(pyenv which python3 2>/dev/null)"
+            if [ -n "$PY" ]; then "$PY" -m pip install --quiet npcpy || true; fi
+            ;;
+        "newvenv|"*)
+            python3 -m venv "$VENV_DIR" || true
+            PY="$VENV_DIR/bin/python"
+            if [ -x "$PY" ]; then "$PY" -m pip install --quiet npcpy || true; fi
+            ;;
+        "system|"*)
+            python3 -m pip install --quiet --user npcpy || true
+            PY="python3"
+            ;;
+        "skip|"*)
+            echo "  skipped. Install later with: python3 -m pip install npcpy"
+            ;;
+    esac
+
+    if [ -n "$PY" ]; then
+        if have_npcpy "$PY"; then
+            echo "  npcpy installed successfully."
+            if [ "$PY" != "python3" ]; then
+                pin_backend_python "$PY"
+            fi
+        else
+            echo "  WARNING: npcpy could not be installed automatically."
+            echo "  Install it manually: python3 -m pip install npcpy"
+        fi
+    fi
+fi
 
 echo ""
 echo "Run 'npcsh --version' or 'npc --version' to verify."
