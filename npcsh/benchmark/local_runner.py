@@ -328,6 +328,14 @@ def _run_npcsh_attempt(
             f.write(f"\temail = {global_email}\n")
         f.write("[init]\n\tdefaultBranch = main\n")
 
+    # Keep history in the real user DB even though HOME is isolated; otherwise
+    # every benchmark run writes to a throwaway DB and the transcript is lost.
+    env["NPCSH_HISTORY_DB"] = DB_PATH
+    # The npcsh Python init path needs build/lib/npcsh because the editable
+    # install points to a source tree that is missing core modules.
+    repo_build_lib = os.path.expanduser("~/npcww/npc-core/npcsh/build/lib")
+    if os.path.isdir(repo_build_lib):
+        env["PYTHONPATH"] = repo_build_lib + os.pathsep + env.get("PYTHONPATH", "")
     env["HOME"] = tmp_home
     env["XDG_CONFIG_HOME"] = os.path.join(tmp_home, ".config")
     env["GIT_CONFIG_GLOBAL"] = fake_gitconfig
@@ -339,12 +347,14 @@ def _run_npcsh_attempt(
         env["GIT_AUTHOR_EMAIL"] = global_email
         env["GIT_COMMITTER_EMAIL"] = global_email
 
-    # The shell picks its own conversation_id and saves everything to
-    # npcsh_history.db. We do not impose one or complain when it uses its own.
-    conversation_id = ""
+    # Pin a conversation_id so the transcript is findable in npcsh_history.db
+    # after the run. Pass it through the environment so `npcsh -c` uses the same
+    # id for every message it saves.
+    conversation_id = str(uuid.uuid4())
+    env["NPCSH_CONVERSATION_ID"] = conversation_id
 
     # Pass the instruction directly to the Rust binary via its -c / --command flag.
-    print(f"  [npcsh] {instruction[:80]}... (cwd={work_dir})", flush=True)
+    print(f"  [npcsh] {instruction[:80]}... (cwd={work_dir}) conv={conversation_id}", flush=True)
     try:
         proc = subprocess.Popen(
             ["npcsh", "-c", instruction],
@@ -405,7 +415,7 @@ def _run_npcsh_attempt(
     output_text = "".join(output_lines) if output_lines else f"Timed out after {attempt_timeout:.0f}s"
 
     try:
-        os.remove(gitconfig_path)
+        os.remove(fake_gitconfig)
     except Exception:
         pass
 

@@ -756,13 +756,15 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        run_python_initialization(&db_path);
         eprintln!("Refresh complete!");
         std::process::exit(0);
     }
 
     let team_dir = find_team_dir();
-    let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+    let db_path = std::env::var("NPCSH_HISTORY_DB")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| shellexpand::tilde("~/npcsh_history.db").to_string());
 
     let team_path = std::path::Path::new(&team_dir);
     let jinxes_dir = team_path.join("jinxes");
@@ -772,10 +774,6 @@ async fn main() -> Result<()> {
             .any(|e| e.path().extension().map_or(false, |ext| ext == "npc")),
         Err(_) => false,
     };
-    if !jinxes_dir.exists() || !has_npcs {
-        run_python_initialization(&db_path);
-    }
-
     let mut current_pid: u32 = 0;
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
 
@@ -812,28 +810,67 @@ async fn main() -> Result<()> {
         }
     }
 
-    // One-shot command mode: execute a single instruction and exit.
+    // One-shot command mode: run a full agent loop for the instruction and exit.
+    // A task may require multiple LLM turns (tool call -> result -> next decision).
+    // We keep calling the model until the assistant issues a `stop` tool call,
+    // returns with no tool_calls, or we hit the safety limit.
     if let Some(cmd) = cli_command {
-        match run_stream_turn(
-            &mut kernel,
-            current_pid,
-            &cmd,
-            Mode::Agent,
-            &http_client,
-            &server_url,
-            true,
-        )
-        .await
-        {
-            Ok(output) => {
-                if !output.is_empty() {
-                    println!("{}", output);
+        const MAX_CMD_TURNS: usize = 10;
+        // In -c mode there is no interactive user to continue the loop. Tell the
+        // model explicitly to call the `stop` tool as soon as it believes the task
+        // is complete; otherwise the harness will keep feeding it tool results and
+        // it will burn turns exploring.
+        let initial_input = format!(
+            "{}\n\n[one-shot mode] Solve this and then call the `stop` tool as soon as the task is complete.",
+            cmd
+        );
+        let mut turn_input = initial_input.clone();
+        let mut last_output = String::new();
+        for turn in 0..MAX_CMD_TURNS {
+            match run_stream_turn(
+                &mut kernel,
+                current_pid,
+                &turn_input,
+                Mode::Agent,
+                &http_client,
+                &server_url,
+                true,
+            )
+            .await
+            {
+                Ok(output) => {
+                    last_output = output;
+                    let tool_calls: Vec<npcrs::ToolCall> = kernel
+                        .get_process(current_pid)
+                        .and_then(|p| p.messages.iter().rev().find(|m| m.role == "assistant"))
+                        .and_then(|m| m.tool_calls.as_ref())
+                        .cloned()
+                        .unwrap_or_default();
+                    let terminal = tool_calls.iter().any(|tc| {
+                        tc.r#type == "function" && tc.function.name == "stop"
+                    });
+                    if tool_calls.is_empty() || terminal {
+                        if !last_output.is_empty() {
+                            println!("{}", last_output);
+                        }
+                        return Ok(());
+                    }
+                    // The assistant issued non-terminal tool calls; tool_results are
+                    // already in process.messages. Feed the results back with a neutral
+                    // prompt so the model can decide whether to call stop or do more.
+                    turn_input = "The tool results are above. Call `stop` if the task is complete, otherwise take the next step.".to_string();
+                    if turn == MAX_CMD_TURNS - 1 {
+                        eprintln!("{YELLOW}Warning: reached max agent turns for -c command; stopping.{RESET}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{RED}Error: {e}{RESET}");
+                    std::process::exit(1);
                 }
             }
-            Err(e) => {
-                eprintln!("{RED}Error: {e}{RESET}");
-                std::process::exit(1);
-            }
+        }
+        if !last_output.is_empty() {
+            println!("{}", last_output);
         }
         return Ok(());
     }
@@ -1301,7 +1338,7 @@ async fn run_stream_turn_with_interrupt(
         }
     }
 
-    let (model, provider, system, npc_name, conv_id) = {
+    let (model, provider, system, npc_name, conv_id, team_name_str) = {
         let process = kernel.get_process(current_pid).ok_or_else(|| {
             npcrs::NpcError::Other(format!("No process with pid {}", current_pid))
         })?;
@@ -1310,7 +1347,15 @@ async fn run_stream_turn_with_interrupt(
         let system = process.npc.system_prompt(kernel.team.context.as_deref());
         let npc_name = process.npc.name.clone();
         let conv_id = process.conversation_id.clone();
-        (model, provider, system, npc_name, conv_id)
+        let team_name_str = kernel
+            .team
+            .source_dir
+            .as_deref()
+            .and_then(|d| std::path::Path::new(d).file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("npcsh")
+            .to_string();
+        (model, provider, system, npc_name, conv_id, team_name_str)
     };
 
     let cwd = std::env::current_dir()
@@ -1458,6 +1503,13 @@ async fn run_stream_turn_with_interrupt(
         }
     }
 
+    // Persist the user turn before we block on the LLM stream. If the parent
+    // kills us during a long generation (benchmark timeout), the user message
+    // is already in npcsh_history.db so the transcript is not lost.
+    if save_history {
+        save_conversation_message(kernel, current_pid, &Message::user(input), &cwd).await;
+    }
+
     let request = stream_client::StreamRequest {
         model,
         provider,
@@ -1501,48 +1553,68 @@ async fn run_stream_turn_with_interrupt(
         assistant_message.tool_calls = Some(response.tool_calls.clone());
     }
 
+    let in_tok = response
+        .usage
+        .as_ref()
+        .map(|u| u.prompt_tokens)
+        .unwrap_or(0);
+    let out_tok = response
+        .usage
+        .as_ref()
+        .map(|u| u.completion_tokens)
+        .unwrap_or(0);
+    let cost = response
+        .usage
+        .as_ref()
+        .map(|u| calculate_cost(&request.model, u.prompt_tokens, u.completion_tokens))
+        .unwrap_or(0.0);
+
     {
         let process = kernel.get_process_mut(current_pid).unwrap();
         process.last_streamed = response.streamed || response.message.content.is_some();
         process.last_thinking = response.message.thinking.clone();
         process.messages.push(Message::user(input));
         process.messages.push(assistant_message.clone());
-        for tr in tool_results {
-            process.messages.push(tr);
+        for tr in &tool_results {
+            process.messages.push(tr.clone());
         }
     }
 
-    let output = response.message.content.clone().unwrap_or_default();
-
+    // Save assistant and tool messages as they arrive so a timeout/kill does
+    // not lose the partial conversation. The user message was already persisted
+    // before the LLM stream started.
     if save_history {
-        let in_tok = response
-            .usage
-            .as_ref()
-            .map(|u| u.prompt_tokens)
-            .unwrap_or(0);
-        let out_tok = response
-            .usage
-            .as_ref()
-            .map(|u| u.completion_tokens)
-            .unwrap_or(0);
-        let cost = response
-            .usage
-            .as_ref()
-            .map(|u| calculate_cost(&request.model, u.prompt_tokens, u.completion_tokens))
-            .unwrap_or(0.0);
-        save_conversation_turn(
-            kernel,
-            current_pid,
-            input,
-            &output,
-            &response.message,
-            in_tok,
-            out_tok,
-            cost,
+        let assistant_for_save = response.message.clone();
+        save_conversation_message(kernel, current_pid, &assistant_for_save, &cwd).await;
+        for tr in &tool_results {
+            save_conversation_message(kernel, current_pid, tr, &cwd).await;
+        }
+
+        // Update token/cost metadata on the assistant row after the stream is
+        // complete and usage is known.
+        let _ = kernel.history.save_conversation_message(
+            &conv_id,
+            "assistant",
+            &response.message.content.clone().unwrap_or_default(),
             &cwd,
-        )
-        .await;
+            Some(&request.model),
+            Some(&request.provider),
+            Some(&npc_name),
+            Some(&team_name_str),
+            assistant_message
+                .tool_calls
+                .as_ref()
+                .map(|tcs| serde_json::to_string(tcs).unwrap_or_default())
+                .as_deref(),
+            None,
+            None,
+            Some(in_tok),
+            Some(out_tok),
+            Some(cost),
+        );
     }
+
+    let output = response.message.content.clone().unwrap_or_default();
 
     let process = kernel.get_process_mut(current_pid).unwrap();
     process.state = ProcessState::Blocked;
@@ -1787,6 +1859,67 @@ async fn run_interactive_stream_turn(
         })),
         all_queued,
     )
+}
+
+async fn save_conversation_message(
+    kernel: &mut Kernel,
+    current_pid: u32,
+    msg: &Message,
+    cwd: &str,
+) {
+    let Some(process) = kernel.get_process(current_pid) else {
+        return;
+    };
+    let model = process.npc.resolved_model();
+    let provider = process.npc.resolved_provider();
+    let npc_name = process.npc.name.clone();
+    let conv_id = process.conversation_id.clone();
+    if conv_id.is_empty() {
+        return;
+    }
+    let team_name_str = kernel
+        .team
+        .source_dir
+        .as_deref()
+        .and_then(|d| std::path::Path::new(d).file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("npcsh")
+        .to_string();
+
+    let content = msg.content.as_deref().unwrap_or("");
+    let tool_calls_json = msg
+        .tool_calls
+        .as_ref()
+        .map(|tcs| serde_json::to_string(tcs).unwrap_or_default())
+        .filter(|s| !s.is_empty());
+    let tool_results_json = msg
+        .name
+        .as_ref()
+        .map(|name| {
+            serde_json::json!({
+                "name": name,
+                "tool_call_id": msg.tool_call_id.as_deref().unwrap_or(""),
+                "content": content,
+            })
+            .to_string()
+        });
+
+    let _ = kernel.history.save_conversation_message(
+        &conv_id,
+        &msg.role,
+        content,
+        cwd,
+        Some(&model),
+        Some(&provider),
+        Some(&npc_name),
+        Some(&team_name_str),
+        tool_calls_json.as_deref(),
+        tool_results_json.as_deref(),
+        None,
+        None,
+        None,
+        None,
+    );
 }
 
 async fn save_conversation_turn(
@@ -3794,37 +3927,6 @@ fn run_reattach(kernel: &mut Kernel, current_pid: u32, filter: Option<&str>) -> 
     Ok(())
 }
 
-fn run_python_initialization(db_path: &str) {
-    eprintln!("Re-initializing npc_team from package...");
-    let output = std::process::Command::new("python3")
-        .args([
-            "-c",
-            &format!(
-                "import os; os.environ['NPCSH_INITIALIZED'] = '0'; \
-                 from npcsh._state import initialize_base_npcs_if_needed; \
-                 initialize_base_npcs_if_needed('{db_path}')"
-            ),
-        ])
-        .output();
-    match output {
-        Ok(o) if o.status.success() => {
-            eprintln!("Initialization complete.");
-        }
-        Ok(o) => {
-            eprintln!(
-                "Initialization output: {}",
-                String::from_utf8_lossy(&o.stdout)
-            );
-            eprintln!(
-                "Initialization errors: {}",
-                String::from_utf8_lossy(&o.stderr)
-            );
-        }
-        Err(e) => {
-            eprintln!("Failed to run Python initialization: {}", e);
-        }
-    }
-}
 
 async fn exec_nsh_file(
     script_path: &str,
