@@ -266,5 +266,96 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# Default chat model/provider selection
+# ---------------------------------------------------------------------------
+
+configure_model_provider() {
+    NPCSHRC="$HOME/.npcshrc"
+    NPC_TEAM_CTX="$HOME/.npcsh/npc_team/npcsh.ctx"
+
+    MODEL=""
+    PROVIDER=""
+
+    if [ -z "${CI:-}" ] && [ -z "${NPCSH_NONINTERACTIVE:-}" ] && [ -e /dev/tty ]; then
+        echo ""
+        echo "Choose your default LLM provider for npcsh chat and the global team:"
+        echo "  1) ollama     (local models, e.g. llama3.2, qwen3.5:2b)"
+        echo "  2) openai     (OpenAI API, requires OPENAI_API_KEY)"
+        echo "  3) gemini     (Google Gemini, requires GEMINI_API_KEY)"
+        echo "  4) anthropic  (Claude, requires ANTHROPIC_API_KEY)"
+        echo "  5) deepseek   (DeepSeek API, requires DEEPSEEK_API_KEY)"
+        echo "  6) skip       (configure manually later)"
+        printf "  Select an option [1]: " > /dev/tty
+        read -r PROV_CHOICE < /dev/tty || PROV_CHOICE=""
+        PROV_CHOICE="${PROV_CHOICE:-1}"
+    else
+        PROV_CHOICE="1"
+    fi
+
+    case "$PROV_CHOICE" in
+        2|openai)     PROVIDER="openai" ;;
+        3|gemini)     PROVIDER="gemini" ;;
+        4|anthropic)  PROVIDER="anthropic" ;;
+        5|deepseek)   PROVIDER="deepseek" ;;
+        6|skip)       return 0 ;;
+        *)            PROVIDER="ollama" ;;
+    esac
+
+    if [ -z "${CI:-}" ] && [ -z "${NPCSH_NONINTERACTIVE:-}" ] && [ -e /dev/tty ]; then
+        case "$PROVIDER" in
+            ollama)    DEFAULT_MODEL="llama3.2" ;;
+            openai)    DEFAULT_MODEL="gpt-4o-mini" ;;
+            gemini)    DEFAULT_MODEL="gemini-3.1-flash-preview" ;;
+            anthropic) DEFAULT_MODEL="claude-sonnet-4-6" ;;
+            deepseek)  DEFAULT_MODEL="deepseek-chat" ;;
+        esac
+        printf "  Enter default model for %s [%s]: " "$PROVIDER" "$DEFAULT_MODEL" > /dev/tty
+        read -r MODEL < /dev/tty || MODEL=""
+        MODEL="${MODEL:-$DEFAULT_MODEL}"
+    else
+        case "$PROVIDER" in
+            ollama)    MODEL="llama3.2" ;;
+            openai)    MODEL="gpt-4o-mini" ;;
+            gemini)    MODEL="gemini-3.1-flash-preview" ;;
+            anthropic) MODEL="claude-sonnet-4-6" ;;
+            deepseek)  MODEL="deepseek-chat" ;;
+        esac
+    fi
+
+    touch "$NPCSHRC"
+    for VAR in NPCSH_CHAT_MODEL NPCSH_CHAT_PROVIDER; do
+        if grep -q "^export ${VAR}=" "$NPCSHRC" 2>/dev/null; then
+            TMP_RC="$(mktemp)"
+            case "$VAR" in
+                NPCSH_CHAT_MODEL) VAL="$MODEL" ;;
+                NPCSH_CHAT_PROVIDER) VAL="$PROVIDER" ;;
+            esac
+            sed "s|^export ${VAR}=.*|export ${VAR}=\"${VAL}\"|" "$NPCSHRC" > "$TMP_RC"
+            mv "$TMP_RC" "$NPCSHRC"
+        else
+            case "$VAR" in
+                NPCSH_CHAT_MODEL) printf 'export NPCSH_CHAT_MODEL="%s"\n' "$MODEL" >> "$NPCSHRC" ;;
+                NPCSH_CHAT_PROVIDER) printf 'export NPCSH_CHAT_PROVIDER="%s"\n' "$PROVIDER" >> "$NPCSHRC" ;;
+            esac
+        fi
+    done
+
+    if [ -f "$NPC_TEAM_CTX" ]; then
+        TMP_CTX="$(mktemp)"
+        awk -v m="$MODEL" -v p="$PROVIDER" '
+            /^model:/ { print "model: " m; next }
+            /^provider:/ { print "provider: " p; next }
+            { print }
+        ' "$NPC_TEAM_CTX" > "$TMP_CTX"
+        mv "$TMP_CTX" "$NPC_TEAM_CTX"
+    fi
+
+    echo "  set NPCSH_CHAT_MODEL=$MODEL and NPCSH_CHAT_PROVIDER=$PROVIDER"
+    echo "  (source ~/.npcshrc or restart your shell to apply)"
+}
+
+configure_model_provider
+
 echo ""
 echo "Run 'npcsh --version' or 'npc --version' to verify."
