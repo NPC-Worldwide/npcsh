@@ -58,7 +58,7 @@ The table below shows scores (100 tasks).
 <tr><td>397b</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
 <tr><td rowspan="2"><b>Ornith</b></td><td>35b</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
 <tr><td>9b</td><td>v2.1.5</td><td>57/100 (57%)</td></tr>
-<tr><td><b>Kimi</b></td><td>k2.7-code</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
+<tr><td><b>Kimi K2.7-Code</b></td><td>1t (32b active)</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
 <tr><td><b>Minimax</b></td><td>m3 428b (23b active)</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
 <tr><td><b>DeepSeek</b></td><td>v4-flash 284b (13b active)</td><td>v2.1.7</td><td>95/100 (95%)</td></tr>
 <tr><td rowspan="3"><b>Mistral</b></td><td>devstral-2 123b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
