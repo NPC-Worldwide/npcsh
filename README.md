@@ -68,7 +68,7 @@ The table below shows scores (100 tasks).
 <tr><td><b>Gemma 4</b></td><td>31b</td><td>v2.1.7</td><td>92/100 (92%)</td></tr>
 <tr><td><b>Qwen3.6</b></td><td>35b</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>
 <tr><td><b>Nemotron</b></td><td>3-super 120b (12b active)</td><td>v2.1.7</td><td>88/100 (88%)</td></tr>
-<tr><td><b>Laguna XS 2.1</b></td><td>33b (3b active)</td><td>v2.1.5</td><td>24/100 (24%)</td></tr>
+<tr><td><b>Laguna XS 2.1</b></td><td>33b (3b active)</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
 </table>
 
 For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).
