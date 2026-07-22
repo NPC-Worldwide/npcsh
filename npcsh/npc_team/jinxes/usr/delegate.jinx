@@ -41,11 +41,6 @@ steps:
       target_npc = team_obj.npcs[target_name]
       target_jinxes = dict((k, v) for k, v in target_npc.jinxes_dict.items() if k != 'delegate')
 
-      # Resolve a runtime model/provider for the specialist.  Prefer the target
-      # NPC's own config, then the team's defaults, then the orchestrator's
-      # runtime values, then the jinx execution state.  This keeps delegations
-      # from failing with "No model specified" when individual .npc files omit
-      # model/provider.
       resolved_model = (
           getattr(target_npc, 'model', None)
           or getattr(team_obj, 'model', None)
