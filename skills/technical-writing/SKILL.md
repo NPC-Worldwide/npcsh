@@ -1,0 +1,68 @@
+---
+name: technical-writing
+description: Patterns for clear technical writing in documentation, READMEs, API references, and design documents.
+source_jinx: npcsh/npc_team/jinxes/skills/technical-writing.jinx
+engine: skill
+---
+
+# technical-writing
+
+Patterns for clear technical writing in documentation, READMEs, API references, and design documents.
+
+## Clarity
+
+One idea per sentence. One topic per paragraph.
+- Use simple subject-verb-object order. Avoid nested clauses.
+- Replace jargon with plain language unless the term is standard for the audience.
+- Define acronyms on first use. Do not assume the reader knows internal project names.
+- Use active voice: "The scheduler retries failed tasks" not "Failed tasks are retried by the scheduler."
+
+
+## Precision
+
+Be exact about behavior, not suggestive.
+- Write "Returns a list of strings" not "Returns some data."
+- Write "Throws ValueError if the input is negative" not "May throw an error for bad input."
+- Write "Timeout is 30 seconds" not "Timeout is fairly short."
+- Distinguish "must" (requirement), "should" (recommendation), and "may" (optional).
+
+
+## Structure
+
+Documents follow a predictable hierarchy:
+- What this is (one sentence).
+- What problem it solves (one paragraph).
+- How to use it (minimal working example).
+- Configuration or parameters (table or list with types and defaults).
+- Error handling and edge cases.
+- Limitations and assumptions.
+- Links to related docs or source code.
+Do not bury the example under three paragraphs of motivation.
+
+
+## Code-Examples
+
+Every concept must have a minimal reproducible example.
+- Show the simplest possible call that produces a valid result.
+- Show one error case if the failure mode is non-obvious.
+- Include expected output as a comment or separate block.
+- Keep examples copy-pasteable. No pseudocode in API docs.
+
+
+## Cross-References
+
+Never leave the reader hunting for related information.
+- Link to prerequisite concepts before using them.
+- Link to deeper dives from high-level summaries.
+- If a term is defined elsewhere, link the first use in each major section.
+- Keep links working. Broken links erode trust faster than missing links.
+
+
+## Revision-Checklist
+
+Before marking a doc complete:
+- Can a new reader follow the example without asking for help?
+- Are all claims verifiable (traceable to code, test, or source)?
+- Are there any ambiguous pronouns ("it", "this") that could mislead?
+- Is every number, parameter, and default current with the code?
+- Does the doc answer "what happens if this goes wrong?"
