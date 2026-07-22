@@ -64,11 +64,11 @@ The table below shows scores (100 tasks).
 <tr><td rowspan="3"><b>Mistral</b></td><td>devstral-2 123b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
 <tr><td>devstral-small-2 24b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
 <tr><td>large-3 675b</td><td>v2.1.7</td><td>89/100 (89%)</td></tr>
-<tr><td><b>North</b></td><td>mini-code-1.0 latest</td><td>v2.1.5</td><td>93/100 (93%)</td></tr>
+<tr><td><b>North Mini Code 1.0</b></td><td>30b (3b active)</td><td>v2.1.5</td><td>93/100 (93%)</td></tr>
 <tr><td><b>Gemma 4</b></td><td>31b</td><td>v2.1.7</td><td>92/100 (92%)</td></tr>
 <tr><td><b>Qwen3.6</b></td><td>35b</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>
 <tr><td><b>Nemotron</b></td><td>3-super 120b (12b active)</td><td>v2.1.7</td><td>88/100 (88%)</td></tr>
-<tr><td><b>Laguna</b></td><td>xs-2.1 latest</td><td>v2.1.5</td><td>24/100 (24%)</td></tr>
+<tr><td><b>Laguna XS 2.1</b></td><td>33b (3b active)</td><td>v2.1.5</td><td>24/100 (24%)</td></tr>
 </table>
 
 For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).
