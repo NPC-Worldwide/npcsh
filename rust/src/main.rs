@@ -4042,14 +4042,6 @@ fn readline_raw(
                 Event::Paste(text) => {
                     tab_matches.clear();
                     let text = text.replace('\r', "\n");
-                    if text.contains('\n') {
-                        buf.insert_str(pos, &text);
-                        pos += text.len();
-                        redraw_prompt(prompt, &buf, pos);
-                        io::stdout().flush()?;
-                        print!("\r\n");
-                        break Ok(ReadlineResult::Input(buf));
-                    }
                     buf.insert_str(pos, &text);
                     pos += text.len();
                     redraw_prompt(prompt, &buf, pos);
