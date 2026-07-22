@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pre-commit hook: keep skills/ in sync with npcsh/npc_team/jinxes/skills/.
+
+set -e
+
+SCRIPT="scripts/export_agent_skills.py"
+SKILLS_DIR="skills"
+
+if [ ! -f "$SCRIPT" ]; then
+    echo "export script not found: $SCRIPT" >&2
+    exit 1
+fi
+
+python3 "$SCRIPT"
+
+# Stage any generated or removed skill files.
+if git ls-files --error-unmatch "$SKILLS_DIR" >/dev/null 2>&1 || [ -d "$SKILLS_DIR" ]; then
+    git add "$SKILLS_DIR"
+fi
