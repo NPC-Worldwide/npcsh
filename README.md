@@ -53,21 +53,21 @@ The table below shows scores (100 tasks).
 
 <table>
 <tr><th>Family</th><th>Model</th><th>Version</th><th>Score</th></tr>
-<tr><td rowspan="2"><b>Qwen3.5</b></td><td>35b</td><td>v2.1.5</td><td>97/100 (97%)</td></tr>
+<tr><td rowspan="3"><b>Qwen3.5</b></td><td>35b</td><td>v2.1.5</td><td>97/100 (97%)</td></tr>
 <tr><td>9b</td><td>v2.1.5</td><td>95/100 (95%)</td></tr>
-<tr><td><b>Qwen3.6</b></td><td>35b</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>
+<tr><td>3.5-cloud</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
 <tr><td rowspan="2"><b>Ornith</b></td><td>35b</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
 <tr><td>9b</td><td>v2.1.5</td><td>57/100 (57%)</td></tr>
-<tr><td><b>North</b></td><td>mini-code-1.0 latest</td><td>v2.1.5</td><td>93/100 (93%)</td></tr>
-<tr><td rowspan="9"><b>Cloud</b></td><td>kimi-k2.7-code</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
-<tr><td>qwen3.5</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
-<tr><td>minimax-m3</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
-<tr><td>deepseek-v4-flash</td><td>v2.1.7</td><td>95/100 (95%)</td></tr>
-<tr><td>devstral-2 123b-cloud</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
+<tr><td><b>Kimi</b></td><td>k2.7-code</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
+<tr><td><b>Minimax</b></td><td>m3</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
+<tr><td><b>DeepSeek</b></td><td>v4-flash</td><td>v2.1.7</td><td>95/100 (95%)</td></tr>
+<tr><td rowspan="3"><b>Mistral</b></td><td>devstral-2 123b-cloud</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
 <tr><td>devstral-small-2 24b-cloud</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
-<tr><td>gemma4 31b-cloud</td><td>v2.1.7</td><td>92/100 (92%)</td></tr>
-<tr><td>mistral-large-3 675b-cloud</td><td>v2.1.7</td><td>89/100 (89%)</td></tr>
-<tr><td>nemotron-3-super</td><td>v2.1.7</td><td>88/100 (88%)</td></tr>
+<tr><td>large-3 675b-cloud</td><td>v2.1.7</td><td>89/100 (89%)</td></tr>
+<tr><td><b>North</b></td><td>mini-code-1.0 latest</td><td>v2.1.5</td><td>93/100 (93%)</td></tr>
+<tr><td><b>Gemma</b></td><td>4 31b-cloud</td><td>v2.1.7</td><td>92/100 (92%)</td></tr>
+<tr><td><b>Qwen3.6</b></td><td>35b</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>
+<tr><td><b>Nemotron</b></td><td>3-super</td><td>v2.1.7</td><td>88/100 (88%)</td></tr>
 <tr><td><b>Laguna</b></td><td>xs-2.1 latest</td><td>v2.1.5</td><td>24/100 (24%)</td></tr>
 </table>
 
