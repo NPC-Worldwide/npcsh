@@ -37,7 +37,17 @@ NPCSH_SPECIFIC_CATEGORIES = frozenset({
     "delegation", "tool-chain", "image-gen", "audio-gen", "web-search",
 })
 
-DB_PATH = os.path.expanduser("~/npcsh_history.db")
+def _benchmark_dir() -> Path:
+    """Root directory for all benchmark state; override with NPCSH_BENCHMARK_DIR."""
+    return Path(os.environ.get("NPCSH_BENCHMARK_DIR", os.path.expanduser("~/.npcsh")))
+
+
+def _history_db_path() -> str:
+    """History DB used by the benchmark runner; defaults inside NPCSH_BENCHMARK_DIR."""
+    return os.environ.get("NPCSH_HISTORY_DB", str(_benchmark_dir() / "npcsh_history.db"))
+
+
+DB_PATH = _history_db_path()
 
 
 def _find_npcsh_bin() -> str:
@@ -294,6 +304,10 @@ def _run_npcsh_attempt(
     env = os.environ.copy()
     # Ensure the Rust npcsh binary in ~/.npcsh/bin wins over any Python shim.
     bin_dir = os.path.expanduser("~/.npcsh/bin")
+    # In a container the binary is installed system-wide; don't force the local
+    # ~/.npcsh/bin path if it doesn't exist and npcsh is already on PATH.
+    if not os.path.isdir(bin_dir) and shutil.which("npcsh"):
+        bin_dir = os.path.dirname(shutil.which("npcsh"))
     env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
     env["NPCSH_CHAT_MODEL"] = model
     env["NPCSH_CHAT_PROVIDER"] = provider
@@ -711,7 +725,7 @@ def run_benchmark(
                        framework=framework)
     report = BenchmarkReport(model=model, provider=provider, total=len(tasks))
 
-    report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
+    report_dir = _benchmark_dir() / "benchmarks" / "local"
     safe_model = model.replace("/", "_").replace(":", "_")
     checkpoint_file = report_dir / f"{framework}_{provider}_{safe_model}_running.csv"
     completed_ids = set()
@@ -793,7 +807,7 @@ def run_benchmark(
         if result.passed:
             report.by_difficulty[diff]["passed"] += 1
 
-        report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
+        report_dir = _benchmark_dir() / "benchmarks" / "local"
         report_dir.mkdir(parents=True, exist_ok=True)
         safe_model = model.replace("/", "_").replace(":", "_")
         conv_dir = report_dir / "conversations"
@@ -834,7 +848,7 @@ def run_benchmark(
     for diff, stats in sorted(report.by_difficulty.items()):
         print(f"  {diff:<10} {stats['passed']}/{stats['total']}")
 
-    report_dir = Path.home() / ".npcsh" / "benchmarks" / "local"
+    report_dir = _benchmark_dir() / "benchmarks" / "local"
     report_dir.mkdir(parents=True, exist_ok=True)
     conv_dir = report_dir / "conversations"
     conv_dir.mkdir(parents=True, exist_ok=True)

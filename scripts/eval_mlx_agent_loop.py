@@ -74,7 +74,8 @@ def run_task(task, model, timeout=120, max_attempts=3):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--n-per-category", type=int, default=1)
-    p.add_argument("--output-dir", default="~/.npcsh/benchmarks/ratings")
+    bench_root = Path(os.environ.get("NPCSH_BENCHMARK_DIR", "~/.npcsh")).expanduser()
+    p.add_argument("--output-dir", default=str(bench_root / "benchmarks" / "ratings"))
     p.add_argument("--timeout", type=int, default=120,
                    help="Per-task wall-clock budget in seconds")
     p.add_argument("--max-attempts", type=int, default=3,

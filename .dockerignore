@@ -8,3 +8,15 @@ dist
 *.egg-info
 .npcsh_global
 .DS_Store
+
+# Benchmark / model artifacts that should never be copied into the image.
+results/
+adapters/
+models/
+rust/target/
+*.egg-info
+node_modules/
+.pytest_cache/
+.ruff_cache/
+.git/
+.github/

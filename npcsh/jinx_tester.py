@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -382,7 +383,8 @@ def print_report(report: JinxTestReport) -> None:
 def write_report_csv(report: JinxTestReport, output_dir: Optional[str] = None) -> Path:
     """Write the report to a timestamped CSV under ~/.npcsh/benchmarks/jinxes/."""
     if output_dir is None:
-        output_dir = Path.home() / ".npcsh" / "benchmarks" / "jinxes"
+        bench_root = Path(os.environ.get("NPCSH_BENCHMARK_DIR", Path.home() / ".npcsh"))
+        output_dir = bench_root / "benchmarks" / "jinxes"
     else:
         output_dir = Path(output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -406,3 +408,42 @@ def write_report_csv(report: JinxTestReport, output_dir: Optional[str] = None) -
     ])
     df.to_csv(out_path, index=False)
     return out_path
+
+
+def main() -> None:
+    """CLI entry point for jinx test/benchmark discovery and execution."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run jinx-level tests and benchmarks")
+    parser.add_argument("--team-dir", default=None,
+                        help="Team directory to scan (default: ~/.npcsh/npc_team)")
+    parser.add_argument("--integration", action="store_true",
+                        help="Run npc_usage integration tests")
+    parser.add_argument("--jinx", default=None, help="Filter to a single jinx name")
+    parser.add_argument("--test", default=None, help="Filter to a single test id")
+    parser.add_argument("--csv", action="store_true", help="Write results CSV")
+    parser.add_argument("--output-dir", default=None, help="CSV output directory")
+    args = parser.parse_args()
+
+    team_dir = args.team_dir
+    if team_dir is None:
+        team_dir = os.path.expanduser("~/.npcsh/npc_team")
+
+    report = run_all_tests(
+        team_dir=team_dir,
+        integration=args.integration,
+        jinx_filter=args.jinx,
+        test_filter=args.test,
+    )
+    print_report(report)
+
+    if args.csv:
+        out_path = write_report_csv(report, output_dir=args.output_dir)
+        print(f"CSV written to: {out_path}")
+
+    if report.failed:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
