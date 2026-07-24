@@ -15,10 +15,54 @@ COMPOSE_FILE="$REPO_ROOT/docker-compose.benchmark.yml"
 # Results go here on the host.  It is git-ignored via the top-level results/ entry.
 mkdir -p "$REPO_ROOT/results/npcsh"
 
+# Determine effective Ollama URL for the preflight check.
+OLLAMA_HOST="${OLLAMA_HOST:-http://host.docker.internal:11434}"
+
+preflight_check() {
+    if ! command -v curl >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # On macOS, Ollama normally listens on localhost:11434.  The *container*
+    # uses host.docker.internal, but from the host shell localhost is the right
+    # address to preflight.  Try both.
+    reachable=false
+    for url in "http://localhost:11434" "$OLLAMA_HOST"; do
+        if curl -fsS "$url/api/tags" >/dev/null 2>&1; then
+            reachable=true
+            break
+        fi
+    done
+
+    if [[ "$reachable" != true ]]; then
+        echo "⚠️  Could not reach Ollama from this host." >&2
+        echo "    The benchmark container will use $OLLAMA_HOST." >&2
+        echo "" >&2
+        if [[ "$OSTYPE" == darwin* ]]; then
+            echo "    Make sure the Ollama app is running (e.g. \`ollama pull gemma4:e2b\`)." >&2
+            echo "    Docker Desktop will proxy host.docker.internal to the host." >&2
+        else
+            echo "    Linux: Ollama must listen on an interface reachable from Docker." >&2
+            echo "    Start it with: OLLAMA_HOST=0.0.0.0:11434 ollama serve" >&2
+            echo "    Or override:   OLLAMA_HOST=http://<host-ip>:11434 scripts/docker-benchmark.sh ..." >&2
+        fi
+        echo "" >&2
+        read -r -p "Continue anyway? [y/N] " answer >&2 || true
+        [[ "$answer" =~ ^[Yy]$ ]] || exit 1
+    fi
+}
+
 cd "$REPO_ROOT"
 
 COMMAND="${1:-local}"
 shift || true
+
+# Skip preflight for build/shell where a model isn't required.
+case "$COMMAND" in
+    local|bench|benchmark|jinx|jinxes|rate|compare)
+        preflight_check
+        ;;
+esac
 
 case "$COMMAND" in
     build)

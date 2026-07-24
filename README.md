@@ -66,7 +66,8 @@ The table below shows scores (100 tasks).
 <tr><td>devstral-2 123b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
 <tr><td>large-3 675b</td><td>v2.1.7</td><td>89/100 (89%)</td></tr>
 <tr><td><b>North Mini Code 1.0</b></td><td>30b (3b active)</td><td>v2.1.5</td><td>93/100 (93%)</td></tr>
-<tr><td rowspan="3"><b>Gemma 4</b></td><td>4b (e4b)</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
+<tr><td rowspan="4"><b>Gemma 4</b></td><td>2b (e2b)</td><td>v2.1.7</td><td>92/100 (92%)</td></tr>
+<tr><td>4b (e4b)</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
 <tr><td>26b</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
 <tr><td>31b</td><td>v2.1.7</td><td>92/100 (92%)</td></tr>
 <tr><td><b>Qwen3.6</b></td><td>35b</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>

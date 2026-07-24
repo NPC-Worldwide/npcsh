@@ -9,14 +9,12 @@ WORKDIR /opt/npcsh
 COPY rust/Cargo.toml rust/Cargo.lock ./
 COPY rust/src ./src
 COPY rust/build.rs ./
-COPY rust/scripts ./scripts
-COPY rust/jinxes ./jinxes
 RUN cargo build --release
 
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsqlite3-0 libssl3 ca-certificates curl git \
+    libsqlite3-0 libssl3 ca-certificates curl git util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 # npcpy is a separate repo.  Clone it from GitHub so the image can always
@@ -24,7 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG NPCPY_REPO=https://github.com/NPC-Worldwide/npcpy.git
 ARG NPCPY_REF=main
 RUN git clone --depth 1 --branch "${NPCPY_REF}" "${NPCPY_REPO}" /opt/npcpy \
-    && pip install --no-cache-dir -e /opt/npcpy
+    && pip install --no-cache-dir -e /opt/npcpy \
+    && pip install --no-cache-dir ollama litellm
 
 WORKDIR /opt/npcsh
 COPY . /opt/npcsh
@@ -47,13 +46,10 @@ RUN printf '%s\n' \
     "export NPCSH_DEFAULT_MODE=agent" \
     "export NPCSH_EMBEDDING_MODEL=nomic-embed-text" \
     "export NPCSH_EMBEDDING_PROVIDER=ollama" \
-    "export NPCSH_DB_PATH=/data/npcsh/npcsh_history.db" \
     "export NPCSH_INITIALIZED=1" \
     > /root/.npcshrc
 
 ENV NPCSH_BENCHMARK_DIR=/data/npcsh \
-    NPCSH_HISTORY_DB=/data/npcsh/npcsh_history.db \
-    NPCSH_DB_PATH=/data/npcsh/npcsh_history.db \
     NPCSH_NPC_TEAM_DIR=/root/.npcsh/npc_team \
     NPCSH_ACCEPT_PERMISSIONS=1 \
     PYTHONPATH=/opt/npcsh:/opt/npcpy \

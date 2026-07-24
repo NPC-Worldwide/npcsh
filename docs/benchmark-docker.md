@@ -22,7 +22,19 @@ All outputs land in `./results/npcsh/` on the host. The container's `/data/npcsh
 
 ## Networking
 
-The compose file uses `network_mode: host` by default so the container can reach Ollama running on the host's loopback interface. This works on Linux. On macOS, Docker Desktop does not support host networking; either expose Ollama on `0.0.0.0` or set `NPCSH_API_URL`/`OLLAMA_HOST` to `http://host.docker.internal:11434`.
+The container reaches Ollama at `http://host.docker.internal:11434` by default. This works automatically on Docker Desktop for macOS and Windows.
+
+On Linux, Ollama must be listening on an interface reachable from the Docker bridge. The easiest way is:
+
+```bash
+OLLAMA_HOST=0.0.0.0:11434 ollama serve
+```
+
+Then run the benchmark normally. Alternatively, override the host address:
+
+```bash
+OLLAMA_HOST=http://<host-ip>:11434 scripts/docker-benchmark.sh local --model gemma4:e2b --provider ollama
+```
 
 ## Commands
 
@@ -41,10 +53,9 @@ The compose file uses `network_mode: host` by default so the container can reach
 The container sets these by default:
 
 - `NPCSH_BENCHMARK_DIR=/data/npcsh`
-- `NPCSH_HISTORY_DB=/data/npcsh/npcsh_history.db`
-- `NPCSH_DB_PATH=/data/npcsh/npcsh_history.db`
 - `NPCSH_NPC_TEAM_DIR=/root/.npcsh/npc_team`
 - `NPCSH_INITIALIZED=1`
 - `NPCSH_ACCEPT_PERMISSIONS=1`
+- `OLLAMA_HOST=http://host.docker.internal:11434`
 
 Override them in `docker-compose.benchmark.yml` or pass `-e KEY=value` via the `run` command.

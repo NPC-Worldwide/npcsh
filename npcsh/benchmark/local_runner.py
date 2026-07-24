@@ -11,16 +11,17 @@ Usage:
     python -m npcsh.benchmark.local_runner --task-id shell-pipe-01
 """
 
+import argparse
 import os
 import queue
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
 import uuid
-import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -365,8 +366,20 @@ def _run_npcsh_attempt(
     # Pass the instruction directly to the Rust binary via its -c / --command flag.
     print(f"  [npcsh] {instruction[:80]}... (cwd={work_dir}) conv={conversation_id}", flush=True)
     try:
+        # npcsh's interactive terminal code needs a controlling TTY.  In a
+        # non-interactive environment (CI, Docker), run it through `script` to
+        # allocate a pseudo-terminal.  This mirrors a normal shell session
+        # without touching the host's actual terminal or shell configuration.
+        if shutil.which("script"):
+            cmd = [
+                "script", "-qec",
+                f"npcsh -c {shlex.quote(instruction)}",
+                "/dev/null",
+            ]
+        else:
+            cmd = ["npcsh", "-c", instruction]
         proc = subprocess.Popen(
-            ["npcsh", "-c", instruction],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

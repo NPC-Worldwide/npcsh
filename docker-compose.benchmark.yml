@@ -5,18 +5,17 @@ services:
       dockerfile: Dockerfile.benchmark
     image: npcsh-benchmark:latest
     container_name: npcsh-benchmark
-    # host networking lets the container reach a locally running Ollama on
-    # Linux.  On macOS Docker Desktop does not support host networking; use
-    # NPCSH_API_URL or ollama's host.docker.internal listener instead.
-    network_mode: host
     environment:
       - NPCSH_BENCHMARK_DIR=/data/npcsh
-      - NPCSH_HISTORY_DB=/data/npcsh/npcsh_history.db
-      - NPCSH_DB_PATH=/data/npcsh/npcsh_history.db
       - NPCSH_NPC_TEAM_DIR=/root/.npcsh/npc_team
       - NPCSH_INITIALIZED=1
       - NPCSH_ACCEPT_PERMISSIONS=1
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
+      # Default to the Docker host gateway. Works automatically on Docker
+      # Desktop (macOS/Windows). On Linux, ensure ollama is bound to 0.0.0.0:11434
+      # or override with OLLAMA_HOST=http://<host-ip>:11434.
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # All benchmark state (CSVs, DB, transcripts) land here.  Host ~/.npcsh
       # is intentionally NOT mounted.
