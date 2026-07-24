@@ -1,0 +1,27 @@
+services:
+  benchmark:
+    build:
+      context: .
+      dockerfile: Dockerfile.benchmark
+    image: npcsh-benchmark:latest
+    container_name: npcsh-benchmark
+    environment:
+      - NPCSH_BENCHMARK_DIR=/data/npcsh
+      - NPCSH_NPC_TEAM_DIR=/root/.npcsh/npc_team
+      - NPCSH_INITIALIZED=1
+      - NPCSH_ACCEPT_PERMISSIONS=1
+      # Default to the Docker host gateway. Works automatically on Docker
+      # Desktop (macOS/Windows). On Linux, ensure ollama is bound to 0.0.0.0:11434
+      # or override with OLLAMA_HOST=http://<host-ip>:11434.
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # All benchmark state (CSVs, DB, transcripts) land here.  Host ~/.npcsh
+      # is intentionally NOT mounted.
+      - ./results/npcsh:/data/npcsh
+      - .:/opt/npcsh:ro
+    working_dir: /workspace
+    # Keep the container alive only while the benchmark runs.
+    stdin_open: false
+    tty: false

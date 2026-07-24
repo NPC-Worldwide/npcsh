@@ -21,6 +21,10 @@ from pathlib import Path
 import pandas as pd
 
 
+def _bench_root() -> Path:
+    return Path(os.environ.get("NPCSH_BENCHMARK_DIR", "~/.npcsh")).expanduser()
+
+
 def parse_trace(trace_str: str):
     if not trace_str or "---TRACE---" not in trace_str:
         return None
@@ -360,7 +364,7 @@ def main():
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--csv-dir", default="~/.npcsh/benchmarks/local")
+    common.add_argument("--csv-dir", default=str(_bench_root() / "benchmarks" / "local"))
     common.add_argument("--pattern", default="*.csv")
     common.add_argument("--model", required=True)
     common.add_argument("--output", default="adapters/npcsh_trained")
@@ -377,7 +381,7 @@ def main():
                         help="Reward formula when --ratings is set")
     common.add_argument("--dry-run", action="store_true",
                         help="Build the dataset and dump to CSV, do not train")
-    common.add_argument("--dump-dir", default="~/.npcsh/benchmarks/datasets",
+    common.add_argument("--dump-dir", default=str(_bench_root() / "benchmarks" / "datasets"),
                         help="Where --dry-run writes the built dataset CSV")
 
     sft_p = sub.add_parser("sft", parents=[common])

@@ -42,7 +42,8 @@ import pandas as pd
 from npcpy.llm_funcs import get_llm_response
 from npcpy.npc_compiler import NPC
 
-RATINGS_DIR = Path("~/.npcsh/benchmarks/ratings").expanduser()
+_BENCH_ROOT = Path(os.environ.get("NPCSH_BENCHMARK_DIR", "~/.npcsh")).expanduser()
+RATINGS_DIR = Path(os.environ.get("NPCSH_RATINGS_DIR", _BENCH_ROOT / "benchmarks" / "ratings")).expanduser()
 TASKS_CSV = Path(__file__).resolve().parent.parent / "npcsh" / "benchmark" / "tasks.csv"
 
 RATING_COLUMNS = [
@@ -63,7 +64,7 @@ DEFAULT_JUDGE_PANEL = [
     ("alicanto", "qwen3.5:cloud"),
     ("sibiji", "minimax-m3:cloud"),
 ]
-NPC_TEAM_DIR = Path("~/.npcsh/npc_team").expanduser()
+NPC_TEAM_DIR = Path(os.environ.get("NPCSH_NPC_TEAM_DIR", "~/.npcsh/npc_team")).expanduser()
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -465,9 +466,9 @@ def trace_seen_key(trace):
 
 def main():
     parser = argparse.ArgumentParser(description="LLM-as-judge rater for npcsh traces")
-    parser.add_argument("--csv-dir", default="~/.npcsh/benchmarks/local",
+    parser.add_argument("--csv-dir", default=str(_BENCH_ROOT / "benchmarks" / "local"),
                         help="Benchmark CSV dir (set empty to skip CSV source)")
-    parser.add_argument("--db", default="~/npcsh_history.db",
+    parser.add_argument("--db", default=os.environ.get("NPCSH_HISTORY_DB", str(_BENCH_ROOT / "npcsh_history.db")),
                         help="npcsh history DB path (set empty to skip DB source)")
     parser.add_argument("--since", default="7 days", help="DB lookback window")
     parser.add_argument("--limit", type=int, default=0,

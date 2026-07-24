@@ -1,0 +1,64 @@
+# syntax=docker/dockerfile:1
+FROM rust:1.88-slim-bookworm AS rust-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libsqlite3-dev libssl-dev cmake build-essential git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/npcsh
+COPY rust/Cargo.toml rust/Cargo.lock ./
+COPY rust/src ./src
+COPY rust/build.rs ./
+RUN cargo build --release
+
+FROM python:3.12-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsqlite3-0 libssl3 ca-certificates curl git util-linux \
+    && rm -rf /var/lib/apt/lists/*
+
+# npcpy is a separate repo.  Clone it from GitHub so the image can always
+# build without requiring the sibling checkout in the build context.
+ARG NPCPY_REPO=https://github.com/NPC-Worldwide/npcpy.git
+ARG NPCPY_REF=main
+RUN git clone --depth 1 --branch "${NPCPY_REF}" "${NPCPY_REPO}" /opt/npcpy \
+    && pip install --no-cache-dir -e /opt/npcpy \
+    && pip install --no-cache-dir ollama litellm
+
+WORKDIR /opt/npcsh
+COPY . /opt/npcsh
+RUN pip install --no-cache-dir -e . || true
+
+COPY --from=rust-builder /opt/npcsh/target/release/npcsh /usr/local/bin/npcsh
+COPY --from=rust-builder /opt/npcsh/target/release/npc /usr/local/bin/npc
+
+# Pre-seed the container home with the bundled npc_team so the Rust binary does
+# not try to copy from the host into /root/.npcsh.
+RUN mkdir -p /root/.npcsh/npc_team && \
+    cp -r /opt/npcsh/npcsh/npc_team/* /root/.npcsh/npc_team/ && \
+    cp /opt/npcsh/npcsh/npc_team/.package_manifest.json /root/.npcsh/npc_team/ 2>/dev/null || true
+
+# Minimal rc so the binary never writes a fresh one and the container defaults
+# are sane.  Override these at runtime.
+RUN printf '%s\n' \
+    "export NPCSH_CHAT_MODEL=qwen3.5:2b" \
+    "export NPCSH_CHAT_PROVIDER=ollama" \
+    "export NPCSH_DEFAULT_MODE=agent" \
+    "export NPCSH_EMBEDDING_MODEL=nomic-embed-text" \
+    "export NPCSH_EMBEDDING_PROVIDER=ollama" \
+    "export NPCSH_INITIALIZED=1" \
+    > /root/.npcshrc
+
+ENV NPCSH_BENCHMARK_DIR=/data/npcsh \
+    NPCSH_NPC_TEAM_DIR=/root/.npcsh/npc_team \
+    NPCSH_ACCEPT_PERMISSIONS=1 \
+    PYTHONPATH=/opt/npcsh:/opt/npcpy \
+    PATH=/usr/local/bin:$PATH
+
+VOLUME ["/data/npcsh"]
+WORKDIR /workspace
+
+COPY scripts/docker-entrypoint.benchmark.sh /usr/local/bin/docker-entrypoint.benchmark.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.benchmark.sh
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.benchmark.sh"]
