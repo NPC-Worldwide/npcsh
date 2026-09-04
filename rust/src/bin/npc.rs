@@ -1,5 +1,5 @@
 use npcrs::error::Result;
-use npcsh::{exec_jinx_file, exec_npc_file, find_team_dir, init_team, resolve_team_layout};
+use npcsh::{agent_turn, exec_jinx_file, exec_npc_file, find_team_dir, init_team, resolve_team_layout};
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: &str = "5237";
@@ -103,17 +103,11 @@ async fn main() -> Result<()> {
                 eprintln!("       npc <file.npc|file.jinx|init> [args...]");
                 std::process::exit(1);
             }
-            let npc_name = override_npc.as_deref().unwrap_or(DEFAULT_NPC);
-            let npc_file = resolve_npc_file(npc_name).unwrap_or_else(|| {
-                eprintln!("Error: could not find NPC file for '{}'", npc_name);
-                std::process::exit(1);
-            });
-            let client = reqwest::Client::new();
-            return exec_npc_file(
-                &npc_file,
-                Some(&prompt),
-                &client,
-                &server_url(),
+            // Use the same refactored one-shot agent loop that `npcsh -c` uses so
+            // jinxes, tool calls, and the full kernel context behave identically.
+            return agent_turn::run_command(
+                &prompt,
+                override_npc.as_deref(),
                 override_model.as_deref(),
                 override_provider.as_deref(),
             )
