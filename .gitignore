@@ -15,7 +15,6 @@ dist/
 *.python-version
 
 rust/target/
-rust/Cargo.lock
 
 npcsh/bin/*
 !npcsh/bin/.gitkeep

@@ -1,5 +1,2 @@
 # Python backend for npcsh.
-# Pin to the npcpy branch containing the agent/sub-agent fixes.
-# Once npcpy 2.1.17 is released to PyPI, replace the git URL with:
-#   npcpy==2.1.17
-npcpy @ git+https://github.com/NPC-Worldwide/npcpy.git@caug/v2.1.17
+npcpy==2.1.17
