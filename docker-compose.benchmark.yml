@@ -21,7 +21,9 @@ services:
       # is intentionally NOT mounted.
       - ./results/npcsh:/data/npcsh
       - .:/opt/npcsh:ro
-      - ../npcpy:/opt/npcpy:ro
+      # npcpy is now pinned via requirements.txt; remove the sibling-mount
+      # fallback so the image uses the locked version instead of the host tree.
+      # - ../npcpy:/opt/npcpy:ro
     working_dir: /workspace
     # Keep the container alive only while the benchmark runs.
     stdin_open: false

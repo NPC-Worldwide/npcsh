@@ -4910,7 +4910,7 @@ fn colorize_input(buf: &str, jinx_names: &[String]) -> String {
     }
     let start = buf.find(|c: char| !c.is_whitespace()).unwrap_or(0);
     let end = start + first.len();
-    format!("{}{}{}[0m{}", &buf[..start], color, first, &buf[end..])
+    format!("{}{}{}{}{}", &buf[..start], color, first, RESET, &buf[end..])
 }
 
 fn input_hint(buf: &str, mode: Mode, jinx_names: &[String]) -> Option<String> {
@@ -5292,36 +5292,41 @@ mod tests {
 
     #[test]
     fn classify_known_core_command() {
-        assert_eq!(classify_input("/help"), TokenClass::CoreCommand);
-        assert_eq!(classify_input("/exit now"), TokenClass::CoreCommand);
+        let jinx_names: &[String] = &[];
+        assert_eq!(classify_input("/help", jinx_names), TokenClass::CoreCommand);
+        assert_eq!(classify_input("/exit now", jinx_names), TokenClass::CoreCommand);
     }
 
     #[test]
     fn classify_npc_ref() {
-        assert_eq!(classify_input("@alice"), TokenClass::NpcRef);
-        assert_eq!(classify_input("@bob hi"), TokenClass::NpcRef);
+        let jinx_names: &[String] = &[];
+        assert_eq!(classify_input("@alice", jinx_names), TokenClass::NpcRef);
+        assert_eq!(classify_input("@bob hi", jinx_names), TokenClass::NpcRef);
     }
 
     #[test]
     fn classify_unknown_slash() {
-        assert_eq!(classify_input("/foobar"), TokenClass::UnknownSlash);
+        let jinx_names: &[String] = &[];
+        assert_eq!(classify_input("/foobar", jinx_names), TokenClass::UnknownSlash);
     }
 
     #[test]
     fn colorize_core_command_wraps_first_token() {
-        let out = colorize_input("/help foo");
+        let jinx_names: &[String] = &[];
+        let out = colorize_input("/help foo", jinx_names);
         assert!(out.starts_with(CYAN));
         assert!(out.contains("/help"));
         assert!(out.ends_with(" foo"));
 
-        let with_space = colorize_input("  /help");
+        let with_space = colorize_input("  /help", jinx_names);
         assert!(with_space.starts_with("  "));
         assert!(with_space.contains("/help"));
     }
 
     #[test]
     fn colorize_bash_command_first_token() {
-        let out = colorize_input("ls -la");
+        let jinx_names: &[String] = &[];
+        let out = colorize_input("ls -la", jinx_names);
         assert!(out.starts_with(YELLOW));
         assert!(out.contains("ls"));
         assert!(out.contains("\u{001b}[0m -la"));
@@ -5329,25 +5334,29 @@ mod tests {
 
     #[test]
     fn colorize_text_untouched() {
-        assert_eq!(colorize_input("hello world"), "hello world");
+        let jinx_names: &[String] = &[];
+        assert_eq!(colorize_input("hello world", jinx_names), "hello world");
     }
 
     #[test]
     fn input_hint_for_bash_in_agent_mode() {
+        let jinx_names: &[String] = &[];
         assert_eq!(
-            input_hint("ls -la", Mode::Agent),
+            input_hint("ls -la", Mode::Agent, jinx_names),
             Some("will execute as bash".to_string())
         );
     }
 
     #[test]
     fn input_hint_no_hint_for_cd_or_editors() {
-        assert_eq!(input_hint("cd /tmp", Mode::Agent), None);
-        assert_eq!(input_hint("vim file.txt", Mode::Agent), None);
+        let jinx_names: &[String] = &[];
+        assert_eq!(input_hint("cd /tmp", Mode::Agent, jinx_names), None);
+        assert_eq!(input_hint("vim file.txt", Mode::Agent, jinx_names), None);
     }
 
     #[test]
     fn input_hint_no_hint_in_chat_mode() {
-        assert_eq!(input_hint("ls -la", Mode::Chat), None);
+        let jinx_names: &[String] = &[];
+        assert_eq!(input_hint("ls -la", Mode::Chat, jinx_names), None);
     }
 }

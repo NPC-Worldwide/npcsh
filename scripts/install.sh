@@ -54,6 +54,24 @@ echo "Installing npcsh ${TAG} for ${OS}/${ARCH}..."
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+REQUIREMENTS_URL="https://raw.githubusercontent.com/${REPO}/${TAG}/requirements.txt"
+REQUIREMENTS_FILE="${TMP_DIR}/requirements.txt"
+
+fetch_requirements() {
+    if curl -fsSL "$REQUIREMENTS_URL" -o "$REQUIREMENTS_FILE" 2>/dev/null; then
+        echo "$REQUIREMENTS_FILE"
+    elif [ -f "$(dirname "$0")/../requirements.txt" ]; then
+        echo "$(dirname "$0")/../requirements.txt"
+    else
+        echo ""
+    fi
+}
+
+NPCPY_REQUIREMENTS="$(fetch_requirements)"
+if [ -z "$NPCPY_REQUIREMENTS" ]; then
+    echo "  WARNING: could not fetch requirements.txt; npcpy install may use an unpinned version."
+fi
+
 mkdir -p "$INSTALL_DIR"
 
 install_binary() {
@@ -226,30 +244,30 @@ else
     case "$OPT" in
         "venv|"*)
             PY="${OPT#venv|}/bin/python"
-            "$PY" -m pip install --quiet npcpy || true
+            if [ -n "$NPCPY_REQUIREMENTS" ]; then "$PY" -m pip install --quiet -r "$NPCPY_REQUIREMENTS" || true; else "$PY" -m pip install --quiet npcpy || true; fi
             ;;
         "uv|"*)
             if [ ! -x "$VENV_DIR/bin/python" ]; then
                 uv venv "$VENV_DIR" || true
             fi
-            uv pip install --quiet --python "$VENV_DIR/bin/python" npcpy || true
+            if [ -n "$NPCPY_REQUIREMENTS" ]; then uv pip install --quiet --python "$VENV_DIR/bin/python" -r "$NPCPY_REQUIREMENTS" || true; else uv pip install --quiet --python "$VENV_DIR/bin/python" npcpy || true; fi
             PY="$VENV_DIR/bin/python"
             ;;
         "pyenv|"*)
             PY="$(pyenv which python3 2>/dev/null)"
-            if [ -n "$PY" ]; then "$PY" -m pip install --quiet npcpy || true; fi
+            if [ -n "$PY" ]; then if [ -n "$NPCPY_REQUIREMENTS" ]; then "$PY" -m pip install --quiet -r "$NPCPY_REQUIREMENTS" || true; else "$PY" -m pip install --quiet npcpy || true; fi; fi
             ;;
         "newvenv|"*)
             python3 -m venv "$VENV_DIR" || true
             PY="$VENV_DIR/bin/python"
-            if [ -x "$PY" ]; then "$PY" -m pip install --quiet npcpy || true; fi
+            if [ -x "$PY" ]; then if [ -n "$NPCPY_REQUIREMENTS" ]; then "$PY" -m pip install --quiet -r "$NPCPY_REQUIREMENTS" || true; else "$PY" -m pip install --quiet npcpy || true; fi; fi
             ;;
         "system|"*)
-            python3 -m pip install --quiet --user npcpy || true
+            if [ -n "$NPCPY_REQUIREMENTS" ]; then python3 -m pip install --quiet --user -r "$NPCPY_REQUIREMENTS" || true; else python3 -m pip install --quiet --user npcpy || true; fi
             PY="python3"
             ;;
         "skip|"*)
-            echo "  skipped. Install later with: python3 -m pip install npcpy"
+            echo "  skipped. Install later with: python3 -m pip install -r requirements.txt"
             ;;
     esac
 
@@ -261,7 +279,7 @@ else
             fi
         else
             echo "  WARNING: npcpy could not be installed automatically."
-            echo "  Install it manually: python3 -m pip install npcpy"
+            echo "  Install it manually: python3 -m pip install -r requirements.txt"
         fi
     fi
 fi
