@@ -1,13 +1,18 @@
 permissions:
   default: ask
 jinx_name: convene
-description: Start a group discussion between multiple NPCs to get diverse perspectives on a topic.
+description: |
+  Start a group discussion between multiple NPCs. Each participant may be run as a
+  bounded streaming agent (mode=agent) or as a plain chat completion (mode=chat).
+  In agent mode each participant gets an Agent cloned from their own NPC and is
+  forbidden from calling convene recursively.
 inputs:
   - topic: ""
   - npcs: "alicanto,corca"
   - rounds: 3
+  - mode: "agent"
 steps:
-  - name: convene_tui
+  - name: convene
     engine: python
     code: |
       import os
@@ -23,8 +28,17 @@ steps:
       import threading
       import time
       import textwrap
+      import itertools
 
       from npcpy.llm_funcs import get_llm_response
+      from npcpy.npc_compiler import Agent
+      from npcpy.streaming import clean_messages_for_llm, ensure_system_prompt
+
+      def _safe_isatty():
+          try:
+              return sys.stdin.isatty()
+          except (ValueError, OSError):
+              return False
 
       def _log_jinx(trigger_id, npc_name, inputs, output, status="success", error_msg=None):
           try:
@@ -44,28 +58,90 @@ steps:
           except Exception:
               pass
 
+      def _get_model_provider(npc):
+          model = None
+          provider = None
+          try:
+              model = state.chat_model
+              provider = state.chat_provider
+          except Exception:
+              pass
+          if not model and npc and hasattr(npc, 'model') and npc.model:
+              model = npc.model
+          if not provider and npc and hasattr(npc, 'provider') and npc.provider:
+              provider = npc.provider
+          if not model:
+              model = os.environ.get('NPCSH_CHAT_MODEL')
+          if not provider:
+              provider = os.environ.get('NPCSH_CHAT_PROVIDER')
+          return model, provider
+
+      def _make_agent(npc, team):
+          if npc is None:
+              return None
+          model, provider = _get_model_provider(npc)
+          system_prompt = "You are a participant in a group discussion. Be concise, insightful, and constructive."
+          if hasattr(npc, 'get_system_prompt'):
+              system_prompt = npc.get_system_prompt(tool_capable=True) or system_prompt
+          agent = Agent(
+              npc=npc,
+              name=getattr(npc, 'name', 'participant'),
+              primary_directive=system_prompt,
+              model=model,
+              provider=provider,
+              team=team,
+          )
+          agent.exclude_jinxes('convene')
+          return agent
+
+      def _participant_response(participant, prompt, mode, discussion_log, round_contributions, on_event=None):
+          name = participant['name']
+          npc = participant.get('npc')
+          agent = participant.get('agent') if mode == 'agent' else None
+          if agent is not None:
+              messages = clean_messages_for_llm([])
+              messages = ensure_system_prompt(messages, npc=agent, tool_capable=True)
+              messages.append({'role': 'user', 'content': prompt})
+              try:
+                  content_parts = []
+                  for event in agent.run_stream(
+                      prompt,
+                      messages=messages,
+                      max_iterations=5,
+                  ):
+                      if on_event is not None:
+                          try:
+                              on_event(name, event)
+                          except Exception:
+                              pass
+                      if isinstance(event, dict) and event.get('type') == 'content_delta':
+                          delta = event.get('choices', [{}])[0].get('delta', {})
+                          content_parts.append(delta.get('content', ''))
+                  contribution = ''.join(content_parts)
+              except Exception as e:
+                  contribution = f'(Agent error: {e})'
+          else:
+              model, provider = _get_model_provider(npc)
+              try:
+                  resp = get_llm_response(prompt, model=model, provider=provider,
+                                          npc=npc, temperature=0.7)
+                  contribution = str(resp.get('response', ''))
+              except Exception as e:
+                  contribution = f'(LLM error: {e})'
+          return contribution
+
       npc = context.get('npc')
       team = context.get('team')
       messages = context.get('messages', [])
 
-      model = None
-      provider = None
-      try:
-          model = state.chat_model
-          provider = state.chat_provider
-      except Exception:
-          pass
-      if not model and npc and hasattr(npc, 'model') and npc.model:
-          model = npc.model
-      if not provider and npc and hasattr(npc, 'provider') and npc.provider:
-          provider = npc.provider
-
       topic = context.get('topic', '')
       npcs_str = context.get('npcs', 'alicanto,corca')
       num_rounds = int(context.get('rounds', 3))
+      mode = str(context.get('mode', 'agent')).strip().lower()
+      _done = False
 
       if not topic:
-          if sys.stdin.isatty():
+          if _safe_isatty():
               print('\033[1;36m CONVENE - Multi-NPC Discussion \033[0m')
               print('\033[90mEnter discussion topic (or q to quit):\033[0m')
               try:
@@ -75,13 +151,25 @@ steps:
               if not topic or topic.lower() == 'q':
                   context['output'] = 'Convene cancelled.'
                   context['messages'] = messages
-                  exit()
+                  _done = True
           else:
-              context['output'] = 'Usage: /convene "topic" npcs=name1,name2 rounds=3'
+              context['output'] = 'Usage: /convene "topic" npcs=name1,name2 rounds=3 mode=agent'
               context['messages'] = messages
-              exit()
+              _done = True
 
-      _interactive = sys.stdin.isatty()
+      _interactive = _safe_isatty()
+
+      npc_names = [n.strip() for n in npcs_str.split(',') if n.strip()]
+      participants = []
+      for name in npc_names:
+          target_npc = None
+          if team and hasattr(team, 'npcs') and name in team.npcs:
+              target_npc = team.npcs[name]
+          elif npc and getattr(npc, 'name', None) == name:
+              target_npc = npc
+          persona = getattr(target_npc, 'primary_directive', f'{name} specialist') if target_npc else f'{name} - general assistant'
+          agent = _make_agent(target_npc, team) if mode == 'agent' else None
+          participants.append({'name': name, 'persona': persona, 'npc': target_npc, 'agent': agent})
 
       if not _interactive:
           try:
@@ -89,17 +177,24 @@ steps:
           except ImportError:
               def colored(t, *a, **kw): return t
 
-          npc_names = [n.strip() for n in npcs_str.split(',') if n.strip()]
-          participants = []
-          for name in npc_names:
-              if team and hasattr(team, 'npcs') and name in team.npcs:
-                  target_npc = team.npcs[name]
-                  persona = getattr(target_npc, 'primary_directive', f'{name} specialist')
-                  participants.append({'name': name, 'persona': persona, 'npc': target_npc})
-              else:
-                  participants.append({'name': name, 'persona': f'{name} - general assistant', 'npc': None})
+          print(f"\n  Convening Discussion\n  Topic: {topic}\n  Participants: {', '.join(npc_names)}\n  Rounds: {num_rounds}\n  Mode: {mode}\n")
 
-          print(f"\n  Convening Discussion\n  Topic: {topic}\n  Participants: {', '.join(npc_names)}\n  Rounds: {num_rounds}\n")
+          def _emit_event(speaker, event):
+              if not isinstance(event, dict):
+                  return
+              typ = event.get('type')
+              if typ == 'tool_start':
+                  tool_name = event.get('name', 'tool')
+                  print(colored(f'    ⚡ {speaker} -> {tool_name}', 'magenta'))
+              elif typ == 'tool_result':
+                  tool_name = event.get('name', 'tool')
+                  result = str(event.get('result', '') or '')
+                  preview = result.replace('\n', ' ')[:120]
+                  print(colored(f'    ✓ {speaker} <- {tool_name}: {preview}', 'magenta'))
+              elif typ == 'tool_error':
+                  tool_name = event.get('name', 'tool')
+                  err = str(event.get('error', '') or '')
+                  print(colored(f'    ✗ {speaker} !! {tool_name}: {err}', 'red'))
 
           discussion_log = []
           for round_num in range(1, num_rounds + 1):
@@ -110,7 +205,6 @@ steps:
               round_contributions = []
               for participant in participants:
                   name = participant['name']
-                  persona = participant['persona']
                   prev_context = ""
                   if discussion_log:
                       prev_context = "\n\nPrevious discussion:\n"
@@ -121,7 +215,7 @@ steps:
                       for entry in round_contributions:
                           prev_context += f"[{entry['speaker']}]: {entry['contribution'][:200]}...\n"
 
-                  prompt = f"""You are {name}. {persona}
+                  prompt = f"""You are {name}. {participant['persona']}
 
       Topic under discussion: "{topic}"
       {prev_context}
@@ -129,12 +223,10 @@ steps:
       Provide your perspective. Be concise but insightful. Build on what others have said. If you disagree, explain why constructively."""
 
                   print(colored(f"\n[{name}]:", "yellow", attrs=["bold"]))
-                  resp = get_llm_response(prompt, model=model, provider=provider,
-                                          npc=participant.get('npc') or npc, temperature=0.7)
-                  contribution = str(resp.get('response', ''))
+                  contribution = _participant_response(participant, prompt, mode, discussion_log, round_contributions, on_event=_emit_event)
                   print(contribution)
                   _log_jinx(f"convene-round-{round_num}-{name}", name,
-                            {"prompt": prompt, "type": "main", "round": round_num},
+                            {"prompt": prompt, "type": "main", "round": round_num, "mode": mode},
                             contribution)
                   entry = {'round': round_num, 'speaker': name, 'contribution': contribution}
                   round_contributions.append(entry)
@@ -152,12 +244,10 @@ steps:
       Respond briefly - agree, disagree, build on it, or ask a clarifying question. Keep it to 2-3 sentences."""
 
                       print(colored(f"\n  [{fn} responds]:", "cyan"))
-                      fresp = get_llm_response(fp_prompt, model=model, provider=provider,
-                                               npc=fp.get('npc') or npc, temperature=0.7)
-                      fcontrib = str(fresp.get('response', ''))
+                      fcontrib = _participant_response(fp, fp_prompt, mode, discussion_log, round_contributions, on_event=_emit_event)
                       print(f"  {fcontrib}")
                       _log_jinx(f"convene-round-{round_num}-{fn}-followup", fn,
-                                {"prompt": fp_prompt, "type": "followup", "round": round_num, "responding_to": name},
+                                {"prompt": fp_prompt, "type": "followup", "round": round_num, "responding_to": name, "mode": mode},
                                 fcontrib)
                       discussion_log.append({'round': round_num, 'speaker': fn, 'contribution': fcontrib, 'type': 'followup'})
 
@@ -172,12 +262,10 @@ steps:
       Brief reaction (1-2 sentences). Move the discussion forward."""
 
                           print(colored(f"\n  [{rn}]:", "magenta"))
-                          cresp = get_llm_response(cp, model=model, provider=provider,
-                                                   npc=rp.get('npc') or npc, temperature=0.7)
-                          ccontrib = str(cresp.get('response', ''))
+                          ccontrib = _participant_response(rp, cp, mode, discussion_log, round_contributions, on_event=_emit_event)
                           print(f"  {ccontrib}")
                           _log_jinx(f"convene-round-{round_num}-{rn}-counter", rn,
-                                    {"prompt": cp, "type": "counter", "round": round_num, "responding_to": fn},
+                                    {"prompt": cp, "type": "counter", "round": round_num, "responding_to": fn, "mode": mode},
                                     ccontrib)
                           discussion_log.append({'round': round_num, 'speaker': rn, 'contribution': ccontrib, 'type': 'counter'})
 
@@ -197,12 +285,12 @@ steps:
       3. Novel ideas that emerged
       4. Recommended next steps or actions"""
 
-          sresp = get_llm_response(synth_prompt, model=model, provider=provider, npc=npc, temperature=0.4)
+          sresp = get_llm_response(synth_prompt, model=_get_model_provider(npc)[0], provider=_get_model_provider(npc)[1], npc=npc, temperature=0.4)
           synthesis = str(sresp.get('response', ''))
           print(synthesis)
           _log_jinx(f"convene-synthesis", npc.name if npc and hasattr(npc, 'name') else "convener",
                     {"prompt": synth_prompt, "type": "synthesis", "topic": topic,
-                     "participants": [n.strip() for n in npcs_str.split(',')], "rounds": num_rounds},
+                     "participants": [n.strip() for n in npcs_str.split(',')], "rounds": num_rounds, "mode": mode},
                     synthesis)
 
           context['output'] = synthesis
@@ -211,430 +299,432 @@ steps:
               'topic': topic,
               'participants': [n.strip() for n in npcs_str.split(',')],
               'rounds': num_rounds,
+              'mode': mode,
               'discussion': discussion_log,
               'synthesis': synthesis,
           }
-          exit()
+          _done = True
 
-      def get_size():
-          try:
-              s = os.get_terminal_size()
-              return s.columns, s.lines
-          except:
-              return 80, 24
+      if not _done:
+          def get_size():
+              try:
+                  s = os.get_terminal_size()
+                  return s.columns, s.lines
+              except:
+                  return 80, 24
+          
+          def wrap(text, w):
+              lines = []
+              for line in str(text).split('\n'):
+                  if len(line) <= w:
+                      lines.append(line)
+                  else:
+                      lines.extend(textwrap.wrap(line, w) or [''])
+              return lines
+          
+          COLORS = ['\033[36m', '\033[33m', '\033[35m', '\033[32m', '\033[34m', '\033[91m', '\033[96m', '\033[93m']
+          def speaker_color(idx):
+              return COLORS[idx % len(COLORS)]
+          
+          class ConveneState:
+              def __init__(self):
+                  self.phase = 0
+                  self.round = 0
+                  self.total_rounds = num_rounds
+                  self.current_speaker = -1
+                  self.speaker_status = {}
+                  self.discussion_log = []
+                  self.display_lines = []
+                  self.scroll = 0
+                  self.synthesis = ""
+                  self.generating = False
+                  self.paused = False
+                  self.skip_round = False
+                  self.status = ""
+                  self.done = False
+                  self.review_sel = 0
+                  self.review_scroll = 0
+          
+          ui = ConveneState()
+          for p in participants:
+              ui.speaker_status[p['name']] = 'idle'
+          
+          def run_discussion():
+              ui.generating = True
 
-      def wrap(text, w):
-          lines = []
-          for line in str(text).split('\n'):
-              if len(line) <= w:
-                  lines.append(line)
-              else:
-                  lines.extend(textwrap.wrap(line, w) or [''])
-          return lines
+              def _emit_event(speaker, event):
+                  if not isinstance(event, dict):
+                      return
+                  typ = event.get('type')
+                  if typ == 'tool_start':
+                      ui.display_lines.append(f'\033[90m    ⚡ {speaker} -> {event.get("name", "tool")}\033[0m')
+                  elif typ == 'tool_result':
+                      result = str(event.get('result', '') or '').replace('\n', ' ')[:80]
+                      ui.display_lines.append(f'\033[90m    ✓ {speaker} <- {event.get("name", "tool")}: {result}\033[0m')
+                  elif typ == 'tool_error':
+                      err = str(event.get('error', '') or '')
+                      ui.display_lines.append(f'\033[91m    ✗ {speaker} !! {event.get("name", "tool")}: {err}\033[0m')
 
-      npc_names = [n.strip() for n in npcs_str.split(',') if n.strip()]
-      participants = []
-      for name in npc_names:
-          if team and hasattr(team, 'npcs') and name in team.npcs:
-              target_npc = team.npcs[name]
-              persona = getattr(target_npc, 'primary_directive', f'{name} specialist')
-              participants.append({'name': name, 'persona': persona, 'npc': target_npc})
-          else:
-              participants.append({'name': name, 'persona': f'{name} - general assistant', 'npc': None})
-
-      COLORS = ['\033[36m', '\033[33m', '\033[35m', '\033[32m', '\033[34m', '\033[91m', '\033[96m', '\033[93m']
-      def speaker_color(idx):
-          return COLORS[idx % len(COLORS)]
-
-      class ConveneState:
-          def __init__(self):
-              self.phase = 0
-              self.round = 0
-              self.total_rounds = num_rounds
-              self.current_speaker = -1
-              self.speaker_status = {}
-              self.discussion_log = []
-              self.display_lines = []
-              self.scroll = 0
-              self.synthesis = ""
-              self.generating = False
-              self.paused = False
-              self.skip_round = False
-              self.status = ""
-              self.done = False
-              self.review_sel = 0
-              self.review_scroll = 0
-
-      ui = ConveneState()
-      for p in participants:
-          ui.speaker_status[p['name']] = 'idle'
-
-      def run_discussion():
-          ui.generating = True
-
-          for round_num in range(1, num_rounds + 1):
-              if ui.done:
-                  break
-              ui.round = round_num
-              ui.display_lines.append(f'\033[90m{"="*50}\033[0m')
-              ui.display_lines.append(f'\033[1;37m  ROUND {round_num}/{num_rounds}\033[0m')
-              ui.display_lines.append(f'\033[90m{"="*50}\033[0m')
-
-              round_contributions = []
-
-              for pi, participant in enumerate(participants):
+              for round_num in range(1, num_rounds + 1):
                   if ui.done:
                       break
-                  while ui.paused:
-                      time.sleep(0.2)
+                  ui.round = round_num
+                  ui.display_lines.append(f'\033[90m{"="*50}\033[0m')
+                  ui.display_lines.append(f'\033[1;37m  ROUND {round_num}/{num_rounds}\033[0m')
+                  ui.display_lines.append(f'\033[90m{"="*50}\033[0m')
+          
+                  round_contributions = []
+          
+                  for pi, participant in enumerate(participants):
                       if ui.done:
                           break
-
-                  name = participant['name']
-                  persona = participant['persona']
-                  ui.current_speaker = pi
-                  ui.speaker_status[name] = 'speaking'
-
-                  prev_context = ""
-                  if ui.discussion_log:
-                      prev_context = "\n\nPrevious discussion:\n"
-                      for entry in ui.discussion_log[-len(participants)*2:]:
-                          prev_context += f"[{entry['speaker']}]: {entry['contribution'][:200]}...\n"
-                  if round_contributions:
-                      prev_context += "\nThis round so far:\n"
-                      for entry in round_contributions:
-                          prev_context += f"[{entry['speaker']}]: {entry['contribution'][:200]}...\n"
-
-                  prompt = f"""You are {name}. {persona}
-
-      Topic under discussion: "{topic}"
-      {prev_context}
-
-      Provide your perspective. Be concise but insightful. Build on what others have said. If you disagree, explain why constructively."""
-
-                  color = speaker_color(pi)
-                  ui.display_lines.append(f'')
-                  ui.display_lines.append(f'{color}\033[1m[{name}]:\033[0m')
-
-                  try:
-                      resp = get_llm_response(prompt, model=model, provider=provider,
-                                              npc=participant.get('npc') or npc, temperature=0.7)
-                      contribution = str(resp.get('response', ''))
-                      _log_jinx(f"convene-round-{round_num}-{name}", name,
-                                {"prompt": prompt, "type": "main", "round": round_num},
-                                contribution)
-                  except Exception as e:
-                      contribution = f'(Error: {e})'
-                      _log_jinx(f"convene-round-{round_num}-{name}", name,
-                                {"prompt": prompt, "type": "main", "round": round_num},
-                                contribution, status="error", error_msg=str(e))
-
-                  for line in wrap(contribution, 70):
-                      ui.display_lines.append(f'  {line}')
-
-                  entry = {'round': round_num, 'speaker': name, 'contribution': contribution, 'type': 'main'}
-                  round_contributions.append(entry)
-                  ui.discussion_log.append(entry)
-                  ui.speaker_status[name] = 'done'
-
-                  others = [p for p in participants if p['name'] != name]
-                  if others and not ui.done:
-                      followup_p = random.choice(others)
-                      fn = followup_p['name']
-                      fi = npc_names.index(fn) if fn in npc_names else 0
-                      ui.speaker_status[fn] = 'speaking'
-
-                      followup_prompt = f"""You are {fn}. {followup_p['persona']}
-
-      Topic: "{topic}"
-
-      {name} just said: "{contribution[:500]}"
-
-      Respond briefly - agree, disagree, build on it, or ask a clarifying question. Keep it to 2-3 sentences."""
-
-                      fcolor = speaker_color(fi)
+                      while ui.paused:
+                          time.sleep(0.2)
+                          if ui.done:
+                              break
+          
+                      name = participant['name']
+                      ui.current_speaker = pi
+                      ui.speaker_status[name] = 'speaking'
+          
+                      prev_context = ""
+                      if ui.discussion_log:
+                          prev_context = "\n\nPrevious discussion:\n"
+                          for entry in ui.discussion_log[-len(participants)*2:]:
+                              prev_context += f"[{entry['speaker']}]: {entry['contribution'][:200]}...\n"
+                      if round_contributions:
+                          prev_context += "\nThis round so far:\n"
+                          for entry in round_contributions:
+                              prev_context += f"[{entry['speaker']}]: {entry['contribution'][:200]}...\n"
+          
+                      prompt = f"""You are {name}. {participant['persona']}
+          
+          Topic under discussion: "{topic}"
+          {prev_context}
+          
+          Provide your perspective. Be concise but insightful. Build on what others have said. If you disagree, explain why constructively."""
+          
+                      color = speaker_color(pi)
                       ui.display_lines.append(f'')
-                      ui.display_lines.append(f'  {fcolor}[{fn} responds]:\033[0m')
-
+                      ui.display_lines.append(f'{color}\033[1m[{name}]:\033[0m')
+          
                       try:
-                          fresp = get_llm_response(followup_prompt, model=model, provider=provider,
-                                                   npc=followup_p.get('npc') or npc, temperature=0.7)
-                          fcontrib = str(fresp.get('response', ''))
-                          _log_jinx(f"convene-round-{round_num}-{fn}-followup", fn,
-                                    {"prompt": followup_prompt, "type": "followup", "round": round_num, "responding_to": name},
-                                    fcontrib)
+                          contribution = _participant_response(participant, prompt, mode, ui.discussion_log, round_contributions, on_event=_emit_event)
+                          _log_jinx(f"convene-round-{round_num}-{name}", name,
+                                    {"prompt": prompt, "type": "main", "round": round_num, "mode": mode},
+                                    contribution)
                       except Exception as e:
-                          fcontrib = f'(Error: {e})'
-                          _log_jinx(f"convene-round-{round_num}-{fn}-followup", fn,
-                                    {"prompt": followup_prompt, "type": "followup", "round": round_num, "responding_to": name},
-                                    fcontrib, status="error", error_msg=str(e))
-
-                      for line in wrap(fcontrib, 66):
-                          ui.display_lines.append(f'    {line}')
-
-                      ui.discussion_log.append({'round': round_num, 'speaker': fn,
-                                                'contribution': fcontrib, 'type': 'followup'})
-                      ui.speaker_status[fn] = 'done'
-
-                      if random.random() < 0.6 and not ui.done:
-                          if random.random() < 0.4:
-                              resp_p = participant
-                          else:
-                              resp_p = random.choice(others)
-                          rn = resp_p['name']
-                          ri = npc_names.index(rn) if rn in npc_names else 0
-                          ui.speaker_status[rn] = 'speaking'
-
-                          counter_prompt = f"""You are {rn}. {resp_p['persona']}
-
-      Topic: "{topic}"
-
-      {fn} responded: "{fcontrib}"
-
-      Brief reaction (1-2 sentences). Move the discussion forward."""
-
-                          rcolor = speaker_color(ri)
+                          contribution = f'(Error: {e})'
+                          _log_jinx(f"convene-round-{round_num}-{name}", name,
+                                    {"prompt": prompt, "type": "main", "round": round_num, "mode": mode},
+                                    contribution, status="error", error_msg=str(e))
+          
+                      for line in wrap(contribution, 70):
+                          ui.display_lines.append(f'  {line}')
+          
+                      entry = {'round': round_num, 'speaker': name, 'contribution': contribution, 'type': 'main'}
+                      round_contributions.append(entry)
+                      ui.discussion_log.append(entry)
+                      ui.speaker_status[name] = 'done'
+          
+                      others = [p for p in participants if p['name'] != name]
+                      if others and not ui.done:
+                          followup_p = random.choice(others)
+                          fn = followup_p['name']
+                          fi = npc_names.index(fn) if fn in npc_names else 0
+                          ui.speaker_status[fn] = 'speaking'
+          
+                          followup_prompt = f"""You are {fn}. {followup_p['persona']}
+          
+          Topic: "{topic}"
+          
+          {name} just said: "{contribution[:500]}"
+          
+          Respond briefly - agree, disagree, build on it, or ask a clarifying question. Keep it to 2-3 sentences."""
+          
+                          fcolor = speaker_color(fi)
                           ui.display_lines.append(f'')
-                          ui.display_lines.append(f'  {rcolor}[{rn}]:\033[0m')
-
+                          ui.display_lines.append(f'  {fcolor}[{fn} responds]:\033[0m')
+          
                           try:
-                              cresp = get_llm_response(counter_prompt, model=model, provider=provider,
-                                                       npc=resp_p.get('npc') or npc, temperature=0.7)
-                              ccontrib = str(cresp.get('response', ''))
-                              _log_jinx(f"convene-round-{round_num}-{rn}-counter", rn,
-                                        {"prompt": counter_prompt, "type": "counter", "round": round_num, "responding_to": fn},
-                                        ccontrib)
+                              fcontrib = _participant_response(followup_p, followup_prompt, mode, ui.discussion_log, round_contributions, on_event=_emit_event)
+                              _log_jinx(f"convene-round-{round_num}-{fn}-followup", fn,
+                                        {"prompt": followup_prompt, "type": "followup", "round": round_num, "responding_to": name, "mode": mode},
+                                        fcontrib)
                           except Exception as e:
-                              ccontrib = f'(Error: {e})'
-                              _log_jinx(f"convene-round-{round_num}-{rn}-counter", rn,
-                                        {"prompt": counter_prompt, "type": "counter", "round": round_num, "responding_to": fn},
-                                        ccontrib, status="error", error_msg=str(e))
-
-                          for line in wrap(ccontrib, 66):
+                              fcontrib = f'(Error: {e})'
+                              _log_jinx(f"convene-round-{round_num}-{fn}-followup", fn,
+                                        {"prompt": followup_prompt, "type": "followup", "round": round_num, "responding_to": name, "mode": mode},
+                                        fcontrib, status="error", error_msg=str(e))
+          
+                          for line in wrap(fcontrib, 66):
                               ui.display_lines.append(f'    {line}')
-
-                          ui.discussion_log.append({'round': round_num, 'speaker': rn,
-                                                    'contribution': ccontrib, 'type': 'counter'})
-                          ui.speaker_status[rn] = 'done'
-
-              for p in participants:
-                  ui.speaker_status[p['name']] = 'idle'
-
-          if not ui.done:
-              ui.display_lines.append(f'')
-              ui.display_lines.append(f'\033[1;32m{"="*50}\033[0m')
-              ui.display_lines.append(f'\033[1;32m  SYNTHESIS\033[0m')
-              ui.display_lines.append(f'\033[1;32m{"="*50}\033[0m')
-
-              all_contribs = "\n".join([f"[{e['speaker']} - Round {e['round']}]: {e['contribution']}"
-                                        for e in ui.discussion_log])
-
-              synth_prompt = f"""As the convener of this discussion on "{topic}", synthesize the key points:
-
-      Full discussion:
-      {all_contribs[:6000]}
-
-      Provide:
-      1. Key agreements and consensus points
-      2. Areas of disagreement or tension
-      3. Novel ideas that emerged
-      4. Recommended next steps or actions"""
-
-              try:
-                  sresp = get_llm_response(synth_prompt, model=model, provider=provider, npc=npc, temperature=0.4)
-                  ui.synthesis = str(sresp.get('response', ''))
-                  _log_jinx(f"convene-synthesis", npc.name if npc and hasattr(npc, 'name') else "convener",
-                            {"prompt": synth_prompt, "type": "synthesis", "topic": topic,
-                             "participants": npc_names, "rounds": num_rounds},
-                            ui.synthesis)
-              except Exception as e:
-                  ui.synthesis = f'Synthesis error: {e}'
-                  _log_jinx(f"convene-synthesis", npc.name if npc and hasattr(npc, 'name') else "convener",
-                            {"type": "synthesis", "topic": topic},
-                            ui.synthesis, status="error", error_msg=str(e))
-
-              for line in wrap(ui.synthesis, 70):
-                  ui.display_lines.append(f'  {line}')
-
-          ui.generating = False
-          ui.phase = 3
-          ui.status = "Discussion complete. Review results."
-
-      def render():
-          width, height = get_size()
-          out = []
-          out.append('\033[2J\033[H')
-
-          phase_label = ['Overview', 'Discussion', 'Synthesizing', 'Review'][min(ui.phase, 3)]
-          header = f' CONVENE - {phase_label} '
-          out.append(f'\033[1;1H\033[7;1m{header.ljust(width)}\033[0m')
-
-          if ui.phase == 0:
-              render_overview(out, width, height)
-          else:
-              render_discussion(out, width, height)
-
-          pause_text = ' \033[31m[PAUSED]\033[0m' if ui.paused else ''
-          gen_text = ' \033[33m(generating...)\033[0m' if ui.generating else ''
-          out.append(f'\033[{height-1};1H\033[K\033[90m Round {ui.round}/{ui.total_rounds} | {len(ui.discussion_log)} contributions{gen_text}{pause_text}\033[0m')
-
-          if ui.phase == 0:
-              out.append(f'\033[{height};1H\033[K\033[7m Enter:Start  q:Quit \033[0m'.ljust(width))
-          elif ui.phase < 3:
-              out.append(f'\033[{height};1H\033[K\033[7m p:Pause  s:Skip round  j/k:Scroll  q:Quit \033[0m'.ljust(width))
-          else:
-              out.append(f'\033[{height};1H\033[K\033[7m j/k:Scroll  q:Quit \033[0m'.ljust(width))
-
-          sys.stdout.write(''.join(out))
-          sys.stdout.flush()
-
-      def render_overview(out, width, height):
-          banner = [
-              '\033[36m ██████╗ ██████╗ ███╗   ██╗██╗   ██╗███████╗███╗   ██╗███████╗\033[0m',
-              '\033[36m██╔════╝██╔═══██╗████╗  ██║██║   ██║██╔════╝████╗  ██║██╔════╝\033[0m',
-              '\033[36m██║     ██║   ██║██╔██╗ ██║██║   ██║█████╗  ██╔██╗ ██║█████╗  \033[0m',
-              '\033[36m██║     ██║   ██║██║╚██╗██║╚██╗ ██╔╝██╔══╝  ██║╚██╗██║██╔══╝  \033[0m',
-              '\033[36m╚██████╗╚██████╔╝██║ ╚████║ ╚████╔╝ ███████╗██║ ╚████║███████╗\033[0m',
-              '\033[36m ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝╚══════╝\033[0m',
-          ]
-          for i, line in enumerate(banner):
-              out.append(f'\033[{3+i};2H{line}')
-
-          y = 3 + len(banner) + 1
-          out.append(f'\033[{y};3H\033[1mTopic:\033[0m {topic}')
-          y += 1
-          out.append(f'\033[{y};3H\033[1mRounds:\033[0m {num_rounds}')
-          y += 2
-          out.append(f'\033[{y};3H\033[1mParticipants:\033[0m')
-          y += 1
-          for i, p in enumerate(participants):
-              color = speaker_color(i)
-              pname = p['name']
-              pdesc = p['persona'][:60] if len(p['persona']) > 60 else p['persona']
-              pdesc = pdesc.split('\n')[0]
-              out.append(f'\033[{y};5H{color}{pname}\033[0m \033[90m- {pdesc}\033[0m')
-              y += 1
-
-      def render_discussion(out, width, height):
-          left_w = max(22, width // 5)
-          right_w = width - left_w - 1
-
-          out.append(f'\033[3;1H\033[36;1m Participants \033[90m{"_" * (left_w - 15)}\033[0m')
-          y = 4
-          for i, p in enumerate(participants):
-              name = p['name']
-              status = ui.speaker_status.get(name, 'idle')
-              color = speaker_color(i)
-              if status == 'speaking':
-                  icon = '\033[33m>\033[0m'
-              elif status == 'done':
-                  icon = '\033[32m+\033[0m'
+          
+                          ui.discussion_log.append({'round': round_num, 'speaker': fn,
+                                                    'contribution': fcontrib, 'type': 'followup'})
+                          ui.speaker_status[fn] = 'done'
+          
+                          if random.random() < 0.6 and not ui.done:
+                              if random.random() < 0.4:
+                                  resp_p = participant
+                              else:
+                                  resp_p = random.choice(others)
+                              rn = resp_p['name']
+                              ri = npc_names.index(rn) if rn in npc_names else 0
+                              ui.speaker_status[rn] = 'speaking'
+          
+                              counter_prompt = f"""You are {rn}. {resp_p['persona']}
+          
+          Topic: "{topic}"
+          
+          {fn} responded: "{fcontrib}"
+          
+          Brief reaction (1-2 sentences). Move the discussion forward."""
+          
+                              rcolor = speaker_color(ri)
+                              ui.display_lines.append(f'')
+                              ui.display_lines.append(f'  {rcolor}[{rn}]:\033[0m')
+          
+                              try:
+                                  ccontrib = _participant_response(resp_p, counter_prompt, mode, ui.discussion_log, round_contributions, on_event=_emit_event)
+                                  _log_jinx(f"convene-round-{round_num}-{rn}-counter", rn,
+                                            {"prompt": counter_prompt, "type": "counter", "round": round_num, "responding_to": fn, "mode": mode},
+                                            ccontrib)
+                              except Exception as e:
+                                  ccontrib = f'(Error: {e})'
+                                  _log_jinx(f"convene-round-{round_num}-{rn}-counter", rn,
+                                            {"prompt": counter_prompt, "type": "counter", "round": round_num, "responding_to": fn, "mode": mode},
+                                            ccontrib, status="error", error_msg=str(e))
+          
+                              for line in wrap(ccontrib, 66):
+                                  ui.display_lines.append(f'    {line}')
+          
+                              ui.discussion_log.append({'round': round_num, 'speaker': rn,
+                                                        'contribution': ccontrib, 'type': 'counter'})
+                              ui.speaker_status[rn] = 'done'
+          
+                  for p in participants:
+                      ui.speaker_status[p['name']] = 'idle'
+          
+              if not ui.done:
+                  ui.display_lines.append(f'')
+                  ui.display_lines.append(f'\033[1;32m{"="*50}\033[0m')
+                  ui.display_lines.append(f'\033[1;32m  SYNTHESIS\033[0m')
+                  ui.display_lines.append(f'\033[1;32m{"="*50}\033[0m')
+          
+                  all_contribs = "\n".join([f"[{e['speaker']} - Round {e['round']}]: {e['contribution']}"
+                                            for e in ui.discussion_log])
+          
+                  synth_prompt = f"""As the convener of this discussion on "{topic}", synthesize the key points:
+          
+          Full discussion:
+          {all_contribs[:6000]}
+          
+          Provide:
+          1. Key agreements and consensus points
+          2. Areas of disagreement or tension
+          3. Novel ideas that emerged
+          4. Recommended next steps or actions"""
+          
+                  try:
+                      sresp = get_llm_response(synth_prompt, model=_get_model_provider(npc)[0], provider=_get_model_provider(npc)[1], npc=npc, temperature=0.4)
+                      ui.synthesis = str(sresp.get('response', ''))
+                      _log_jinx(f"convene-synthesis", npc.name if npc and hasattr(npc, 'name') else "convener",
+                                {"prompt": synth_prompt, "type": "synthesis", "topic": topic,
+                                 "participants": npc_names, "rounds": num_rounds, "mode": mode},
+                                ui.synthesis)
+                  except Exception as e:
+                      ui.synthesis = f'Synthesis error: {e}'
+                      _log_jinx(f"convene-synthesis", npc.name if npc and hasattr(npc, 'name') else "convener",
+                                {"type": "synthesis", "topic": topic, "mode": mode},
+                                ui.synthesis, status="error", error_msg=str(e))
+          
+                  for line in wrap(ui.synthesis, 70):
+                      ui.display_lines.append(f'  {line}')
+          
+              ui.generating = False
+              ui.phase = 3
+              ui.status = "Discussion complete. Review results."
+          
+          def render():
+              width, height = get_size()
+              out = []
+              out.append('\033[2J\033[H')
+          
+              phase_label = ['Overview', 'Discussion', 'Synthesizing', 'Review'][min(ui.phase, 3)]
+              header = f' CONVENE - {phase_label} '
+              out.append(f'\033[1;1H\033[7;1m{header.ljust(width)}\033[0m')
+          
+              if ui.phase == 0:
+                  render_overview(out, width, height)
               else:
-                  icon = '\033[90m-\033[0m'
-              out.append(f'\033[{y};2H{icon} {color}{name[:left_w-4]}\033[0m')
+                  render_discussion(out, width, height)
+          
+              pause_text = ' \033[31m[PAUSED]\033[0m' if ui.paused else ''
+              gen_text = ' \033[33m(generating...)\033[0m' if ui.generating else ''
+              out.append(f'\033[{height-1};1H\033[K\033[90m Round {ui.round}/{ui.total_rounds} | {len(ui.discussion_log)} contributions{gen_text}{pause_text}\033[0m')
+          
+              if ui.phase == 0:
+                  out.append(f'\033[{height};1H\033[K\033[7m Enter:Start  q:Quit \033[0m'.ljust(width))
+              elif ui.phase < 3:
+                  out.append(f'\033[{height};1H\033[K\033[7m p:Pause  s:Skip round  j/k:Scroll  q:Quit \033[0m'.ljust(width))
+              else:
+                  out.append(f'\033[{height};1H\033[K\033[7m j/k:Scroll  q:Quit \033[0m'.ljust(width))
+          
+              sys.stdout.write(''.join(out))
+              sys.stdout.flush()
+          
+          def render_overview(out, width, height):
+              banner = [
+                  '\033[36m ██████╗ ██████╗ ███╗   ██╗██╗   ██╗███████╗███╗   ██╗███████╗\033[0m',
+                  '\033[36m██╔════╝██╔═══██╗████╗  ██║██║   ██║██╔════╝████╗  ██║██╔════╝\033[0m',
+                  '\033[36m██║     ██║   ██║██╔██╗ ██║██║   ██║█████╗  ██╔██╗ ██║█████╗  \033[0m',
+                  '\033[36m██║     ██║   ██║██║╚██╗██║╚██╗ ██╔╝██╔══╝  ██║╚██╗██║██╔══╝  \033[0m',
+                  '\033[36m╚██████╗╚██████╔╝██║ ╚████║ ╚████╔╝ ███████╗██║ ╚████║███████╗\033[0m',
+                  '\033[36m ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝╚══════╝\033[0m',
+              ]
+              for i, line in enumerate(banner):
+                  out.append(f'\033[{3+i};2H{line}')
+          
+              y = 3 + len(banner) + 1
+              out.append(f'\033[{y};3H\033[1mTopic:\033[0m {topic}')
               y += 1
-
-          y += 1
-          out.append(f'\033[{y};2H\033[90mRound {ui.round}/{ui.total_rounds}\033[0m')
-          y += 1
-          contribs = len(ui.discussion_log)
-          out.append(f'\033[{y};2H\033[90m{contribs} contributions\033[0m')
-
-          out.append(f'\033[3;{left_w+1}H\033[33;1m Discussion \033[90m{"_" * (right_w - 13)}\033[0m')
-
-          panel_h = height - 6
-          total = len(ui.display_lines)
-          if ui.generating:
-              ui.scroll = max(0, total - panel_h)
-          vis_start = max(0, ui.scroll)
-
-          for i in range(panel_h):
-              idx = vis_start + i
-              row = 4 + i
-              out.append(f'\033[{row};{left_w+1}H\033[K')
-              if 0 <= idx < total:
-                  line = ui.display_lines[idx]
-                  out.append(f'\033[{row};{left_w+2}H{line[:right_w-2]}')
-
-      def handle_input(c, fd):
-          if c == '\x1b':
-              if _sel.select([fd], [], [], 0.05)[0]:
-                  c2 = os.read(fd, 1).decode('latin-1')
-                  if c2 == '[':
-                      c3 = os.read(fd, 1).decode('latin-1')
-                      if c3 == 'A': scroll_up()
-                      elif c3 == 'B': scroll_down()
-              return True
-
-          if c == 'q' or c == '\x03':
-              ui.done = True
-              return False
-
-          if ui.phase == 0:
-              if c in ('\r', '\n'):
-                  ui.phase = 1
-                  threading.Thread(target=run_discussion, daemon=True).start()
-          elif ui.phase < 3:
-              if c == 'p':
-                  ui.paused = not ui.paused
-              elif c == 's':
-                  ui.skip_round = True
-              elif c == 'j': scroll_down()
-              elif c == 'k': scroll_up()
-          else:
-              if c == 'j': scroll_down()
-              elif c == 'k': scroll_up()
-
-          return True
-
-      def scroll_up():
-          ui.scroll = max(0, ui.scroll - 1)
-
-      def scroll_down():
-          total = len(ui.display_lines)
-          _, height = get_size()
-          panel_h = height - 6
-          ui.scroll = min(max(0, total - panel_h), ui.scroll + 1)
-
-      fd = sys.stdin.fileno()
-      old_settings = termios.tcgetattr(fd)
-
-      try:
-          tty.setcbreak(fd)
-          sys.stdout.write('\033[?25l')
-          render()
-
-          running = True
-          while running:
+              out.append(f'\033[{y};3H\033[1mRounds:\033[0m {num_rounds}')
+              y += 1
+              out.append(f'\033[{y};3H\033[1mMode:\033[0m {mode}')
+              y += 2
+              out.append(f'\033[{y};3H\033[1mParticipants:\033[0m')
+              y += 1
+              for i, p in enumerate(participants):
+                  color = speaker_color(i)
+                  pname = p['name']
+                  pdesc = p['persona'][:60] if len(p['persona']) > 60 else p['persona']
+                  pdesc = pdesc.split('\n')[0]
+                  out.append(f'\033[{y};5H{color}{pname}\033[0m \033[90m- {pdesc}\033[0m')
+                  y += 1
+          
+          def render_discussion(out, width, height):
+              left_w = max(22, width // 5)
+              right_w = width - left_w - 1
+          
+              out.append(f'\033[3;1H\033[36;1m Participants \033[90m{"_" * (left_w - 15)}\033[0m')
+              y = 4
+              for i, p in enumerate(participants):
+                  name = p['name']
+                  status = ui.speaker_status.get(name, 'idle')
+                  color = speaker_color(i)
+                  if status == 'speaking':
+                      icon = '\033[33m>\033[0m'
+                  elif status == 'done':
+                      icon = '\033[32m+\033[0m'
+                  else:
+                      icon = '\033[90m-\033[0m'
+                  out.append(f'\033[{y};2H{icon} {color}{name[:left_w-4]}\033[0m')
+                  y += 1
+          
+              y += 1
+              out.append(f'\033[{y};2H\033[90mRound {ui.round}/{ui.total_rounds}\033[0m')
+              y += 1
+              contribs = len(ui.discussion_log)
+              out.append(f'\033[{y};2H\033[90m{contribs} contributions\033[0m')
+          
+              out.append(f'\033[3;{left_w+1}H\033[33;1m Discussion \033[90m{"_" * (right_w - 13)}\033[0m')
+          
+              panel_h = height - 6
+              total = len(ui.display_lines)
               if ui.generating:
-                  if _sel.select([fd], [], [], 0.3)[0]:
-                      c = os.read(fd, 1).decode('latin-1')
-                      running = handle_input(c, fd)
+                  ui.scroll = max(0, total - panel_h)
+              vis_start = max(0, ui.scroll)
+          
+              for i in range(panel_h):
+                  idx = vis_start + i
+                  row = 4 + i
+                  out.append(f'\033[{row};{left_w+1}H\033[K')
+                  if 0 <= idx < total:
+                      line = ui.display_lines[idx]
+                      out.append(f'\033[{row};{left_w+2}H{line[:right_w-2]}')
+          
+          def handle_input(c, fd):
+              if c == '\x1b':
+                  if _sel.select([fd], [], [], 0.05)[0]:
+                      c2 = os.read(fd, 1).decode('latin-1')
+                      if c2 == '[':
+                          c3 = os.read(fd, 1).decode('latin-1')
+                          if c3 == 'A': scroll_up()
+                          elif c3 == 'B': scroll_down()
+                  return True
+          
+              if c == 'q' or c == '\x03':
+                  ui.done = True
+                  return False
+          
+              if ui.phase == 0:
+                  if c in ('\r', '\n'):
+                      ui.phase = 1
+                      threading.Thread(target=run_discussion, daemon=True).start()
+              elif ui.phase < 3:
+                  if c == 'p':
+                      ui.paused = not ui.paused
+                  elif c == 's':
+                      ui.skip_round = True
+                  elif c == 'j': scroll_down()
+                  elif c == 'k': scroll_up()
               else:
-                  if _sel.select([fd], [], [], 0.5)[0]:
-                      c = os.read(fd, 1).decode('latin-1')
-                      running = handle_input(c, fd)
+                  if c == 'j': scroll_down()
+                  elif c == 'k': scroll_up()
+          
+              return True
+          
+          def scroll_up():
+              ui.scroll = max(0, ui.scroll - 1)
+          
+          def scroll_down():
+              total = len(ui.display_lines)
+              _, height = get_size()
+              panel_h = height - 6
+              ui.scroll = min(max(0, total - panel_h), ui.scroll + 1)
+          
+          fd = sys.stdin.fileno()
+          old_settings = termios.tcgetattr(fd)
+          
+          try:
+              tty.setcbreak(fd)
+              sys.stdout.write('\033[?25l')
               render()
-      finally:
-          termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-          sys.stdout.write('\033[?25h\033[2J\033[H')
-          sys.stdout.flush()
-
-      if ui.discussion_log:
-          print(f'\033[1;36m=== CONVENE: {topic} ===\033[0m\n')
-          print(f'Participants: {", ".join(npc_names)}')
-          print(f'Rounds: {ui.round}/{ui.total_rounds}')
-          print(f'Contributions: {len(ui.discussion_log)}')
-          if ui.synthesis:
-              print(f'\n\033[1;32m--- Synthesis ---\033[0m')
-              print(ui.synthesis[:2000])
-
-      context['output'] = ui.synthesis or 'Convene session ended.'
-      context['messages'] = messages
-      context['convene_result'] = {
-          'topic': topic,
-          'participants': npc_names,
-          'rounds': ui.round,
-          'discussion': ui.discussion_log,
-          'synthesis': ui.synthesis,
-      }
+          
+              running = True
+              while running:
+                  if ui.generating:
+                      if _sel.select([fd], [], [], 0.3)[0]:
+                          c = os.read(fd, 1).decode('latin-1')
+                          running = handle_input(c, fd)
+                  else:
+                      if _sel.select([fd], [], [], 0.5)[0]:
+                          c = os.read(fd, 1).decode('latin-1')
+                          running = handle_input(c, fd)
+                  render()
+          finally:
+              termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+              sys.stdout.write('\033[?25h\033[2J\033[H')
+              sys.stdout.flush()
+          
+          if ui.discussion_log:
+              print(f'\033[1;36m=== CONVENE: {topic} ===\033[0m\n')
+              print(f'Participants: {", ".join(npc_names)}')
+              print(f'Rounds: {ui.round}/{ui.total_rounds}')
+              print(f'Mode: {mode}')
+              print(f'Contributions: {len(ui.discussion_log)}')
+              if ui.synthesis:
+                  print(f'\n\033[1;32m--- Synthesis ---\033[0m')
+                  print(ui.synthesis[:2000])
+          
+          context['output'] = ui.synthesis or 'Convene session ended.'
+          context['messages'] = messages
+          context['convene_result'] = {
+              'topic': topic,
+              'participants': npc_names,
+              'rounds': ui.round,
+              'mode': mode,
+              'discussion': ui.discussion_log,
+              'synthesis': ui.synthesis,
+          }

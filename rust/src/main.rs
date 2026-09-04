@@ -18,6 +18,7 @@ mod version_check;
 
 use crate::cli_providers::{CLI_PROVIDERS, run_cli_provider};
 use crate::cron::CronRegistry;
+use npcsh::agent_turn::{self, run_command_loop};
 use npcsh::markdown::render_block;
 use npcsh::{
     discover_knowledge_stores, exec_jinx_file, exec_npc_file, find_team_dir, format_memory_context,
@@ -1097,77 +1098,15 @@ async fn main() -> Result<()> {
     }
 
     // One-shot command mode: run a full agent loop for the instruction and exit.
-    // A task may require multiple LLM turns (tool call -> result -> next decision).
-    // We keep calling the model until the assistant issues a `stop` tool call,
-    // returns with no tool_calls, or we hit the safety limit.
     if let Some(cmd) = cli_command {
-        // Randomize the one-shot agent turn limit so tasks run for a variable
-        // duration (mean 60, stdev 30, clamped to at least 10).
-        let max_cmd_turns: usize = {
-            let mut rng = rand::thread_rng();
-            let z: f64 = rng.sample(rand_distr::StandardNormal);
-            ((60.0 + 30.0 * z) as i64).clamp(10, 300) as usize
-        };
-        // In -c mode there is no interactive user to continue the loop. Tell the
-        // model explicitly to call the `stop` tool as soon as it believes the task
-        // is complete; otherwise the harness will keep feeding it tool results and
-        // it will burn turns exploring.
-        let initial_input = format!(
-            "{}\n\n[one-shot mode] Solve this and then call the `stop` tool as soon as the task is complete.",
-            cmd
-        );
-        let mut turn_input = initial_input.clone();
-        let mut last_output = String::new();
-        for turn in 0..max_cmd_turns {
-            match run_stream_turn(
-                &mut kernel,
-                current_pid,
-                &turn_input,
-                Mode::Agent,
-                &http_client,
-                &server_url,
-                true,
-                None,
-            )
-            .await
-            {
-                Ok(output) => {
-                    last_output = output;
-                    let tool_calls: Vec<npcrs::ToolCall> = kernel
-                        .get_process(current_pid)
-                        .and_then(|p| p.messages.iter().rev().find(|m| m.role == "assistant"))
-                        .and_then(|m| m.tool_calls.as_ref())
-                        .cloned()
-                        .unwrap_or_default();
-                    let terminal = tool_calls
-                        .iter()
-                        .any(|tc| tc.r#type == "function" && tc.function.name == "stop");
-                    if tool_calls.is_empty() || terminal {
-                        if !last_output.is_empty() {
-                            println!("{}", last_output);
-                        }
-                        return Ok(());
-                    }
-                    // The assistant issued non-terminal tool calls; tool_results are
-                    // already in process.messages. Feed the results back with a neutral
-                    // prompt so the model can decide whether to call stop or do more.
-                    turn_input = "The tool results are above. Call `stop` if the task is complete, otherwise take the next step.".to_string();
-                    if turn == max_cmd_turns - 1 {
-                        eprintln!(
-                            "{YELLOW}Warning: reached max agent turns for -c command; stopping.{RESET}"
-                        );
-                    }
-                }
-                Err(e) => {
-                    eprintln!("{RED}Error: {e}{RESET}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        if !last_output.is_empty() {
-            println!("{}", last_output);
-        }
-        return Ok(());
+        return run_command_loop(
+            &mut kernel,
+            current_pid,
+            &http_client,
+            &server_url,
+            cmd.as_str(),
+        )
+        .await;
     }
 
     let cron_file = shellexpand::tilde("~/.npcsh/loops.yaml").to_string();
@@ -4917,13 +4856,14 @@ async fn exec_nsh_file(
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum TokenClass {
     CoreCommand,
+    JinxName,
     NpcRef,
     BashCommand,
     UnknownSlash,
     Text,
 }
 
-fn classify_input(buf: &str) -> TokenClass {
+fn classify_input(buf: &str, jinx_names: &[String]) -> TokenClass {
     let first = buf.split_whitespace().next().unwrap_or("");
     if first.is_empty() {
         return TokenClass::Text;
@@ -4936,6 +4876,8 @@ fn classify_input(buf: &str) -> TokenClass {
         }
     } else if CORE_COMMANDS.iter().any(|c| c.name == first) {
         TokenClass::CoreCommand
+    } else if jinx_names.iter().any(|n| n == first) {
+        TokenClass::JinxName
     } else if first.starts_with('@') {
         TokenClass::NpcRef
     } else if looks_like_bash(buf) {
@@ -4948,6 +4890,7 @@ fn classify_input(buf: &str) -> TokenClass {
 fn color_for_class(class: TokenClass) -> &'static str {
     match class {
         TokenClass::CoreCommand => CYAN,
+        TokenClass::JinxName => CYAN,
         TokenClass::NpcRef => PURPLE,
         TokenClass::BashCommand => YELLOW,
         TokenClass::UnknownSlash => RED,
@@ -4955,8 +4898,8 @@ fn color_for_class(class: TokenClass) -> &'static str {
     }
 }
 
-fn colorize_input(buf: &str) -> String {
-    let class = classify_input(buf);
+fn colorize_input(buf: &str, jinx_names: &[String]) -> String {
+    let class = classify_input(buf, jinx_names);
     let color = color_for_class(class);
     if color.is_empty() {
         return buf.to_string();
@@ -4967,14 +4910,14 @@ fn colorize_input(buf: &str) -> String {
     }
     let start = buf.find(|c: char| !c.is_whitespace()).unwrap_or(0);
     let end = start + first.len();
-    format!("{}{}{}[0m{}", &buf[..start], color, first, &buf[end..])
+    format!("{}{}{}{}{}", &buf[..start], color, first, RESET, &buf[end..])
 }
 
-fn input_hint(buf: &str, mode: Mode) -> Option<String> {
+fn input_hint(buf: &str, mode: Mode, jinx_names: &[String]) -> Option<String> {
     if buf.trim().is_empty() {
         return None;
     }
-    match classify_input(buf) {
+    match classify_input(buf, jinx_names) {
         TokenClass::BashCommand if mode == Mode::Agent => {
             let first = buf.split_whitespace().next().unwrap_or("");
             if first == "cd" || is_terminal_editor(buf) || is_interactive(buf) {
@@ -5045,7 +4988,7 @@ fn readline_raw(
                     let text = text.replace('\r', "\n");
                     buf.insert_str(pos, &text);
                     pos += text.len();
-                    redraw_prompt(prompt, &buf, pos, mode);
+                    redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                     io::stdout().flush()?;
                     continue;
                 }
@@ -5080,7 +5023,7 @@ fn readline_raw(
                                             println!("{DIM}(no thinking content available){RESET}");
                                         }
                                     }
-                                    redraw_prompt(prompt, &buf, pos, mode);
+                                    redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                                 }
                                 'o' => {
                                     print!("\r\n");
@@ -5129,7 +5072,7 @@ fn readline_raw(
                                             println!("{BOLD}═{RESET}");
                                         }
                                     }
-                                    redraw_prompt(prompt, &buf, pos, mode);
+                                    redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                                 }
                                 _ => {}
                             }
@@ -5141,7 +5084,7 @@ fn readline_raw(
                                 buf.insert(pos, c);
                             }
                             pos += c.len_utf8();
-                            redraw_prompt(prompt, &buf, pos, mode);
+                            redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                             io::stdout().flush()?;
                         }
                     }
@@ -5151,7 +5094,7 @@ fn readline_raw(
                             let prev = buf[..pos].chars().next_back().unwrap();
                             pos -= prev.len_utf8();
                             buf.remove(pos);
-                            redraw_prompt(prompt, &buf, pos, mode);
+                            redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                             io::stdout().flush()?;
                         }
                     }
@@ -5159,7 +5102,7 @@ fn readline_raw(
                         tab_matches.clear();
                         if pos < buf.len() {
                             buf.remove(pos);
-                            redraw_prompt(prompt, &buf, pos, mode);
+                            redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                             io::stdout().flush()?;
                         }
                     }
@@ -5204,14 +5147,14 @@ fn readline_raw(
                                 *history_index = Some(new_idx);
                                 buf = history[new_idx].clone();
                                 pos = buf.len();
-                                redraw_prompt(prompt, &buf, pos, mode);
+                                redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                             }
                         } else if !history.is_empty() {
                             let new_idx = history.len() - 1;
                             *history_index = Some(new_idx);
                             buf = history[new_idx].clone();
                             pos = buf.len();
-                            redraw_prompt(prompt, &buf, pos, mode);
+                            redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                         }
                     }
                     KeyCode::Down => {
@@ -5221,12 +5164,12 @@ fn readline_raw(
                                 *history_index = Some(new_idx);
                                 buf = history[new_idx].clone();
                                 pos = buf.len();
-                                redraw_prompt(prompt, &buf, pos, mode);
+                                redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                             } else {
                                 *history_index = None;
                                 buf.clear();
                                 pos = 0;
-                                redraw_prompt(prompt, &buf, pos, mode);
+                                redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                             }
                         } else if buf.is_empty() {
                             break Ok(ReadlineResult::Reattach);
@@ -5241,7 +5184,7 @@ fn readline_raw(
                                     format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
                                 pos = word_start + replacement.len();
                                 buf = new_buf;
-                                redraw_prompt(prompt, &buf, pos, mode);
+                                redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                                 tab_matches.clear();
                             } else if !matches.is_empty() {
                                 tab_matches = matches;
@@ -5263,7 +5206,7 @@ fn readline_raw(
                                     print!("{:<width$}", m.display, width = col_width);
                                 }
                                 print!("\r\n");
-                                redraw_prompt(prompt, &buf, pos, mode);
+                                redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                             }
                         } else {
                             if !tab_matches.is_empty() {
@@ -5274,7 +5217,7 @@ fn readline_raw(
                                     format!("{}{}{}", &buf[..word_start], replacement, &buf[pos..]);
                                 pos = word_start + replacement.len();
                                 buf = new_buf;
-                                redraw_prompt(prompt, &buf, pos, mode);
+                                redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                             }
                         }
                     }
@@ -5293,9 +5236,9 @@ fn readline_raw(
     result
 }
 
-fn redraw_prompt(prompt: &str, buf: &str, pos: usize, mode: Mode) {
-    let colored = colorize_input(buf);
-    let hint = input_hint(buf, mode);
+fn redraw_prompt(prompt: &str, buf: &str, pos: usize, mode: Mode, jinx_names: &[String]) {
+    let colored = colorize_input(buf, jinx_names);
+    let hint = input_hint(buf, mode, jinx_names);
 
     let (cols, _) = tui::term_size();
     let cols = cols.max(1);
@@ -5349,36 +5292,41 @@ mod tests {
 
     #[test]
     fn classify_known_core_command() {
-        assert_eq!(classify_input("/help"), TokenClass::CoreCommand);
-        assert_eq!(classify_input("/exit now"), TokenClass::CoreCommand);
+        let jinx_names: &[String] = &[];
+        assert_eq!(classify_input("/help", jinx_names), TokenClass::CoreCommand);
+        assert_eq!(classify_input("/exit now", jinx_names), TokenClass::CoreCommand);
     }
 
     #[test]
     fn classify_npc_ref() {
-        assert_eq!(classify_input("@alice"), TokenClass::NpcRef);
-        assert_eq!(classify_input("@bob hi"), TokenClass::NpcRef);
+        let jinx_names: &[String] = &[];
+        assert_eq!(classify_input("@alice", jinx_names), TokenClass::NpcRef);
+        assert_eq!(classify_input("@bob hi", jinx_names), TokenClass::NpcRef);
     }
 
     #[test]
     fn classify_unknown_slash() {
-        assert_eq!(classify_input("/foobar"), TokenClass::UnknownSlash);
+        let jinx_names: &[String] = &[];
+        assert_eq!(classify_input("/foobar", jinx_names), TokenClass::UnknownSlash);
     }
 
     #[test]
     fn colorize_core_command_wraps_first_token() {
-        let out = colorize_input("/help foo");
+        let jinx_names: &[String] = &[];
+        let out = colorize_input("/help foo", jinx_names);
         assert!(out.starts_with(CYAN));
         assert!(out.contains("/help"));
         assert!(out.ends_with(" foo"));
 
-        let with_space = colorize_input("  /help");
+        let with_space = colorize_input("  /help", jinx_names);
         assert!(with_space.starts_with("  "));
         assert!(with_space.contains("/help"));
     }
 
     #[test]
     fn colorize_bash_command_first_token() {
-        let out = colorize_input("ls -la");
+        let jinx_names: &[String] = &[];
+        let out = colorize_input("ls -la", jinx_names);
         assert!(out.starts_with(YELLOW));
         assert!(out.contains("ls"));
         assert!(out.contains("\u{001b}[0m -la"));
@@ -5386,25 +5334,29 @@ mod tests {
 
     #[test]
     fn colorize_text_untouched() {
-        assert_eq!(colorize_input("hello world"), "hello world");
+        let jinx_names: &[String] = &[];
+        assert_eq!(colorize_input("hello world", jinx_names), "hello world");
     }
 
     #[test]
     fn input_hint_for_bash_in_agent_mode() {
+        let jinx_names: &[String] = &[];
         assert_eq!(
-            input_hint("ls -la", Mode::Agent),
+            input_hint("ls -la", Mode::Agent, jinx_names),
             Some("will execute as bash".to_string())
         );
     }
 
     #[test]
     fn input_hint_no_hint_for_cd_or_editors() {
-        assert_eq!(input_hint("cd /tmp", Mode::Agent), None);
-        assert_eq!(input_hint("vim file.txt", Mode::Agent), None);
+        let jinx_names: &[String] = &[];
+        assert_eq!(input_hint("cd /tmp", Mode::Agent, jinx_names), None);
+        assert_eq!(input_hint("vim file.txt", Mode::Agent, jinx_names), None);
     }
 
     #[test]
     fn input_hint_no_hint_in_chat_mode() {
-        assert_eq!(input_hint("ls -la", Mode::Chat), None);
+        let jinx_names: &[String] = &[];
+        assert_eq!(input_hint("ls -la", Mode::Chat, jinx_names), None);
     }
 }

@@ -48,6 +48,7 @@ jinxes:
   - {{ Jinx('memory') }}
   - {{ Jinx('knowledge') }}
   - {{ Jinx('explore') }}
+  - {{ Jinx('agent') }}
   - {{ Jinx('delegate') }}
   - {{ Jinx('convene') }}
   - {{ Jinx('python') }}

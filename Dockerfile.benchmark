@@ -17,12 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 libssl3 ca-certificates curl git util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-# npcpy is a separate repo.  Clone it from GitHub so the image can always
-# build without requiring the sibling checkout in the build context.
-ARG NPCPY_REPO=https://github.com/NPC-Worldwide/npcpy.git
-ARG NPCPY_REF=main
-RUN git clone --depth 1 --branch "${NPCPY_REF}" "${NPCPY_REPO}" /opt/npcpy \
-    && pip install --no-cache-dir -e /opt/npcpy \
+# npcpy is a separate repo.  Pin to the version/branch required by npcsh.
+COPY requirements.txt /opt/npcsh/requirements.txt
+RUN pip install --no-cache-dir -r /opt/npcsh/requirements.txt \
     && pip install --no-cache-dir ollama litellm
 
 WORKDIR /opt/npcsh

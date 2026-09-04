@@ -43,6 +43,10 @@ rand = "0.8"
 rand_distr = "0.4"
 uuid = { version = "1", features = ["v4"] }
 semver = "1"
+# tinyvec 1.13.0 fails to compile on current stable Rust because it imports
+# `alloc::vec::{self, Vec}` and then uses the `vec!` macro. Pin to the last
+# known-good version until upstream fixes it.
+tinyvec = "=1.11.0"
 
 [build-dependencies]
 anyhow = "1"

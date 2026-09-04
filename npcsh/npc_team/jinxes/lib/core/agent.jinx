@@ -1,0 +1,64 @@
+permissions:
+  default: ask
+jinx_name: agent
+description: |
+  Bounded streaming tool-call agent. Delegates to the parent NPC's Agent
+  instance via run_stream() so the sub-agent has exactly the same tools,
+  jinxes, MCP servers, and model configuration as the caller.
+inputs:
+  - query: null
+  - max_turns: "10"
+  - persona: null
+steps:
+  - name: agent_loop
+    engine: python
+    code: |
+      import os
+      from npcpy.npc_compiler import Agent
+      from npcpy.streaming import clean_messages_for_llm, ensure_system_prompt
+
+      query = {{ query | default("") | tojson }}
+      max_turns = int({{ max_turns | default("10") | tojson }} or "10")
+      persona = {{ persona | default("") | tojson }}
+
+      if not query:
+          output = "Error: no query provided to agent jinx."
+          context['agent_output'] = output
+          context['messages'] = clean_messages_for_llm(context.get('messages') or [])
+      else:
+          npc_inst = context.get('npc') or npc
+
+          if persona:
+              system_prompt = persona
+          elif npc_inst and hasattr(npc_inst, 'get_system_prompt'):
+              system_prompt = npc_inst.get_system_prompt(tool_capable=True)
+          else:
+              system_prompt = "You are a helpful assistant with access to tools."
+
+          agent = Agent(
+              npc=npc_inst,
+              name=getattr(npc_inst, 'name', 'agent'),
+              primary_directive=system_prompt,
+              model=os.environ.get('NPCSH_CHAT_MODEL') if not getattr(npc_inst, 'model', None) else None,
+              provider=os.environ.get('NPCSH_CHAT_PROVIDER') if not getattr(npc_inst, 'provider', None) else None,
+              team=context.get('team'),
+          )
+          agent.exclude_jinxes('agent')
+
+          messages = clean_messages_for_llm(context.get('messages') or [])
+          messages = ensure_system_prompt(messages, npc=agent, tool_capable=True)
+
+          agent_context = """IMPORTANT AGENT BEHAVIOR:
+      - If a tool call fails or returns an error, DO NOT give up. Try alternative approaches.
+      - If a file is not found, search for it using different paths or patterns.
+      - If one method doesn't work, try another method to accomplish the task.
+      - Keep working on the task until it is complete or you have exhausted all reasonable options.
+      - When you encounter errors, explain what went wrong and what you're trying next."""
+
+          output = agent.run_stream(
+              query,
+              messages=messages,
+              context=agent_context,
+              max_iterations=max_turns,
+          )
+          context['agent_output'] = output
