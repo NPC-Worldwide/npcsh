@@ -696,7 +696,7 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
                 &mut out,
                 cols,
                 rows,
-                " [Tab] Switch  [j/k] Nav  [Enter] Diff/Stage  [s] Stage  [u] Unstage  [c] Commit  [q] Quit ",
+                " [Tab] Switch  [j/k] Nav  [Enter] Diff/Stage  [s] Stage  [u] Unstage  [c] Commit  [p] Pull  [P] Push  [q] Quit ",
             );
         }
 
@@ -888,6 +888,32 @@ pub fn run_gitt_tui(path: Option<&str>) -> Result<()> {
                             &repo,
                         );
                     }
+                }
+                KeyCode::Char('p') => {
+                    let _ = run_git(&repo, &["pull"]);
+                    refresh(
+                        &tab,
+                        &mut files,
+                        &mut branches,
+                        &mut stash,
+                        &mut log,
+                        &mut diff_text,
+                        &mut status,
+                        &repo,
+                    );
+                }
+                KeyCode::Char('P') => {
+                    let _ = run_git(&repo, &["push"]);
+                    refresh(
+                        &tab,
+                        &mut files,
+                        &mut branches,
+                        &mut stash,
+                        &mut log,
+                        &mut diff_text,
+                        &mut status,
+                        &repo,
+                    );
                 }
                 _ => {}
             }
