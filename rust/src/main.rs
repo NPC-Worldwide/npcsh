@@ -1301,6 +1301,12 @@ async fn main() -> Result<()> {
             }
         }
 
+        if kernel.jinxes.contains_key(cmd_token) {
+            let rest = input.strip_prefix(cmd_token).unwrap_or("").trim();
+            run_jinx_command(&mut kernel, current_pid, cmd_token, rest).await;
+            continue;
+        }
+
         if input == "/set" || input == "set" {
             eprintln!("Usage: set key=value");
             eprintln!("  model=<model-name>  provider=<provider-name>  mode=chat");
@@ -4910,7 +4916,14 @@ fn colorize_input(buf: &str, jinx_names: &[String]) -> String {
     }
     let start = buf.find(|c: char| !c.is_whitespace()).unwrap_or(0);
     let end = start + first.len();
-    format!("{}{}{}{}{}", &buf[..start], color, first, RESET, &buf[end..])
+    format!(
+        "{}{}{}{}{}",
+        &buf[..start],
+        color,
+        first,
+        RESET,
+        &buf[end..]
+    )
 }
 
 fn input_hint(buf: &str, mode: Mode, jinx_names: &[String]) -> Option<String> {
@@ -5294,7 +5307,10 @@ mod tests {
     fn classify_known_core_command() {
         let jinx_names: &[String] = &[];
         assert_eq!(classify_input("/help", jinx_names), TokenClass::CoreCommand);
-        assert_eq!(classify_input("/exit now", jinx_names), TokenClass::CoreCommand);
+        assert_eq!(
+            classify_input("/exit now", jinx_names),
+            TokenClass::CoreCommand
+        );
     }
 
     #[test]
@@ -5307,7 +5323,10 @@ mod tests {
     #[test]
     fn classify_unknown_slash() {
         let jinx_names: &[String] = &[];
-        assert_eq!(classify_input("/foobar", jinx_names), TokenClass::UnknownSlash);
+        assert_eq!(
+            classify_input("/foobar", jinx_names),
+            TokenClass::UnknownSlash
+        );
     }
 
     #[test]

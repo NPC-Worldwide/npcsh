@@ -1,5 +1,7 @@
 use npcrs::error::Result;
-use npcsh::{agent_turn, exec_jinx_file, exec_npc_file, find_team_dir, init_team, resolve_team_layout};
+use npcsh::{
+    agent_turn, exec_jinx_file, exec_npc_file, find_team_dir, init_team, resolve_team_layout,
+};
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: &str = "5237";
