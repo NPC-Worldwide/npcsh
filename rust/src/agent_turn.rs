@@ -628,9 +628,9 @@ pub async fn run_stream_turn_with_interrupt(
     permission_prompt: Option<&dyn Fn(&str) -> String>,
 ) -> Result<String> {
     {
-        let process = kernel.get_process_mut(current_pid).ok_or_else(|| {
-            NpcError::Other(format!("No process with pid {}", current_pid))
-        })?;
+        let process = kernel
+            .get_process_mut(current_pid)
+            .ok_or_else(|| NpcError::Other(format!("No process with pid {}", current_pid)))?;
         if let Some(reason) = process.usage.exceeds(&process.limits) {
             process.kill(137);
             return Err(NpcError::Other(format!(
@@ -653,9 +653,9 @@ pub async fn run_stream_turn_with_interrupt(
     }
 
     let (model, provider, system, npc_name, conv_id, team_name_str) = {
-        let process = kernel.get_process(current_pid).ok_or_else(|| {
-            NpcError::Other(format!("No process with pid {}", current_pid))
-        })?;
+        let process = kernel
+            .get_process(current_pid)
+            .ok_or_else(|| NpcError::Other(format!("No process with pid {}", current_pid)))?;
         let model = process.npc.resolved_model();
         let provider = process.npc.resolved_provider();
         let base_system = process.npc.system_prompt(kernel.team.context.as_deref());
@@ -664,7 +664,8 @@ pub async fn run_stream_turn_with_interrupt(
         let system = if crate::memory_context_enabled() && (has_memory_jinx || has_knowledge_jinx) {
             if let Some(team_dir) = kernel.team.source_dir.as_deref() {
                 let stores = crate::discover_knowledge_stores(team_dir);
-                let appendix = crate::format_memory_context(&stores, has_memory_jinx, has_knowledge_jinx);
+                let appendix =
+                    crate::format_memory_context(&stores, has_memory_jinx, has_knowledge_jinx);
                 if appendix.is_empty() {
                     base_system
                 } else {
@@ -975,9 +976,7 @@ pub async fn run_stream_turn(
                 MAX_ATTEMPTS - 1
             );
             if let Err(e) = restart_server(client, server_url).await {
-                last_error = Some(NpcError::Other(format!(
-                    "failed to restart server: {e}"
-                )));
+                last_error = Some(NpcError::Other(format!("failed to restart server: {e}")));
                 continue;
             }
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1065,9 +1064,8 @@ pub async fn spawn_npc_from_registered_teams(
     for (_team_name, team_dir) in teams {
         let path = std::path::Path::new(&team_dir).join(format!("{}.npc", name));
         if path.exists() {
-            let npc = npcrs::npc_compiler::NPC::from_file(&path).map_err(|e| {
-                NpcError::Other(format!("Failed to load NPC {}: {}", name, e))
-            })?;
+            let npc = npcrs::npc_compiler::NPC::from_file(&path)
+                .map_err(|e| NpcError::Other(format!("Failed to load NPC {}: {}", name, e)))?;
             let pid = kernel.spawn(npc, current_pid, Capabilities::root());
             return Ok(pid);
         }
@@ -1193,7 +1191,10 @@ pub async fn run_command(
                 Ok(new_pid) if new_pid != 0 => {
                     current_pid = new_pid;
                 }
-                _ => eprintln!("{RED}Warning: NPC '{}' not found; using default.{RESET}", name),
+                _ => eprintln!(
+                    "{RED}Warning: NPC '{}' not found; using default.{RESET}",
+                    name
+                ),
             }
         }
     }
@@ -1207,12 +1208,5 @@ pub async fn run_command(
         }
     }
 
-    run_command_loop(
-        &mut kernel,
-        current_pid,
-        &http_client,
-        &server_url,
-        command,
-    )
-    .await
+    run_command_loop(&mut kernel, current_pid, &http_client, &server_url, command).await
 }
