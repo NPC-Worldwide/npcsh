@@ -7,7 +7,9 @@ pub mod team_sync;
 use npcrs::calculate_cost;
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
-use std::io::IsTerminal;
+use std::io::{self, IsTerminal, Write};
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::OnceLock;
 
 const PREF_FILE: &str = ".NPCSH_PREFERRED_TEAM_NAME";
@@ -43,20 +45,158 @@ pub fn real_user_home() -> Option<String> {
     std::env::var("HOME").ok().filter(|s| !s.is_empty())
 }
 
+pub fn load_registered_teams() -> Vec<(String, String)> {
+    let path = std::env::var("NPCSH_TEAM_YAML")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| npcsh_home().join("teams.yaml"));
+
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let value: serde_yaml::Value = match serde_yaml::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut out = Vec::new();
+    if let Some(teams) = value.get("teams").and_then(|v| v.as_mapping()) {
+        for (k, v) in teams {
+            let name = k.as_str().unwrap_or_default().trim().to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let path_str = v.as_str().unwrap_or_default().trim();
+            if path_str.is_empty() {
+                continue;
+            }
+            let expanded = expand_tilde(path_str).to_string_lossy().to_string();
+            out.push((name, expanded));
+        }
+    }
+    out
+}
+
+fn resolve_team_name_to_dir(name: &str, teams: &[(String, String)]) -> Option<String> {
+    let needle = name.to_lowercase();
+    teams
+        .iter()
+        .find(|(n, _)| n.to_lowercase() == needle)
+        .map(|(_, p)| p.clone())
+}
+
+fn select_team_path(teams: &[(String, String)]) -> Option<String> {
+    if teams.is_empty() {
+        return None;
+    }
+    if teams.len() == 1 {
+        return Some(teams[0].1.clone());
+    }
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        return None;
+    }
+
+    let preview = teams
+        .iter()
+        .map(|(n, p)| format!("{}  —  {}", n, p))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if Command::new("sh").arg("-c").arg("command -v fzf").output().ok()?.status.success() {
+        let mut child = Command::new("fzf")
+            .args([
+                "--height=~20",
+                "--layout=reverse",
+                "--header=Select team (↑↓ to navigate, Enter to select)",
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(preview.as_bytes());
+        }
+
+        if let Ok(output) = child.wait_with_output() {
+            if output.status.success() {
+                let selected = String::from_utf8_lossy(&output.stdout);
+                let selected = selected.trim();
+                if let Some(idx) = selected.find("  —") {
+                    let name = selected[..idx].trim();
+                    return resolve_team_name_to_dir(name, teams);
+                }
+            }
+        }
+    }
+
+    eprintln!("\n  Registered teams\n");
+    for (i, (name, path)) in teams.iter().enumerate() {
+        eprintln!("  {}. {}  —  {}", i + 1, name, path);
+    }
+    eprintln!();
+    loop {
+        eprint!("  Select team [1-{}]: ", teams.len());
+        let _ = io::Write::flush(&mut io::stderr());
+        let mut buf = String::new();
+        if io::stdin().read_line(&mut buf).is_err() {
+            return None;
+        }
+        let choice = buf.trim();
+        if choice.is_empty() {
+            continue;
+        }
+        if let Ok(idx) = choice.parse::<usize>() {
+            if let Some((_, path)) = teams.get(idx.saturating_sub(1)) {
+                return Some(path.clone());
+            }
+        }
+        if let Some(path) = resolve_team_name_to_dir(choice, teams) {
+            return Some(path);
+        }
+        eprintln!("  Invalid choice.");
+    }
+}
+
 pub fn find_team_dir() -> String {
     if let Some(resolved) = RESOLVED_TEAM_DIR.get() {
         return resolved.clone();
     }
 
+    let registered = load_registered_teams();
+
     let args: Vec<String> = std::env::args().collect();
     if let Some(pos) = args.iter().position(|a| a == "--team") {
-        if let Some(dir) = args.get(pos + 1) {
-            return dir.clone();
+        if let Some(val) = args.get(pos + 1) {
+            let expanded = expand_tilde(val).to_string_lossy().to_string();
+            if std::path::Path::new(&expanded).is_dir() {
+                return expanded;
+            }
+            if let Some(dir) = resolve_team_name_to_dir(val, &registered) {
+                return dir;
+            }
+            return val.clone();
         }
     }
 
     if std::path::Path::new("./npc_team").exists() {
         return "./npc_team".to_string();
+    }
+
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    let pref_path = std::path::Path::new(&cwd).join(PREF_FILE);
+    if let Ok(pref) = std::fs::read_to_string(&pref_path) {
+        let pref_name = pref.trim();
+        if let Some(dir) = resolve_team_name_to_dir(pref_name, &registered) {
+            return dir;
+        }
+    }
+
+    if let Some(dir) = select_team_path(&registered) {
+        return dir;
     }
 
     let home = real_user_home().unwrap_or_else(|| {
@@ -395,7 +535,7 @@ pub fn resolve_team_layout_at(cwd: &std::path::Path) -> Option<String> {
     let mode = match (has_npc_team, has_agents) {
         (true, false) => Some("npc_team".to_string()),
         (false, true) => Some("agents".to_string()),
-        (true, true) => pref.or_else(|| {
+        (true, true) => pref.clone().or_else(|| {
             if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
                 prompt_for_layout(cwd)
             } else {
@@ -408,6 +548,21 @@ pub fn resolve_team_layout_at(cwd: &std::path::Path) -> Option<String> {
             }
         }),
         (false, false) => None,
+    };
+
+    // If no project layout is present, the preference file may hold a registered
+    // team name. Resolve it and cache the directory so find_team_dir() uses it.
+    let mode = if let Some(m) = mode {
+        Some(m)
+    } else if let Some(p) = pref.as_deref() {
+        if let Some(dir) = resolve_team_name_to_dir(p, &load_registered_teams()) {
+            let abs = expand_tilde(&dir).to_string_lossy().to_string();
+            RESOLVED_TEAM_DIR.set(abs.clone()).ok();
+            return Some(abs);
+        }
+        None
+    } else {
+        None
     };
 
     let mode = mode?;
@@ -439,7 +594,7 @@ pub fn resolve_team_layout() -> Option<String> {
 
 pub async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
     use npcrs::npc_compiler::{
-        Jinx, execute_jinx_with_npc, load_jinx_from_file, load_team_from_directory,
+        execute_jinx_with_npc, load_jinx_from_file, load_team_from_directory,
     };
 
     let jinx = load_jinx_from_file(jinx_file)?;
@@ -459,7 +614,7 @@ pub async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
     // Boot the full team like npcpy does, so every sub-jinx and the lead NPC are available.
     let team_dir = resolve_team_layout().unwrap_or_else(|| ".".to_string());
     let team = load_team_from_directory(&team_dir)?;
-    let mut available_jinxes = team.jinxes.clone();
+    let available_jinxes = team.jinxes.clone();
 
     let npc = if let Some(mut lead) = team.lead_npc().cloned() {
         lead.team = Some(Box::new(team.clone()));

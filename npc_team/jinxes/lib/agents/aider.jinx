@@ -1,0 +1,74 @@
+permissions:
+  default: ask
+jinx_name: aider
+description: Launch Aider as the selected NPC.
+inputs:
+  - npc_name: ""
+  - extra_args: ""
+steps:
+  - name: launch
+    engine: python
+    code: |
+      import os
+      import shlex
+      import sys
+      import tempfile
+      from npcpy.npc_compiler import Team
+
+      npc_name = (context.get('npc_name') or '').strip()
+      extra = (context.get('extra_args') or '').strip()
+      extra_args = shlex.split(extra) if extra else []
+
+      team = getattr(state, 'team', None) if state else None
+      if team is None:
+          team = Team(team_path=context.get('team_path') or os.getcwd())
+
+      if npc_name:
+          npc = team.npcs.get(npc_name)
+          if not npc:
+              print(f"NPC '{npc_name}' not found. Available: {list(team.npcs.keys())}", file=sys.stderr)
+              sys.exit(1)
+      else:
+          npc = team.npcs.get(team.forenpc) if team.forenpc else None
+          if not npc and team.npcs:
+              npc = next(iter(team.npcs.values()))
+          if not npc:
+              print("No NPCs found in team", file=sys.stderr)
+              sys.exit(1)
+
+      directive = (npc.primary_directive or '').strip()
+      parts = [f"You are {npc.name}.\n\n{directive}".strip()]
+
+      tools = []
+      if hasattr(npc, 'jinxes_dict'):
+          tools = list(npc.jinxes_dict.keys())
+      elif hasattr(npc, 'jinx_names'):
+          tools = list(npc.jinx_names)
+      if tools:
+          parts.append(f"\nYour tools: {tools}")
+
+      other = {
+          n: (info.primary_directive or '').split('\n')[0].strip()
+          for n, info in team.npcs.items()
+          if n != npc.name and (info.primary_directive or '').strip()
+      }
+      if other:
+          parts.append("\nOther NPCs on the team:")
+          for n, desc in other.items():
+              parts.append(f"  @{n}: {desc}")
+
+      system_prompt = "\n".join(parts)
+
+      with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False,
+                                       prefix=f'npc_{npc.name}_') as f:
+          f.write(system_prompt)
+          prompt_file = f.name
+
+      cmd = ["aider", "--read", prompt_file]
+      cmd.extend(extra_args)
+      print(f"Starting Aider as {npc.name}")
+      try:
+          os.execvp("aider", cmd)
+      except FileNotFoundError:
+          print("aider: command not found", file=sys.stderr)
+          sys.exit(1)

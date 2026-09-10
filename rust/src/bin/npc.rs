@@ -2,33 +2,43 @@ use npcrs::error::Result;
 use npcsh::{
     agent_turn, exec_jinx_file, exec_npc_file, find_team_dir, init_team, resolve_team_layout,
 };
+use std::path::PathBuf;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: &str = "5237";
-const DEFAULT_NPC: &str = "sibiji";
 
 fn server_url() -> String {
     std::env::var("NPCSH_SERVER_URL")
         .unwrap_or_else(|_| format!("http://{DEFAULT_HOST}:{DEFAULT_PORT}"))
 }
 
-fn resolve_npc_file(name: &str) -> Option<String> {
-    if name.ends_with(".npc") {
-        if std::path::Path::new(name).is_file() {
-            return Some(name.to_string());
-        }
-        return None;
+fn resolve_agent_tool(name: &str) -> Option<&'static str> {
+    match name.to_lowercase().as_str() {
+        "claude" | "claude-code" => Some("claude"),
+        "codex" => Some("codex"),
+        "gemini" => Some("gemini"),
+        "opencode" => Some("opencode"),
+        "aider" => Some("aider"),
+        "amp" => Some("amp"),
+        _ => None,
     }
+}
 
+fn resolve_agent_jinx(tool: &str) -> Option<String> {
+    let name = format!("{}.jinx", tool);
     let team_dir = find_team_dir();
-    let candidates = [
-        format!("./{}.npc", name),
-        format!("{}/{}.npc", team_dir, name),
-        format!("{}/npc_team/{}.npc", team_dir, name),
-    ];
-    for candidate in &candidates {
-        if std::path::Path::new(candidate).is_file() {
-            return Some(candidate.clone());
+    let global_team = shellexpand::tilde("~/.npcsh/npc_team").to_string();
+
+    for base in [team_dir, global_team] {
+        let jinxes_dir = PathBuf::from(&base).join("jinxes");
+        if !jinxes_dir.is_dir() {
+            continue;
+        }
+        for sub in ["", "lib", "lib/agents", "usr", "sys", "etc", "skills"] {
+            let candidate = jinxes_dir.join(sub).join(&name);
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
         }
     }
     None
@@ -98,11 +108,37 @@ async fn main() -> Result<()> {
                 override_provider.as_deref(),
             )
             .await;
+        } else if let Some(tool) = resolve_agent_tool(file) {
+            let jinx_path = resolve_agent_jinx(tool).unwrap_or_else(|| {
+                eprintln!(
+                    "No {} launcher jinx found. Install it in your team jinxes directory or run `npc init`.",
+                    tool
+                );
+                std::process::exit(1);
+            });
+
+            let mut jinx_args: Vec<String> = Vec::new();
+            if let Some(npc) = &override_npc {
+                jinx_args.push(format!("npc_name={}", npc));
+            }
+
+            let mut extra: Vec<&str> = positional[1..].to_vec();
+            if extra.first() == Some(&"--") {
+                extra.remove(0);
+            }
+            if !extra.is_empty() {
+                jinx_args.push(format!("extra_args={}", extra.join(" ")));
+            }
+
+            let jinx_arg_refs: Vec<&str> = jinx_args.iter().map(|s| s.as_str()).collect();
+            return exec_jinx_file(&jinx_path, &jinx_arg_refs).await;
         } else {
             let prompt = positional.join(" ");
             if prompt.is_empty() {
                 eprintln!("Usage: npc <prompt> [-n NPC] [-m MODEL] [-pr PROVIDER]");
                 eprintln!("       npc <file.npc|file.jinx|init> [args...]");
+                eprintln!("       npc <agent> [-n NPC] [-- <tool args>]");
+                eprintln!("       agents: claude, codex, gemini, opencode, aider, amp");
                 std::process::exit(1);
             }
             // Use the same refactored one-shot agent loop that `npcsh -c` uses so
@@ -119,5 +155,7 @@ async fn main() -> Result<()> {
 
     eprintln!("Usage: npc <prompt> [-n NPC] [-m MODEL] [-pr PROVIDER]");
     eprintln!("       npc <file.npc|file.jinx|init> [args...]");
+    eprintln!("       npc <agent> [-n NPC] [-- <tool args>]");
+    eprintln!("       agents: claude, codex, gemini, opencode, aider, amp");
     std::process::exit(1);
 }
