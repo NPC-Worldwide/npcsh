@@ -1,0 +1,164 @@
+permissions:
+  default: ask
+jinx_name: "compress"
+description: "Compact conversation context using breathe(). Summarizes the session into a plan and starts a new linked conversation."
+inputs: []
+steps:
+  - name: "compress_conversation"
+    engine: "python"
+    code: |
+      import os
+      import traceback
+      import uuid
+      from datetime import datetime
+      from sqlalchemy import create_engine, text
+      from npcpy.llm_funcs import breathe
+
+      def _new_conversation_id(prepend="npcsh"):
+          return f"{prepend}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+      def _get_last_message_id(engine, conversation_id):
+          stmt = (
+              "SELECT message_id FROM conversation_history "
+              "WHERE conversation_id = :conversation_id "
+              "ORDER BY id DESC LIMIT 1"
+          )
+          with engine.connect() as conn:
+              result = conn.execute(text(stmt), {"conversation_id": conversation_id})
+              row = result.fetchone()
+              return row[0] if row else None
+
+      def _save_conversation_message(
+          engine,
+          conversation_id,
+          role,
+          content,
+          npc=None,
+          team=None,
+          parent_message_id=None,
+      ):
+          message_id = str(uuid.uuid4())
+          timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+          directory_path = os.getcwd()
+          stmt = """
+              INSERT INTO conversation_history
+              (message_id, timestamp, role, content, conversation_id, directory_path, npc, team, parent_message_id)
+              VALUES (:message_id, :timestamp, :role, :content, :conversation_id, :directory_path, :npc, :team, :parent_message_id)
+          """
+          params = {
+              "message_id": message_id,
+              "timestamp": timestamp,
+              "role": role,
+              "content": content,
+              "conversation_id": conversation_id,
+              "directory_path": directory_path,
+              "npc": npc,
+              "team": team,
+              "parent_message_id": parent_message_id,
+          }
+          with engine.begin() as conn:
+              conn.execute(text(stmt), params)
+          return message_id
+
+      def _ensure_conversation_history_table(engine):
+          stmt = """
+              CREATE TABLE IF NOT EXISTS conversation_history (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  message_id TEXT UNIQUE NOT NULL,
+                  timestamp TEXT,
+                  role TEXT,
+                  content TEXT,
+                  conversation_id TEXT,
+                  directory_path TEXT,
+                  model TEXT,
+                  provider TEXT,
+                  npc TEXT,
+                  team TEXT,
+                  reasoning_content TEXT,
+                  tool_calls TEXT,
+                  tool_results TEXT,
+                  parent_message_id TEXT,
+                  device_id TEXT,
+                  device_name TEXT,
+                  params TEXT,
+                  input_tokens INTEGER,
+                  output_tokens INTEGER,
+                  cost TEXT
+              )
+          """
+          with engine.begin() as conn:
+              conn.execute(text(stmt))
+
+      output_messages = context.get("messages", [])
+      current_npc = context.get("npc")
+      team_obj = context.get("team")
+
+      m = None
+      p = None
+      try:
+          m = state.chat_model
+          p = state.chat_provider
+      except Exception:
+          pass
+      if not m and current_npc and hasattr(current_npc, "model") and current_npc.model:
+          m = current_npc.model
+      if not p and current_npc and hasattr(current_npc, "provider") and current_npc.provider:
+          p = current_npc.provider
+
+      try:
+          result = breathe(messages=output_messages, model=m, provider=p, npc=current_npc)
+          summary = result.get("output", "Context compressed.") if isinstance(result, dict) else str(result)
+      except Exception as e:
+          traceback.print_exc()
+          context["output"] = "Error during compression: " + str(e)
+          exit()
+
+      old_cid = None
+      try:
+          old_cid = state.conversation_id
+      except Exception:
+          pass
+
+      new_cid = _new_conversation_id()
+      try:
+          state.conversation_id = new_cid
+      except Exception:
+          pass
+
+      summary_content = "Session context (continued from " + str(old_cid) + "): " + summary
+      recent = list(output_messages[-6:])
+      context["messages"] = [{"role": "system", "content": summary_content}] + recent
+
+      npc_name = current_npc.name if current_npc else "npcsh"
+      team_name = team_obj.name if team_obj else "npcsh"
+
+      db_path = os.getenv("NPCSH_DB_PATH", os.path.expanduser("~/npcsh_history.db"))
+      engine = create_engine(f"sqlite:///{db_path}")
+      _ensure_conversation_history_table(engine)
+      last_msg_id = None
+      try:
+          if old_cid:
+              last_msg_id = _get_last_message_id(engine, old_cid)
+          _save_conversation_message(
+              engine,
+              new_cid,
+              "system",
+              summary_content,
+              npc=npc_name,
+              team=team_name,
+              parent_message_id=last_msg_id,
+          )
+      finally:
+          try:
+              engine.dispose()
+          except Exception:
+              pass
+
+      current_cid = new_cid
+      try:
+          current_cid = state.conversation_id
+      except Exception:
+          pass
+
+      link_info = " (linked via " + str(last_msg_id) + ")" if last_msg_id else ""
+      context["output"] = "Compressed. New conversation: " + str(current_cid) + link_info

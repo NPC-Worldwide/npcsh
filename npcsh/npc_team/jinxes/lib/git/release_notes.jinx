@@ -23,34 +23,34 @@ steps:
           return r.returncode, r.stdout, r.stderr
 
       if repo:
-          print(f"[release_notes] resolving last release for {repo}...")
+          print(f"[release_notes] resolving last release for {repo}...", flush=True)
           if user_from_tag:
               from_tag = user_from_tag
           else:
               rc, tag, _ = run_cmd('gh', 'release', 'view', '-R', repo, '--json', 'tagName', '-q', '.tagName')
               from_tag = tag.strip() if rc == 0 and tag.strip() else ''
-          print(f"[release_notes] from_tag={from_tag or '(none)'} to_ref={user_to_ref}")
+          print(f"[release_notes] from_tag={from_tag or '(none)'} to_ref={user_to_ref}", flush=True)
 
           if from_tag:
               _, release_date, _ = run_cmd('gh', 'release', 'view', from_tag, '-R', repo, '--json', 'publishedAt', '-q', '.publishedAt')
               release_date = release_date.strip()
 
-              print(f"[release_notes] fetching commits {from_tag}...{user_to_ref}...")
+              print(f"[release_notes] fetching commits {from_tag}...{user_to_ref}...", flush=True)
               _, log, _ = run_cmd('gh', 'api', f'repos/{repo}/compare/{from_tag}...{user_to_ref}',
                   '--jq', '.commits[] | (.sha[:7] + "\t" + (.commit.message | split("\n") | .[0]) + "\t" + .commit.author.name)')
-              print(f"[release_notes] fetching file patches...")
+              print(f"[release_notes] fetching file patches...", flush=True)
               _, diff_stat, _ = run_cmd('gh', 'api', f'repos/{repo}/compare/{from_tag}...{user_to_ref}',
                   '--jq', '.files[] | (.filename + "\t" + .status + "\n" + (.patch // ""))')
 
               pr_search = f'repo:{repo} is:pr is:merged'
               if release_date:
                   pr_search += f' merged:>{release_date[:10]}'
-              print(f"[release_notes] fetching merged PRs...")
+              print(f"[release_notes] fetching merged PRs...", flush=True)
               _, prs, _ = run_cmd('gh', 'pr', 'list', '-R', repo, '--state', 'merged', '--limit', '20',
                   '--search', pr_search,
                   '--json', 'title,body,number', '--jq', '.[] | ("#" + (.number|tostring) + " " + .title + "\n" + (.body // ""))')
           else:
-              print(f"[release_notes] no prior release; fetching recent commits...")
+              print(f"[release_notes] no prior release; fetching recent commits...", flush=True)
               _, log, _ = run_cmd('gh', 'api', f'repos/{repo}/commits',
                   '--jq', '.[] | (.sha[:7] + "\t" + (.commit.message | split("\n") | .[0]) + "\t" + .commit.author.name)')
               diff_stat = ''
@@ -58,7 +58,7 @@ steps:
               from_tag = '(no prior release)'
 
           repo_name = repo.split('/')[-1]
-          print(f"[release_notes] got {len(log.strip().splitlines())} commits, {len(diff_stat)} diff chars, {len(prs)} pr chars")
+          print(f"[release_notes] got {len(log.strip().splitlines())} commits, {len(diff_stat)} diff chars, {len(prs)} pr chars", flush=True)
       else:
           rc, _, _ = run_cmd('git', 'rev-parse', '--is-inside-work-tree')
           if rc != 0:
@@ -93,7 +93,7 @@ steps:
               _model = user_model or (npc.model if npc else (state.chat_model if state else 'gemma3:4b'))
               _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
 
-              print(f"[release_notes] generating notes with {_provider}/{_model}...")
+              print(f"[release_notes] generating notes with {_provider}/{_model}...", flush=True)
               commits_text = log
               files_text = diff_stat if diff_stat else '(unavailable)'
               prs_text = prs if prs else '(none)'
@@ -2118,7 +2118,7 @@ steps:
                   Files changed:
                   {files_chunk}
                   """
-                  print(f"[release_notes] summarizing chunk {idx + 1}/{total}...")
+                  print(f"[release_notes] summarizing chunk {idx + 1}/{total}...", flush=True)
                   r = get_llm_response(p, model=_model, provider=_provider, npc=npc, temperature=0.3)
                   return str(r.get('response', '')).strip()
 
@@ -2133,7 +2133,7 @@ steps:
                   chunk_summaries.append(summarize_chunk(i, total, cc, fc))
 
               combined_summaries = '\n\n'.join(chunk_summaries)
-              print(f"[release_notes] synthesizing final release notes...")
+              print(f"[release_notes] synthesizing final release notes...", flush=True)
               final_prompt = f"""You are writing the final release notes for {repo_name} since {from_tag}. Below are intermediate summaries of changes grouped by chunk, plus merged PRs. Your job is to merge related bullets, remove duplicates, and produce a clean, specific release notes list.
 
                   Each bullet MUST include short commit hash(es) in parentheses at the end, e.g. (a1b2c3d) or (a1b2c3d, e4f5g6h). Do not say "updates to X" or "various improvements". Name the actual change. Skip anything you cannot make specific. No headers, no intro, no closing. Lowercase fragments, not full sentences.
