@@ -19,7 +19,7 @@ name = "npc"
 path = "src/bin/npc.rs"
 
 [dependencies]
-npcrs = { version = "0.1.29", default-features = false, features = ["ffi"] }
+npcrs = { version = "0.1.30", default-features = false, features = ["ffi"] }
 
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
 cfg-if = "1"
