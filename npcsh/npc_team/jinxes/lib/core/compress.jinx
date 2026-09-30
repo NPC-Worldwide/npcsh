@@ -11,7 +11,9 @@ steps:
       import traceback
       import uuid
       from datetime import datetime
+      from pathlib import Path
       from sqlalchemy import create_engine, text
+      import yaml
       from npcpy.llm_funcs import breathe
 
       def _new_conversation_id(prepend="npcsh"):
@@ -93,6 +95,24 @@ steps:
       current_npc = context.get("npc")
       team_obj = context.get("team")
 
+      def _get_ctx_value(key, default=""):
+          try:
+              team_dir = None
+              if team_obj and hasattr(team_obj, "source_dir") and team_obj.source_dir:
+                  team_dir = team_obj.source_dir
+              if not team_dir:
+                  team_dir = os.path.expanduser("~/.npcsh/npc_team")
+              for ctx_file in Path(team_dir).glob("*.ctx"):
+                  with open(ctx_file) as f:
+                      ctx = yaml.safe_load(f)
+                  if ctx and key in ctx:
+                      return ctx[key] or default
+          except Exception:
+              pass
+          return default
+
+      compression_instructions = _get_ctx_value("COMPRESSION_INSTRUCTIONS")
+
       m = None
       p = None
       try:
@@ -105,8 +125,12 @@ steps:
       if not p and current_npc and hasattr(current_npc, "provider") and current_npc.provider:
           p = current_npc.provider
 
+      breathe_messages = list(output_messages)
+      if compression_instructions:
+          breathe_messages.insert(0, {"role": "system", "content": compression_instructions})
+
       try:
-          result = breathe(messages=output_messages, model=m, provider=p, npc=current_npc)
+          result = breathe(messages=breathe_messages, model=m, provider=p, npc=current_npc)
           summary = result.get("output", "Context compressed.") if isinstance(result, dict) else str(result)
       except Exception as e:
           traceback.print_exc()

@@ -1,0 +1,74 @@
+permissions:
+  default: ask
+jinx_name: shell-guide
+skill_name: shell-guide
+description: "Reference guide for the npcsh shell: core commands, modes, dispatch, team sync, and startup."
+inputs:
+- section: all
+steps:
+  - engine: skill
+    skill_name: shell-guide
+    skill_description: Reference guide for the npcsh shell.
+    sections:
+      what-is-npcsh: |
+        `npcsh` is the main NPC OS shell: a Rust REPL built on `npcrs` that connects to an `npcpy.serve` backend.
+        It loads a team, runs an interactive prompt, dispatches commands, and manages conversation history.
+
+      modes: |
+        - `/agent`: full agent mode — tools, bash, LLM. Plain non-command text goes to the LLM; recognized bash commands run locally.
+        - `/chat`: LLM-only, no tools.
+        - `/cmd`: bash first, LLM fallback if the input is not a runnable command.
+        Switch modes with the slash commands or bare `agent`, `chat`, `cmd` aliases.
+
+      core-commands: |
+        Core commands always start with `/`:
+        - Modes: `/agent`, `/chat`, `/cmd`
+        - Terminal UIs: `/ctx`, `/git`, `/jinxes`, `/kg`, `/loop`, `/loops`, `/memories`, `/model`, `/ps`, `/stats`, `/team`
+        - System / Config: `/clear`, `/config`, `/flush`, `/history`, `/reattach`
+        - System Commands: `/init`, `/reload`, `/sync`, `/update`, `/verbose`
+        - Info: `/exit`, `/help`, `/quit`, `/tutorial`
+        Run `/help` in the shell to see the live list.
+
+      jinx-invocation: |
+        Jinxes are invoked by name without a leading slash: `compress`, `file_search pattern=*.py`.
+        Use `/jinxes` to browse the loaded catalog.
+        Tab completion works for `@npcs`, `/commands`, jinx names, and file paths.
+
+      npc-addressing: |
+        `@npc` switches the active process to that NPC across registered teams.
+        `@npc command` delegates a single command to the NPC without changing the active process.
+
+      team-sync: |
+        `/sync` downloads the latest release tarball and copies default team files into `~/.npcsh/npc_team`.
+        It preserves the `usr/` directory and any user-defined keys in `npcsh.ctx`.
+        On startup a hint is shown if the recorded `team_version` does not match `npcsh`.
+
+      init-and-rc: |
+        `/init --force` creates `~/.npcsh/`, `~/.npcsh/bin/`, and `~/.npcsh/npc_team/`.
+        `~/.npcshrc` is sourced on startup; common vars: `NPCSH_CHAT_MODEL`, `NPCSH_CHAT_PROVIDER`, `NPCSH_DEFAULT_MODE`, `NPCSH_MEMORY`.
+
+      one-shot-cli: |
+        `npc "prompt" [-n NPC] [-m MODEL] [-pr PROVIDER]` runs a single command through the agent.
+        `npc <file.jinx> [args...]` executes a jinx file directly.
+        `npc <file.npc> [command]` runs an NPC file.
+        `npc init [dir]` initializes a new team directory.
+
+      history-and-state: |
+        Conversation history is stored in `~/npcsh_history.db` (SQLite).
+        `/history` shows the current conversation; `/flush N` removes the last N messages.
+        `/reattach [path|all]` lets you resume prior conversations from the database.
+
+      startup-flow: |
+        1. `npcsh` starts, loads `~/.npcshrc`, ensures the memory pref.
+        2. Resolves the team directory (`~/.npcsh/npc_team` by default).
+        3. Ensures the `npcpy.serve` backend is running.
+        4. Boots the kernel, loads the team, and enters the REPL.
+        5. Prints a sync hint if the default team files are out of date.
+
+      customization: |
+        Users can add jinxes to `jinxes/usr/` and custom context keys to `npcsh.ctx`.
+        Both survive `/sync` updates. Framework jinxes live in `jinxes/lib/core/`, `jinxes/lib/search/`, and `jinxes/skills/`.
+    scripts_json: '[]'
+    references_json: '[]'
+    assets_json: '[]'
+    section: '{{section}}'

@@ -31,6 +31,13 @@ fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
     LOCK.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn binary_hash() -> String {
+    let exe = std::env::current_exe().unwrap_or_default();
+    let bytes = std::fs::read(&exe).unwrap_or_default();
+    let digest = md5::compute(&bytes);
+    format!("{:x}", digest)[..8.min(format!("{:x}", digest).len())].to_string()
+}
+
 async fn ensure_server_running(
     client: &reqwest::Client,
     server_url: &str,
@@ -49,6 +56,7 @@ async fn ensure_server_running(
 
     let teams_yaml = std::env::var("NPCSH_TEAM_YAML")
         .unwrap_or_else(|_| shellexpand::tilde("~/.npcsh/teams.yaml").to_string());
+    let user_team_dir = shellexpand::tilde("~/.npcsh/npc_team").to_string();
 
     let host = std::env::var("NPCSH_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port = std::env::var("NPCSH_SERVER_PORT").unwrap_or_else(|_| "5237".to_string());
@@ -60,6 +68,8 @@ async fn ensure_server_running(
         .arg(&host)
         .arg("--port")
         .arg(&port)
+        .arg("--dir")
+        .arg(&user_team_dir)
         .arg("--teams-yaml")
         .arg(&teams_yaml)
         .stdin(std::process::Stdio::null())
@@ -395,37 +405,24 @@ enum CoreCmd {
     Agent,
     Chat,
     CmdMode,
-    Kill,
     Clear,
     Flush,
     Config,
     Ctx,
     History,
     Memories,
-    Mems,
     Knowledge,
     Model,
     Reattach,
-    Set,
-    Setup,
     Team,
-    Commit,
-    Gitt,
-    Cron,
+    Git,
     Loop,
-    LoopDemo,
-    LoopOff,
-    LoopOn,
-    LoopRm,
     Loops,
     Jinx(&'static str),
-    Doctor,
     Init,
-    Nsync,
     Reload,
-    Shh,
+    Sync,
     Update,
-    Usage,
     Verbose,
     Exit,
     Help,
@@ -433,7 +430,6 @@ enum CoreCmd {
     Ps,
     Stats,
     Tutorial,
-    ProposeJinxes,
 }
 
 struct CommandDef {
@@ -445,97 +441,7 @@ struct CommandDef {
 
 const CORE_COMMANDS: &[CommandDef] = &[
     CommandDef {
-        name: "/exit",
-        category: "Info",
-        description: "Exit npcsh",
-        cmd: CoreCmd::Exit,
-    },
-    CommandDef {
-        name: "exit",
-        category: "Info",
-        description: "Exit npcsh",
-        cmd: CoreCmd::Exit,
-    },
-    CommandDef {
-        name: "/quit",
-        category: "Info",
-        description: "Exit npcsh",
-        cmd: CoreCmd::Exit,
-    },
-    CommandDef {
-        name: "quit",
-        category: "Info",
-        description: "Exit npcsh",
-        cmd: CoreCmd::Exit,
-    },
-    CommandDef {
-        name: "/help",
-        category: "Info",
-        description: "Show this help",
-        cmd: CoreCmd::Help,
-    },
-    CommandDef {
-        name: "help",
-        category: "Info",
-        description: "Show this help",
-        cmd: CoreCmd::Help,
-    },
-    CommandDef {
-        name: "/jinxes",
-        category: "Info",
-        description: "List available jinxes",
-        cmd: CoreCmd::Jinxes,
-    },
-    CommandDef {
-        name: "jinxes",
-        category: "Info",
-        description: "List available jinxes",
-        cmd: CoreCmd::Jinxes,
-    },
-    CommandDef {
-        name: "/ps",
-        category: "Info",
-        description: "List processes",
-        cmd: CoreCmd::Ps,
-    },
-    CommandDef {
-        name: "ps",
-        category: "Info",
-        description: "List processes",
-        cmd: CoreCmd::Ps,
-    },
-    CommandDef {
-        name: "/stats",
-        category: "Info",
-        description: "Kernel stats",
-        cmd: CoreCmd::Stats,
-    },
-    CommandDef {
-        name: "stats",
-        category: "Info",
-        description: "Kernel stats",
-        cmd: CoreCmd::Stats,
-    },
-    CommandDef {
-        name: "/tutorial",
-        category: "Info",
-        description: "Run interactive tutorial",
-        cmd: CoreCmd::Tutorial,
-    },
-    CommandDef {
-        name: "tutorial",
-        category: "Info",
-        description: "Run interactive tutorial",
-        cmd: CoreCmd::Tutorial,
-    },
-    CommandDef {
         name: "/agent",
-        category: "Modes",
-        description: "Full agent mode (tools + bash + LLM)",
-        cmd: CoreCmd::Agent,
-    },
-    CommandDef {
-        name: "agent",
         category: "Modes",
         description: "Full agent mode (tools + bash + LLM)",
         cmd: CoreCmd::Agent,
@@ -547,34 +453,76 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Chat,
     },
     CommandDef {
-        name: "chat",
-        category: "Modes",
-        description: "Chat-only mode (LLM, no tools)",
-        cmd: CoreCmd::Chat,
-    },
-    CommandDef {
         name: "/cmd",
         category: "Modes",
         description: "Command mode (bash first, LLM fallback)",
         cmd: CoreCmd::CmdMode,
     },
     CommandDef {
-        name: "cmd",
-        category: "Modes",
-        description: "Command mode (bash first, LLM fallback)",
-        cmd: CoreCmd::CmdMode,
+        name: "/ctx",
+        category: "Terminal UIs",
+        description: "Browse and edit team context fields",
+        cmd: CoreCmd::Ctx,
     },
     CommandDef {
-        name: "/kill",
-        category: "NPCs",
-        description: "Kill current process",
-        cmd: CoreCmd::Kill,
+        name: "/git",
+        category: "Terminal UIs",
+        description: "Git TUI",
+        cmd: CoreCmd::Git,
     },
     CommandDef {
-        name: "kill",
-        category: "NPCs",
-        description: "Kill current process",
-        cmd: CoreCmd::Kill,
+        name: "/jinxes",
+        category: "Terminal UIs",
+        description: "List available jinxes",
+        cmd: CoreCmd::Jinxes,
+    },
+    CommandDef {
+        name: "/kg",
+        category: "Terminal UIs",
+        description: "Browse knowledge stores and entries",
+        cmd: CoreCmd::Knowledge,
+    },
+    CommandDef {
+        name: "/loop",
+        category: "Terminal UIs",
+        description: "Create a loop: /loop <interval> <task>",
+        cmd: CoreCmd::Loop,
+    },
+    CommandDef {
+        name: "/loops",
+        category: "Terminal UIs",
+        description: "Review and manage loops",
+        cmd: CoreCmd::Loops,
+    },
+    CommandDef {
+        name: "/memories",
+        category: "Terminal UIs",
+        description: "Browse memory lifecycle TUI",
+        cmd: CoreCmd::Memories,
+    },
+    CommandDef {
+        name: "/model",
+        category: "Terminal UIs",
+        description: "Model selection TUI",
+        cmd: CoreCmd::Model,
+    },
+    CommandDef {
+        name: "/ps",
+        category: "Terminal UIs",
+        description: "List processes",
+        cmd: CoreCmd::Ps,
+    },
+    CommandDef {
+        name: "/stats",
+        category: "Terminal UIs",
+        description: "Kernel stats",
+        cmd: CoreCmd::Stats,
+    },
+    CommandDef {
+        name: "/team",
+        category: "Terminal UIs",
+        description: "Team management TUI",
+        cmd: CoreCmd::Team,
     },
     CommandDef {
         name: "/clear",
@@ -583,10 +531,10 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Clear,
     },
     CommandDef {
-        name: "clear",
+        name: "/config",
         category: "System / Config",
-        description: "Clear conversation",
-        cmd: CoreCmd::Clear,
+        description: "Configuration TUI",
+        cmd: CoreCmd::Config,
     },
     CommandDef {
         name: "/flush",
@@ -595,94 +543,10 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Flush,
     },
     CommandDef {
-        name: "flush",
-        category: "System / Config",
-        description: "Flush the last N messages from the conversation",
-        cmd: CoreCmd::Flush,
-    },
-    CommandDef {
-        name: "/config",
-        category: "System / Config",
-        description: "Configuration TUI",
-        cmd: CoreCmd::Config,
-    },
-    CommandDef {
-        name: "config",
-        category: "System / Config",
-        description: "Configuration TUI",
-        cmd: CoreCmd::Config,
-    },
-    CommandDef {
-        name: "/ctx",
-        category: "System / Config",
-        description: "Browse and edit team context fields",
-        cmd: CoreCmd::Ctx,
-    },
-    CommandDef {
-        name: "ctx",
-        category: "System / Config",
-        description: "Browse and edit team context fields",
-        cmd: CoreCmd::Ctx,
-    },
-    CommandDef {
         name: "/history",
         category: "System / Config",
         description: "Show conversation history",
         cmd: CoreCmd::History,
-    },
-    CommandDef {
-        name: "history",
-        category: "System / Config",
-        description: "Show conversation history",
-        cmd: CoreCmd::History,
-    },
-    CommandDef {
-        name: "/memories",
-        category: "System / Config",
-        description: "Browse memory lifecycle TUI",
-        cmd: CoreCmd::Memories,
-    },
-    CommandDef {
-        name: "memories",
-        category: "System / Config",
-        description: "Browse memory lifecycle TUI",
-        cmd: CoreCmd::Memories,
-    },
-    CommandDef {
-        name: "/mems",
-        category: "System / Config",
-        description: "Browse and edit memory lifecycle TUI",
-        cmd: CoreCmd::Mems,
-    },
-    CommandDef {
-        name: "mems",
-        category: "System / Config",
-        description: "Browse and edit memory lifecycle TUI",
-        cmd: CoreCmd::Mems,
-    },
-    CommandDef {
-        name: "/kg",
-        category: "System / Config",
-        description: "Browse knowledge stores and entries",
-        cmd: CoreCmd::Knowledge,
-    },
-    CommandDef {
-        name: "kg",
-        category: "System / Config",
-        description: "Browse knowledge stores and entries",
-        cmd: CoreCmd::Knowledge,
-    },
-    CommandDef {
-        name: "/model",
-        category: "System / Config",
-        description: "Model selection TUI",
-        cmd: CoreCmd::Model,
-    },
-    CommandDef {
-        name: "model",
-        category: "System / Config",
-        description: "Model selection TUI",
-        cmd: CoreCmd::Model,
     },
     CommandDef {
         name: "/reattach",
@@ -691,202 +555,10 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Reattach,
     },
     CommandDef {
-        name: "reattach",
-        category: "System / Config",
-        description: "Reattach to files/sessions",
-        cmd: CoreCmd::Reattach,
-    },
-    CommandDef {
-        name: "/set",
-        category: "System / Config",
-        description: "Set model, provider, or mode",
-        cmd: CoreCmd::Set,
-    },
-    CommandDef {
-        name: "set",
-        category: "System / Config",
-        description: "Set model, provider, or mode",
-        cmd: CoreCmd::Set,
-    },
-    CommandDef {
-        name: "/setup",
-        category: "System / Config",
-        description: "First-time setup TUI",
-        cmd: CoreCmd::Setup,
-    },
-    CommandDef {
-        name: "setup",
-        category: "System / Config",
-        description: "First-time setup TUI",
-        cmd: CoreCmd::Setup,
-    },
-    CommandDef {
-        name: "/team",
-        category: "System / Config",
-        description: "Team management TUI",
-        cmd: CoreCmd::Team,
-    },
-    CommandDef {
-        name: "team",
-        category: "System / Config",
-        description: "Team management TUI",
-        cmd: CoreCmd::Team,
-    },
-    CommandDef {
-        name: "/commit",
-        category: "Tools",
-        description: "Commit helper TUI",
-        cmd: CoreCmd::Commit,
-    },
-    CommandDef {
-        name: "commit",
-        category: "Tools",
-        description: "Commit helper TUI",
-        cmd: CoreCmd::Commit,
-    },
-    CommandDef {
-        name: "/gitt",
-        category: "Tools",
-        description: "Git TUI",
-        cmd: CoreCmd::Gitt,
-    },
-    CommandDef {
-        name: "gitt",
-        category: "Tools",
-        description: "Git TUI",
-        cmd: CoreCmd::Gitt,
-    },
-    CommandDef {
-        name: "/cron",
-        category: "Loops",
-        description: "Cron management",
-        cmd: CoreCmd::Cron,
-    },
-    CommandDef {
-        name: "cron",
-        category: "Loops",
-        description: "Cron management",
-        cmd: CoreCmd::Cron,
-    },
-    CommandDef {
-        name: "/loop",
-        category: "Loops",
-        description: "Create a loop",
-        cmd: CoreCmd::Loop,
-    },
-    CommandDef {
-        name: "loop",
-        category: "Loops",
-        description: "Create a loop",
-        cmd: CoreCmd::Loop,
-    },
-    CommandDef {
-        name: "/loop_demo",
-        category: "Loops",
-        description: "Add a demo heartbeat loop",
-        cmd: CoreCmd::LoopDemo,
-    },
-    CommandDef {
-        name: "loop_demo",
-        category: "Loops",
-        description: "Add a demo heartbeat loop",
-        cmd: CoreCmd::LoopDemo,
-    },
-    CommandDef {
-        name: "/loopoff",
-        category: "Loops",
-        description: "Disable a loop",
-        cmd: CoreCmd::LoopOff,
-    },
-    CommandDef {
-        name: "loopoff",
-        category: "Loops",
-        description: "Disable a loop",
-        cmd: CoreCmd::LoopOff,
-    },
-    CommandDef {
-        name: "/loopon",
-        category: "Loops",
-        description: "Enable a loop",
-        cmd: CoreCmd::LoopOn,
-    },
-    CommandDef {
-        name: "loopon",
-        category: "Loops",
-        description: "Enable a loop",
-        cmd: CoreCmd::LoopOn,
-    },
-    CommandDef {
-        name: "/looprm",
-        category: "Loops",
-        description: "Remove a loop",
-        cmd: CoreCmd::LoopRm,
-    },
-    CommandDef {
-        name: "looprm",
-        category: "Loops",
-        description: "Remove a loop",
-        cmd: CoreCmd::LoopRm,
-    },
-    CommandDef {
-        name: "/loops",
-        category: "Loops",
-        description: "List loops",
-        cmd: CoreCmd::Loops,
-    },
-    CommandDef {
-        name: "loops",
-        category: "Loops",
-        description: "List loops",
-        cmd: CoreCmd::Loops,
-    },
-    CommandDef {
-        name: "/doctor",
-        category: "System Commands",
-        description: "Diagnose and auto-fix common issues",
-        cmd: CoreCmd::Doctor,
-    },
-    CommandDef {
-        name: "doctor",
-        category: "System Commands",
-        description: "Diagnose and auto-fix common issues",
-        cmd: CoreCmd::Doctor,
-    },
-    CommandDef {
         name: "/init",
         category: "System Commands",
         description: "Initialize / reinitialize npcsh",
         cmd: CoreCmd::Init,
-    },
-    CommandDef {
-        name: "init",
-        category: "System Commands",
-        description: "Initialize / reinitialize npcsh",
-        cmd: CoreCmd::Init,
-    },
-    CommandDef {
-        name: "/nsync",
-        category: "System Commands",
-        description: "Sync npcsh state",
-        cmd: CoreCmd::Nsync,
-    },
-    CommandDef {
-        name: "nsync",
-        category: "System Commands",
-        description: "Sync npcsh state",
-        cmd: CoreCmd::Nsync,
-    },
-    CommandDef {
-        name: "/refresh",
-        category: "System Commands",
-        description: "Refresh npcsh (alias of reload)",
-        cmd: CoreCmd::Reload,
-    },
-    CommandDef {
-        name: "refresh",
-        category: "System Commands",
-        description: "Refresh npcsh (alias of reload)",
-        cmd: CoreCmd::Reload,
     },
     CommandDef {
         name: "/reload",
@@ -895,22 +567,10 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Reload,
     },
     CommandDef {
-        name: "reload",
+        name: "/sync",
         category: "System Commands",
-        description: "Reload npcsh state",
-        cmd: CoreCmd::Reload,
-    },
-    CommandDef {
-        name: "/shh",
-        category: "System Commands",
-        description: "Toggle quiet mode",
-        cmd: CoreCmd::Shh,
-    },
-    CommandDef {
-        name: "shh",
-        category: "System Commands",
-        description: "Toggle quiet mode",
-        cmd: CoreCmd::Shh,
+        description: "Sync default jinxes and NPCs from the latest release",
+        cmd: CoreCmd::Sync,
     },
     CommandDef {
         name: "/update",
@@ -919,55 +579,41 @@ const CORE_COMMANDS: &[CommandDef] = &[
         cmd: CoreCmd::Update,
     },
     CommandDef {
-        name: "update",
-        category: "System Commands",
-        description: "Update npcsh",
-        cmd: CoreCmd::Update,
-    },
-    CommandDef {
-        name: "/usage",
-        category: "System Commands",
-        description: "Show usage info",
-        cmd: CoreCmd::Usage,
-    },
-    CommandDef {
-        name: "usage",
-        category: "System Commands",
-        description: "Show usage info",
-        cmd: CoreCmd::Usage,
-    },
-    CommandDef {
         name: "/verbose",
         category: "System Commands",
         description: "Toggle verbose mode",
         cmd: CoreCmd::Verbose,
     },
     CommandDef {
-        name: "verbose",
-        category: "System Commands",
-        description: "Toggle verbose mode",
-        cmd: CoreCmd::Verbose,
+        name: "/exit",
+        category: "Info",
+        description: "Exit npcsh",
+        cmd: CoreCmd::Exit,
     },
     CommandDef {
-        name: "/propose-jinxes",
-        category: "Tools",
-        description: "Suggest new jinxes/skills or edits based on team context",
-        cmd: CoreCmd::ProposeJinxes,
+        name: "/help",
+        category: "Info",
+        description: "Show this help",
+        cmd: CoreCmd::Help,
     },
     CommandDef {
-        name: "propose-jinxes",
-        category: "Tools",
-        description: "Suggest new jinxes/skills or edits based on team context",
-        cmd: CoreCmd::ProposeJinxes,
+        name: "/quit",
+        category: "Info",
+        description: "Exit npcsh",
+        cmd: CoreCmd::Exit,
+    },
+    CommandDef {
+        name: "/tutorial",
+        category: "Info",
+        description: "Run interactive tutorial",
+        cmd: CoreCmd::Tutorial,
     },
 ];
 
 const COMMAND_CATEGORIES: &[&str] = &[
     "Modes",
-    "NPCs",
+    "Terminal UIs",
     "System / Config",
-    "Tools",
-    "Loops",
     "System Commands",
     "Info",
 ];
@@ -977,7 +623,15 @@ async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.iter().any(|a| a == "--version" || a == "-v") {
-        println!("npcsh {}", env!("NPCSH_VERSION"));
+        println!("npcsh {} {}", env!("NPCSH_VERSION"), binary_hash());
+        return Ok(());
+    }
+
+    if args
+        .iter()
+        .any(|a| a == "--help" || a == "-h" || a == "-help")
+    {
+        print_cli_help();
         return Ok(());
     }
 
@@ -1118,6 +772,8 @@ async fn main() -> Result<()> {
     print_welcome(&kernel, current_pid);
 
     let current_version = env!("NPCSH_VERSION").to_string();
+    check_team_sync_hint(&current_version);
+
     let http_client_for_update = http_client.clone();
     tokio::spawn(async move {
         if let Some(info) =
@@ -1504,7 +1160,7 @@ async fn main() -> Result<()> {
                         .map(|p| p.last_streamed)
                         .unwrap_or(false);
                     if !streamed && !output.trim().is_empty() {
-                        println!("\n{}", render_block(output.trim()));
+                        println!("\n{}", output.trim());
                     }
 
                     let p = kernel.get_process(current_pid);
@@ -1857,7 +1513,7 @@ async fn run_stream_turn_with_interrupt(
 
     {
         let process = kernel.get_process_mut(current_pid).unwrap();
-        process.last_streamed = response.streamed || response.message.content.is_some();
+        process.last_streamed = response.streamed;
         process.last_thinking = response.message.thinking.clone();
         process.messages.push(Message::user(input));
         process.messages.push(assistant_message.clone());
@@ -2527,21 +2183,6 @@ async fn dispatch_core_command(
             CoreDispatch::Handled
         }
 
-        CoreCmd::Kill => {
-            if *current_pid == 0 {
-                eprintln!("{RED}Cannot kill init (pid 0){RESET}");
-            } else {
-                let name = kernel.get_process(*current_pid).map(|p| p.npc.name.clone());
-                kernel.kill(*current_pid, 0).ok();
-                *current_pid = 0;
-                eprintln!(
-                    "{YELLOW}Killed @{} — switched to init{RESET}",
-                    name.unwrap_or_default()
-                );
-            }
-            CoreDispatch::Handled
-        }
-
         CoreCmd::Clear => {
             if let Some(p) = kernel.get_process_mut(*current_pid) {
                 p.messages.clear();
@@ -2643,12 +2284,6 @@ async fn dispatch_core_command(
             }
             CoreDispatch::Handled
         }
-        CoreCmd::Setup => {
-            if let Err(e) = tui::run_setup_tui() {
-                eprintln!("{RED}Error: {e}{RESET}");
-            }
-            CoreDispatch::Handled
-        }
         CoreCmd::Team => {
             match tui::run_team_tui(kernel) {
                 Ok(Some(new_team_dir)) => {
@@ -2674,13 +2309,7 @@ async fn dispatch_core_command(
             }
             CoreDispatch::Handled
         }
-        CoreCmd::Commit => {
-            if let Err(e) = tui::run_commit_tui() {
-                eprintln!("{RED}Error: {e}{RESET}");
-            }
-            CoreDispatch::Handled
-        }
-        CoreCmd::Gitt => {
+        CoreCmd::Git => {
             let path = if rest.is_empty() { None } else { Some(rest) };
             if let Err(e) = tui::run_gitt_tui(path) {
                 eprintln!("{RED}Error: {e}{RESET}");
@@ -2688,108 +2317,7 @@ async fn dispatch_core_command(
             CoreDispatch::Handled
         }
 
-        CoreCmd::ProposeJinxes => {
-            let Some(process) = kernel.get_process(*current_pid) else {
-                eprintln!("{RED}No active NPC.{RESET}");
-                return CoreDispatch::Handled;
-            };
-            let npc_name = process.npc.name.clone();
-
-            // Gather existing jinxes
-            let mut jinx_list = Vec::new();
-            for (name, jinx) in &kernel.jinxes {
-                let desc = if jinx.description.is_empty() {
-                    "(no description)"
-                } else {
-                    jinx.description.as_str()
-                };
-                jinx_list.push(format!("- {name}: {desc}"));
-            }
-            jinx_list.sort();
-
-            // Gather recent conversation turns
-            let mut recent = String::new();
-            if let Some(p) = kernel.get_process(*current_pid) {
-                let mut count = 0;
-                for m in p.messages.iter().rev() {
-                    if count >= 10 {
-                        break;
-                    }
-                    if m.role == "user" || m.role == "assistant" {
-                        let content = m.content.as_deref().unwrap_or("").trim();
-                        if !content.is_empty() {
-                            recent.push_str(&format!(
-                                "{}: {}\n",
-                                m.role,
-                                content.chars().take(500).collect::<String>()
-                            ));
-                            count += 1;
-                        }
-                    }
-                }
-            }
-
-            // Team context
-            let team_ctx = kernel.team.context.as_deref().unwrap_or("(none)");
-
-            let prompt = format!(
-                "You are helping improve an NPC team's tooling.\n\n\
-                Team context:\n{team_ctx}\n\n\
-                Existing jinxes/skills:\n{}\n\n\
-                Recent conversation:\n{recent}\n\n\
-                Based on the team context and recent work, propose 1-3 new jinxes/skills or concrete edits to existing ones. \
-                For each proposal give: name, purpose, inputs, and a short draft of the jinx steps. \
-                Write in plain text suitable for turning into a .jinx file later.",
-                jinx_list.join("\n")
-            );
-
-            eprintln!("{DIM}Asking @{npc_name} for jinx proposals...{RESET}");
-            match kernel.exec_chat(*current_pid, &prompt).await {
-                Ok(output) => {
-                    // Decide destination: local team dir if it has a jinxes folder, else global
-                    let base_dir = kernel
-                        .team
-                        .source_dir
-                        .as_deref()
-                        .and_then(|d| {
-                            let p = std::path::Path::new(d).join("jinxes");
-                            if p.is_dir() { Some(p) } else { None }
-                        })
-                        .unwrap_or_else(|| {
-                            shellexpand::tilde("~/.npcsh/npc_team/usr/jinxes")
-                                .into_owned()
-                                .into()
-                        });
-                    let _ = std::fs::create_dir_all(&base_dir);
-                    let stamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let out_path = base_dir.join(format!("proposed-{stamp}.md"));
-                    match std::fs::write(&out_path, &output) {
-                        Ok(_) => {
-                            eprintln!("{GREEN}Wrote proposals to {}{RESET}", out_path.display());
-                        }
-                        Err(e) => {
-                            eprintln!("{RED}Failed to write proposals: {e}{RESET}");
-                            println!("{output}");
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("{RED}Proposal request failed: {e}{RESET}");
-                }
-            }
-            CoreDispatch::Handled
-        }
-
         CoreCmd::Memories => {
-            if let Err(e) = tui::run_memories_tui() {
-                eprintln!("{RED}Error: {e}{RESET}");
-            }
-            CoreDispatch::Handled
-        }
-        CoreCmd::Mems => {
             if let Err(e) = tui::run_memories_tui() {
                 eprintln!("{RED}Error: {e}{RESET}");
             }
@@ -2847,65 +2375,12 @@ async fn dispatch_core_command(
             CoreDispatch::Handled
         }
 
-        CoreCmd::Cron => {
-            handle_cron_command(rest, kernel, cron_registry, *current_pid).await;
-            CoreDispatch::Handled
-        }
         CoreCmd::Loop => {
             handle_loop_command(rest, kernel, cron_registry, *current_pid).await;
             CoreDispatch::Handled
         }
         CoreCmd::Loops => {
             handle_jobs_command(rest, kernel, cron_registry, *current_pid).await;
-            CoreDispatch::Handled
-        }
-        CoreCmd::LoopDemo => {
-            let npc_name = kernel
-                .get_process(*current_pid)
-                .map(|p| p.npc.name.clone())
-                .unwrap_or_default();
-            if npc_name.is_empty() {
-                eprintln!("{RED}No active NPC to attach the demo loop to.{RESET}");
-            } else {
-                let loop_rest = format!("{npc_name} 10s heartbeat demo: print the current time");
-                handle_loop_command(&loop_rest, kernel, cron_registry, *current_pid).await;
-            }
-            CoreDispatch::Handled
-        }
-        CoreCmd::LoopRm => {
-            if let Ok(id) = rest.parse::<u32>() {
-                if cron_registry.lock().unwrap().remove(id) {
-                    eprintln!("{GREEN}Removed loop {id}{RESET}");
-                } else {
-                    eprintln!("{RED}No loop with id {id}{RESET}");
-                }
-            } else {
-                eprintln!("Usage: /looprm <id>");
-            }
-            CoreDispatch::Handled
-        }
-        CoreCmd::LoopOff => {
-            if let Ok(id) = rest.parse::<u32>() {
-                if cron_registry.lock().unwrap().enable(id, false) {
-                    eprintln!("{GREEN}Disabled loop {id}{RESET}");
-                } else {
-                    eprintln!("{RED}No loop with id {id}{RESET}");
-                }
-            } else {
-                eprintln!("Usage: /loopoff <id>");
-            }
-            CoreDispatch::Handled
-        }
-        CoreCmd::LoopOn => {
-            if let Ok(id) = rest.parse::<u32>() {
-                if cron_registry.lock().unwrap().enable(id, true) {
-                    eprintln!("{GREEN}Enabled loop {id}{RESET}");
-                } else {
-                    eprintln!("{RED}No loop with id {id}{RESET}");
-                }
-            } else {
-                eprintln!("Usage: /loopon <id>");
-            }
             CoreDispatch::Handled
         }
 
@@ -2916,32 +2391,20 @@ async fn dispatch_core_command(
             CoreDispatch::Handled
         }
 
-        CoreCmd::Doctor => {
-            run_doctor_command(rest).await;
-            CoreDispatch::Handled
-        }
         CoreCmd::Init => {
             run_init_command(rest).await;
-            CoreDispatch::Handled
-        }
-        CoreCmd::Nsync => {
-            run_nsync_command(rest).await;
             CoreDispatch::Handled
         }
         CoreCmd::Reload => {
             run_reload_command(kernel, current_pid).await;
             CoreDispatch::Handled
         }
-        CoreCmd::Shh => {
-            run_shh_command();
+        CoreCmd::Sync => {
+            run_sync_command().await;
             CoreDispatch::Handled
         }
         CoreCmd::Update => {
             run_update_command().await;
-            CoreDispatch::Handled
-        }
-        CoreCmd::Usage => {
-            run_usage_command(kernel, *current_pid);
             CoreDispatch::Handled
         }
         CoreCmd::Verbose => {
@@ -2952,54 +2415,6 @@ async fn dispatch_core_command(
         CoreCmd::Jinx(jinx_name) => {
             run_jinx_command(kernel, *current_pid, jinx_name, rest).await;
             CoreDispatch::Handled
-        }
-
-        CoreCmd::Set => CoreDispatch::NotHandled,
-    }
-}
-
-async fn run_doctor_command(_rest: &str) {
-    let home = shellexpand::tilde("~").to_string();
-    let npcsh_dir = std::path::Path::new(&home).join(".npcsh");
-    let bin_dir = npcsh_dir.join("bin");
-    let mut fixes: Vec<String> = Vec::new();
-
-    if !npcsh_dir.exists() {
-        if let Err(e) = tokio::fs::create_dir_all(&npcsh_dir).await {
-            eprintln!("{RED}Failed to create ~/.npcsh: {e}{RESET}");
-            return;
-        }
-        fixes.push("Created ~/.npcsh".to_string());
-    }
-
-    if !bin_dir.exists() {
-        if let Err(e) = tokio::fs::create_dir_all(&bin_dir).await {
-            eprintln!("{RED}Failed to create ~/.npcsh/bin: {e}{RESET}");
-            return;
-        }
-        fixes.push("Created ~/.npcsh/bin".to_string());
-    }
-
-    let db_path = std::path::Path::new(&home).join("npcsh_history.db");
-    if !db_path.exists() {
-        fixes.push("No history database yet; it will be created on first use.".to_string());
-    }
-
-    let npc_team_dir = npcsh_dir.join("npc_team");
-    if !npc_team_dir.exists() {
-        if let Err(e) = tokio::fs::create_dir_all(&npc_team_dir).await {
-            eprintln!("{RED}Failed to create ~/.npcsh/npc_team: {e}{RESET}");
-            return;
-        }
-        fixes.push("Created ~/.npcsh/npc_team".to_string());
-    }
-
-    if fixes.is_empty() {
-        println!("{GREEN}No common issues found. npcsh looks healthy.{RESET}");
-    } else {
-        println!("{BOLD}Doctor fixes:{RESET}");
-        for f in fixes {
-            println!("  {GREEN}{f}{RESET}");
         }
     }
 }
@@ -3041,11 +2456,29 @@ async fn run_init_command(rest: &str) {
     println!("  rc:       {}", rc_path.display());
 }
 
-async fn run_nsync_command(_rest: &str) {
+fn check_team_sync_hint(current_version: &str) {
+    let Some(home) = real_user_home() else {
+        return;
+    };
+    let version_path = std::path::PathBuf::from(&home)
+        .join(".npcsh")
+        .join("team_version");
+    let out_of_sync = match std::fs::read_to_string(&version_path) {
+        Ok(stored) => stored.trim() != current_version,
+        Err(_) => true,
+    };
+    if out_of_sync {
+        println!(
+            "{YELLOW}Default team files are out of sync with npcsh {current_version}. Run /sync to update them.{RESET}"
+        );
+    }
+}
+
+async fn run_sync_command() {
     let home = real_user_home().unwrap_or_else(|| shellexpand::tilde("~").to_string());
     let home_path = std::path::PathBuf::from(home);
     let user_team = home_path.join(".npcsh").join("npc_team");
-    let tag = env!("CARGO_PKG_VERSION");
+    let tag = env!("NPCSH_VERSION");
     let repo = "NPC-Worldwide/npcsh";
     let tarball_url = format!(
         "https://github.com/{}/archive/refs/tags/v{}.tar.gz",
@@ -3125,6 +2558,10 @@ async fn run_nsync_command(_rest: &str) {
     let _ = fs::remove_dir_all(&tmp_dir);
 
     let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
+    let version_path = home_path.join("team_version");
+    if let Err(e) = std::fs::write(&version_path, env!("NPCSH_VERSION")) {
+        eprintln!("  {RED}failed to record synced version: {e}{RESET}");
+    }
     println!("  team dir: {}", user_team.display());
     println!("  db path:  {db_path}");
     println!("{GREEN}State synced.{RESET}");
@@ -3143,17 +2580,6 @@ async fn run_reload_command(kernel: &mut Kernel, current_pid: &mut u32) {
     }
 }
 
-fn run_shh_command() {
-    static QUIET: AtomicBool = AtomicBool::new(false);
-    let was = QUIET.load(Ordering::Relaxed);
-    QUIET.store(!was, Ordering::Relaxed);
-    if was {
-        println!("{GREEN}Verbose mode on.{RESET}");
-    } else {
-        println!("{GREEN}Quiet mode on.{RESET}");
-    }
-}
-
 fn run_verbose_command() {
     static VERBOSE: AtomicBool = AtomicBool::new(false);
     let was = VERBOSE.load(Ordering::Relaxed);
@@ -3163,46 +2589,6 @@ fn run_verbose_command() {
     } else {
         println!("{GREEN}Verbose mode on.{RESET}");
     }
-}
-
-fn run_usage_command(kernel: &Kernel, current_pid: u32) {
-    let mut inp = 0u64;
-    let mut out = 0u64;
-    let mut cost = 0.0f64;
-    let mut turns = 0u64;
-
-    if let Some(p) = kernel.get_process(current_pid) {
-        inp = p.usage.total_input_tokens;
-        out = p.usage.total_output_tokens;
-        cost = p.usage.total_cost_usd;
-        turns = p.usage.total_turns;
-    }
-
-    let total = inp + out;
-    let fmt = |n: u64| {
-        if n >= 1000 {
-            format!("{:.1}k", n as f64 / 1000.0)
-        } else {
-            n.to_string()
-        }
-    };
-    let cost_str = if cost == 0.0 {
-        "free (local)".to_string()
-    } else if cost < 0.01 {
-        format!("${cost:.4}")
-    } else {
-        format!("${cost:.2}")
-    };
-
-    println!("{BOLD}Session Usage{RESET}");
-    println!(
-        "  Tokens: {} in / {} out ({} total)",
-        fmt(inp),
-        fmt(out),
-        fmt(total)
-    );
-    println!("  Cost:   {cost_str}");
-    println!("  Turns:  {turns}");
 }
 
 async fn run_update_command() {
@@ -3261,6 +2647,35 @@ async fn run_update_command() {
     println!("Or restart npcsh after running the install script.");
 }
 
+/// Print the non-interactive CLI usage/help text and exit.
+///
+/// This mirrors `/help` inside the shell but is usable without a TTY, so that
+/// `npcsh --help` behaves like a conventional command-line program.
+fn print_cli_help() {
+    println!(
+        "npcsh {} \u{2014} the composable multi-agent shell",
+        env!("NPCSH_VERSION")
+    );
+    println!();
+    println!("USAGE:");
+    println!("  npcsh [OPTIONS] [<file>.nsh]");
+    println!();
+    println!("OPTIONS:");
+    println!("  -h, --help                 Print this help and exit");
+    println!("  -v, --version              Print version and exit");
+    println!("  -n, --npc <name>           Start with the given NPC active");
+    println!("  -m, --model <model>        Override the model for the active NPC");
+    println!("  -p, --provider <provider>  Override the provider for the active NPC");
+    println!("  -c, --command <text>       Run a one-shot agent loop for <text> and exit");
+    println!("      --refresh              Clear and re-sync jinxes and NPCs");
+    println!();
+    println!("ENVIRONMENT:");
+    println!("  NPCSH_HISTORY_DB     Path to the history database (default ~/npcsh_history.db)");
+    println!("  NPCSH_SERVER_URL     npcpy server URL (default http://127.0.0.1:5237)");
+    println!();
+    println!("Run without arguments to start the interactive shell, then use /help.");
+}
+
 fn print_core_help() {
     println!(
         "{BOLD}npcsh-rs{RESET} — NPC OS Shell v{}\n",
@@ -3272,7 +2687,6 @@ fn print_core_help() {
     println!("  {CYAN}/agent{RESET}          Full agent mode (tools + bash + LLM)");
     println!("  {CYAN}/chat{RESET}           Chat-only mode (LLM, no tools)");
     println!("  {CYAN}/cmd{RESET}            Command mode (bash first, LLM fallback)");
-    println!("  {CYAN}/kill{RESET}           Kill current process");
     println!();
 
     for category in COMMAND_CATEGORIES {
@@ -3737,8 +3151,9 @@ fn print_welcome(kernel: &Kernel, current_pid: u32) {
     eprintln!("  {BLUE}       ╚═╝              {RESET}");
     eprintln!();
     eprintln!(
-        "  {BOLD}npcsh{RESET} v{} {DIM}(rust){RESET}",
-        env!("NPCSH_VERSION")
+        "  {BOLD}npcsh{RESET} v{} {} {DIM}(rust){RESET}",
+        env!("NPCSH_VERSION"),
+        binary_hash()
     );
     eprintln!(
         "  {DIM}{} processes | {} jinxes | /help for commands{RESET}",

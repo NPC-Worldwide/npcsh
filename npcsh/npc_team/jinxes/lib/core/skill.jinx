@@ -14,48 +14,70 @@ steps:
   - name: handle_skill
     engine: python
     code: |
-      import json as _json, base64 as _b64
+      if True:
+          import json as _json, base64 as _b64
 
-      _name = {{ skill_name | tojson }}
-      _desc = {{ skill_description | tojson }}
-      _sections_raw = {{ sections | tojson }}
-      if isinstance(_sections_raw, dict):
-          _sections = _sections_raw
-      elif isinstance(_sections_raw, str):
-          try:
-              _sections = _json.loads(_b64.b64decode(_sections_raw).decode('utf-8'))
-          except Exception:
-              _sections = _json.loads(_sections_raw)
-      else:
-          _sections = {}
-      _scripts = _json.loads({{ scripts_json | tojson }}) if {{ scripts_json | tojson }} else []
-      _references = _json.loads({{ references_json | tojson }}) if {{ references_json | tojson }} else []
-      _assets = _json.loads({{ assets_json | tojson }}) if {{ assets_json | tojson }} else []
-      _section = {{ section | tojson }} or 'all'
-      _section = _section.strip()
-
-      if _section == 'meta':
-          output = _json.dumps({
-              'name': _name,
-              'description': _desc,
-              'sections': list(_sections.keys()),
-              'scripts': _scripts,
-              'references': _references,
-              'assets': _assets,
-          }, indent=2)
-      elif _section == 'list':
-          output = 'Available sections: ' + ', '.join(_sections.keys())
-      elif _section == 'all':
-          _parts = []
-          for _k, _v in _sections.items():
-              _parts.append(f'## {_k}\n{_v.strip()}')
-          output = '\n\n'.join(_parts)
-      else:
-          if _section in _sections:
-              output = _sections[_section].strip()
+          _name = {{ skill_name | tojson }}
+          _desc = {{ skill_description | tojson }}
+          _sections_raw = {{ sections | default({}) | tojson | replace('\x7b\x7b', '__LBR__') | replace('\x7d\x7d', '__RBR__') | replace('\x7b\x25', '__LP__') | replace('\x25\x7d', '__RP__') }}
+          if isinstance(_sections_raw, dict):
+              _sections = _sections_raw
+          elif isinstance(_sections_raw, str) and _sections_raw:
+              try:
+                  _sections = _json.loads(_b64.b64decode(_sections_raw).decode('utf-8'))
+              except Exception:
+                  try:
+                      _sections = _json.loads(_sections_raw)
+                  except Exception:
+                      _sections = {}
           else:
-              _matches = [_k for _k in _sections if _section.lower() in _k.lower()]
-              if _matches:
-                  output = _sections[_matches[0]].strip()
+              _sections = {}
+
+          _LBR = chr(123) * 2
+          _RBR = chr(125) * 2
+          _LP = chr(123) + chr(37)
+          _RP = chr(37) + chr(125)
+
+          def _restore_text(v):
+              if isinstance(v, str):
+                  v = v.replace('__LBR__', _LBR).replace('__RBR__', _RBR).replace('__LP__', _LP).replace('__RP__', _RP)
+                  try:
+                      v = v.encode('utf-8').decode('unicode_escape')
+                  except Exception:
+                      pass
+              return v
+
+          _sections = {_k: _restore_text(_v) for _k, _v in _sections.items()}
+          _scripts = _json.loads({{ scripts_json | default('[]') | tojson }} or '[]')
+          _references = _json.loads({{ references_json | default('[]') | tojson }} or '[]')
+          _assets = _json.loads({{ assets_json | default('[]') | tojson }} or '[]')
+          _section = context.get('section', 'all')
+          _section = str(_section).strip()
+          if _section in ('', 'all'):
+              _section = 'all'
+
+          if _section == 'meta':
+              output = _json.dumps({
+                  'name': _name,
+                  'description': _desc,
+                  'sections': list(_sections.keys()),
+                  'scripts': _scripts,
+                  'references': _references,
+                  'assets': _assets,
+              }, indent=2)
+          elif _section == 'list':
+              output = 'Available sections: ' + ', '.join(_sections.keys())
+          elif _section == 'all':
+              _parts = []
+              for _k, _v in _sections.items():
+                  _parts.append(f'## {_k}\n{_v.strip()}')
+              output = '\n\n'.join(_parts)
+          else:
+              if _section in _sections:
+                  output = _sections[_section].strip()
               else:
-                  output = f"Section '{_section}' not found. Available sections: " + ', '.join(_sections.keys())
+                  _matches = [_k for _k in _sections if _section.lower() in _k.lower()]
+                  if _matches:
+                      output = _sections[_matches[0]].strip()
+                  else:
+                      output = "Section '" + _section + "' not found. Available sections: " + ', '.join(_sections.keys())

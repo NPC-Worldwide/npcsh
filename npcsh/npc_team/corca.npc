@@ -19,6 +19,11 @@ primary_directive: |
   PATHS. Run pwd first if you need the working directory. When counting things, use wc -l. When
   debugging, read the error, fix it, retry. Keep it simple. Do the task, report the result.
 
+  Reference guides:
+  For questions about how jinxes work, call jinxes-guide. For NPC definitions, call npcs-guide.
+  For .ctx files, call ctx-guide. For the NPC compiler, call npc-compiler-guide. For npcsh shell
+  commands and sync, call shell-guide. These are tools in your jinx list — use them.
+
   When to act yourself vs delegate:
   Handle simple tasks directly using sh, python, or web_search — things like running a command,
   fetching info, or quick computations. For complex multi-step work, delegate to a specialist.
@@ -51,8 +56,13 @@ jinxes:
   - {{ Jinx('agent') }}
   - {{ Jinx('delegate') }}
   - {{ Jinx('convene') }}
-  - {{ Jinx('python') }}
+  - {{ Jinx('py') }}
   - {{ Jinx('shell') }}
   - {{ Jinx('web_search') }}
   - {{ Jinx('chat') }}
   - {{ Jinx('stop') }}
+  - {{ Jinx('jinxes-guide') }}
+  - {{ Jinx('npcs-guide') }}
+  - {{ Jinx('ctx-guide') }}
+  - {{ Jinx('npc-compiler-guide') }}
+  - {{ Jinx('shell-guide') }}

@@ -1,6 +1,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const RESERVED_CTX_KEYS: &[&str] = &[
+    "context",
+    "databases",
+    "forenpc",
+    "mcp_servers",
+    "providers",
+    "available_executables",
+    "name",
+];
+
 pub fn ensure_user_subteam(home: &Path) -> std::io::Result<PathBuf> {
     let team = home.join(".npcsh").join("npc_team");
     let usr = team.join("usr");
@@ -32,7 +42,24 @@ pub fn sync_team(source: &Path, target: &Path) -> std::io::Result<()> {
     fs::create_dir_all(target)?;
     ensure_user_subteam(&target.ancestors().nth(2).unwrap_or(target))?;
 
-    // Remove stale base entries in target, never touching usr/.
+    let mut preserved_ctx_values: std::collections::HashMap<String, serde_yaml::Value> =
+        std::collections::HashMap::new();
+    let target_ctx_path = target.join("npcsh.ctx");
+    if target_ctx_path.exists() {
+        if let Ok(content) = fs::read_to_string(&target_ctx_path) {
+            if let Ok(parsed) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+                if let Some(mapping) = parsed.as_mapping() {
+                    for (key, value) in mapping {
+                        let key_str = key.as_str().unwrap_or("").to_string();
+                        if !RESERVED_CTX_KEYS.contains(&key_str.as_str()) {
+                            preserved_ctx_values.insert(key_str, value.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     for entry in fs::read_dir(target)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -47,7 +74,6 @@ pub fn sync_team(source: &Path, target: &Path) -> std::io::Result<()> {
         }
     }
 
-    // Copy current base files from source, skipping its own usr/ if present.
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -62,10 +88,35 @@ pub fn sync_team(source: &Path, target: &Path) -> std::io::Result<()> {
             if let Some(parent) = dst.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::copy(&src, &dst)?;
+            if dst.file_name().and_then(|s| s.to_str()) == Some("npcsh.ctx")
+                && !preserved_ctx_values.is_empty()
+            {
+                copy_ctx_with_preserved_values(&src, &dst, &preserved_ctx_values)?;
+            } else {
+                fs::copy(&src, &dst)?;
+            }
         }
     }
 
+    Ok(())
+}
+
+fn copy_ctx_with_preserved_values(
+    src: &Path,
+    dst: &Path,
+    preserved: &std::collections::HashMap<String, serde_yaml::Value>,
+) -> std::io::Result<()> {
+    let content = fs::read_to_string(src)?;
+    let mut parsed: serde_yaml::Value = serde_yaml::from_str(&content)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    if let Some(mapping) = parsed.as_mapping_mut() {
+        for (key, value) in preserved {
+            mapping.insert(serde_yaml::Value::String(key.clone()), value.clone());
+        }
+    }
+    let out = serde_yaml::to_string(&parsed)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    fs::write(dst, out)?;
     Ok(())
 }
 

@@ -9,7 +9,7 @@ from npcpy.npc_compiler import Jinx
 
 
 COMPRESS_JINX_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "npcsh", "npc_team", "jinxes", "usr", "compress.jinx"
+    os.path.dirname(__file__), "..", "npcsh", "npc_team", "jinxes", "lib", "core", "compress.jinx"
 )
 
 

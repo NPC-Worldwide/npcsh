@@ -47,6 +47,7 @@ semver = "1"
 # `alloc::vec::{self, Vec}` and then uses the `vec!` macro. Pin to the last
 # known-good version until upstream fixes it.
 tinyvec = "=1.11.0"
+md5 = "0.7"
 
 [build-dependencies]
 anyhow = "1"
