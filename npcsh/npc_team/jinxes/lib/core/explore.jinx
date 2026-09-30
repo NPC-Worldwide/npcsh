@@ -12,6 +12,36 @@ inputs:
   - agent_turns: "10"
   - persona: null
 steps:
+  - name: load_instructions
+    engine: python
+    code: |
+      import os
+      from pathlib import Path
+      try:
+          import yaml
+      except ImportError:
+          yaml = None
+
+      team_obj = context.get('team')
+      instructions = ""
+      try:
+          if yaml:
+              team_dir = None
+              if team_obj and hasattr(team_obj, "source_dir") and team_obj.source_dir:
+                  team_dir = team_obj.source_dir
+              if not team_dir:
+                  team_dir = os.path.expanduser("~/.npcsh/npc_team")
+              for ctx_file in Path(team_dir).glob("*.ctx"):
+                  with open(ctx_file) as f:
+                      ctx = yaml.safe_load(f)
+                  if ctx and "EXPLORE_INSTRUCTIONS" in ctx:
+                      instructions = ctx["EXPLORE_INSTRUCTIONS"] or ""
+                      break
+      except Exception:
+          pass
+      context['explore_instructions'] = instructions
+      context['output'] = ''
+
   - name: run_agent
     engine: agent
     query: |
@@ -21,6 +51,10 @@ steps:
       Goal: {{ task }}
       {% else %}
       Goal: Explore this codebase and summarize its architecture, entry points, conventions, and key components.
+      {% endif %}
+
+      {% if context is defined and context.get('explore_instructions') %}
+      Additional explore instructions: {{ context.get('explore_instructions') }}
       {% endif %}
 
       You have a limited turn budget. Use the first turn to list the directory and read README/config files.

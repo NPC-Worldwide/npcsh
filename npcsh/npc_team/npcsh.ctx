@@ -64,6 +64,11 @@ databases:
 - ~/npcsh_history.db
 forenpc: corca
 mcp_servers: []
+
+# User-customizable compression instructions. These are intentionally blank by default;
+# fill them in to override how the compress jinx behaves. They are preserved
+# across `/sync` updates so your tweaks are not overwritten.
+COMPRESSION_INSTRUCTIONS: ""
 # ── Example provider configurations ─────────────────────────────────────────
 # The `providers` field lets you define named provider configs that NPCs can
 # reference by name. This centralizes API URLs, keys, and models so individual
