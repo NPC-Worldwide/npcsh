@@ -31,6 +31,13 @@ fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
     LOCK.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn binary_hash() -> String {
+    let exe = std::env::current_exe().unwrap_or_default();
+    let bytes = std::fs::read(&exe).unwrap_or_default();
+    let digest = md5::compute(&bytes);
+    format!("{:x}", digest)[..8.min(format!("{:x}", digest).len())].to_string()
+}
+
 async fn ensure_server_running(
     client: &reqwest::Client,
     server_url: &str,
@@ -616,7 +623,7 @@ async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.iter().any(|a| a == "--version" || a == "-v") {
-        println!("npcsh {}", env!("NPCSH_VERSION"));
+        println!("npcsh {} {}", env!("NPCSH_VERSION"), binary_hash());
         return Ok(());
     }
 
@@ -1153,7 +1160,7 @@ async fn main() -> Result<()> {
                         .map(|p| p.last_streamed)
                         .unwrap_or(false);
                     if !streamed && !output.trim().is_empty() {
-                        println!("\n{}", render_block(output.trim()));
+                        println!("\n{}", output.trim());
                     }
 
                     let p = kernel.get_process(current_pid);
@@ -1506,7 +1513,7 @@ async fn run_stream_turn_with_interrupt(
 
     {
         let process = kernel.get_process_mut(current_pid).unwrap();
-        process.last_streamed = response.streamed || response.message.content.is_some();
+        process.last_streamed = response.streamed;
         process.last_thinking = response.message.thinking.clone();
         process.messages.push(Message::user(input));
         process.messages.push(assistant_message.clone());
@@ -3144,8 +3151,9 @@ fn print_welcome(kernel: &Kernel, current_pid: u32) {
     eprintln!("  {BLUE}       ╚═╝              {RESET}");
     eprintln!();
     eprintln!(
-        "  {BOLD}npcsh{RESET} v{} {DIM}(rust){RESET}",
-        env!("NPCSH_VERSION")
+        "  {BOLD}npcsh{RESET} v{} {} {DIM}(rust){RESET}",
+        env!("NPCSH_VERSION"),
+        binary_hash()
     );
     eprintln!(
         "  {DIM}{} processes | {} jinxes | /help for commands{RESET}",

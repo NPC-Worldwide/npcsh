@@ -79,7 +79,7 @@ pub async fn restart_server(
     client: &reqwest::Client,
     server_url: &str,
 ) -> std::result::Result<(), String> {
-    let host = std::env::var("NPCSH_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let _host = std::env::var("NPCSH_SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port = std::env::var("NPCSH_SERVER_PORT").unwrap_or_else(|_| "5237".to_string());
 
     match tokio::process::Command::new("lsof")
@@ -561,7 +561,7 @@ pub fn ask_permission(prompt: &str) -> String {
 
     let mut stdout = io::stdout();
     let mut selected: usize = 0;
-    let (_cols, rows) = terminal::size().unwrap_or((80, 24));
+    let (_cols, _rows) = terminal::size().unwrap_or((80, 24));
 
     loop {
         stdout.execute(Clear(ClearType::All)).ok();
@@ -893,7 +893,7 @@ pub async fn run_stream_turn_with_interrupt(
 
     {
         let process = kernel.get_process_mut(current_pid).unwrap();
-        process.last_streamed = response.streamed || response.message.content.is_some();
+        process.last_streamed = response.streamed;
         process.last_thinking = response.message.thinking.clone();
         process.messages.push(Message::user(input));
         process.messages.push(assistant_message.clone());
@@ -1118,7 +1118,11 @@ pub async fn run_command_loop(
                     .iter()
                     .any(|tc| tc.r#type == "function" && tc.function.name == "stop");
                 if tool_calls.is_empty() || terminal {
-                    if !last_output.is_empty() {
+                    let streamed = kernel
+                        .get_process(current_pid)
+                        .map(|p| p.last_streamed)
+                        .unwrap_or(false);
+                    if !streamed && !last_output.is_empty() {
                         println!("{}", last_output);
                     }
                     return Ok(());
@@ -1136,7 +1140,11 @@ pub async fn run_command_loop(
             }
         }
     }
-    if !last_output.is_empty() {
+    let streamed = kernel
+        .get_process(current_pid)
+        .map(|p| p.last_streamed)
+        .unwrap_or(false);
+    if !streamed && !last_output.is_empty() {
         println!("{}", last_output);
     }
     Ok(())

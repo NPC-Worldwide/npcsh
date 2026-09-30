@@ -1,88 +1,234 @@
 use std::io::IsTerminal;
 use std::time::{Duration, Instant};
 
-/// Render a markdown string to an ANSI-styled string using the terminal width.
-pub fn render_block(md: &str) -> String {
-    if md.trim().is_empty() {
-        return md.to_string();
+const BOLD: &str = "\x1b[1m";
+const ITALIC: &str = "\x1b[3m";
+const DIM: &str = "\x1b[90m";
+const CYAN: &str = "\x1b[36m";
+const UNDERLINE: &str = "\x1b[4m";
+const RESET: &str = "\x1b[0m";
+
+fn format_inline_markdown(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '`' {
+            let mut code = String::new();
+            let mut closed = false;
+            while let Some(c) = chars.next() {
+                if c == '`' {
+                    closed = true;
+                    break;
+                }
+                code.push(c);
+            }
+            out.push_str(CYAN);
+            out.push_str(&code);
+            if closed {
+                out.push_str(RESET);
+            }
+        } else if ch == '*' {
+            if chars.peek() == Some(&'*') {
+                chars.next();
+                let mut inner = String::new();
+                let mut closed = false;
+                while let Some(c) = chars.next() {
+                    if c == '*' && chars.peek() == Some(&'*') {
+                        chars.next();
+                        closed = true;
+                        break;
+                    }
+                    inner.push(c);
+                }
+                out.push_str(BOLD);
+                out.push_str(&format_inline_markdown(&inner));
+                if closed {
+                    out.push_str(RESET);
+                }
+            } else {
+                let mut inner = String::new();
+                let mut closed = false;
+                while let Some(c) = chars.next() {
+                    if c == '*' {
+                        closed = true;
+                        break;
+                    }
+                    inner.push(c);
+                }
+                out.push_str(ITALIC);
+                out.push_str(&format_inline_markdown(&inner));
+                if closed {
+                    out.push_str(RESET);
+                }
+            }
+        } else if ch == '_' {
+            if chars.peek() == Some(&'_') {
+                chars.next();
+                let mut inner = String::new();
+                let mut closed = false;
+                while let Some(c) = chars.next() {
+                    if c == '_' && chars.peek() == Some(&'_') {
+                        chars.next();
+                        closed = true;
+                        break;
+                    }
+                    inner.push(c);
+                }
+                out.push_str(BOLD);
+                out.push_str(&format_inline_markdown(&inner));
+                if closed {
+                    out.push_str(RESET);
+                }
+            } else {
+                let mut inner = String::new();
+                let mut closed = false;
+                while let Some(c) = chars.next() {
+                    if c == '_' {
+                        closed = true;
+                        break;
+                    }
+                    inner.push(c);
+                }
+                out.push_str(ITALIC);
+                out.push_str(&format_inline_markdown(&inner));
+                if closed {
+                    out.push_str(RESET);
+                }
+            }
+        } else if ch == '~' && chars.peek() == Some(&'~') {
+            chars.next();
+            let mut inner = String::new();
+            let mut closed = false;
+            while let Some(c) = chars.next() {
+                if c == '~' && chars.peek() == Some(&'~') {
+                    chars.next();
+                    closed = true;
+                    break;
+                }
+                inner.push(c);
+            }
+            out.push_str(DIM);
+            out.push_str(&inner);
+            if closed {
+                out.push_str(RESET);
+            }
+        } else {
+            out.push(ch);
+        }
     }
-    let skin = termimad::MadSkin::default();
-    format!("{}", skin.term_text(md))
+    out
 }
 
-/// Renderer that streams markdown deltas to stderr.
-///
-/// During streaming we only emit *complete* lines as raw text.  Markdown
-/// wrapping is applied only to the final trailing partial line on flush().
-/// This avoids termimad wrapping partial output and prevents progressive
-/// indentation drift.
+fn format_line_markdown(line: &str) -> String {
+    if line.starts_with("```") {
+        return format!("{}{}{}", DIM, line, RESET);
+    }
+    if line.starts_with("# ") {
+        return format!(
+            "{}{}{}{}{}",
+            BOLD,
+            UNDERLINE,
+            format_inline_markdown(&line[2..]),
+            RESET,
+            RESET
+        );
+    }
+    if line.starts_with("## ") || line.starts_with("### ") || line.starts_with("#### ") {
+        let start = line.find(' ').unwrap_or(0) + 1;
+        return format!(
+            "{}{}{}{}",
+            BOLD,
+            format_inline_markdown(&line[start..]),
+            RESET,
+            RESET
+        );
+    }
+    if line.trim() == "---" || line.trim() == "***" || line.trim() == "___" {
+        let width = 60;
+        return format!("{}{}{}", DIM, "─".repeat(width), RESET);
+    }
+    format_inline_markdown(line)
+}
+
+pub fn render_block(md: &str) -> String {
+    md.lines()
+        .map(format_line_markdown)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub struct StreamRenderer {
-    /// Raw accumulated source text since the last newline.
     buffer: String,
-    skin: termimad::MadSkin,
+    at_line_start: bool,
     last_render: Instant,
     min_interval: Duration,
     disabled: bool,
+    started: bool,
 }
 
 impl StreamRenderer {
     pub fn new() -> Self {
-        let disabled = !std::io::stderr().is_terminal();
+        let disabled = false;
         Self {
             buffer: String::new(),
-            skin: termimad::MadSkin::default(),
+            at_line_start: true,
             last_render: Instant::now(),
             min_interval: Duration::from_millis(50),
             disabled,
+            started: false,
         }
     }
 
-    /// Append a raw markdown delta.
-    ///
-    /// Complete lines are emitted as raw text immediately.  The final
-    /// trailing partial line is left buffered and markdown-rendered on flush.
+    fn emit_line(&mut self, line: &str) {
+        let line = line.trim_start();
+        eprint!("{}\r\n", format_line_markdown(line));
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+        self.last_render = Instant::now();
+    }
+
     pub fn push(&mut self, text: &str) {
         if self.disabled {
             eprint!("{}", text);
             let _ = std::io::Write::flush(&mut std::io::stderr());
             return;
         }
-
-        self.buffer.push_str(text);
-
-        // Emit any complete lines that just ended.
-        while let Some(pos) = self.buffer.find('\n') {
-            let line = &self.buffer[..=pos];
-            // Strip trailing \r for CRLF streams.
-            let line = line.strip_suffix('\n').unwrap_or(line);
-            let line = line.strip_suffix('\r').unwrap_or(line);
-            eprintln!("{}", line);
-            self.buffer.replace_range(..=pos, "");
-            self.last_render = Instant::now();
+        if !self.started {
+            self.started = true;
+            eprint!("\r\n");
+        }
+        for ch in text.chars() {
+            if ch == '\n' {
+                self.flush_line();
+                self.at_line_start = true;
+            } else if self.at_line_start && (ch == ' ' || ch == '\t') {
+                continue;
+            } else {
+                self.buffer.push(ch);
+                self.at_line_start = false;
+            }
         }
     }
 
-    /// Force a final flush of any remaining unemitted text.
+    fn flush_line(&mut self) {
+        let line = self.buffer.trim_end_matches(['\n', '\r']).trim_start();
+        if !line.is_empty() {
+            eprint!("{}\r\n", format_line_markdown(line));
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+        }
+        self.buffer.clear();
+    }
+
     pub fn flush(&mut self) {
         if self.disabled {
             return;
         }
-        if self.buffer.trim_end_matches(['\n', '\r']).is_empty() {
-            self.buffer.clear();
-            return;
-        }
-        let rendered = format!("{}", self.skin.term_text(&self.buffer));
-        let rendered = rendered.trim_end_matches(['\n', '\r']).to_string();
-        if !rendered.is_empty() {
-            eprint!("{}", rendered);
-        }
-        self.buffer.clear();
-        self.last_render = Instant::now();
+        self.flush_line();
+        self.at_line_start = true;
     }
 
-    /// Clear the accumulated buffer and forget emitted progress.
     pub fn clear(&mut self) {
         self.buffer.clear();
+        self.at_line_start = true;
     }
 }
 

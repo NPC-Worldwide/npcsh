@@ -17,7 +17,7 @@
 
 ---
 
-`npcsh` interprets bash and natural language seamlessly within a single interface, making the most of LLMs and agents through an interactive shell. Engineer context and design custom Jinja Execution templates (Jinxes) for your agents to invoke for tool-use, prompts, and skills. 
+`npcsh` interprets bash and natural language seamlessly within a single interface, making the most of LLMs and agents through an interactive shell. Engineer context and design custom Jinja Execution templates (Jinxes) for your agents to invoke for tool-use, prompts, and skills.
 
 Install `npcsh`:
 
@@ -38,7 +38,7 @@ npcsh> @corca refactor the auth module and add tests
 
 Open the Git TUI after changes:
 ```bash
-npcsh> /gitt
+npcsh> /git
 ```
 
 ---
@@ -121,6 +121,27 @@ export NPCSH_BACKEND_PYTHON=/path/to/python
 The server bind address can be changed with `NPCSH_SERVER_HOST` and `NPCSH_SERVER_PORT`.
 
 If startup fails with `failed to spawn npcpy.serve` or `npcpy server did not become reachable after spawn`, the selected Python does not have `npcpy` installed, or the port is already taken by a stale server process.
+
+### Keeping up to date
+
+Run `/update` inside `npcsh` to update the Rust binaries and Python backend, or `/sync` to refresh the built-in team files (`npc_team/*`) while preserving any user-defined keys in `npcsh.ctx`.
+
+### Built-in skills
+
+`npcsh` ships with skill jinxes that `@corca` and other agents can invoke as tools:
+
+- `jinxes-guide` — how jinxes, engines, and rendering work
+- `npcs-guide` — NPC file format, primary directives, and tool resolution
+- `ctx-guide` — team context files and user-defined keys
+- `npc-compiler-guide` — how the `npcpy` compiler loads and executes jinxes
+- `shell-guide` — shell commands, `/sync`, and PATH/binary behavior
+- `git-workflow` — branching, commits, and merge strategy
+
+Skills live under `npc_team/jinxes/skills/` and are compiled through the `skill` macro jinx.
+
+### User-defined context keys
+
+Any key you add to `~/.npcsh/npc_team/npcsh.ctx` that is not in the reserved framework set is preserved across `/sync`. Use this for custom instruction hooks such as `COMPRESSION_INSTRUCTIONS` without editing framework jinxes.
 
 ### System dependencies
 
