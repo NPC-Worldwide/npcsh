@@ -5,7 +5,6 @@ pub mod markdown;
 pub mod stream_client;
 pub mod team_sync;
 
-use npcrs::calculate_cost;
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
 use std::io::IsTerminal;
@@ -544,11 +543,7 @@ pub async fn exec_npc_file(
             .as_ref()
             .map(|u| u.completion_tokens)
             .unwrap_or(0);
-        let cost = response
-            .usage
-            .as_ref()
-            .map(|u| calculate_cost(&request.model, u.prompt_tokens, u.completion_tokens))
-            .unwrap_or(0.0);
+        let cost = response.usage.as_ref().map(|u| u.cost_usd).unwrap_or(0.0);
         let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
         let team_dir = find_team_dir();
         if let Ok(kernel) = npcrs::Kernel::boot(&team_dir, &db_path) {

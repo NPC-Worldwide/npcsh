@@ -1,7 +1,7 @@
+use npcrs::Message;
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
 use npcrs::process::{Capabilities, ProcessState};
-use npcrs::{Message, calculate_cost};
 use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
