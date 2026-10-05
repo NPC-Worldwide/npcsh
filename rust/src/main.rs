@@ -707,6 +707,12 @@ async fn main() -> Result<()> {
         Err(_) => false,
     };
     let mut current_pid: u32 = 0;
+
+    if let Err(e) = npcsh::db_migrations::run_migrations(&db_path) {
+        eprintln!("{RED}Error: database migration failed: {e}{RESET}");
+        std::process::exit(1);
+    }
+
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
 
     // Default the active NPC to the team's lead/forenpc instead of the init process.

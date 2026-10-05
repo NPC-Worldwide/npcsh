@@ -1,5 +1,6 @@
 pub mod agent_turn;
 pub mod cli_providers;
+pub mod db_migrations;
 pub mod markdown;
 pub mod stream_client;
 pub mod team_sync;
