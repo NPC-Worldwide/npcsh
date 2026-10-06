@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 const BUNDLED_MIGRATIONS: &[(&str, &str)] = &[(
     "001_fix_duplicate_cost_totals_1005_2026.sql",
-    include_str!("../../npcsh/db_migrations/001_fix_duplicate_cost_totals_1005_2026.sql"),
+    include_str!("../db_migrations/001_fix_duplicate_cost_totals_1005_2026.sql"),
 )];
 
 fn migrations_dir() -> PathBuf {
