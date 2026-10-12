@@ -2564,7 +2564,7 @@ async fn run_sync_command() {
     let _ = fs::remove_dir_all(&tmp_dir);
 
     let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
-    let version_path = home_path.join("team_version");
+    let version_path = home_path.join(".npcsh").join("team_version");
     if let Err(e) = std::fs::write(&version_path, env!("NPCSH_VERSION")) {
         eprintln!("  {RED}failed to record synced version: {e}{RESET}");
     }
