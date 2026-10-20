@@ -131,7 +131,11 @@ steps:
 
       try:
           result = breathe(messages=breathe_messages, model=m, provider=p, npc=current_npc)
-          summary = result.get("output", "Context compressed.") if isinstance(result, dict) else str(result)
+          if isinstance(result, dict):
+              raw_out = result.get("output", "Context compressed.")
+              summary = raw_out if isinstance(raw_out, str) else str(raw_out)
+          else:
+              summary = str(result)
       except Exception as e:
           traceback.print_exc()
           context["output"] = "Error during compression: " + str(e)
