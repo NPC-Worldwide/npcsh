@@ -72,6 +72,8 @@ pub async fn call_stream_with_interrupt(
     let mut tool_results: Vec<Message> = Vec::new();
     let mut usage: Option<Usage> = None;
     let mut saw_output = false;
+    let mut thinking_started = false;
+    let mut reasoning_started = false;
     let mut renderer = StreamRenderer::new();
 
     let mut stream = resp.bytes_stream();
@@ -124,6 +126,8 @@ pub async fn call_stream_with_interrupt(
                 &mut content,
                 &mut reasoning,
                 &mut thinking,
+                &mut thinking_started,
+                &mut reasoning_started,
                 &mut tool_calls,
                 &mut tool_results,
                 &mut usage,
@@ -148,6 +152,8 @@ pub async fn call_stream_with_interrupt(
                         &mut content,
                         &mut reasoning,
                         &mut thinking,
+                        &mut thinking_started,
+                        &mut reasoning_started,
                         &mut tool_calls,
                         &mut tool_results,
                         &mut usage,
@@ -233,6 +239,8 @@ fn apply_sse_event(
     content: &mut String,
     reasoning: &mut String,
     thinking: &mut String,
+    thinking_started: &mut bool,
+    reasoning_started: &mut bool,
     tool_calls: &mut Vec<ToolCall>,
     tool_results: &mut Vec<Message>,
     usage: &mut Option<Usage>,
@@ -459,13 +467,23 @@ fn apply_sse_event(
                 if let Some(t) = delta.get("thinking").and_then(|v| v.as_str()) {
                     thinking.push_str(t);
                     *saw_output = true;
-                    eprint!("\r\n\x1b[90m{}\x1b[0m", t);
+                    if !*thinking_started {
+                        *thinking_started = true;
+                        eprint!("\r\n\x1b[90m{}\x1b[0m", t);
+                    } else {
+                        eprint!("\x1b[90m{}\x1b[0m", t);
+                    }
                     let _ = std::io::Write::flush(&mut std::io::stderr());
                 }
                 if let Some(r) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
                     reasoning.push_str(r);
                     *saw_output = true;
-                    eprint!("\r\n\x1b[90m{}\x1b[0m", r);
+                    if !*reasoning_started {
+                        *reasoning_started = true;
+                        eprint!("\r\n\x1b[90m{}\x1b[0m", r);
+                    } else {
+                        eprint!("\x1b[90m{}\x1b[0m", r);
+                    }
                     let _ = std::io::Write::flush(&mut std::io::stderr());
                 }
                 if let Some(deltas) = delta.get("tool_calls").and_then(|v| v.as_array()) {
