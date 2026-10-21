@@ -469,7 +469,7 @@ pub async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
     };
 
     let result =
-        execute_jinx_with_npc(&jinx, &input_values, &available_jinxes, npc.as_ref()).await?;
+        execute_jinx_with_npc(&jinx, &input_values, &available_jinxes, npc.as_ref(), None).await?;
 
     if !result.output.is_empty() {
         println!("{}", result.output);
