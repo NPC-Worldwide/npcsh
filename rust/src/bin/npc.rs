@@ -44,6 +44,48 @@ async fn main() -> Result<()> {
         println!("npc {}", env!("NPCSH_VERSION"));
         return Ok(());
     }
+    // npc mcp-server [team] [--npc name] — stdio MCP server for agent coders
+    if args.len() > 1 && args[1] == "mcp-server" {
+        let mut team_path: Option<String> = None;
+        let mut npc_name: Option<String> = None;
+        let mut i = 2;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--npc" => {
+                    npc_name = args.get(i + 1).cloned();
+                    i += 2;
+                }
+                _ => {
+                    if team_path.is_none() && !args[i].starts_with("--") {
+                        team_path = Some(args[i].clone());
+                    }
+                    i += 1;
+                }
+            }
+        }
+        let tp = team_path.unwrap_or_else(find_team_dir);
+        let mut server = npcsh::mcp_server::McpServer::load(&tp, npc_name.as_deref())?;
+        return server.run_stdio().await;
+    }
+
+    // npc <agent-coder> [args...] — e.g. npc claude, npc codex --npc corca
+    if let Some(first) = args.get(1)
+        && npcsh::agent_coders::is_agent_coder(first)
+    {
+        let extra: Vec<String> = args[2..].to_vec();
+        let (npc_name, extra): (Option<String>, Vec<String>) = {
+            if let Some(pos) = extra.iter().position(|a| a == "--npc") {
+                let npc = extra.get(pos + 1).cloned();
+                let mut rest = extra.clone();
+                let _ = rest.splice(pos..=(pos + 1).min(rest.len() - 1), []);
+                (npc, rest)
+            } else {
+                (None, extra)
+            }
+        };
+        return npcsh::agent_coders::run_agent_coder(first, None, npc_name.as_deref(), &extra);
+    }
+
     let mut positional: Vec<&str> = Vec::new();
     let mut override_model: Option<String> = None;
     let mut override_provider: Option<String> = None;

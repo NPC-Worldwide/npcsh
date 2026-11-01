@@ -1112,7 +1112,37 @@ async fn main() -> Result<()> {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| ".".to_string());
 
-        let cli_intercepted = false;
+        // Intercept known agent coders (claude, codex, gemini, opencode, ...)
+        // before bash dispatch so the team context goes in via MCP instead of
+        // being silently passed through to a lone bash exec.
+        let maybe_cli_intercepted = {
+            let first = input.split_whitespace().next().unwrap_or("");
+            if npcsh::agent_coders::is_agent_coder(first) {
+                let parts: Vec<String> = input.split_whitespace().map(|s| s.to_string()).collect();
+                let (npc_name, extra): (Option<String>, Vec<String>) = {
+                    if let Some(pos) = parts.iter().position(|a| a == "--npc") {
+                        let npc = parts.get(pos + 1).cloned();
+                        let mut rest = parts.clone();
+                        let _ = rest.splice(pos..=(pos + 1).min(rest.len() - 1), []);
+                        (npc, rest)
+                    } else {
+                        (None, parts)
+                    }
+                };
+                match npcsh::agent_coders::run_agent_coder(first, None, npc_name.as_deref(), &extra)
+                {
+                    Ok(()) => Some(()),
+                    Err(e) => {
+                        eprintln!("{RED}[npc] agentCoder {}: {}{RESET}", first, e);
+                        Some(())
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        let cli_intercepted = maybe_cli_intercepted.is_some();
 
         let exec_result = if cli_intercepted {
             None
@@ -4427,6 +4457,15 @@ fn readline_raw(
                     continue;
                 }
                 Event::Key(key) => match key.code {
+                    KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        let result = npcsh::ctrl_r::reverse_search(&buf);
+                        buf = result;
+                        pos = buf.len();
+                        tab_matches.clear();
+                        redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
+                        let _ = io::stdout().flush();
+                        continue;
+                    }
                     KeyCode::Char(c) => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             match c {
