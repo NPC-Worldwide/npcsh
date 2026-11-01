@@ -1,6 +1,7 @@
 pub mod agent_coders;
 pub mod agent_turn;
 pub mod cli_providers;
+pub mod ctrl_r;
 pub mod db_migrations;
 pub mod markdown;
 pub mod mcp_server;

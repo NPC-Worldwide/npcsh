@@ -4457,6 +4457,15 @@ fn readline_raw(
                     continue;
                 }
                 Event::Key(key) => match key.code {
+                    KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        let result = npcsh::ctrl_r::reverse_search(&buf);
+                        buf = result;
+                        pos = buf.len();
+                        tab_matches.clear();
+                        redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
+                        let _ = io::stdout().flush();
+                        continue;
+                    }
                     KeyCode::Char(c) => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) {
                             match c {

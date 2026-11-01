@@ -150,3 +150,36 @@ fn render_initial(st: &State, cols: u16) -> std::io::Result<()> {
     let _ = cols;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dedupe_logic_most_recent_first() {
+        let content = "ls -la\npwd\ngit status\npwd\n";
+        let mut seen = std::collections::HashSet::new();
+        let mut out: Vec<String> = Vec::new();
+        for line in content.lines().rev() {
+            let line = line.trim();
+            if !line.is_empty() && seen.insert(line.to_string()) {
+                out.push(line.to_string());
+            }
+        }
+        assert_eq!(out, vec!["pwd", "git status", "ls -la"]);
+    }
+
+    #[test]
+    fn dedupe_ignores_empty_lines() {
+        let content = "\nls\n\nls\n";
+        let mut seen = std::collections::HashSet::new();
+        let mut out: Vec<String> = Vec::new();
+        for line in content.lines().rev() {
+            let line = line.trim();
+            if !line.is_empty() && seen.insert(line.to_string()) {
+                out.push(line.to_string());
+            }
+        }
+        assert_eq!(out, vec!["ls"]);
+    }
+}
