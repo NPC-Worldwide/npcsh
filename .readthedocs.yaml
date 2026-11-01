@@ -4,21 +4,10 @@ build:
   os: ubuntu-24.04
   tools:
     python: "3.11"
-  apt_packages:
-    - portaudio19-dev
-    - python3-pyaudio
-    - ffmpeg
-    - libcairo2-dev
-    - libgirepository1.0-dev
-    - espeak
-    - alsa-base
-    - alsa-utils
 
 mkdocs:
-  configuration: mkdocs.yml  # Changed from sphinx
+  configuration: mkdocs.yml
 
 python:
   install:
-    - method: pip
-      path: .
     - requirements: docs/requirements.txt

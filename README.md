@@ -231,7 +231,7 @@ All formats inherit the team's default model/provider from `team.ctx` when not s
 
 ## Read the Docs
 
-Full guides and API reference at [npc-shell.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/).
+Full guides and API reference at [npcsh.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/).
 
 ## Community & Support
 
