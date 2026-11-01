@@ -1113,7 +1113,8 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|_| ".".to_string());
 
         // Intercept known agent coders (claude, codex, gemini, opencode, ...)
-        // before bash dispatch so the team context goes in via MCP instead of -
+        // before bash dispatch so the team context goes in via MCP instead of
+        // being silently passed through to a lone bash exec.
         let maybe_cli_intercepted = {
             let first = input.split_whitespace().next().unwrap_or("");
             if npcsh::agent_coders::is_agent_coder(first) {

@@ -4,9 +4,19 @@
 //! inside npcsh or via `npc <coder>`, this layer:
 //!   1. loads the resolved npcsh team,
 //!   2. shows an NPC picker (or takes `--npc <name>`),
-//!   3. registers the NPC MCP server with the coder (native `mcp add` CLI or
-//!      config write), and
-//!   4. launches the coder so it discovers team jinxes as MCP tools.
+//!   3. emits the persona as markdown (AGENTS.md + agents/<npc>.md) for the
+//!      coder's built-in context mechanism, and
+//!   4. registers the NPC MCP server (`npcsh mcp-server`) with the coder's
+//!      native MCP config so team jinxes appear as tools,
+//!   5. launches the coder.
+//!
+//! Two pieces, two surfaces:
+//!   - **Persona/context** → markdown agent file (AGENTS.md standard; Claude
+//!     reads CLAUDE.md/AGENTS.md, Codex/Cursor/OpenCode/Amp read AGENTS.md,
+//!     Gemini CLI reads AGENTS.md or GEMINI.md).
+//!   - **Tools** → MCP server (`initialize` / `tools/list` / `tools/call`),
+//!     registered via `claude mcp add` / `codex mcp add` / `gemini mcp add` /
+//!     `opencode.json → mcp.local`.
 //!
 //! Attach metadata is tracked in ~/.npcsh/agent_coders.json.
 
@@ -183,12 +193,111 @@ fn register_opencode(team_path: &str, npc: &str) {
     eprintln!("[npc] wrote MCP entry to {}", config.display());
 }
 
+/// Compose the markdown body for an NPC: frontmatter + directive + roster.
+fn npc_markdown(npc_name: &str, team: &Team) -> String {
+    let npc = team.npcs.get(npc_name);
+    let mut fm = String::new();
+    if let Some(n) = npc {
+        fm.push_str("---\n");
+        fm.push_str(&format!("name: {}\n", npc_name));
+        if let Some(m) = &n.model {
+            fm.push_str(&format!("model: {}\n", m));
+        }
+        if let Some(p) = &n.provider {
+            fm.push_str(&format!("provider: {}\n", p));
+        }
+        let tools: Vec<&String> = n.jinx_names.iter().collect();
+        if !tools.is_empty() {
+            fm.push_str(&format!(
+                "tools: [{}]\n",
+                tools
+                    .iter()
+                    .map(|t| t.as_str())
+                    .collect::<Vec<&str>>()
+                    .join(", ")
+            ));
+        }
+        fm.push_str("---\n\n");
+    }
+    let directive = npc
+        .and_then(|n| n.primary_directive.as_deref())
+        .unwrap_or("")
+        .trim();
+    let others = team
+        .npcs
+        .keys()
+        .filter(|k| k.as_str() != npc_name)
+        .map(|k| k.as_str())
+        .collect::<Vec<_>>();
+    let mut body = fm;
+    body.push_str(directive);
+    if !others.is_empty() {
+        body.push_str("\n\nOther NPCs on the team:\n");
+        for o in others {
+            body.push_str(&format!("  @{}\n", o));
+        }
+    }
+    body.push_str("\n\nNPC-provided tools are exposed through the `npc` MCP server.\n");
+
+    if !body.ends_with("\n") {
+        body.push('\n');
+    }
+    body
+}
+
+/// Write persona artifacts in cwd: AGENTS.md / CLAUDE.md / agents/<npc>.md.
+/// Existing files are kept unless refresh is true so a bare `npc claude`
+/// run never clobbers a repo\'s own AGENTS.md.
+fn emit_persona_artifacts(
+    npc_name: &str,
+    team: &Team,
+    refresh: bool,
+) -> std::io::Result<Vec<PathBuf>> {
+    let md = npc_markdown(npc_name, team);
+    let cwd = std::env::current_dir()?;
+    let mut written = Vec::new();
+
+    fn write_if(path: &std::path::Path, md: &str, refresh: bool) -> std::io::Result<bool> {
+        if path.exists() && !refresh {
+            eprintln!(
+                "[npc] keeping existing {} (pass --refresh-context to overwrite)",
+                path.display()
+            );
+            return Ok(false);
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, md)?;
+        Ok(true)
+    }
+
+    for path in [
+        cwd.join("AGENTS.md"),
+        cwd.join("CLAUDE.md"),
+        cwd.join("agents").join(format!("{}.md", npc_name)),
+    ] {
+        if write_if(&path, &md, refresh)? {
+            written.push(path);
+        }
+    }
+
+    Ok(written)
+}
+
 pub fn run_agent_coder(
     tool: &str,
     team_path: Option<&str>,
     npc_name: Option<&str>,
     extra_args: &[String],
 ) -> Result<()> {
+    let refresh_context = extra_args.iter().any(|a| a.as_str() == "--refresh-context");
+    let extra_args_v: Vec<String> = extra_args
+        .iter()
+        .filter(|a| a.as_str() != "--refresh-context")
+        .cloned()
+        .collect();
+    let extra_args: &[String] = &extra_args_v;
     let team_path = team_path
         .map(|s| s.to_string())
         .unwrap_or_else(crate::find_team_dir);
@@ -198,6 +307,16 @@ pub fn run_agent_coder(
         None => pick_npc(&team)?,
     };
     eprintln!("[npc] launching {} as @{} (team: {})", tool, npc, team.name);
+
+    // Persona → markdown context (AGENTS.md / CLAUDE.md + agents/<npc>.md).
+    match emit_persona_artifacts(&npc, &team, refresh_context) {
+        Ok(paths) => {
+            for p in &paths {
+                eprintln!("[npc] wrote persona: {}", p.display());
+            }
+        }
+        Err(e) => eprintln!("[npc] persona emission failed: {}", e),
+    }
 
     match tool {
         "claude" | "codex" | "gemini" => {
