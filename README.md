@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/npc-worldwide/npcsh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <a href="https://crates.io/crates/npcsh"><img src="https://img.shields.io/crates/v/npcsh.svg" alt="Crates.io"></a>
-  <a href="https://npc-shell.readthedocs.io/"><img src="https://img.shields.io/badge/docs-readthedocs-brightgreen.svg" alt="Docs"></a>
+  <a href="https://npcsh.readthedocs.io/"><img src="https://img.shields.io/badge/docs-readthedocs-brightgreen.svg" alt="Docs"></a>
 </p>
 
 ---
@@ -231,7 +231,7 @@ All formats inherit the team's default model/provider from `team.ctx` when not s
 
 ## Read the Docs
 
-Full guides and API reference at [npc-shell.readthedocs.io](https://npc-shell.readthedocs.io/en/latest/).
+Full guides and API reference at [npcsh.readthedocs.io](https://npcsh.readthedocs.io/en/latest/).
 
 ## Community & Support
 
