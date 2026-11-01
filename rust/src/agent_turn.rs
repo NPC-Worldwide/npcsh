@@ -59,20 +59,34 @@ pub async fn ensure_server_running(
     cmd.spawn()
         .map_err(|e| format!("failed to spawn npcpy.serve: {e}"))?;
 
-    for _ in 0..30 {
+    // A cold `npcpy.serve` import pulls in litellm/torch and takes ~10-15s
+    // before Flask can bind its port. Allow a generous budget (60s) and poll
+    // the cheap /api/health route instead of `/`, which 404s but still costs a
+    // full request round-trip.
+    let attempts = std::env::var("NPCSH_SERVER_STARTUP_ATTEMPTS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(120);
+    let health_url = format!("{}/api/health", server_url.trim_end_matches('/'));
+
+    for _ in 0..attempts {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         if client
-            .get(server_url)
-            .timeout(std::time::Duration::from_secs(1))
+            .get(&health_url)
+            .timeout(std::time::Duration::from_secs(2))
             .send()
             .await
-            .is_ok()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
         {
             return Ok(());
         }
     }
 
-    Err("npcpy server did not become reachable after spawn".to_string())
+    Err(format!(
+        "npcpy server did not become reachable after spawn (waited {}s)",
+        attempts / 2
+    ))
 }
 
 pub async fn restart_server(
