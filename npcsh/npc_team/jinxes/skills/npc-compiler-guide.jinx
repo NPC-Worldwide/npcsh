@@ -1,0 +1,74 @@
+permissions:
+  default: ask
+jinx_name: npc-compiler-guide
+skill_name: npc-compiler-guide
+description: "Reference guide for the NPC compiler: npcrs, npcpy.npc_compiler, Jinja rendering, generated runner, and execution flow."
+inputs:
+- section: all
+steps:
+  - engine: skill
+    skill_name: npc-compiler-guide
+    skill_description: Reference guide for the NPC compiler.
+    sections:
+      overview: |
+        The compiler turns `.npc` NPC files, `.ctx` context files, and `.jinx` workflow files into runnable agents.
+        Two main implementations exist: `npcpy.npc_compiler` (Python) and `npcrs` (Rust kernel used by `npcsh`).
+
+      npcpy-npc-compiler: |
+        Python module in `npcpy/npc_compiler.py`.
+        Key classes:
+        - `Jinx`: loads YAML, renders Jinja templates, executes Python/shell/skill steps.
+        - `NPC`: loads `.npc` files, resolves model/provider/jinxes, builds a tool catalog.
+        - `Team`: loads the team directory, context, jinxes, then NPCs.
+
+      npcrs: |
+        Rust crate used by `npcsh`. Provides `Kernel`, `ProcessState`, `Capabilities`, and `Message`.
+        The kernel boots from a team directory, loads the team through the Python backend,
+        and manages running NPC processes, conversation history, and tool dispatch.
+        `npcsh` uses `npcrs` for its REPL, TUIs, and one-shot `npc` CLI commands.
+
+      jinja-rendering: |
+        Two-pass rendering:
+        1. First pass: team load time. Expands control-flow tags, nested jinx calls, Jinx(), NPC(), ref(), jinxes_list().
+        2. Second pass: execution time. Substitutes input values from `context` into step code.
+        Jinx files use double-curly placeholders for runtime variables and should NOT be fully rendered at load time.
+        NPC files use double-curly placeholders for jinx path resolution and ARE rendered at load time when a `jinja_context` is supplied.
+
+      jinx-path-map: |
+        The team builds `self._jinx_path_map` from the source paths of loaded jinxes.
+        Example: `{ "edit_file": "lib/core/edit_file" }`.
+        The `Jinx('edit_file')` helper resolves to that relative path string so NPC files stay portable.
+
+      generated-runner: |
+        `Jinx.execute()` creates a Jinja environment, renders each step's code with the current `context`,
+        then calls Python `exec()` on the rendered code. The exec globals include `npc`, `context`, `state`,
+        common imports (`os`, `json`, `yaml`, `subprocess`, `get_llm_response`, etc.), and any `extra_globals`.
+        This is the "generated Python runner": a temporary in-memory script produced per step.
+
+      execution-flow: |
+        1. User types input in `npcsh`.
+        2. Shell dispatches based on mode: `/agent`, `/chat`, `/cmd`, core command, jinx name, or plain text to NPC.
+        3. The active NPC's `check_llm_command` decides to answer directly or invoke a jinx.
+        4. `handle_jinx_call` resolves inputs and calls `jinx.execute()`.
+        5. Step code runs, sets `context['output']`, and returns.
+        6. Output is rendered and appended to conversation history.
+
+      serve-backend: |
+        `npcpy.serve` is a Flask server started by `npcsh`.
+        It exposes `/api/stream` for LLM streaming and `/api/jinxes/*` for jinx execution.
+        It loads the team from the project or global `~/.npcsh/npc_team` directory.
+
+      testing-and-debugging: |
+        - Run a jinx directly: `npc <file.jinx> [args...]`.
+        - Check a loaded NPC: `npc <file.npc> "hello"`.
+        - Inspect rendered jinxes with `/jinxes` in `npcsh`.
+        - Compiler logs show first-pass render errors and step execution tracebacks.
+
+      anti-patterns: |
+        - Do not import `npcpy.memory.command_history` in jinx step code.
+        - Avoid `state.command_history` assumptions; prefer `context`, `npc.shared_context`, or the shell state.
+        - Keep step code valid Python after Jinja substitution; use `| tojson` for strings.
+    scripts_json: '[]'
+    references_json: '[]'
+    assets_json: '[]'
+    section: '{{section}}'

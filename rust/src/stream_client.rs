@@ -72,6 +72,8 @@ pub async fn call_stream_with_interrupt(
     let mut tool_results: Vec<Message> = Vec::new();
     let mut usage: Option<Usage> = None;
     let mut saw_output = false;
+    let mut thinking_started = false;
+    let mut reasoning_started = false;
     let mut renderer = StreamRenderer::new();
 
     let mut stream = resp.bytes_stream();
@@ -124,6 +126,8 @@ pub async fn call_stream_with_interrupt(
                 &mut content,
                 &mut reasoning,
                 &mut thinking,
+                &mut thinking_started,
+                &mut reasoning_started,
                 &mut tool_calls,
                 &mut tool_results,
                 &mut usage,
@@ -148,6 +152,8 @@ pub async fn call_stream_with_interrupt(
                         &mut content,
                         &mut reasoning,
                         &mut thinking,
+                        &mut thinking_started,
+                        &mut reasoning_started,
                         &mut tool_calls,
                         &mut tool_results,
                         &mut usage,
@@ -161,6 +167,15 @@ pub async fn call_stream_with_interrupt(
     }
 
     renderer.flush();
+
+    if !content.is_empty() {
+        let dedented: String = content
+            .lines()
+            .map(|line| line.trim_start())
+            .collect::<Vec<_>>()
+            .join("\n");
+        content = dedented;
+    }
 
     tool_calls.retain(|tc| !tc.function.name.is_empty());
 
@@ -224,6 +239,8 @@ fn apply_sse_event(
     content: &mut String,
     reasoning: &mut String,
     thinking: &mut String,
+    thinking_started: &mut bool,
+    reasoning_started: &mut bool,
     tool_calls: &mut Vec<ToolCall>,
     tool_results: &mut Vec<Message>,
     usage: &mut Option<Usage>,
@@ -264,7 +281,8 @@ fn apply_sse_event(
             "tool_start" => {
                 let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
                 renderer.flush();
-                eprintln!("\x1b[90m┌─ ⚡ {}\x1b[0m", name);
+                eprint!("\r\n\x1b[90m┌─ ⚡ {}\x1b[0m\r\n", name);
+                let _ = std::io::Write::flush(&mut std::io::stderr());
                 renderer.clear();
                 *saw_output = true;
             }
@@ -302,7 +320,8 @@ fn apply_sse_event(
                     .ok()
                     .and_then(|s| s.parse::<usize>().ok())
                     .unwrap_or(1200);
-                let mut preview = display.clone();
+                let trimmed = display.trim_end_matches(['\n', '\r']).to_string();
+                let mut preview = trimmed.clone();
                 let mut truncated = false;
                 if preview.chars().count() > max_chars {
                     preview = preview.chars().take(max_chars).collect::<String>();
@@ -325,24 +344,28 @@ fn apply_sse_event(
                     } else {
                         "\x1b[90m│\x1b[0m  ".to_string()
                     };
-                    eprintln!("{}{}", prefix, line);
+                    eprint!("{}{}\r\n", prefix, line);
+                    let _ = std::io::Write::flush(&mut std::io::stderr());
                 }
                 if lines.len() > max_lines || truncated {
-                    let total = display.lines().count();
+                    let total = trimmed.lines().count();
                     let extra = total.saturating_sub(max_lines);
                     let suffix = if truncated {
-                        format!(" | {}+ chars", display.chars().count() - max_chars)
+                        format!(" | {}+ chars", trimmed.chars().count() - max_chars)
                     } else {
                         String::new()
                     };
-                    eprintln!(
-                        "\x1b[90m│  … {} more line{}{}\x1b[0m",
+                    eprint!(
+                        "\r\n\x1b[90m│  … {} more line{}{}\x1b[0m\r\n",
                         extra,
                         if extra == 1 { "" } else { "s" },
                         suffix
                     );
+                    let _ = std::io::Write::flush(&mut std::io::stderr());
                 }
-                eprintln!("\x1b[90m└─ \x1b[36m{} result\x1b[0m", name);
+                eprint!("\x1b[90m└─ \x1b[36m{} result\x1b[0m\r\n", name);
+                eprint!("\r\n");
+                let _ = std::io::Write::flush(&mut std::io::stderr());
                 renderer.clear();
                 *saw_output = true;
                 if !display.is_empty() {
@@ -375,7 +398,7 @@ fn apply_sse_event(
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 renderer.flush();
-                eprintln!("");
+                eprint!("\r\n");
                 let tool_name = json
                     .get("tool_name")
                     .and_then(|v| v.as_str())
@@ -409,11 +432,13 @@ fn apply_sse_event(
                     .get("error")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown error");
-                eprintln!("\x1b[31m┌─ {} error\x1b[0m", name);
+                eprint!("\r\n\x1b[31m┌─ {} error\x1b[0m\r\n", name);
                 for line in err.lines() {
-                    eprintln!("\x1b[31m│  {}\x1b[0m", line);
+                    eprint!("\x1b[31m│  {}\x1b[0m\r\n", line);
+                    let _ = std::io::Write::flush(&mut std::io::stderr());
                 }
-                eprintln!("\x1b[31m└─\x1b[0m");
+                eprint!("\x1b[31m└─\x1b[0m\r\n");
+                let _ = std::io::Write::flush(&mut std::io::stderr());
                 renderer.clear();
                 *saw_output = true;
             }
@@ -442,13 +467,23 @@ fn apply_sse_event(
                 if let Some(t) = delta.get("thinking").and_then(|v| v.as_str()) {
                     thinking.push_str(t);
                     *saw_output = true;
-                    eprint!("\x1b[90m{}\x1b[0m", t);
+                    if !*thinking_started {
+                        *thinking_started = true;
+                        eprint!("\r\n\x1b[90m{}\x1b[0m", t);
+                    } else {
+                        eprint!("\x1b[90m{}\x1b[0m", t);
+                    }
                     let _ = std::io::Write::flush(&mut std::io::stderr());
                 }
                 if let Some(r) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
                     reasoning.push_str(r);
                     *saw_output = true;
-                    eprint!("\x1b[90m{}\x1b[0m", r);
+                    if !*reasoning_started {
+                        *reasoning_started = true;
+                        eprint!("\r\n\x1b[90m{}\x1b[0m", r);
+                    } else {
+                        eprint!("\x1b[90m{}\x1b[0m", r);
+                    }
                     let _ = std::io::Write::flush(&mut std::io::stderr());
                 }
                 if let Some(deltas) = delta.get("tool_calls").and_then(|v| v.as_array()) {

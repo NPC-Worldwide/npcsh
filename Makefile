@@ -1,15 +1,21 @@
-SPHINXOPTS    ?=
-SPHINXBUILD   ?= sphinx-build
-SOURCEDIR     = .
-BUILDDIR      = _build
+.PHONY: help docs docs-build docs-serve install-hooks
 
 help:
-	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+	@echo "targets:"
+	@echo "  docs          build + serve docs locally on :8000"
+	@echo "  docs-build    build docs into ./site (verify before push)"
+	@echo "  docs-serve    serve docs locally"
+	@echo "  install-hooks install pre-commit hooks"
 
-.PHONY: help Makefile install-hooks
+docs-build:
+	python3 -m pip install -q -r docs/requirements.txt
+	mkdocs build --strict
 
-%: Makefile
-	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+docs-serve:
+	mkdocs serve -a 127.0.0.1:8000
+
+docs: docs-build
+	mkdocs serve -a 127.0.0.1:8000
 
 install-hooks:
 	@cp scripts/pre-commit-export-skills .git/hooks/pre-commit

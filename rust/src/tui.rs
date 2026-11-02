@@ -1766,6 +1766,8 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<Option<String>> {
         hr(&mut out, cols, rows - 2);
         let footer = if matches!(tab, Tab::Teams) {
             " [Tab] Switch  [j/k] Nav  [Enter] Select  [q] Quit "
+        } else if matches!(tab, Tab::NPCs) {
+            " [Tab] Switch  [j/k] Nav  [Enter] Edit directive  [q] Quit "
         } else {
             " [Tab] Switch  [j/k] Nav  [q] Quit "
         };
@@ -1811,6 +1813,20 @@ pub fn run_team_tui(kernel: &mut Kernel) -> Result<Option<String>> {
                     if matches!(tab, Tab::Teams) && sel < registered_teams.len() {
                         let selected_dir = registered_teams[sel].1.clone();
                         return Ok(Some(selected_dir));
+                    }
+                    if matches!(tab, Tab::NPCs) && sel < npcs.len() {
+                        let name = npcs[sel].clone();
+                        if let Some(npc) = kernel.team.get_npc_mut(&name) {
+                            let current = npc.primary_directive.clone().unwrap_or_default();
+                            if let Some(updated) =
+                                edit_in_editor(&current, &format!("{}_directive", name))
+                            {
+                                npc.primary_directive = Some(updated);
+                                if let Err(e) = npc.save(None) {
+                                    eprintln!("Failed to save NPC: {e}");
+                                }
+                            }
+                        }
                     }
                 }
                 _ => {}

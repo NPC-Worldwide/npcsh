@@ -134,6 +134,26 @@ steps:
       team = context.get('team')
       messages = context.get('messages', [])
 
+      def _get_ctx_value(key, default=""):
+          try:
+              import yaml
+              from pathlib import Path
+              team_dir = None
+              if team and hasattr(team, "source_dir") and team.source_dir:
+                  team_dir = team.source_dir
+              if not team_dir:
+                  team_dir = os.path.expanduser("~/.npcsh/npc_team")
+              for ctx_file in Path(team_dir).glob("*.ctx"):
+                  with open(ctx_file) as f:
+                      ctx = yaml.safe_load(f)
+                  if ctx and key in ctx:
+                      return ctx[key] or default
+          except Exception:
+              pass
+          return default
+
+      convene_instructions = _get_ctx_value("CONVENE_INSTRUCTIONS")
+
       topic = context.get('topic', '')
       npcs_str = context.get('npcs', 'alicanto,corca')
       num_rounds = int(context.get('rounds', 3))
@@ -274,7 +294,9 @@ steps:
           print(colored(f"{'='*60}", "green"))
 
           all_contribs = "\n".join([f"[{e['speaker']} - Round {e['round']}]: {e['contribution']}" for e in discussion_log])
-          synth_prompt = f"""As the convener of this discussion on "{topic}", synthesize the key points:
+          synth_prompt = f"""As the convener of this discussion on "{topic}", synthesize the key points.
+
+      {f"Additional convene instructions: {convene_instructions}" if convene_instructions else ""}
 
       Full discussion:
       {all_contribs}
@@ -515,11 +537,13 @@ steps:
                   all_contribs = "\n".join([f"[{e['speaker']} - Round {e['round']}]: {e['contribution']}"
                                             for e in ui.discussion_log])
           
-                  synth_prompt = f"""As the convener of this discussion on "{topic}", synthesize the key points:
-          
+                  synth_prompt = f"""As the convener of this discussion on "{topic}", synthesize the key points.
+
+          {f"Additional convene instructions: {convene_instructions}" if convene_instructions else ""}
+
           Full discussion:
           {all_contribs[:6000]}
-          
+
           Provide:
           1. Key agreements and consensus points
           2. Areas of disagreement or tension

@@ -19,7 +19,7 @@ name = "npc"
 path = "src/bin/npc.rs"
 
 [dependencies]
-npcrs = { version = "0.1.29", default-features = false, features = ["ffi"] }
+npcrs = { version = "0.1.31", default-features = false, features = ["ffi"] }
 
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
 cfg-if = "1"
@@ -47,6 +47,8 @@ semver = "1"
 # `alloc::vec::{self, Vec}` and then uses the `vec!` macro. Pin to the last
 # known-good version until upstream fixes it.
 tinyvec = "=1.11.0"
+md5 = "0.7"
+nql = { version = "0.1.7" }
 
 [build-dependencies]
 anyhow = "1"
@@ -54,3 +56,6 @@ anyhow = "1"
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+[dev-dependencies]
+serial_test = "3"

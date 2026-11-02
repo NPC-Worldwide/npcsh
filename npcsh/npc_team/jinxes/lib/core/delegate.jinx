@@ -29,6 +29,26 @@ steps:
       orchestrator = context.get('npc') or npc
       orchestrator_name = getattr(orchestrator, 'name', 'orchestrator')
 
+      def _get_ctx_value(key, default=""):
+          try:
+              import yaml
+              from pathlib import Path
+              team_dir = None
+              if team_obj and hasattr(team_obj, "source_dir") and team_obj.source_dir:
+                  team_dir = team_obj.source_dir
+              if not team_dir:
+                  team_dir = os.path.expanduser("~/.npcsh/npc_team")
+              for ctx_file in Path(team_dir).glob("*.ctx"):
+                  with open(ctx_file) as f:
+                      ctx = yaml.safe_load(f)
+                  if ctx and key in ctx:
+                      return ctx[key] or default
+          except Exception:
+              pass
+          return default
+
+      delegation_instructions = _get_ctx_value("DELEGATION_INSTRUCTIONS")
+
       if not team_obj:
           output = "Error: No team available for delegation"
           exit()
@@ -113,7 +133,9 @@ steps:
               output_preview = delegate_output[:2000] if delegate_output else 'No output received'
               msg_preview = str(delegate_messages[-5:]) if delegate_messages else 'No messages'
 
-              review_prompt = f"""You are reviewing work done by @{target_name} on this task:
+              review_prompt = f"""You are reviewing work done by @{target_name} on this task.
+
+                {f"Additional delegation instructions: {delegation_instructions}" if delegation_instructions else ""}
 
                 ORIGINAL TASK: {task_request}
 

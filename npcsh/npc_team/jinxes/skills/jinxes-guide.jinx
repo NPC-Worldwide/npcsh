@@ -1,0 +1,91 @@
+permissions:
+  default: ask
+jinx_name: jinxes-guide
+skill_name: jinxes-guide
+description: "Reference guide for jinxes: NPC workflows, engines, inputs, rendering, and execution."
+inputs:
+- section: all
+steps:
+  - engine: skill
+    skill_name: jinxes-guide
+    skill_description: Reference guide for jinxes.
+    sections:
+      what-is-a-jinx: |
+        A jinx is a YAML workflow definition executed by `npcpy.npc_compiler.Jinx`.
+        Each jinx has a name, inputs, optional permissions, and a list of steps.
+        Steps can run Python, shell, or call another jinx as a sub-workflow.
+
+      file-layout: |
+        Jinxes live under `jinxes/` inside an NPC team directory.
+        Built-in framework jinxes are in `jinxes/lib/core/` and `jinxes/lib/search/`.
+        User-added jinxes belong in `jinxes/usr/` (not shipped by the framework).
+        Skill jinxes live in `jinxes/skills/` and use `engine: skill`.
+
+      required-fields: |
+        - `jinx_name`: unique identifier used for invocation and tool schemas.
+        - `description`: what the jinx does; shown in help and tool definitions.
+        - `inputs`: list of parameter names or `{name: default}` dicts.
+        - `steps`: list of step definitions with `engine`, `name`, optional `code`, etc.
+        Optional: `permissions.default` = `allow`, `ask`, or `deny`.
+
+      engines: |
+        - `python`: runs Jinja-rendered Python code. Set `output` variable for return value.
+        - `shell` / `bash`: executes the command with allowed executables only.
+        - `skill`: structured documentation jinx. Data is passed to `skill.jinx`.
+        - `jinx_name`: a step whose `engine` is another jinx name calls that jinx.
+
+      rendering: |
+        Jinja templates render twice.
+        First pass: when the team loads, expanding macros, for-loops, and nested jinx calls.
+        Second pass: at execution time, substituting input values and `context`.
+        Use double-curly variable references with `| tojson` for safe string interpolation in generated code.
+        Use the `Jinx()` helper in NPC files to reference a jinx by its relative path.
+
+      inputs: |
+        Inputs are declared as strings (`- query`) or dicts with defaults (`- path: .`).
+        At run time they are merged into `context`, so code can read `context.get('query')`.
+        The LLM chooses values automatically when invoking a jinx as a tool.
+        Required inputs have no default value.
+
+      invocation: |
+        Users invoke jinxes by name without a leading slash:
+          /compress
+          file_search pattern=*.py
+        Inside agent mode, the LLM can call jinxes as tools from its available catalog.
+        Jinxes can also be called from other jinxes by setting a step `engine` to the jinx name.
+
+      permissions: |
+        `permissions.default` controls automatic execution:
+        - `allow`: run without asking.
+        - `ask`: prompt the user before running.
+        - `deny`: never run.
+        This is independent of any executable allow-lists in the team context.
+
+      context-and-state: |
+        Inside a Python step the runtime provides:
+        - `context`: dict of inputs, outputs, and shared team context.
+        - `npc`: the active NPC object (model, provider, primary_directive, jinxes_dict).
+        - `state`: optional shell/server state with chat_model, chat_provider, current_path.
+        - `messages`: conversation history list.
+        Set `context['output']` to return a value to the caller.
+
+      built-in-jinxes: |
+        Core jinxes available to most NPCs include:
+        read, write, execute, shell, python (py), edit_file, load_file, agent, delegate,
+        convene, explore, plan, memory, knowledge, chat, cmd, compress, stop, wait,
+        web_search, file_search, db_search, gen_image, release_notes, and skill.
+
+      anti-patterns: |
+        - Do not import `npcpy.memory.command_history` in jinx code.
+        - Do not assume `state` or `npc` are always defined; guard with try/except or getattr.
+        - Do not write implicitly concatenated strings inside Python code blocks.
+        - Keep Python code blocks valid after Jinja rendering.
+
+      testing: |
+        Skill jinxes may include `tests:` entries with `type: capability`.
+        Jinxes can be run standalone with `npc <file.jinx> [args...]`.
+        Use `npcsh` or `npc` to exercise jinxes against a running `npcpy.serve` backend.
+    scripts_json: '[]'
+    references_json: '[]'
+    assets_json: '[]'
+    section: '{{section}}'

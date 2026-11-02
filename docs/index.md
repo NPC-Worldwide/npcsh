@@ -35,6 +35,20 @@ npc ./npc_team/corca.npc "what is the biggest file on my computer?"
 npc chat -n corca
 ```
 
+## Agent Coders
+
+Run external AI coding agents as a team NPC, directly from the shell. Type `claude`, `codex`, `gemini`, `opencode`, ... inside npcsh, or via `npc <coder>`:
+
+- npcsh shows an agent picker (or honors `--npc <name>`),
+- registers the NPC MCP server with the coder, and
+- injects the persona through the coder's own CLI args — no files written to your project.
+
+See [Agent Coders](agent-coders.md) for the full flow.
+
+## Ctrl+R History Search
+
+At the npcsh prompt, `Ctrl+R` opens a reverse-i-search over `~/.npcsh_history` (deduped, most-recent-first). Type to narrow, `Ctrl+R`/Down cycles, Enter accepts into the input buffer, Esc or Ctrl+G aborts.
+
 ## The CAT Data Layer
 
 Everything customizable in `npcsh` lives as simple files across three layers:

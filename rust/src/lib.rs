@@ -1,10 +1,13 @@
+pub mod agent_coders;
 pub mod agent_turn;
 pub mod cli_providers;
+pub mod ctrl_r;
+pub mod db_migrations;
 pub mod markdown;
+pub mod mcp_server;
 pub mod stream_client;
 pub mod team_sync;
 
-use npcrs::calculate_cost;
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
 use std::io::{self, IsTerminal, Write};
@@ -624,7 +627,7 @@ pub async fn exec_jinx_file(jinx_file: &str, args: &[&str]) -> Result<()> {
     };
 
     let result =
-        execute_jinx_with_npc(&jinx, &input_values, &available_jinxes, npc.as_ref()).await?;
+        execute_jinx_with_npc(&jinx, &input_values, &available_jinxes, npc.as_ref(), None).await?;
 
     if !result.output.is_empty() {
         println!("{}", result.output);
@@ -698,11 +701,7 @@ pub async fn exec_npc_file(
             .as_ref()
             .map(|u| u.completion_tokens)
             .unwrap_or(0);
-        let cost = response
-            .usage
-            .as_ref()
-            .map(|u| calculate_cost(&request.model, u.prompt_tokens, u.completion_tokens))
-            .unwrap_or(0.0);
+        let cost = response.usage.as_ref().map(|u| u.cost_usd).unwrap_or(0.0);
         let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
         let team_dir = find_team_dir();
         if let Ok(kernel) = npcrs::Kernel::boot(&team_dir, &db_path) {
