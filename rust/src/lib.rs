@@ -3,6 +3,7 @@ pub mod agent_turn;
 pub mod cli_providers;
 pub mod ctrl_r;
 pub mod db_migrations;
+pub mod live_persist;
 pub mod markdown;
 pub mod mcp_server;
 pub mod stream_client;
@@ -528,73 +529,47 @@ pub async fn exec_npc_file(
             conversation_id: Some(conv_id.clone()),
             current_path: Some(cwd.clone()),
             execution_mode: "chat".to_string(),
+            stream_id: Some(uuid::Uuid::new_v4().to_string()),
         };
-        let response = stream_client::call_stream(client, server_url, &request, None)
-            .await
-            .map_err(|e| npcrs::NpcError::Other(e))?;
+        let team_dir0 = find_team_dir();
+        let team0 = std::path::Path::new(&team_dir0)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("npc")
+            .to_string();
+        let turn =
+            std::sync::Arc::new(std::sync::Mutex::new(crate::live_persist::LiveTurn::begin(
+                &conv_id, cmd, &cwd, &model, &provider, &npc_name, &team0,
+            )));
+        let response = stream_client::call_stream_with_sink(
+            client,
+            server_url,
+            &request,
+            None,
+            None,
+            crate::live_persist::event_sink(&turn),
+        )
+        .await
+        .map_err(|e| npcrs::NpcError::Other(e))?;
         let output = response.message.content.clone().unwrap_or_default();
         if !output.is_empty() {
             println!("{}", output);
         }
-        let in_tok = response
-            .usage
-            .as_ref()
-            .map(|u| u.prompt_tokens)
-            .unwrap_or(0);
-        let out_tok = response
-            .usage
-            .as_ref()
-            .map(|u| u.completion_tokens)
-            .unwrap_or(0);
-        let cost = response.usage.as_ref().map(|u| u.cost_usd).unwrap_or(0.0);
-        let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
-        let team_dir = find_team_dir();
-        if let Ok(kernel) = npcrs::Kernel::boot(&team_dir, &db_path) {
-            let team_name_str = kernel
-                .team
-                .source_dir
-                .as_deref()
-                .and_then(|d| std::path::Path::new(d).file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or("npc")
-                .to_string();
-            let _ = kernel.history.save_conversation_message(
-                &conv_id,
-                "user",
-                cmd,
-                &cwd,
-                Some(&model),
-                Some(&provider),
-                Some(&npc_name),
-                Some(&team_name_str),
-                None,
-                None,
-                None,
-                Some(in_tok),
-                None,
-                None,
-            );
-            let _ = kernel.history.save_conversation_message(
-                &conv_id,
-                "assistant",
-                &output,
-                &cwd,
-                Some(&model),
-                Some(&provider),
-                Some(&npc_name),
-                Some(&team_name_str),
-                None,
-                None,
-                None,
-                None,
-                Some(out_tok),
-                Some(cost),
-            );
+        // Rows were written live while streaming; only usage/cost and any tool
+        // rows the stream events did not carry are left to attach.
+        if let Ok(mut t) = turn.lock() {
+            t.close_from_response(&response);
+            crate::live_persist::notice(t.enabled, t.rows_written);
         }
     } else {
         let db_path = shellexpand::tilde("~/npcsh_history.db").to_string();
         let team_dir = find_team_dir();
         let mut kernel = Kernel::boot(&team_dir, &db_path)?;
+        let team_label = std::path::Path::new(&team_dir)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("npc")
+            .to_string();
 
         if let Some(p) = kernel.get_process_mut(0) {
             p.npc = npc;
@@ -647,12 +622,38 @@ pub async fn exec_npc_file(
                         .unwrap_or_else(|_| ".".to_string()),
                 ),
                 execution_mode: "chat".to_string(),
+                stream_id: Some(uuid::Uuid::new_v4().to_string()),
             };
-            match stream_client::call_stream(client, server_url, &request, None).await {
+            // Each REPL turn is persisted row by row as it streams, so a Ctrl+C
+            // mid-answer keeps the partial transcript instead of losing it.
+            let conv_id = request.conversation_id.clone().unwrap_or_default();
+            let turn =
+                std::sync::Arc::new(std::sync::Mutex::new(crate::live_persist::LiveTurn::begin(
+                    &conv_id,
+                    &input,
+                    request.current_path.as_deref().unwrap_or("."),
+                    &model,
+                    &provider,
+                    &npc_name,
+                    &team_label,
+                )));
+            match stream_client::call_stream_with_sink(
+                client,
+                server_url,
+                &request,
+                None,
+                None,
+                crate::live_persist::event_sink(&turn),
+            )
+            .await
+            {
                 Ok(response) => {
                     let output = response.message.content.clone().unwrap_or_default();
                     if !output.is_empty() {
                         println!("\n{}", output);
+                    }
+                    if let Ok(mut t) = turn.lock() {
+                        t.close_from_response(&response);
                     }
                 }
                 Err(e) => eprintln!("\x1b[31mError: {}\x1b[0m", e),

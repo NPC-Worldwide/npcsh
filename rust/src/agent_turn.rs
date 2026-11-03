@@ -1,3 +1,4 @@
+use crate::live_persist::{self, LiveTurn};
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
 use npcrs::process::{Capabilities, ProcessState};
@@ -5,7 +6,7 @@ use npcrs::{Message, NpcError};
 use rand::{Rng, SeedableRng};
 use std::collections::HashMap;
 use std::io::Write;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 const CYAN: &str = "\x1b[36m";
 const DIM: &str = "\x1b[90m";
@@ -14,6 +15,58 @@ const YELLOW: &str = "\x1b[33m";
 const RED: &str = "\x1b[31m";
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
+
+/// Process-wide Ctrl+C bus.
+///
+/// One-shot mode (`npcsh -c ...`) never installed a signal handler, so a SIGINT
+/// killed the process outright and the in-flight turn died with it. Installing
+/// the handler once and broadcasting to every turn means an interrupt drains the
+/// stream, persists everything received so far, and returns a partial response
+/// instead of aborting.
+static CTRL_C_TX: OnceLock<tokio::sync::broadcast::Sender<()>> = OnceLock::new();
+static CTRL_C_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static CTRL_C_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn ctrl_c_bus() -> &'static tokio::sync::broadcast::Sender<()> {
+    CTRL_C_TX.get_or_init(|| {
+        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        let t = tx.clone();
+        tokio::spawn(async move {
+            loop {
+                if tokio::signal::ctrl_c().await.is_err() {
+                    break;
+                }
+                CTRL_C_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
+                CTRL_C_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = t.send(());
+            }
+        });
+        tx
+    })
+}
+
+/// Per-turn interrupt receiver. Fires once on the next Ctrl+C.
+pub fn ctrl_c_receiver() -> tokio::sync::mpsc::UnboundedReceiver<()> {
+    let mut sub = ctrl_c_bus().subscribe();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        if sub.recv().await.is_ok() {
+            let _ = tx.send(());
+        }
+    });
+    rx
+}
+
+/// True once the user has pressed Ctrl+C at least once in this process.
+pub fn ctrl_c_seen() -> bool {
+    CTRL_C_SEEN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Monotonic count of Ctrl+C presses. Compare before/after a turn so one
+/// interrupt does not poison every later turn in a long-lived shell.
+pub fn ctrl_c_generation() -> u64 {
+    CTRL_C_GEN.load(std::sync::atomic::Ordering::SeqCst)
+}
 
 pub fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
     static LOCK: OnceLock<Mutex<HashMap<u32, String>>> = OnceLock::new();
@@ -847,10 +900,7 @@ pub async fn run_stream_turn_with_interrupt(
         }
     }
 
-    if save_history {
-        save_conversation_message(kernel, current_pid, &Message::user(input), &cwd).await;
-    }
-
+    let stream_id = uuid::Uuid::new_v4().to_string();
     let request = crate::stream_client::StreamRequest {
         model,
         provider,
@@ -870,18 +920,36 @@ pub async fn run_stream_turn_with_interrupt(
         conversation_id: Some(conv_id.clone()),
         current_path: Some(cwd.clone()),
         execution_mode,
+        stream_id: Some(stream_id.clone()),
     };
 
-    let response = crate::stream_client::call_stream_with_interrupt(
+    // Start persisting before the first byte arrives. From here on every content
+    // delta, tool call and tool result is committed to SQLite as it happens, so
+    // an interrupt (Ctrl+C, server crash, kill -9) keeps the partial turn.
+    //
+    // The turn lives behind an `Arc<Mutex<_>>` because the sink handed to the
+    // streamer needs `&mut` while this function still owns the handle.
+    let turn: Arc<Mutex<LiveTurn>> = Arc::new(Mutex::new(LiveTurn::begin(
+        if save_history { &conv_id } else { "" },
+        input,
+        &cwd,
+        &request.model,
+        &request.provider,
+        &npc_name,
+        &team_name_str,
+    )));
+
+    let response = crate::stream_client::call_stream_with_sink(
         client,
         server_url,
         &request,
         permission_prompt,
         interrupt,
+        live_persist::event_sink(&turn),
     )
     .await
     .map_err(|e| NpcError::Other(e))?;
-    let tool_results = response.tool_results;
+    let tool_results = response.tool_results.clone();
 
     if let Some(ref usage) = response.usage {
         let process = kernel.get_process_mut(current_pid).unwrap();
@@ -892,18 +960,6 @@ pub async fn run_stream_turn_with_interrupt(
     if !response.tool_calls.is_empty() {
         assistant_message.tool_calls = Some(response.tool_calls.clone());
     }
-
-    let in_tok = response
-        .usage
-        .as_ref()
-        .map(|u| u.prompt_tokens)
-        .unwrap_or(0);
-    let out_tok = response
-        .usage
-        .as_ref()
-        .map(|u| u.completion_tokens)
-        .unwrap_or(0);
-    let cost = response.usage.as_ref().map(|u| u.cost_usd).unwrap_or(0.0);
 
     {
         let process = kernel.get_process_mut(current_pid).unwrap();
@@ -916,33 +972,14 @@ pub async fn run_stream_turn_with_interrupt(
         }
     }
 
+    // The transcript was already written row-by-row while streaming. All that
+    // is left is to reconcile anything the stream events did not carry (tool
+    // calls from older servers) and to attach usage/cost to the last row.
     if save_history {
-        let assistant_for_save = response.message.clone();
-        save_conversation_message(kernel, current_pid, &assistant_for_save, &cwd).await;
-        for tr in &tool_results {
-            save_conversation_message(kernel, current_pid, tr, &cwd).await;
+        if let Ok(mut t) = turn.lock() {
+            t.close_from_response(&response);
+            live_persist::notice(t.enabled, t.rows_written);
         }
-
-        let _ = kernel.history.save_conversation_message(
-            &conv_id,
-            "assistant",
-            &response.message.content.clone().unwrap_or_default(),
-            &cwd,
-            Some(&request.model),
-            Some(&request.provider),
-            Some(&npc_name),
-            Some(&team_name_str),
-            assistant_message
-                .tool_calls
-                .as_ref()
-                .map(|tcs| serde_json::to_string(tcs).unwrap_or_default())
-                .as_deref(),
-            None,
-            None,
-            Some(in_tok),
-            Some(out_tok),
-            Some(cost),
-        );
     }
 
     let output = response.message.content.clone().unwrap_or_default();
@@ -1107,7 +1144,8 @@ pub async fn run_command_loop(
     let mut last_output = String::new();
     let auto_approve = |_prompt: &str| "Yes (session)".to_string();
     for turn in 0..max_cmd_turns {
-        match run_stream_turn(
+        let gen_before = ctrl_c_generation();
+        match run_stream_turn_with_interrupt(
             kernel,
             current_pid,
             &turn_input,
@@ -1115,11 +1153,21 @@ pub async fn run_command_loop(
             client,
             server_url,
             true,
+            Some(ctrl_c_receiver()),
             None,
             Some(&auto_approve),
         )
         .await
         {
+            Ok(output) if ctrl_c_generation() != gen_before => {
+                // Ctrl+C during the turn: the transcript was already flushed
+                // and flagged. Print what we got and stop looping.
+                if !output.is_empty() {
+                    println!("{}", output);
+                }
+                eprintln!("{DIM}Interrupted; transcript saved.{RESET}");
+                return Ok(());
+            }
             Ok(output) => {
                 last_output = output;
                 let tool_calls: Vec<npcrs::ToolCall> = kernel
