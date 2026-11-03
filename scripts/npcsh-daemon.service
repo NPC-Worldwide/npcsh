@@ -1,10 +1,14 @@
 [Unit]
-Description=NPCsh LLM daemon
+Description=npcpy backend server for npcsh
+# The Rust shell spawns this same process on demand; this unit just keeps it
+# running so a cold start does not pay the ~12s `import npcpy.serve` cost.
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=python3 -m npcsh.daemon --daemon
+Environment=NPCSH_SERVER_HOST=127.0.0.1
+Environment=NPCSH_SERVER_PORT=5237
+ExecStart=/usr/bin/env python3 -m npcpy.serve --host 127.0.0.1 --port 5237 --dir %h/.npcsh/npc_team --teams-yaml %h/.npcsh/teams.yaml
 Restart=on-failure
 RestartSec=5
 

@@ -16,17 +16,14 @@ npcsh> @corca refactor the auth module and add tests
 npcsh> @alicanto summarize the last three papers on transformers
 ```
 
-## Common Commands
+## Commands
 
-| Command | What it does |
-|---------|--------------|
-| `/agent` | Full agent mode: the NPC can call jinxes, run bash, and use the LLM. |
-| `/chat` | Chat-only mode: LLM responses without tool use. |
-| `/cmd` | Command mode: input is run as bash first; if it fails, fall back to the LLM. |
-| `/<agent>` | Switch the current session to the named agent (e.g., `/corca`). |
-| `@<agent>` | Ask a one-off question to an agent without switching. |
-| `/jinxes` | List the jinxes available to the current team. |
-| `/help` | Show the built-in help. |
+`npcsh` separates **slash commands** from **team jinxes**:
+
+- **Slash commands** are built into the shell itself (mode switches like `/agent`, TUIs like `/git`, housekeeping like `/clear`, `/help`, `/exit`, ...). They exist regardless of which — or any — team is loaded.
+- **Jinxes** are reusable tools your *team* defines (`.jinx` files under `npc_team/jinxes/`). You run them by name, they appear or disappear as you switch teams, and `/jinxes` lists whatever this session's team provides.
+
+See [Commands](commands.md) for the full built-in slash-command table.
 
 The CLI also exposes agents via `npc`:
 

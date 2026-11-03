@@ -22,8 +22,8 @@ use npcsh::agent_turn::{self, run_command_loop};
 use npcsh::markdown::render_block;
 use npcsh::{
     discover_knowledge_stores, exec_jinx_file, exec_npc_file, find_team_dir, format_memory_context,
-    init_team, memory_context_enabled, real_user_home, resolve_team_layout, set_resolved_team_dir,
-    stream_client, team_sync,
+    init_team, live_persist, memory_context_enabled, real_user_home, resolve_team_layout,
+    set_resolved_team_dir, stream_client, team_sync,
 };
 
 fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
@@ -80,20 +80,34 @@ async fn ensure_server_running(
     cmd.spawn()
         .map_err(|e| format!("failed to spawn npcpy.serve: {e}"))?;
 
-    for _ in 0..30 {
+    // A cold `npcpy.serve` import pulls in litellm/torch and takes ~10-15s
+    // before Flask can bind its port. Allow a generous budget (60s) and poll
+    // the cheap /api/health route instead of `/`, which 404s but still costs a
+    // full request round-trip.
+    let attempts = std::env::var("NPCSH_SERVER_STARTUP_ATTEMPTS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(120);
+    let health_url = format!("{}/api/health", server_url.trim_end_matches('/'));
+
+    for _ in 0..attempts {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         if client
-            .get(server_url)
-            .timeout(std::time::Duration::from_secs(1))
+            .get(&health_url)
+            .timeout(std::time::Duration::from_secs(2))
             .send()
             .await
-            .is_ok()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
         {
             return Ok(());
         }
     }
 
-    Err("npcpy server did not become reachable after spawn".to_string())
+    Err(format!(
+        "npcpy server did not become reachable after spawn (waited {}s)",
+        attempts / 2
+    ))
 }
 
 async fn restart_server(
@@ -1489,10 +1503,6 @@ async fn run_stream_turn_with_interrupt(
     // Persist the user turn before we block on the LLM stream. If the parent
     // kills us during a long generation (benchmark timeout), the user message
     // is already in npcsh_history.db so the transcript is not lost.
-    if save_history {
-        save_conversation_message(kernel, current_pid, &Message::user(input), &cwd).await;
-    }
-
     let request = stream_client::StreamRequest {
         model,
         provider,
@@ -1512,18 +1522,33 @@ async fn run_stream_turn_with_interrupt(
         conversation_id: Some(conv_id.clone()),
         current_path: Some(cwd.clone()),
         execution_mode,
+        stream_id: Some(uuid::Uuid::new_v4().to_string()),
     };
 
-    let response = stream_client::call_stream_with_interrupt(
+    // Persist as the turn happens: the user row lands before the first byte and
+    // every content delta / tool call / tool result is committed immediately, so
+    // a Ctrl+C mid-loop keeps everything produced up to that instant.
+    let turn = Arc::new(Mutex::new(live_persist::LiveTurn::begin(
+        if save_history { &conv_id } else { "" },
+        input,
+        &cwd,
+        &request.model,
+        &request.provider,
+        &npc_name,
+        &team_name_str,
+    )));
+
+    let response = stream_client::call_stream_with_sink(
         client,
         server_url,
         &request,
         Some(&ask_permission),
         interrupt,
+        live_persist::event_sink(&turn),
     )
     .await
     .map_err(|e| npcrs::NpcError::Other(e))?;
-    let tool_results = response.tool_results;
+    let tool_results = response.tool_results.clone();
 
     if let Some(ref usage) = response.usage {
         let process = kernel.get_process_mut(current_pid).unwrap();
@@ -1558,38 +1583,13 @@ async fn run_stream_turn_with_interrupt(
         }
     }
 
-    // Save assistant and tool messages as they arrive so a timeout/kill does
-    // not lose the partial conversation. The user message was already persisted
-    // before the LLM stream started.
+    // Rows were written live while streaming; attach usage and reconcile any
+    // tool calls an older server did not emit as `tool_start` events.
     if save_history {
-        let assistant_for_save = response.message.clone();
-        save_conversation_message(kernel, current_pid, &assistant_for_save, &cwd).await;
-        for tr in &tool_results {
-            save_conversation_message(kernel, current_pid, tr, &cwd).await;
+        if let Ok(mut t) = turn.lock() {
+            t.close_from_response(&response);
+            live_persist::notice(t.enabled, t.rows_written);
         }
-
-        // Update token/cost metadata on the assistant row after the stream is
-        // complete and usage is known.
-        let _ = kernel.history.save_conversation_message(
-            &conv_id,
-            "assistant",
-            &response.message.content.clone().unwrap_or_default(),
-            &cwd,
-            Some(&request.model),
-            Some(&request.provider),
-            Some(&npc_name),
-            Some(&team_name_str),
-            assistant_message
-                .tool_calls
-                .as_ref()
-                .map(|tcs| serde_json::to_string(tcs).unwrap_or_default())
-                .as_deref(),
-            None,
-            None,
-            Some(in_tok),
-            Some(out_tok),
-            Some(cost),
-        );
     }
 
     let output = response.message.content.clone().unwrap_or_default();

@@ -3,6 +3,41 @@ use futures::StreamExt;
 use npcrs::r#gen::{Message, ToolCall, ToolCallFunction, Usage};
 use serde_json::Value;
 
+/// Events surfaced while an SSE stream is being consumed.
+///
+/// The CLI subscribes to these so each tool call / tool result / content delta
+/// is written to the transcript as it arrives. A Ctrl+C, a server crash or a
+/// killed process therefore keeps everything up to that instant.
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    /// A chunk of assistant text.
+    ContentDelta(String),
+    /// A tool is about to run.
+    ToolStart {
+        name: String,
+        id: String,
+        args: String,
+    },
+    /// A tool finished and produced its output.
+    ToolResult {
+        name: String,
+        id: String,
+        content: String,
+    },
+    /// A tool failed. Persisted like a result: the provider requires every
+    /// `tool_call` to be answered by a `tool` message, so a failure that is
+    /// not recorded leaves a dangling call that breaks the next request.
+    ToolError {
+        name: String,
+        id: String,
+        error: String,
+    },
+    /// The stream was cancelled by the user.
+    Interrupted,
+    /// The agent loop reached its end.
+    Finished,
+}
+
 pub struct StreamRequest {
     pub model: String,
     pub provider: String,
@@ -13,6 +48,9 @@ pub struct StreamRequest {
     pub conversation_id: Option<String>,
     pub current_path: Option<String>,
     pub execution_mode: String,
+    /// Client-chosen id used with POST /api/interrupt so the server stops the
+    /// agent loop when the user hits Ctrl+C.
+    pub stream_id: Option<String>,
 }
 
 pub struct StreamResponse {
@@ -21,6 +59,11 @@ pub struct StreamResponse {
     pub tool_results: Vec<Message>,
     pub usage: Option<Usage>,
     pub streamed: bool,
+    /// True when the user interrupted the stream (Ctrl+C / Esc). Everything
+    /// received up to that point is still in message / tool_calls /
+    /// tool_results, so callers can finish the turn gracefully instead of
+    /// treating it as a failure.
+    pub interrupted: bool,
 }
 
 pub async fn call_stream(
@@ -32,12 +75,52 @@ pub async fn call_stream(
     call_stream_with_interrupt(client, base_url, request, permission_prompt, None).await
 }
 
+/// Same as `call_stream_with_interrupt` but also forwards incremental events to
+/// `sink` as they are parsed off the wire.
+pub async fn call_stream_with_sink(
+    client: &reqwest::Client,
+    base_url: &str,
+    request: &StreamRequest,
+    permission_prompt: Option<&dyn Fn(&str) -> String>,
+    interrupt: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
+    sink: Option<Box<dyn FnMut(StreamEvent) + Send>>,
+) -> Result<StreamResponse, String> {
+    call_stream_inner(
+        client,
+        base_url,
+        request,
+        permission_prompt,
+        interrupt,
+        sink,
+    )
+    .await
+}
+
 pub async fn call_stream_with_interrupt(
     client: &reqwest::Client,
     base_url: &str,
     request: &StreamRequest,
     permission_prompt: Option<&dyn Fn(&str) -> String>,
+    interrupt: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
+) -> Result<StreamResponse, String> {
+    call_stream_inner(
+        client,
+        base_url,
+        request,
+        permission_prompt,
+        interrupt,
+        None,
+    )
+    .await
+}
+
+async fn call_stream_inner(
+    client: &reqwest::Client,
+    base_url: &str,
+    request: &StreamRequest,
+    permission_prompt: Option<&dyn Fn(&str) -> String>,
     mut interrupt: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
+    mut sink: Option<Box<dyn FnMut(StreamEvent) + Send>>,
 ) -> Result<StreamResponse, String> {
     let stream_url = format!("{}/api/stream", base_url);
     let body = serde_json::json!({
@@ -50,6 +133,7 @@ pub async fn call_stream_with_interrupt(
         "conversationId": request.conversation_id,
         "currentPath": request.current_path,
         "executionMode": request.execution_mode,
+        "streamId": request.stream_id,
     });
 
     let resp = client
@@ -78,12 +162,16 @@ pub async fn call_stream_with_interrupt(
 
     let mut stream = resp.bytes_stream();
     let mut pending = String::new();
+    let mut interrupted_by_user = false;
 
     loop {
         let chunk = if let Some(ref mut rx) = interrupt {
             tokio::select! {
                 biased;
-                _ = rx.recv() => break,
+                _ = rx.recv() => {
+                    interrupted_by_user = true;
+                    break;
+                }
                 chunk = stream.next() => chunk,
             }
         } else {
@@ -134,6 +222,8 @@ pub async fn call_stream_with_interrupt(
                 &mut saw_output,
                 &mut renderer,
                 permission_prompt,
+                sink.as_mut()
+                    .map(|b| &mut **b as &mut dyn FnMut(StreamEvent)),
             );
             if pause {
                 continue;
@@ -160,10 +250,29 @@ pub async fn call_stream_with_interrupt(
                         &mut saw_output,
                         &mut renderer,
                         permission_prompt,
+                        sink.as_mut()
+                            .map(|b| &mut **b as &mut dyn FnMut(StreamEvent)),
                     );
                 }
             }
         }
+    }
+
+    // If we left the loop because the user interrupted, tell the server to stop
+    // the agent loop too. Without this the Python process keeps running tool
+    // calls for minutes after the CLI has returned to the prompt.
+    if interrupted_by_user {
+        if let Some(stream_id) = request.stream_id.as_deref() {
+            let url = format!("{}/api/interrupt", base_url);
+            let body = serde_json::json!({ "streamId": stream_id });
+            let c = client.clone();
+            let _ = c.post(&url).json(&body).send().await;
+        }
+        if let Some(cb) = sink.as_mut() {
+            cb(StreamEvent::Interrupted);
+        }
+    } else if let Some(cb) = sink.as_mut() {
+        cb(StreamEvent::Finished);
     }
 
     renderer.flush();
@@ -211,6 +320,7 @@ pub async fn call_stream_with_interrupt(
         tool_results,
         usage,
         streamed: saw_output,
+        interrupted: interrupted_by_user,
     })
 }
 
@@ -247,6 +357,7 @@ fn apply_sse_event(
     saw_output: &mut bool,
     renderer: &mut StreamRenderer,
     permission_prompt: Option<&dyn Fn(&str) -> String>,
+    mut sink: Option<&mut (dyn FnMut(StreamEvent) + '_)>,
 ) -> bool {
     if let Some(typ) = json.get("type").and_then(|v| v.as_str()) {
         match typ {
@@ -280,6 +391,28 @@ fn apply_sse_event(
             }
             "tool_start" => {
                 let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                let tool_id = json
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let args = json
+                    .get("args")
+                    .map(|v| {
+                        if let Some(s) = v.as_str() {
+                            s.to_string()
+                        } else {
+                            v.to_string()
+                        }
+                    })
+                    .unwrap_or_default();
+                if let Some(cb) = sink.as_mut() {
+                    cb(StreamEvent::ToolStart {
+                        name: name.to_string(),
+                        id: tool_id.clone(),
+                        args,
+                    });
+                }
                 renderer.flush();
                 eprint!("\r\n\x1b[90m┌─ ⚡ {}\x1b[0m\r\n", name);
                 let _ = std::io::Write::flush(&mut std::io::stderr());
@@ -368,6 +501,13 @@ fn apply_sse_event(
                 let _ = std::io::Write::flush(&mut std::io::stderr());
                 renderer.clear();
                 *saw_output = true;
+                if let Some(cb) = sink.as_mut() {
+                    cb(StreamEvent::ToolResult {
+                        name: name.to_string(),
+                        id: tool_id.clone(),
+                        content: display.clone(),
+                    });
+                }
                 if !display.is_empty() {
                     tool_results.push(Message {
                         role: "tool".to_string(),
@@ -432,6 +572,18 @@ fn apply_sse_event(
                     .get("error")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown error");
+                let tool_id = json
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if let Some(cb) = sink.as_mut() {
+                    cb(StreamEvent::ToolError {
+                        name: name.to_string(),
+                        id: tool_id.clone(),
+                        error: err.to_string(),
+                    });
+                }
                 eprint!("\r\n\x1b[31m┌─ {} error\x1b[0m\r\n", name);
                 for line in err.lines() {
                     eprint!("\x1b[31m│  {}\x1b[0m\r\n", line);
@@ -460,6 +612,9 @@ fn apply_sse_event(
                     if !new_text.is_empty() {
                         content.push_str(new_text);
                         *saw_output = true;
+                        if let Some(cb) = sink.as_mut() {
+                            cb(StreamEvent::ContentDelta(new_text.to_string()));
+                        }
                         renderer.push(new_text);
                         let _ = std::io::Write::flush(&mut std::io::stderr());
                     }
