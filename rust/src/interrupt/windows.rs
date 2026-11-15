@@ -14,9 +14,16 @@ pub fn spawn_listener(
     running: Arc<AtomicBool>,
 ) -> tokio::task::JoinHandle<()> {
     let signal_interrupt_tx = interrupt_tx.clone();
+    let signal_running = running.clone();
     tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        let _ = signal_interrupt_tx.send(());
+        // Re-arm after each delivery so one Ctrl+C does not disable interrupt
+        // handling for the rest of a long-lived shell session.
+        while tokio::signal::ctrl_c().await.is_ok() {
+            let _ = signal_interrupt_tx.send(());
+            if !signal_running.load(Ordering::Relaxed) {
+                break;
+            }
+        }
     });
 
     tokio::task::spawn_blocking(move || {

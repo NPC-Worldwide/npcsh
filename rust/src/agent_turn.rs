@@ -45,6 +45,19 @@ fn ctrl_c_bus() -> &'static tokio::sync::broadcast::Sender<()> {
     })
 }
 
+/// Install the process-wide Ctrl+C handler.
+///
+/// Call this once, as early as possible after the tokio runtime starts, so a
+/// SIGINT delivered while no per-turn listener is alive is still absorbed.
+/// The default SIGINT disposition terminates the process; that is what made
+/// Ctrl+C exit the shell on macOS whenever the terminal was not in raw mode
+/// (startup team selection, blocking confirmations, external commands) or when
+/// no turn was in flight. On Linux a per-turn handler happened to cover the
+/// common path, which hid the gap.
+pub fn install_ctrl_c_handler() {
+    let _ = ctrl_c_bus();
+}
+
 /// Per-turn interrupt receiver. Fires once on the next Ctrl+C.
 pub fn ctrl_c_receiver() -> tokio::sync::mpsc::UnboundedReceiver<()> {
     let mut sub = ctrl_c_bus().subscribe();

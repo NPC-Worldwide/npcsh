@@ -18,10 +18,20 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import uuid
+
+# macOS /usr/bin/script does not support -c and is unreliable under Python
+# subprocess capture, so we allocate a PTY ourselves.
+try:
+    import pty
+    import select as select_mod
+    _PTY_AVAILABLE = True
+except Exception:
+    _PTY_AVAILABLE = False
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -333,6 +343,7 @@ def _run_npcsh_attempt(
     env["NPCSH_DEBUG"] = "1"
     env["NPCSH_STREAM_OUTPUT"] = "1"
     env["NPCSH_ACCEPT_PERMISSIONS"] = "1"
+    env["NPCSH_MEMORY"] = "0"  # disable memory-extraction prompt in benchmark
 
     # Fully isolate git so a model running `git config` cannot mutate the user's
     # real config or inherit a repo-local .git/config. We create a throwaway HOME
@@ -383,74 +394,136 @@ def _run_npcsh_attempt(
 
     # Pass the instruction directly to the Rust binary via its -c / --command flag.
     print(f"  [npcsh] {instruction[:80]}... (cwd={work_dir}) conv={conversation_id}", flush=True)
-    try:
-        # npcsh's interactive terminal code needs a controlling TTY.  In a
-        # non-interactive environment (CI, Docker), run it through `script` to
-        # allocate a pseudo-terminal.  This mirrors a normal shell session
-        # without touching the host's actual terminal or shell configuration.
-        if os.path.exists(_SCRIPT_BIN):
-            cmd = [
-                _SCRIPT_BIN, "-qec",
-                f"{_NPCSH_BIN} -c {shlex.quote(instruction)}",
-                "/dev/null",
-            ]
-        else:
-            cmd = [_NPCSH_BIN, "-c", instruction]
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=env,
-            cwd=work_dir,
-            start_new_session=True,
-        )
-    except FileNotFoundError as exc:
-        shutil.rmtree(tmp_home, ignore_errors=True)
-        return f"Exception: {exc}", conversation_id
 
-    def _drain_stdout():
-        try:
-            for line in proc.stdout:
-                stdout_queue.put(line)
-        finally:
-            stdout_queue.put(None)
-
-    stdout_queue = queue.Queue()
-    reader = threading.Thread(target=_drain_stdout, daemon=True)
-    reader.start()
-
+    cmd = [_NPCSH_BIN, "--skip-migrations", "-c", instruction]
     output_lines = []
     hard_deadline = time.time() + attempt_timeout + 5.0
-    while time.time() < hard_deadline:
-        remaining = hard_deadline - time.time()
-        try:
-            line = stdout_queue.get(timeout=min(remaining, 1.0))
-        except queue.Empty:
-            if proc.poll() is not None:
-                break
-            continue
-        if line is None:
-            break
-        output_lines.append(line)
-        if stream:
-            print(line, end="", flush=True)
 
-    _kill_descendants(proc.pid)
-    try:
-        proc.kill()
-    except Exception:
-        pass
-    while proc.poll() is None and time.time() < hard_deadline:
+    # macOS /usr/bin/script does not support -c and is unreliable under Python
+    # subprocess capture. Allocate a PTY ourselves so npcsh sees a real TTY.
+    if sys.platform == "darwin" and _PTY_AVAILABLE:
         try:
-            proc.wait(timeout=0.5)
-        except subprocess.TimeoutExpired:
+            master_fd, slave_fd = pty.openpty()
+            proc = subprocess.Popen(
+                cmd,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                env=env,
+                cwd=work_dir,
+                start_new_session=True,
+                close_fds=True,
+            )
+            os.close(slave_fd)
+        except (OSError, FileNotFoundError) as exc:
+            shutil.rmtree(tmp_home, ignore_errors=True)
+            return f"Exception: {exc}", conversation_id
+
+        try:
+            pending_input = b""
+            while time.time() < hard_deadline and proc.poll() is None:
+                remaining = hard_deadline - time.time()
+                ready, _, _ = select_mod.select([master_fd], [], [], min(remaining, 0.5))
+                if ready:
+                    try:
+                        chunk = os.read(master_fd, 4096)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    decoded = chunk.decode("utf-8", errors="replace")
+                    output_lines.append(decoded)
+                    if stream:
+                        print(decoded, end="", flush=True)
+                    # Detect interactive prompts the benchmark needs to answer.
+                    # We track whether we already sent the response so we only
+                    # reply once per prompt.
+                    text_so_far = "".join(output_lines)
+                    if "PROCEED? [y/N]" in text_so_far and pending_input == b"":
+                        pending_input = b"sent"
+                        try:
+                            os.write(master_fd, b"y\n")
+                        except OSError:
+                            break
+        finally:
+            try:
+                os.close(master_fd)
+            except Exception:
+                pass
             _kill_descendants(proc.pid)
-    if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            while proc.poll() is None and time.time() < hard_deadline:
+                try:
+                    proc.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    _kill_descendants(proc.pid)
+    else:
+        # Linux / CI path: keep using `script` if available; it handles TTY
+        # allocation reliably there and avoids any PTY size issues.
         try:
-            proc.stdout.close()
+            if os.path.exists(_SCRIPT_BIN):
+                cmd = [
+                    _SCRIPT_BIN, "-qec",
+                    f"{_NPCSH_BIN} --skip-migrations -c {shlex.quote(instruction)}",
+                    "/dev/null",
+                ]
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+                cwd=work_dir,
+                start_new_session=True,
+                bufsize=1,
+            )
+        except FileNotFoundError as exc:
+            shutil.rmtree(tmp_home, ignore_errors=True)
+            return f"Exception: {exc}", conversation_id
+
+        def _drain_stdout():
+            try:
+                for line in proc.stdout:
+                    stdout_queue.put(line)
+            finally:
+                stdout_queue.put(None)
+
+        stdout_queue = queue.Queue()
+        reader = threading.Thread(target=_drain_stdout, daemon=True)
+        reader.start()
+
+        while time.time() < hard_deadline:
+            remaining = hard_deadline - time.time()
+            try:
+                line = stdout_queue.get(timeout=min(remaining, 1.0))
+            except queue.Empty:
+                if proc.poll() is not None:
+                    break
+                continue
+            if line is None:
+                break
+            output_lines.append(line)
+            if stream:
+                print(line, end="", flush=True)
+
+        _kill_descendants(proc.pid)
+        try:
+            proc.kill()
         except Exception:
             pass
+        while proc.poll() is None and time.time() < hard_deadline:
+            try:
+                proc.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                _kill_descendants(proc.pid)
+        if proc.poll() is None:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
 
     output_text = "".join(output_lines) if output_lines else f"Timed out after {attempt_timeout:.0f}s"
 

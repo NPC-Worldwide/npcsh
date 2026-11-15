@@ -5,14 +5,34 @@ use std::time::Duration;
 
 /// macOS interrupt listener.
 ///
-/// On macOS, crossterm reliably observes Ctrl+C before the default SIGINT
-/// handler kills the process, so the signal fallback is not needed. Esc and
-/// Ctrl+C both send an interrupt signal; Enter queues a line of input.
+/// Esc and Ctrl+C both send an interrupt signal; Enter queues a line of input.
+///
+/// A tokio SIGINT handler is installed as well. crossterm only turns Ctrl+C
+/// into a key event while the terminal is in raw mode; whenever raw mode is
+/// momentarily off (between prompts, while a blocking `read_line` such as the
+/// restart confirmation runs, or after a nested raw-mode user toggles it off)
+/// the terminal delivers a real SIGINT instead. Without a handler the default
+/// disposition terminates the shell, which is why Ctrl+C exited the process on
+/// macOS while Linux (which already installs this handler) survived.
 pub fn spawn_listener(
     interrupt_tx: tokio::sync::mpsc::UnboundedSender<()>,
     queue_tx: tokio::sync::mpsc::UnboundedSender<String>,
     running: Arc<AtomicBool>,
 ) -> tokio::task::JoinHandle<()> {
+    let signal_interrupt_tx = interrupt_tx.clone();
+    let signal_running = running.clone();
+    tokio::spawn(async move {
+        // Re-arm after each delivery: the process lives for many turns and a
+        // single Ctrl+C must not disable interrupt handling for the rest of
+        // the session.
+        while tokio::signal::ctrl_c().await.is_ok() {
+            let _ = signal_interrupt_tx.send(());
+            if !signal_running.load(Ordering::Relaxed) {
+                break;
+            }
+        }
+    });
+
     tokio::task::spawn_blocking(move || {
         let mut buf = String::new();
         while running.load(Ordering::Relaxed) {
