@@ -17,4 +17,5 @@ nav:
   - Home: index.md
   - Installation: installation.md
   - Skills: skills.md
+  - Commands: commands.md
   - Agent Coders: agent-coders.md

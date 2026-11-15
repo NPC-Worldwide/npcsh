@@ -64,3 +64,15 @@ jobs:
           echo "These must be released per-platform, not checked in."
           exit 1
         fi
+
+  docs-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install docs deps
+      run: pip install -r docs/requirements.txt
+    - name: Build docs (strict)
+      run: mkdocs build --strict
