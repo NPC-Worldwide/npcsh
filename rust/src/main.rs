@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 mod cli_providers;
 mod cron;
 mod interrupt;
+mod rawmode;
 mod tui;
 mod tutorial;
 mod version_check;
@@ -634,6 +635,12 @@ const COMMAND_CATEGORIES: &[&str] = &[
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the process-wide Ctrl+C handler before any blocking prompt can
+    // run. Without it the default SIGINT disposition terminates the shell
+    // whenever the terminal is not in raw mode (team selection, confirmations,
+    // external commands) or when no per-turn listener is alive.
+    npcsh::agent_turn::install_ctrl_c_handler();
+
     let args: Vec<String> = std::env::args().collect();
 
     if args.iter().any(|a| a == "--version" || a == "-v") {
@@ -722,9 +729,12 @@ async fn main() -> Result<()> {
     };
     let mut current_pid: u32 = 0;
 
-    if let Err(e) = npcsh::db_migrations::run_migrations(&db_path) {
-        eprintln!("{RED}Error: database migration failed: {e}{RESET}");
-        std::process::exit(1);
+    let skip_migrations = args.iter().any(|a| a == "--skip-migrations");
+    if !skip_migrations {
+        if let Err(e) = npcsh::db_migrations::run_migrations(&db_path) {
+            eprintln!("{RED}Error: database migration failed: {e}{RESET}");
+            std::process::exit(1);
+        }
     }
 
     let mut kernel = Kernel::boot(&team_dir, &db_path)?;
@@ -1705,10 +1715,10 @@ async fn run_interactive_stream_turn_once(
     server_url: &str,
     memory_scheduler: Option<&mut MemoryScheduler>,
 ) -> (Result<String>, Vec<String>) {
-    let _raw_guard = {
-        let _ = crossterm::terminal::enable_raw_mode();
-        RawModeRestore
-    };
+    // Nesting-safe: a permission prompt raised during this turn will acquire
+    // its own guard and must not take the terminal out of raw mode when it
+    // closes, otherwise Ctrl+C stops arriving as a key event.
+    let _raw_guard = crate::rawmode::RawModeGuard::acquire_lossy();
 
     let (interrupt_tx, interrupt_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let (queue_tx, mut queue_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -1739,13 +1749,6 @@ async fn run_interactive_stream_turn_once(
     }
 
     (result, queued)
-}
-
-struct RawModeRestore;
-impl Drop for RawModeRestore {
-    fn drop(&mut self) {
-        let _ = crossterm::terminal::disable_raw_mode();
-    }
 }
 
 async fn run_interactive_stream_turn(
@@ -2052,19 +2055,25 @@ fn ask_permission(prompt: &str) -> String {
         lines
     };
 
-    struct PromptGuard;
+    struct PromptGuard {
+        // This prompt is usually raised from inside a streaming turn that
+        // already owns raw mode. Tearing raw mode down on exit would hand the
+        // terminal back to the line discipline for the remainder of the turn,
+        // so Ctrl+C would arrive as a real SIGINT instead of a key event.
+        raw: crate::rawmode::RawModeGuard,
+    }
     impl PromptGuard {
         fn new() -> io::Result<Self> {
+            let raw = crate::rawmode::RawModeGuard::acquire()?;
             let mut stdout = io::stdout();
-            stdout.execute(EnterAlternateScreen)?;
-            terminal::enable_raw_mode()?;
-            Ok(Self)
+            let _ = stdout.execute(EnterAlternateScreen);
+            Ok(Self { raw })
         }
     }
     impl Drop for PromptGuard {
         fn drop(&mut self) {
-            let _ = terminal::disable_raw_mode();
             let _ = io::stdout().execute(LeaveAlternateScreen);
+            // `raw` drops after this and restores raw mode only if we enabled it.
         }
     }
 

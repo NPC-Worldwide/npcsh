@@ -53,8 +53,8 @@ The table below shows scores (100 tasks).
 
 <table>
 <tr><th>Family</th><th>Model</th><th>Version</th><th>Score</th></tr>
-<tr><td rowspan="6"><b>Qwen3.5</b></td><td>0.8b</td><td>v2.1.7</td><td>23/100 (23%)</td></tr>
-<tr><td>2b</td><td>v2.1.7</td><td>66/100 (66%)</td></tr>
+<tr><td rowspan="6"><b>Qwen3.5</b></td><td>0.8b</td><td>v2.1.25</td><td>59/100 (59%)</td></tr>
+<tr><td>2b</td><td>v2.1.25</td><td>86/100 (86%)</td></tr>
 <tr><td>4b</td><td>v2.1.5</td><td>85/100 (85%)</td></tr>
 <tr><td>9b</td><td>v2.1.5</td><td>95/100 (95%)</td></tr>
 <tr><td>35b</td><td>v2.1.5</td><td>97/100 (97%)</td></tr>
@@ -69,13 +69,16 @@ The table below shows scores (100 tasks).
 <tr><td>devstral-2 123b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
 <tr><td>large-3 675b</td><td>v2.1.7</td><td>89/100 (89%)</td></tr>
 <tr><td><b>North Mini Code 1.0</b></td><td>30b (3b active)</td><td>v2.1.5</td><td>93/100 (93%)</td></tr>
-<tr><td rowspan="4"><b>Gemma 4</b></td><td>2b (e2b)</td><td>v2.1.7</td><td>92/100 (92%)</td></tr>
+<tr><td rowspan="4"><b>Gemma 4</b></td><td>2b (e2b)</td><td>v2.1.25</td><td>90/100 (90%)</td></tr>
 <tr><td>4b (e4b)</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
 <tr><td>26b</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
 <tr><td>31b</td><td>v2.1.7</td><td>92/100 (92%)</td></tr>
 <tr><td rowspan="3"><b>Granite 4.1</b></td><td>3b</td><td>v2.1.7</td><td>68/100 (68%)</td></tr>
 <tr><td>8b</td><td>v2.1.7</td><td>81/100 (81%)</td></tr>
 <tr><td>30b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
+<tr><td><b>Bonsai</b></td><td>bonsai-2 (latest, 9b)</td><td>v2.1.25</td><td>96/100 (96%)</td></tr>
+<tr><td><b>MiMo</b></td><td>v2.6 (9.4b)</td><td>v2.1.25</td><td>95/100 (95%)</td></tr>
+<tr><td><b>Liquid Foundation Models (LFM)</b></td><td>3 (1.7b)</td><td>v2.1.25</td><td>87/100 (87%)</td></tr>
 </table>
 
 For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).

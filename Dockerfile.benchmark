@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /opt/npcsh
 COPY rust/Cargo.toml rust/Cargo.lock ./
 COPY rust/src ./src
+COPY rust/db_migrations ./db_migrations
 COPY rust/build.rs ./
 RUN cargo build --release
 
