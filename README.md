@@ -55,15 +55,18 @@ The table below shows scores (100 tasks).
 <tr><th>Family</th><th>Model</th><th>Version</th><th>Score</th></tr>
 <tr><td rowspan="6"><b>Qwen3.5</b></td><td>0.8b</td><td>v2.1.25</td><td>59/100 (59%)</td></tr>
 <tr><td>2b</td><td>v2.1.25</td><td>86/100 (86%)</td></tr>
-<tr><td>4b</td><td>v2.1.5</td><td>85/100 (85%)</td></tr>
+<tr><td>4b</td><td>v2.1.25</td><td>96/100 (96%)</td></tr>
 <tr><td>9b</td><td>v2.1.5</td><td>95/100 (95%)</td></tr>
 <tr><td>35b</td><td>v2.1.5</td><td>97/100 (97%)</td></tr>
 <tr><td>397b</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
-<tr><td><b>Qwen3.6</b></td><td>35b</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>
+<tr><td rowspan="3"><b>Qwen3.6 / Qwen3.8</b></td><td>27b (qwen3.8)</td><td>v2.1.25</td><td>97/100 (97%)</td></tr>
+<tr><td>35b (qwen3.6)</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>
+<tr><td>27b (qwen3.6)</td><td>v2.1.25</td><td>TBD</td></tr>
 <tr><td rowspan="2"><b>Ornith</b></td><td>9b</td><td>v2.1.5</td><td>57/100 (57%)</td></tr>
 <tr><td>35b</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
 <tr><td><b>Kimi K2.7-Code</b></td><td>1t (32b active)</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
 <tr><td><b>Minimax</b></td><td>m3 428b (23b active)</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
+<tr><td><b>Minimax</b></td><td>m3.1-flash:cloud (428b)</td><td>v2.1.25</td><td>TBD</td></tr>
 <tr><td><b>DeepSeek</b></td><td>v4-flash 284b (13b active)</td><td>v2.1.7</td><td>95/100 (95%)</td></tr>
 <tr><td rowspan="3"><b>Mistral</b></td><td>devstral-small-2 24b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
 <tr><td>devstral-2 123b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
@@ -73,12 +76,15 @@ The table below shows scores (100 tasks).
 <tr><td>4b (e4b)</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
 <tr><td>26b</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
 <tr><td>31b</td><td>v2.1.7</td><td>92/100 (92%)</td></tr>
-<tr><td rowspan="3"><b>Granite 4.1</b></td><td>3b</td><td>v2.1.7</td><td>68/100 (68%)</td></tr>
+<tr><td rowspan="3"><b>Granite 4.1</b></td><td>3b</td><td>v2.1.25</td><td>81/100 (81%)</td></tr>
 <tr><td>8b</td><td>v2.1.7</td><td>81/100 (81%)</td></tr>
 <tr><td>30b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
 <tr><td><b>Bonsai</b></td><td>bonsai-2 (latest, 9b)</td><td>v2.1.25</td><td>96/100 (96%)</td></tr>
 <tr><td><b>MiMo</b></td><td>v2.6 (9.4b)</td><td>v2.1.25</td><td>95/100 (95%)</td></tr>
 <tr><td><b>Liquid Foundation Models (LFM)</b></td><td>3 (1.7b)</td><td>v2.1.25</td><td>87/100 (87%)</td></tr>
+<tr><td><b>Thinking Machines Lab</b></td><td>inkling-2-small:cloud (594b/17b active)</td><td>v2.1.25</td><td>97/100 (97%)</td></tr>
+<tr><td><b>Reflection AI</b></td><td>beam:cloud</td><td>v2.1.25</td><td>94/100 (94%)</td></tr>
+<tr><td><b>Muse</b></td><td>spark-open:cloud (816b/42b active)</td><td>v2.1.25</td><td>98/100 (98%)</td></tr>
 </table>
 
 For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).
