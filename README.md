@@ -53,7 +53,7 @@ The table below shows scores (100 tasks).
 
 <table>
 <tr><th>Maker</th><th>Family</th><th>Model</th><th>Params</th><th>Version</th><th>Score</th></tr>
-<tr><td rowspan="9"><b>Alibaba</b></td><td rowspan="6">Qwen3.5</td><td>0.8b</td><td>0.8b</td><td>v2.1.25</td><td>59/100 (59%)</td></tr>
+<tr><td rowspan="8"><b>Alibaba</b></td><td rowspan="6">Qwen3.5</td><td>0.8b</td><td>0.8b</td><td>v2.1.25</td><td>59/100 (59%)</td></tr>
 <tr><td>2b</td><td>2b</td><td>v2.1.25</td><td>86/100 (86%)</td></tr>
 <tr><td>4b</td><td>4b</td><td>v2.1.25</td><td>96/100 (96%)</td></tr>
 <tr><td>9b</td><td>9b</td><td>v2.1.5</td><td>95/100 (95%)</td></tr>
