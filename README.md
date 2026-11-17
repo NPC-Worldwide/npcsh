@@ -59,8 +59,7 @@ The table below shows scores (100 tasks).
 <tr><td>9b</td><td>9b</td><td>v2.1.5</td><td>95/100 (95%)</td></tr>
 <tr><td>35b</td><td>35b</td><td>v2.1.5</td><td>97/100 (97%)</td></tr>
 <tr><td>397b</td><td>397b</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
-<tr><td rowspan="2">Qwen3.6</td><td>27b</td><td>27b</td><td>v2.1.25</td><td>TBD</td></tr>
-<tr><td>35b</td><td>35b</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>
+<tr><td>Qwen3.6</td><td>35b</td><td>35b</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>
 <tr><td>Qwen3.8</td><td>27b</td><td>27b</td><td>v2.1.25</td><td>97/100 (97%)</td></tr>
 <tr><td rowspan="2"><b>Ornith</b></td><td rowspan="2">Ornith</td><td>9b</td><td>9b</td><td>v2.1.5</td><td>57/100 (57%)</td></tr>
 <tr><td>35b</td><td>35b</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
@@ -83,7 +82,7 @@ The table below shows scores (100 tasks).
 <tr><td><b>Xiaomi</b></td><td>MiMo</td><td>v2.6</td><td>9.4b</td><td>v2.1.25</td><td>95/100 (95%)</td></tr>
 <tr><td><b>Liquid AI</b></td><td>LFM</td><td>3</td><td>1.7b</td><td>v2.1.25</td><td>87/100 (87%)</td></tr>
 <tr><td><b>Thinking Machines Lab</b></td><td>Inkling</td><td>inkling-2-small:cloud</td><td>594b total / 17b active</td><td>v2.1.25</td><td>97/100 (97%)</td></tr>
-<tr><td><b>Reflection AI</b></td><td>Beam</td><td>beam:cloud</td><td>unknown</td><td>v2.1.25</td><td>94/100 (94%)</td></tr>
+<tr><td><b>Reflection AI</b></td><td>Beam</td><td>beam:cloud</td><td>501b total / 23b active</td><td>v2.1.25</td><td>94/100 (94%)</td></tr>
 <tr><td><b>Muse</b></td><td>Spark Open</td><td>spark-open:cloud</td><td>816b total / 42b active</td><td>v2.1.25</td><td>98/100 (98%)</td></tr>
 </table>
 
