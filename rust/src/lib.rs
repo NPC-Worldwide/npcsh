@@ -106,7 +106,14 @@ fn select_team_path(teams: &[(String, String)]) -> Option<String> {
         .collect::<Vec<_>>()
         .join("\n");
 
-    if Command::new("sh").arg("-c").arg("command -v fzf").output().ok()?.status.success() {
+    if Command::new("sh")
+        .arg("-c")
+        .arg("command -v fzf")
+        .output()
+        .ok()?
+        .status
+        .success()
+    {
         let mut child = Command::new("fzf")
             .args([
                 "--height=~20",

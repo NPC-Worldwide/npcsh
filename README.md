@@ -86,7 +86,9 @@ The table below shows scores (100 tasks).
 <tr><td><b>Muse</b></td><td>Spark</td><td>Open</td><td>816b total / 42b active</td><td>v2.1.25</td><td>98/100 (98%)</td></tr>
 </table>
 
-For a more comprehensive view of npcsh's capabilities and the advantages of the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).
+For a more comprehensive view of npcsh's capabilities and the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).  
+
+To view traces from benchmark runs for the above models, check out [npcsh-traces](https://hf.co/npc-worldwide).
 
 ---
 

@@ -66,3 +66,7 @@ Screenshot*
 run_*.txt
 results/
 site/
+
+# Vendored benchmark assets needed by scripts/plot_benchmarks.py
+!scripts/assets/external_benchmarks.csv
+!scripts/assets/matplotlibrc
