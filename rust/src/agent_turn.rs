@@ -198,7 +198,7 @@ pub async fn restart_server(
     ensure_server_running(client, server_url).await
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Agent,
     Chat,
@@ -705,7 +705,7 @@ pub async fn run_stream_turn_with_interrupt(
     save_history: bool,
     interrupt: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
     memory_scheduler: Option<&mut MemoryScheduler>,
-    permission_prompt: Option<&dyn Fn(&str) -> String>,
+    permission_prompt: Option<&(dyn Fn(&str) -> String + Sync)>,
 ) -> Result<String> {
     {
         let process = kernel
@@ -1027,7 +1027,7 @@ pub async fn run_stream_turn(
     server_url: &str,
     save_history: bool,
     _memory_scheduler: Option<&mut MemoryScheduler>,
-    permission_prompt: Option<&dyn Fn(&str) -> String>,
+    permission_prompt: Option<&(dyn Fn(&str) -> String + Sync)>,
 ) -> Result<String> {
     const MAX_ATTEMPTS: usize = 4;
     let mut last_error: Option<NpcError> = None;

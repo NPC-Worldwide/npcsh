@@ -1,16 +1,16 @@
 use npcrs::Message;
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
-use npcrs::process::{Capabilities, ProcessState};
+use npcrs::process::ProcessState;
 use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::broadcast;
 
 mod cli_providers;
-mod cron;
 mod interrupt;
 mod rawmode;
 mod tui;
@@ -18,18 +18,32 @@ mod tutorial;
 mod version_check;
 
 use crate::cli_providers::{CLI_PROVIDERS, run_cli_provider};
-use crate::cron::CronRegistry;
-use npcsh::agent_turn::{self, run_command_loop};
-use npcsh::markdown::render_block;
+use npcsh::agent_turn::{run_command_loop, Mode};
+use npcsh::cron as cron;
+use npcsh::cron::CronRegistry;
+use npcsh::loop_runner::{execute_cron_job, spawn_background_loop, spawn_npc_for_loop, BackgroundLoop, LoopEvent};
 use npcsh::{
-    discover_knowledge_stores, exec_jinx_file, exec_npc_file, find_team_dir, format_memory_context,
-    init_team, live_persist, memory_context_enabled, real_user_home, resolve_team_layout,
-    set_resolved_team_dir, stream_client, team_sync,
+    discover_knowledge_stores, find_team_dir, format_memory_context, live_persist,
+    memory_context_enabled, real_user_home, resolve_team_layout, set_resolved_team_dir,
+    stream_client, team_sync,
 };
 
 fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
     static LOCK: OnceLock<Mutex<HashMap<u32, String>>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn active_loops() -> &'static Mutex<HashMap<String, Arc<BackgroundLoop>>> {
+    static LOCK: OnceLock<Mutex<HashMap<String, Arc<BackgroundLoop>>>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn detach_signal() -> &'static (Mutex<Option<tokio::sync::mpsc::Sender<()>>>, tokio::sync::Mutex<tokio::sync::mpsc::Receiver<()>>) {
+    static LOCK: OnceLock<(Mutex<Option<tokio::sync::mpsc::Sender<()>>>, tokio::sync::Mutex<tokio::sync::mpsc::Receiver<()>>)> = OnceLock::new();
+    LOCK.get_or_init(|| {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        (Mutex::new(Some(tx)), tokio::sync::Mutex::new(rx))
+    })
 }
 
 fn binary_hash() -> String {
@@ -398,23 +412,6 @@ async fn run_jinx_command(kernel: &mut Kernel, current_pid: u32, cmd_name: &str,
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Mode {
-    Agent,
-    Chat,
-    Cmd,
-}
-
-impl std::fmt::Display for Mode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Mode::Agent => write!(f, "agent"),
-            Mode::Chat => write!(f, "chat"),
-            Mode::Cmd => write!(f, "cmd"),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CoreCmd {
     Agent,
@@ -433,6 +430,7 @@ enum CoreCmd {
     Git,
     Loop,
     Loops,
+    Detach,
     Jinx(&'static str),
     Init,
     Reload,
@@ -500,7 +498,7 @@ const CORE_COMMANDS: &[CommandDef] = &[
     CommandDef {
         name: "/loop",
         category: "Terminal UIs",
-        description: "Create a loop: /loop <interval> <task>",
+        description: "Create or enter a loop: /loop <npc> <interval> <task> | /loop <id>",
         cmd: CoreCmd::Loop,
     },
     CommandDef {
@@ -508,6 +506,12 @@ const CORE_COMMANDS: &[CommandDef] = &[
         category: "Terminal UIs",
         description: "Review and manage loops",
         cmd: CoreCmd::Loops,
+    },
+    CommandDef {
+        name: "/detach",
+        category: "Modes",
+        description: "Detach from a running loop and return to the REPL",
+        cmd: CoreCmd::Detach,
     },
     CommandDef {
         name: "/memories",
@@ -632,6 +636,15 @@ const COMMAND_CATEGORIES: &[&str] = &[
     "System Commands",
     "Info",
 ];
+
+fn arg_value(args: &[String], flags: &[&str]) -> Option<String> {
+    for window in args.windows(2) {
+        if flags.contains(&window[0].as_str()) {
+            return Some(window[1].clone());
+        }
+    }
+    None
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -763,8 +776,8 @@ async fn main() -> Result<()> {
         if let Some(proc) = kernel.find_by_name(name) {
             current_pid = proc.pid;
         } else {
-            match spawn_npc_from_registered_teams(name, &mut kernel, current_pid).await {
-                Ok(new_pid) if new_pid != 0 => {
+            match spawn_npc_for_loop(&mut kernel, name, current_pid) {
+                Ok(new_pid) => {
                     current_pid = new_pid;
                 }
                 _ => eprintln!("{RED}Warning: NPC '{name}' not found; using default.{RESET}"),
@@ -797,7 +810,7 @@ async fn main() -> Result<()> {
     let cron_registry = Arc::new(Mutex::new(CronRegistry::with_file(cron_file)));
     cron_registry.lock().unwrap().load_from_jinxes(&team_dir);
     let (cron_tx, mut cron_rx) = tokio::sync::mpsc::unbounded_channel();
-    crate::cron::spawn_cron_ticker(cron_registry.clone(), cron_tx);
+    cron::spawn_cron_ticker(cron_registry.clone(), cron_tx);
 
     print_welcome(&kernel, current_pid);
 
@@ -898,17 +911,31 @@ async fn main() -> Result<()> {
         );
 
         while let Ok(job) = cron_rx.try_recv() {
-            let _ = execute_cron_job_and_capture(
+            let key = loop_key(&job);
+            let mut loops = active_loops().lock().unwrap();
+            // If a previous run for this job finished but its entry is still in
+            // the map, remove it so the next scheduled run can spawn. If it is
+            // still running, skip this tick instead of overlapping.
+            if let Some(existing) = loops.get(&key) {
+                if existing.is_finished() {
+                    loops.remove(&key);
+                } else {
+                    continue;
+                }
+            }
+            match spawn_background_loop(
                 &mut kernel,
-                current_pid,
-                &job,
-                &http_client,
-                &server_url,
-                &mut session_input_tokens,
-                &mut session_output_tokens,
-                &mut session_cost,
-            )
-            .await;
+                job,
+                http_client.clone(),
+                server_url.to_string(),
+            ) {
+                Ok(handle) => {
+                    loops.insert(key, handle);
+                }
+                Err(e) => {
+                    eprintln!("{RED}[cron] failed to start loop: {e}{RESET}");
+                }
+            }
         }
 
         let input = if let Some(queued) = input_queue.pop_front() {
@@ -978,6 +1005,8 @@ async fn main() -> Result<()> {
                 &mut current_pid,
                 &mut mode,
                 &cron_registry,
+                &http_client,
+                &server_url,
             )
             .await
             {
@@ -1023,8 +1052,8 @@ async fn main() -> Result<()> {
                     current_pid = proc.pid;
                     eprintln!("{GREEN}Switched to @{target} (pid:{current_pid}){RESET}");
                 } else {
-                    match spawn_npc_from_registered_teams(target, &mut kernel, current_pid).await {
-                        Ok(new_pid) if new_pid != 0 => {
+                    match spawn_npc_for_loop(&mut kernel, target, current_pid) {
+                        Ok(new_pid) => {
                             current_pid = new_pid;
                             eprintln!("{GREEN}Switched to @{target} (pid:{current_pid}){RESET}");
                         }
@@ -1048,8 +1077,8 @@ async fn main() -> Result<()> {
                 }
                 continue;
             }
-            match spawn_npc_from_registered_teams(name, &mut kernel, current_pid).await {
-                Ok(new_pid) if new_pid != 0 => {
+            match spawn_npc_for_loop(&mut kernel, name, current_pid) {
+                Ok(new_pid) => {
                     current_pid = new_pid;
                     eprintln!("{GREEN}Switched to @{name} (pid:{current_pid}){RESET}");
                     continue;
@@ -2203,6 +2232,8 @@ async fn dispatch_core_command(
     current_pid: &mut u32,
     mode: &mut Mode,
     cron_registry: &Arc<Mutex<CronRegistry>>,
+    http_client: &reqwest::Client,
+    server_url: &str,
 ) -> CoreDispatch {
     match cmd {
         CoreCmd::Exit => CoreDispatch::Break,
@@ -2280,14 +2311,17 @@ async fn dispatch_core_command(
                             _ => DIM,
                         };
                         let content = m.content.as_deref().unwrap_or("");
-                        let preview = if content.len() > 80 {
-                            format!("{}...", &content[..80])
+                        let preview = if content.chars().count() > 80 {
+                            let trunc: String = content.chars().take(80).collect();
+                            format!("{trunc}...")
                         } else {
                             content.to_string()
                         };
                         println!("  {role_color}{:<10}{RESET} {}", m.role, preview);
                     }
                 }
+            } else {
+                println!("{DIM}(process {current_pid} not found){RESET}");
             }
             CoreDispatch::Handled
         }
@@ -2421,11 +2455,28 @@ async fn dispatch_core_command(
         }
 
         CoreCmd::Loop => {
-            handle_loop_command(rest, kernel, cron_registry, *current_pid).await;
+            handle_loop_command(rest, kernel, cron_registry, current_pid, http_client, server_url).await;
             CoreDispatch::Handled
         }
         CoreCmd::Loops => {
-            handle_jobs_command(rest, kernel, cron_registry, *current_pid).await;
+            match tui::run_loops_tui(kernel, cron_registry, current_pid, &http_client, &server_url).await {
+                Ok(Some(job)) => {
+                    eprintln!("{GREEN}Entered loop {} for @{} (pid:{}).{RESET}", job.id, job.npc, *current_pid);
+                    if let Err(e) = attach_to_loop(kernel, &job, http_client, server_url).await {
+                        eprintln!("{RED}Loop attach error: {e}{RESET}");
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("{RED}Error: {e}{RESET}"),
+            }
+            CoreDispatch::Handled
+        }
+
+        CoreCmd::Detach => {
+            let (tx_lock, _rx_lock) = detach_signal();
+            if let Some(tx) = tx_lock.lock().unwrap().take() {
+                let _ = tx.try_send(());
+            }
             CoreDispatch::Handled
         }
 
@@ -2779,7 +2830,7 @@ async fn handle_cron_command(
                 eprintln!("{BOLD}Cron jobs:{RESET}");
                 for j in jobs {
                     let status = if j.enabled { GREEN } else { RED };
-                    let kind = if j.kind == crate::cron::CronJobKind::Jinx {
+                    let kind = if j.kind == cron::CronJobKind::Jinx {
                         "jinx"
                     } else {
                         "chat"
@@ -2789,7 +2840,7 @@ async fn handle_cron_command(
                         "  [{status}{:>3}{RESET}] @{:<12} every {:<5} [{:<4}] {} (last: {})",
                         j.id,
                         j.npc,
-                        crate::cron::format_duration(j.interval_secs),
+                        cron::format_duration(j.interval_secs),
                         kind,
                         j.task,
                         last
@@ -2808,11 +2859,11 @@ async fn handle_cron_command(
             let interval = parts[2];
             let task = parts[3..].join(" ");
             let (kind, task) = if let Some(t) = task.strip_prefix("jinx:") {
-                (crate::cron::CronJobKind::Jinx, t.to_string())
+                (cron::CronJobKind::Jinx, t.to_string())
             } else {
-                (crate::cron::CronJobKind::Chat, task)
+                (cron::CronJobKind::Chat, task)
             };
-            let secs = crate::cron::parse_duration(interval);
+            let secs = cron::parse_duration(interval);
             let id = registry
                 .lock()
                 .unwrap()
@@ -2867,15 +2918,12 @@ async fn handle_cron_command(
                         .find(|j| j.id == id)
                         .cloned();
                     if let Some(job) = job {
-                        if let Some(out) = execute_cron_job_and_capture(
+                        if let Some(out) = execute_cron_job(
                             kernel,
-                            current_pid,
                             &job,
                             &reqwest::Client::new(),
                             "http://127.0.0.1:5237",
-                            &mut 0,
-                            &mut 0,
-                            &mut 0.0,
+                            true,
                         )
                         .await
                         {
@@ -2891,81 +2939,50 @@ async fn handle_cron_command(
     }
 }
 
-async fn handle_jobs_command(
-    target: &str,
-    kernel: &mut Kernel,
-    registry: &Arc<Mutex<CronRegistry>>,
-    _current_pid: u32,
-) {
-    let reg = registry.lock().unwrap();
-    let jobs = reg.list();
-    let mut filtered: Vec<&crate::cron::CronJob> = jobs
-        .iter()
-        .filter(|j| {
-            if target.is_empty() {
-                true
-            } else {
-                j.npc == target || target == "all"
-            }
-        })
-        .collect();
-    if filtered.is_empty() {
-        if target.is_empty() {
-            eprintln!("{DIM}No loops. Use /loop <npc> <interval> <task>{RESET}");
-        } else {
-            eprintln!("{DIM}No loops for @{target}.{RESET}");
-        }
-        return;
-    }
-    filtered.sort_by(|a, b| a.npc.cmp(&b.npc).then(a.id.cmp(&b.id)));
-
-    eprintln!(
-        "{BOLD}Loops{RESET} {}",
-        if target.is_empty() {
-            "(all NPCs)".to_string()
-        } else {
-            format!("for @{target}")
-        }
-    );
-    eprintln!("  {DIM}Use /looprm <id>, /loopoff <id>, /loopon <id>{RESET}");
-    let mut last_npc = String::new();
-    for j in filtered {
-        if j.npc != last_npc {
-            eprintln!("\n  {CYAN}@{}{RESET}", j.npc);
-            last_npc = j.npc.clone();
-        }
-        let status = if j.enabled { GREEN } else { RED };
-        let kind = if j.kind == crate::cron::CronJobKind::Jinx {
-            "jinx"
-        } else {
-            "chat"
-        };
-        let last = j.last_run.map(|_| "ran").unwrap_or("never");
-        let next_secs = j
-            .next_run
-            .duration_since(std::time::Instant::now())
-            .as_secs();
-        eprintln!(
-            "    [{status}{:>3}{RESET}] every {:<6} [{:<4}] next in {:<6} | {} (last: {})",
-            j.id,
-            crate::cron::format_duration(j.interval_secs),
-            kind,
-            crate::cron::format_duration(next_secs),
-            j.task,
-            last
-        );
-    }
-}
-
 async fn handle_loop_command(
     rest: &str,
     kernel: &mut Kernel,
     registry: &Arc<Mutex<CronRegistry>>,
-    current_pid: u32,
+    current_pid: &mut u32,
+    http_client: &reqwest::Client,
+    server_url: &str,
 ) {
     let parts: Vec<&str> = rest.split_whitespace().collect();
+
+    // If the first token parses as an existing loop id, enter that loop's conversation.
+    if let Some(first) = parts.first() {
+        if let Ok(id) = first.parse::<u32>() {
+            let job = registry.lock().unwrap().list().iter().find(|j| j.id == id).cloned();
+            if let Some(job) = job {
+                let npc = &job.npc;
+                let new_pid = if let Some(proc) = kernel.find_by_name(npc) {
+                    proc.pid
+                } else {
+                    match spawn_npc_for_loop(kernel, npc, *current_pid) {
+                        Ok(pid) => pid,
+                        _ => {
+                            eprintln!("{RED}Loop {id} targets @{npc}, but that NPC is not available.{RESET}");
+                            return;
+                        }
+                    }
+                };
+                *current_pid = new_pid;
+                let kind = if job.kind == cron::CronJobKind::Jinx { "jinx" } else { "chat" };
+                eprintln!("{GREEN}Entered loop {id} ({kind}) for @{npc} (pid:{}).{RESET}", *current_pid);
+                if let Err(e) = attach_to_loop(kernel, &job, http_client, server_url).await {
+                    eprintln!("{RED}Loop attach error: {e}{RESET}");
+                }
+                return;
+            } else {
+                eprintln!("{RED}No loop with id {id}. Use /loops to list loops.{RESET}");
+                return;
+            }
+        }
+    }
+
     if parts.len() < 3 {
         eprintln!("Usage: /loop <npc> <interval> <chat task|jinx:jinx_name>");
+        eprintln!("       /loop <id>            enter a loop's conversation");
         eprintln!("  /loop sibiji 30s 'check for new emails and summarize'");
         eprintln!("  /loop corca 5m 'review open PRs'");
         eprintln!("  /loop sibiji 10s jinx:shell 'echo heartbeat'");
@@ -2974,13 +2991,13 @@ async fn handle_loop_command(
     let npc = parts[0].to_string();
     let interval = parts[1];
     let task = parts[2..].join(" ");
-    let secs = crate::cron::parse_duration(interval);
+    let secs = cron::parse_duration(interval);
     let (kind, task) = if let Some(t) = task.strip_prefix("jinx:") {
-        (crate::cron::CronJobKind::Jinx, t.to_string())
+        (cron::CronJobKind::Jinx, t.to_string())
     } else {
-        (crate::cron::CronJobKind::Chat, task)
+        (cron::CronJobKind::Chat, task)
     };
-    let is_jinx = kind == crate::cron::CronJobKind::Jinx;
+    let is_jinx = kind == cron::CronJobKind::Jinx;
     let label = if is_jinx {
         format!("jinx:{task}")
     } else {
@@ -2993,172 +3010,166 @@ async fn handle_loop_command(
     eprintln!("{GREEN}Loop {id} added: @{npc} every {interval} -> {label}{RESET}");
 }
 
-async fn execute_cron_job_and_capture(
+fn loop_key(job: &cron::CronJob) -> String {
+    format!("loop-{}-{}", job.npc, job.id)
+}
+
+fn render_loop_event(ev: &LoopEvent) {
+    match ev {
+        LoopEvent::ContentDelta(text) => {
+            eprint!("{}", text);
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+        }
+        LoopEvent::ToolStart { name, args, .. } => {
+            eprint!("\r\n\x1b[90m┌─ ⚡ {}\x1b[0m\r\n", name);
+            if !args.is_empty() {
+                eprint!("\x1b[90m│  args: {}\x1b[0m\r\n", args);
+            }
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+        }
+        LoopEvent::ToolResult { name, content, .. } => {
+            let max_lines = std::env::var("NPCSH_TOOL_LINES")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(24);
+            let max_chars = std::env::var("NPCSH_TOOL_CHARS")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(1200);
+            let trimmed = content.trim_end_matches(['\n', '\r']).to_string();
+            let mut preview = trimmed.clone();
+            let mut truncated = false;
+            if preview.chars().count() > max_chars {
+                preview = preview.chars().take(max_chars).collect::<String>();
+                truncated = true;
+            }
+            let lines: Vec<String> = preview
+                .lines()
+                .map(|l| {
+                    if l.chars().count() > 120 {
+                        format!("{}…", l.chars().take(119).collect::<String>())
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .collect();
+            let visible_lines = lines.len().min(max_lines);
+            for (i, line) in lines.iter().take(visible_lines).enumerate() {
+                let prefix = if i == 0 {
+                    format!("\x1b[90m│\x1b[0m  ")
+                } else {
+                    "\x1b[90m│\x1b[0m  ".to_string()
+                };
+                eprint!("{}{}\r\n", prefix, line);
+                let _ = std::io::Write::flush(&mut std::io::stderr());
+            }
+            if lines.len() > max_lines || truncated {
+                let total = trimmed.lines().count();
+                let extra = total.saturating_sub(max_lines);
+                let suffix = if truncated {
+                    format!(" | {}+ chars", trimmed.chars().count() - max_chars)
+                } else {
+                    String::new()
+                };
+                eprint!(
+                    "\r\n\x1b[90m│  … {} more line{}{}\x1b[0m\r\n",
+                    extra,
+                    if extra == 1 { "" } else { "s" },
+                    suffix
+                );
+                let _ = std::io::Write::flush(&mut std::io::stderr());
+            }
+            eprint!("\x1b[90m└─ \x1b[36m{} result\x1b[0m\r\n", name);
+            eprint!("\r\n");
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+        }
+        LoopEvent::ToolError { name, error, .. } => {
+            eprint!("\r\n\x1b[31m┌─ {} error\x1b[0m\r\n", name);
+            for line in error.lines() {
+                eprint!("\x1b[31m│  {}\x1b[0m\r\n", line);
+                let _ = std::io::Write::flush(&mut std::io::stderr());
+            }
+            eprint!("\x1b[31m└─\x1b[0m\r\n");
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+        }
+        LoopEvent::Error(e) => {
+            eprintln!("\x1b[31mloop error: {}\x1b[0m", e);
+        }
+        LoopEvent::Interrupted => {
+            eprintln!("\x1b[33mLoop interrupted.\x1b[0m");
+        }
+        LoopEvent::Finished => {
+            eprintln!("\x1b[32mLoop finished.\x1b[0m");
+        }
+    }
+}
+
+async fn attach_to_loop(
     kernel: &mut Kernel,
-    current_pid: u32,
-    job: &crate::cron::CronJob,
-    client: &reqwest::Client,
+    job: &cron::CronJob,
+    http_client: &reqwest::Client,
     server_url: &str,
-    session_input_tokens: &mut u64,
-    session_output_tokens: &mut u64,
-    session_cost: &mut f64,
-) -> Option<String> {
-    let mut out = Vec::new();
-    let Some(proc) = kernel.find_by_name(&job.npc) else {
-        out.push(format!("{RED}[cron] unknown NPC: @{}{RESET}", job.npc));
-        return Some(out.join("\n"));
-    };
-    let pid = proc.pid;
-    let label = format!("[cron {}]", job.npc);
-    match job.kind {
-        crate::cron::CronJobKind::Jinx => {
-            let mut args = std::collections::HashMap::new();
-            let mut pieces = job.task.splitn(2, ' ');
-            let jinx_name = pieces.next().unwrap_or(&job.task).to_string();
-            if let Some(rest) = pieces.next() {
-                if let Some(first_input) =
-                    kernel.jinxes.get(&jinx_name).and_then(|j| j.inputs.first())
-                {
-                    args.insert(first_input.name.clone(), rest.to_string());
-                }
-            }
-            match kernel.syscall(pid, &jinx_name, &args).await {
-                Ok(output) => {
-                    if !output.is_empty() {
-                        out.push(format!("{CYAN}{label}{RESET} /{jinx_name}\n{output}"));
-                    }
-                }
-                Err(e) => out.push(format!("{RED}{label} /{jinx_name} error: {e}{RESET}")),
-            }
-        }
-        crate::cron::CronJobKind::Chat => {
-            out.push(format!(
-                "{CYAN}{label}{RESET} {DIM}{task}{RESET}",
-                task = job.task
-            ));
-            match run_stream_turn(
+) -> Result<()> {
+    let key = loop_key(job);
+    let (tx_lock, rx_lock) = detach_signal();
+
+    // Reset detach signal so old signals do not fire immediately.
+    {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        *tx_lock.lock().unwrap() = Some(tx);
+        let _ = rx_lock.lock().await.try_recv();
+    }
+
+    let background = {
+        let mut loops = active_loops().lock().unwrap();
+        if let Some(existing) = loops.get(&key) {
+            existing.clone()
+        } else {
+            let new_loop = spawn_background_loop(
                 kernel,
-                pid,
-                &job.task,
-                Mode::Agent,
-                client,
-                server_url,
-                false,
-                None,
+                job.clone(),
+                http_client.clone(),
+                server_url.to_string(),
             )
-            .await
-            {
-                Ok(output) => {
-                    if let Some(p) = kernel.get_process(pid) {
-                        *session_input_tokens += p.usage.total_input_tokens;
-                        *session_output_tokens += p.usage.total_output_tokens;
-                        *session_cost += p.usage.total_cost_usd;
-                    }
-                    if !output.is_empty() {
-                        out.push(output);
+            .map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
+            loops.insert(key.clone(), new_loop.clone());
+            new_loop
+        }
+    };
+
+    let mut rx = background.subscribe();
+    let mut detach_rx = rx_lock.lock().await;
+    let detach_tx = {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        tx
+    };
+    *tx_lock.lock().unwrap() = Some(detach_tx);
+
+    eprintln!("\x1b[90mAttached to loop {}. Type /detach to leave it running.\x1b[0m", job.id);
+
+    loop {
+        tokio::select! {
+            biased;
+            _ = detach_rx.recv() => {
+                eprintln!("\x1b[90mDetached from loop {}.\x1b[0m", job.id);
+                break;
+            }
+            event = rx.recv() => {
+                match event {
+                    Ok(ev) => render_loop_event(&ev),
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        eprintln!("\x1b[90m... missed {} events while detached ...\x1b[0m", n);
                     }
                 }
-                Err(e) => out.push(format!("{RED}{label} error: {e}{RESET}")),
             }
         }
     }
-    let full = if out.is_empty() {
-        None
-    } else {
-        Some(out.join("\n"))
-    };
-    if let Some(ref text) = full {
-        let _ = save_loop_run(
-            &job.npc,
-            &job.task,
-            job.kind == crate::cron::CronJobKind::Jinx,
-            text,
-        );
+
+    if background.is_finished() {
+        let _ = active_loops().lock().unwrap().remove(&key);
     }
-    full
-}
-
-fn task_slug(task: &str, is_jinx: bool) -> String {
-    let base = if is_jinx {
-        format!("jinx_{}", task)
-    } else {
-        task.to_string()
-    };
-    base.to_lowercase()
-        .replace(|c: char| !c.is_alphanumeric(), "_")
-        .replace("__", "_")
-        .trim_matches('_')
-        .chars()
-        .take(60)
-        .collect::<String>()
-}
-
-fn save_loop_run(npc: &str, task: &str, is_jinx: bool, output: &str) -> std::io::Result<()> {
-    let slug = task_slug(task, is_jinx);
-    let base = std::path::PathBuf::from(shellexpand::tilde("~/.npcsh/loops").to_string())
-        .join(npc)
-        .join(slug)
-        .join("runs");
-    std::fs::create_dir_all(&base)?;
-    let ts = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let path = base.join(format!("{}.txt", ts));
-    std::fs::write(&path, output)
-}
-
-fn load_registered_teams() -> Vec<(String, String)> {
-    let path = shellexpand::tilde("~/.npcsh/teams.yaml").to_string();
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    let parsed: serde_yaml::Value = match serde_yaml::from_str(&content) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let mut out = Vec::new();
-    if let Some(teams) = parsed.get("teams").and_then(|t| t.as_mapping()) {
-        for (name, path_value) in teams {
-            let name = name.as_str().unwrap_or("").to_string();
-            let path = path_value.as_str().unwrap_or("").to_string();
-            if !name.is_empty() && !path.is_empty() {
-                let expanded = shellexpand::tilde(&path).to_string();
-                out.push((name, expanded));
-            }
-        }
-    }
-    out
-}
-
-fn arg_value(args: &[String], flags: &[&str]) -> Option<String> {
-    for window in args.windows(2) {
-        if flags.contains(&window[0].as_str()) {
-            return Some(window[1].clone());
-        }
-    }
-    None
-}
-
-async fn spawn_npc_from_registered_teams(
-    name: &str,
-    kernel: &mut Kernel,
-    current_pid: u32,
-) -> Result<u32> {
-    if kernel.find_by_name(name).is_some() {
-        return Ok(0);
-    }
-
-    let teams = load_registered_teams();
-    for (_team_name, team_dir) in teams {
-        let path = std::path::Path::new(&team_dir).join(format!("{}.npc", name));
-        if path.exists() {
-            let npc = npcrs::npc_compiler::NPC::from_file(&path).map_err(|e| {
-                npcrs::NpcError::Other(format!("Failed to load NPC {}: {}", name, e))
-            })?;
-            let pid = kernel.spawn(npc, current_pid, Capabilities::root());
-            return Ok(pid);
-        }
-    }
-    Ok(0)
+    Ok(())
 }
 
 fn current_npc_name(kernel: &Kernel, current_pid: u32) -> String {

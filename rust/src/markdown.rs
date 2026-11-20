@@ -164,6 +164,7 @@ pub struct StreamRenderer {
     min_interval: Duration,
     disabled: bool,
     started: bool,
+    silent: bool,
 }
 
 impl StreamRenderer {
@@ -176,10 +177,26 @@ impl StreamRenderer {
             min_interval: Duration::from_millis(50),
             disabled,
             started: false,
+            silent: false,
+        }
+    }
+
+    pub fn silent() -> Self {
+        Self {
+            buffer: String::new(),
+            at_line_start: true,
+            last_render: Instant::now(),
+            min_interval: Duration::from_millis(50),
+            disabled: false,
+            started: false,
+            silent: true,
         }
     }
 
     fn emit_line(&mut self, line: &str) {
+        if self.silent {
+            return;
+        }
         let line = line.trim_start();
         eprint!("{}\r\n", format_line_markdown(line));
         let _ = std::io::Write::flush(&mut std::io::stderr());
@@ -187,6 +204,9 @@ impl StreamRenderer {
     }
 
     pub fn push(&mut self, text: &str) {
+        if self.silent {
+            return;
+        }
         if self.disabled {
             eprint!("{}", text);
             let _ = std::io::Write::flush(&mut std::io::stderr());
@@ -210,6 +230,10 @@ impl StreamRenderer {
     }
 
     fn flush_line(&mut self) {
+        if self.silent {
+            self.buffer.clear();
+            return;
+        }
         let line = self.buffer.trim_end_matches(['\n', '\r']).trim_start();
         if !line.is_empty() {
             eprint!("{}\r\n", format_line_markdown(line));
@@ -219,7 +243,7 @@ impl StreamRenderer {
     }
 
     pub fn flush(&mut self) {
-        if self.disabled {
+        if self.silent || self.disabled {
             return;
         }
         self.flush_line();

@@ -47,14 +47,8 @@ struct CronFileJob {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 enum CronFileTask {
-    Chat {
-        task: String,
-    },
-    Jinx {
-        jinx: String,
-        #[serde(default)]
-        args: String,
-    },
+    Chat { task: String },
+    Jinx { jinx: String, #[serde(default)] args: String },
 }
 
 fn default_enabled() -> bool {
@@ -162,7 +156,13 @@ impl CronRegistry {
         let _ = std::fs::write(&path, body);
     }
 
-    pub fn add(&mut self, npc: String, interval_secs: u64, task: String, kind: CronJobKind) -> u32 {
+    pub fn add(
+        &mut self,
+        npc: String,
+        interval_secs: u64,
+        task: String,
+        kind: CronJobKind,
+    ) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
         self.jobs.push(CronJob {

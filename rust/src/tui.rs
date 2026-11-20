@@ -1,9 +1,12 @@
-use chrono::Utc;
+use chrono::{Local, Utc};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
 use npcrs::kernel::Kernel;
+use npcsh::cron::{format_duration, CronJob, CronJobKind, CronRegistry};
+use npcsh::loop_runner::{spawn_npc_for_loop, task_slug};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 const ONE_WEEK: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
 
@@ -2395,8 +2398,6 @@ fn scan_jinxes(
     }
 }
 
-use std::sync::{Arc, Mutex};
-
 #[derive(Debug, Clone)]
 struct AgentLog {
     timestamp: String,
@@ -2498,21 +2499,6 @@ fn load_agent_logs(kernel: &Kernel, npc_name: &str, limit: usize) -> Vec<AgentLo
     logs
 }
 
-fn task_slug(task: &str, is_jinx: bool) -> String {
-    let base = if is_jinx {
-        format!("jinx_{}", task)
-    } else {
-        task.to_string()
-    };
-    base.to_lowercase()
-        .replace(|c: char| !c.is_alphanumeric(), "_")
-        .replace("__", "_")
-        .trim_matches('_')
-        .chars()
-        .take(60)
-        .collect::<String>()
-}
-
 fn load_task_runs(npc: &str, task: &str, is_jinx: bool) -> Vec<(String, String)> {
     let slug = task_slug(task, is_jinx);
     let base = PathBuf::from(shellexpand::tilde("~/.npcsh/loops").to_string())
@@ -2601,7 +2587,7 @@ fn show_run_view(content: &str) -> Result<()> {
 pub fn run_agent_dashboard_tui(
     kernel: &mut Kernel,
     npc_name: &str,
-    registry: &Arc<Mutex<crate::cron::CronRegistry>>,
+    registry: &Arc<Mutex<CronRegistry>>,
 ) -> Result<()> {
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
     let mut out = io::stdout();
@@ -2642,7 +2628,7 @@ pub fn run_agent_dashboard_tui(
     let mut tab = AgentTab::Tasks;
     let mut sel: usize = 0;
     let mut scroll: usize = 0;
-    let mut selected_job: Option<crate::cron::CronJob> = None;
+    let mut selected_job: Option<CronJob> = None;
     let mut runs: Vec<(String, String)> = Vec::new();
 
     loop {
@@ -2666,7 +2652,7 @@ pub fn run_agent_dashboard_tui(
         hr(&mut out, cols, 4);
 
         let reg = registry.lock().unwrap();
-        let jobs: Vec<crate::cron::CronJob> = reg
+        let jobs: Vec<CronJob> = reg
             .list()
             .iter()
             .filter(|j| j.npc == npc_name)
@@ -2681,7 +2667,7 @@ pub fn run_agent_dashboard_tui(
                 if runs.is_empty() && selected_job.is_some() {
                     let j = selected_job.as_ref().unwrap();
                     runs =
-                        load_task_runs(&j.npc, &j.task, j.kind == crate::cron::CronJobKind::Jinx);
+                        load_task_runs(&j.npc, &j.task, j.kind == CronJobKind::Jinx);
                 }
                 runs.len()
             }
@@ -2707,7 +2693,7 @@ pub fn run_agent_dashboard_tui(
             let text = match tab {
                 AgentTab::Tasks => {
                     let j = &jobs[idx];
-                    let kind = if j.kind == crate::cron::CronJobKind::Jinx {
+                    let kind = if j.kind == CronJobKind::Jinx {
                         "jinx"
                     } else {
                         "chat"
@@ -2720,7 +2706,7 @@ pub fn run_agent_dashboard_tui(
                     format!(
                         "[{}] every {} [{}] {} ({}) {}",
                         j.id,
-                        crate::cron::format_duration(j.interval_secs),
+                        format_duration(j.interval_secs),
                         kind,
                         j.task,
                         if j.last_run.is_some() { "ran" } else { "never" },
@@ -2838,7 +2824,7 @@ pub fn run_agent_dashboard_tui(
                         runs = load_task_runs(
                             &jobs[sel].npc,
                             &jobs[sel].task,
-                            jobs[sel].kind == crate::cron::CronJobKind::Jinx,
+                            jobs[sel].kind == CronJobKind::Jinx,
                         );
                         tab = AgentTab::TaskRuns;
                         sel = 0;
@@ -2866,6 +2852,294 @@ pub fn run_agent_dashboard_tui(
         }
     }
     Ok(())
+}
+
+pub async fn run_loops_tui(
+    kernel: &mut Kernel,
+    registry: &Arc<Mutex<CronRegistry>>,
+    current_pid: &mut u32,
+    _client: &reqwest::Client,
+    _server_url: &str,
+) -> Result<Option<CronJob>> {
+    let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
+    let mut out = io::stdout();
+
+    #[derive(Clone, PartialEq)]
+    enum Tab {
+        Loops,
+        Runs,
+        History,
+        Details,
+    }
+    impl Tab {
+        fn next(&self) -> Tab {
+            match self {
+                Tab::Loops => Tab::Runs,
+                Tab::Runs => Tab::History,
+                Tab::History => Tab::Details,
+                Tab::Details => Tab::Loops,
+            }
+        }
+        fn prev(&self) -> Tab {
+            match self {
+                Tab::Loops => Tab::Details,
+                Tab::Runs => Tab::Loops,
+                Tab::History => Tab::Runs,
+                Tab::Details => Tab::History,
+            }
+        }
+    }
+
+    let mut tab = Tab::Loops;
+    let mut sel: usize = 0;
+    let mut scroll: usize = 0;
+    let mut selected_job: Option<CronJob> = None;
+    let mut runs: Vec<(String, String)> = Vec::new();
+    let mut logs: Vec<AgentLog> = Vec::new();
+    let mut status_message: Option<String> = None;
+
+    loop {
+        let (cols, rows) = term_size();
+        let body_h = rows.saturating_sub(6).max(1);
+        clear_all(&mut out);
+        header_line(&mut out, cols, " Loops ");
+        hr(&mut out, cols, 2);
+        let tabs = format!(
+            "  {} Loops    {} Runs    {} History    {} Details",
+            if tab == Tab::Loops { "▸" } else { " " },
+            if tab == Tab::Runs { "▸" } else { " " },
+            if tab == Tab::History { "▸" } else { " " },
+            if tab == Tab::Details { "▸" } else { " " },
+        );
+        wline(&mut out, 3, &tabs);
+        hr(&mut out, cols, 4);
+
+        let reg = registry.lock().unwrap();
+        let jobs: Vec<CronJob> = reg.list().iter().cloned().collect();
+        drop(reg);
+
+        if let Some(ref job) = selected_job {
+            if runs.is_empty() {
+                runs = load_task_runs(&job.npc, &job.task, job.kind == CronJobKind::Jinx);
+            }
+            if logs.is_empty() {
+                logs = load_agent_logs(kernel, &job.npc, 200);
+            }
+        }
+
+        let items = match tab {
+            Tab::Loops => jobs.len(),
+            Tab::Runs => runs.len(),
+            Tab::History => logs.len(),
+            Tab::Details => if selected_job.is_some() { 1 } else { 0 },
+        };
+        if sel >= items && items > 0 {
+            sel = items - 1;
+        }
+        if sel < scroll {
+            scroll = sel;
+        } else if sel >= scroll + body_h {
+            scroll = sel.saturating_sub(body_h) + 1;
+        }
+
+        for r in 0..body_h {
+            let idx = scroll + r;
+            let row = 5 + r;
+            if idx >= items {
+                wline(&mut out, row, "");
+                continue;
+            }
+            let text = match tab {
+                Tab::Loops => {
+                    let j = &jobs[idx];
+                    let kind = if j.kind == CronJobKind::Jinx { "jinx" } else { "chat" };
+                    let status = if j.enabled { "\x1b[32menabled\x1b[0m" } else { "\x1b[31mdisabled\x1b[0m" };
+                    let next_secs = j
+                        .next_run
+                        .duration_since(std::time::Instant::now())
+                        .as_secs();
+                    format!(
+                        "[{}] @{} every {} [{}] next in {} | {} ({})",
+                        j.id,
+                        j.npc,
+                        format_duration(j.interval_secs),
+                        kind,
+                        format_duration(next_secs),
+                        j.task,
+                        status
+                    )
+                }
+                Tab::Runs => {
+                    let (ts, _) = &runs[idx];
+                    format!("run {}", ts)
+                }
+                Tab::History => {
+                    let log = &logs[idx];
+                    let cost_str = log.cost.map(|c| format!(" ${:.4}", c)).unwrap_or_default();
+                    let ts = if log.timestamp.is_empty() { String::new() } else { format!("{} ", log.timestamp) };
+                    format!(
+                        "{}{}{}{}{}",
+                        ts,
+                        log.role,
+                        if log.source.is_empty() { "" } else { ":" },
+                        log.source,
+                        cost_str
+                    )
+                }
+                Tab::Details => {
+                    if let Some(j) = &selected_job {
+                        let kind = if j.kind == CronJobKind::Jinx { "jinx" } else { "chat" };
+                        let last = j.last_run.map(|_| "ran").unwrap_or("never");
+                        let next_secs = j
+                            .next_run
+                            .duration_since(std::time::Instant::now())
+                            .as_secs();
+                        format!(
+                            "id={} npc=@{} interval={} kind={} enabled={} last={} next_in={}\n{}",
+                            j.id,
+                            j.npc,
+                            format_duration(j.interval_secs),
+                            kind,
+                            j.enabled,
+                            last,
+                            format_duration(next_secs),
+                            j.task
+                        )
+                    } else {
+                        "(no loop selected)".to_string()
+                    }
+                }
+            };
+            let truncated = text.chars().take(cols.saturating_sub(4)).collect::<String>();
+            if idx == sel {
+                wline(
+                    &mut out,
+                    row,
+                    &format!("\x1b[7m  > {}\x1b[0m", truncated).pad(cols),
+                );
+            } else {
+                wline(&mut out, row, &format!("    {}", truncated));
+            }
+        }
+
+        hr(&mut out, cols, rows - 2);
+        let foot = if tab == Tab::Loops {
+            " [Tab] Cycle  [j/k] Nav  [Enter] Inspect  [Space] Toggle  [r] Run now  [d] Delete  [q] Quit "
+        } else if tab == Tab::Runs {
+            " [Tab] Cycle  [j/k] Nav  [Enter] View run  [q] Quit "
+        } else if tab == Tab::History {
+            " [Tab] Cycle  [j/k] Nav  [Enter] View message  [q] Quit "
+        } else {
+            " [Tab] Cycle  [q] Quit "
+        };
+        footer_line(&mut out, cols, rows, foot);
+        if let Some(msg) = &status_message {
+            wline(&mut out, rows - 3, &format!("\x1b[90m  {}\x1b[0m", msg.chars().take(cols.saturating_sub(4)).collect::<String>()));
+        }
+        let _ = out.flush();
+
+        if let Ok(Event::Key(key)) = event::read() {
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
+            status_message = None;
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Char('c')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    break;
+                }
+                KeyCode::Esc | KeyCode::Char('q') => break,
+                KeyCode::Tab => {
+                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                        tab = tab.prev();
+                    } else {
+                        tab = tab.next();
+                    }
+                    sel = 0;
+                    scroll = 0;
+                }
+                KeyCode::BackTab => {
+                    tab = tab.prev();
+                    sel = 0;
+                    scroll = 0;
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if sel + 1 < items {
+                        sel += 1;
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if sel > 0 {
+                        sel -= 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    if tab == Tab::Loops && !jobs.is_empty() {
+                        let job = jobs[sel].clone();
+                        if let Some(proc) = kernel.find_by_name(&job.npc) {
+                            *current_pid = proc.pid;
+                        } else {
+                            match spawn_npc_for_loop(kernel, &job.npc, 0) {
+                                Ok(pid) => *current_pid = pid,
+                                Err(e) => {
+                                    status_message = Some(format!(
+                                        "Could not spawn NPC for loop {}: {}",
+                                        job.id, e
+                                    ));
+                                    continue;
+                                }
+                            }
+                        }
+                        return Ok(Some(job));
+                    } else if tab == Tab::Runs && !runs.is_empty() {
+                        show_run_view(&runs[sel].1)?;
+                    } else if tab == Tab::History && !logs.is_empty() {
+                        show_run_view(&logs[sel].content)?;
+                    }
+                }
+                KeyCode::Char(' ') if tab == Tab::Loops && !jobs.is_empty() => {
+                    let id = jobs[sel].id;
+                    let new_state = !jobs[sel].enabled;
+                    let _ = registry.lock().unwrap().enable(id, new_state);
+                }
+                KeyCode::Char('d') | KeyCode::Char('D')
+                    if tab == Tab::Loops && !jobs.is_empty() =>
+                {
+                    let id = jobs[sel].id;
+                    registry.lock().unwrap().remove(id);
+                    if selected_job.as_ref().map(|j| j.id) == Some(id) {
+                        selected_job = None;
+                        runs.clear();
+                        logs.clear();
+                    }
+                }
+                KeyCode::Char('r') | KeyCode::Char('R')
+                    if tab == Tab::Loops && !jobs.is_empty() =>
+                {
+                    let job = jobs[sel].clone();
+                    selected_job = Some(job.clone());
+                    if let Some(proc) = kernel.find_by_name(&job.npc) {
+                        *current_pid = proc.pid;
+                    } else {
+                        match spawn_npc_for_loop(kernel, &job.npc, 0) {
+                            Ok(pid) => *current_pid = pid,
+                            Err(e) => {
+                                status_message = Some(format!(
+                                    "Could not spawn NPC for loop {}: {}",
+                                    job.id, e
+                                ));
+                                continue;
+                            }
+                        }
+                    }
+                    return Ok(Some(job));
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(None)
 }
 
 pub fn run_memories_tui() -> Result<()> {
