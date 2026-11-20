@@ -53,7 +53,7 @@ The table below shows scores (100 tasks).
 
 <table>
 <tr><th>Maker</th><th>Family</th><th>Model</th><th>Params</th><th>Version</th><th>Score</th></tr>
-<tr><td rowspan="11"><b>Alibaba</b></td><td rowspan="11">Qwen</td><td rowspan="7">3.5</td><td>0.8b</td><td>v2.1.25</td><td>59/100 (59%)</td></tr>
+<tr><td rowspan="10"><b>Alibaba</b></td><td rowspan="10">Qwen</td><td rowspan="6">3.5</td><td>0.8b</td><td>v2.1.25</td><td>59/100 (59%)</td></tr>
 <tr><td>2b</td><td>v2.1.25</td><td>86/100 (86%)</td></tr>
 <tr><td>4b</td><td>v2.1.25</td><td>96/100 (96%)</td></tr>
 <tr><td>9b</td><td>v2.1.25</td><td>91/100 (91%)</td></tr>
@@ -63,16 +63,15 @@ The table below shows scores (100 tasks).
 <tr><td>3.8</td><td>27b</td><td>v2.1.25</td><td>97/100 (97%)</td></tr>
 <tr><td rowspan="2">3</td><td>0.6b</td><td>v2.1.25</td><td>15/100 (15%)</td></tr>
 <tr><td>1.7b</td><td>v2.1.25</td><td>43/100 (43%)</td></tr>
-<tr><td rowspan="2"><b>Ornith</b></td><td rowspan="2"></td><td rowspan="2"></td><td>9b</td><td>v2.1.5</td><td>57/100 (57%)</td></tr>
+<tr><td rowspan="2"><b>Ornith</b></td><td rowspan="2">-</td><td rowspan="2">-</td><td>9b</td><td>v2.1.5</td><td>57/100 (57%)</td></tr>
 <tr><td>35b</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
 <tr><td><b>Moonshot AI</b></td><td>Kimi</td><td>K2.7-Code</td><td>1t (32b active)</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
-<tr><td rowspan="2"><b>Minimax</b></td><td rowspan="2"></td><td>M3</td><td>428b (23b active)</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
-<tr><td>M3.1 Flash</td><td>428b</td><td>v2.1.25</td><td>TBD</td></tr>
-<tr><td><b>DeepSeek</b></td><td></td><td>V4 Flash</td><td>284b (13b active)</td><td>v2.1.7</td><td>95/100 (95%)</td></tr>
-<tr><td rowspan="3"><b>Mistral AI</b></td><td rowspan="3"></td><td>Devstral Small 2</td><td>24b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
+<tr><td><b>Minimax</b></td><td>-</td><td>M3</td><td>428b (23b active)</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
+<tr><td><b>DeepSeek</b></td><td>-</td><td>V4 Flash</td><td>284b (13b active)</td><td>v2.1.7</td><td>95/100 (95%)</td></tr>
+<tr><td rowspan="3"><b>Mistral AI</b></td><td rowspan="3">-</td><td>Devstral Small 2</td><td>24b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
 <tr><td>Devstral 2</td><td>123b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
 <tr><td>Large 3</td><td>675b</td><td>v2.1.7</td><td>89/100 (89%)</td></tr>
-<tr><td><b>North AI Labs</b></td><td></td><td>Mini Code 1.0</td><td>30b (3b active)</td><td>v2.1.5</td><td>93/100 (93%)</td></tr>
+<tr><td><b>North AI Labs</b></td><td>-</td><td>Mini Code 1.0</td><td>30b (3b active)</td><td>v2.1.5</td><td>93/100 (93%)</td></tr>
 <tr><td rowspan="5"><b>Google</b></td><td rowspan="5">Gemma</td><td rowspan="5">4</td><td>2b (e2b)</td><td>v2.1.25</td><td>90/100 (90%)</td></tr>
 <tr><td>4b (e4b)</td><td>v2.1.25</td><td>88/100 (88%)</td></tr>
 <tr><td>4b (e4b)</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
@@ -87,7 +86,7 @@ The table below shows scores (100 tasks).
 <tr><td><b>Xiaomi</b></td><td>MiMo</td><td>2.6</td><td>9.4b</td><td>v2.1.25</td><td>95/100 (95%)</td></tr>
 <tr><td><b>Liquid AI</b></td><td>LFM</td><td>3</td><td>1.7b</td><td>v2.1.25</td><td>87/100 (87%)</td></tr>
 <tr><td><b>Thinking Machines Lab</b></td><td>Inkling</td><td>2 Small</td><td>594b total / 17b active</td><td>v2.1.25</td><td>97/100 (97%)</td></tr>
-<tr><td><b>Reflection AI</b></td><td>Beam</td><td></td><td>501b total / 23b active</td><td>v2.1.25</td><td>94/100 (94%)</td></tr>
+<tr><td><b>Reflection AI</b></td><td>Beam</td><td>-</td><td>501b total / 23b active</td><td>v2.1.25</td><td>94/100 (94%)</td></tr>
 <tr><td><b>Muse</b></td><td>Spark</td><td>Open</td><td>816b total / 42b active</td><td>v2.1.25</td><td>98/100 (98%)</td></tr>
 <tr><td><b>Zhipu AI</b></td><td>GLM</td><td>4.7 Flash</td><td>32b</td><td>v2.1.25</td><td>91/100 (91%)</td></tr>
 </table>
