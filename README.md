@@ -51,44 +51,45 @@ The table below shows scores (100 tasks).
 
 ### Scores (100 tasks)
 
-| Maker | Family | Model | Params | Version | Score |
-| --- | --- | --- | --- | --- | --- |
-| Alibaba | Qwen | 3.5 | 0.8b | v2.1.25 | 59/100 (59%) |
-| Alibaba | Qwen | 3.5 | 2b | v2.1.25 | 86/100 (86%) |
-| Alibaba | Qwen | 3.5 | 4b | v2.1.25 | 96/100 (96%) |
-| Alibaba | Qwen | 3.5 | 9b | v2.1.25 | 91/100 (91%) |
-| Alibaba | Qwen | 3.5 | 35b | v2.1.5 | 97/100 (97%) |
-| Alibaba | Qwen | 3.5 | 397b | v2.1.7 | 96/100 (96%) |
-| Alibaba | Qwen | 3.6 | 35b | v2.1.5 | 91/100 (91%) |
-| Alibaba | Qwen | 3.8 | 27b | v2.1.25 | 97/100 (97%) |
-| Alibaba | Qwen | 3 | 0.6b | v2.1.25 | 15/100 (15%) |
-| Alibaba | Qwen | 3 | 1.7b | v2.1.25 | 43/100 (43%) |
-| Ornith | - | - | 9b | v2.1.5 | 57/100 (57%) |
-| Ornith | - | - | 35b | v2.1.7 | 97/100 (97%) |
-| Moonshot AI | Kimi | K2.7-Code | 1t (32b active) | v2.1.7 | 97/100 (97%) |
-| Minimax | - | M3 | 428b (23b active) | v2.1.7 | 96/100 (96%) |
-| DeepSeek | - | V4 Flash | 284b (13b active) | v2.1.7 | 95/100 (95%) |
-| Mistral AI | - | Devstral Small 2 | 24b | v2.1.7 | 94/100 (94%) |
-| Mistral AI | - | Devstral 2 | 123b | v2.1.7 | 94/100 (94%) |
-| Mistral AI | - | Large 3 | 675b | v2.1.7 | 89/100 (89%) |
-| North AI Labs | - | Mini Code 1.0 | 30b (3b active) | v2.1.5 | 93/100 (93%) |
-| Google | Gemma | 4 | 2b (e2b) | v2.1.25 | 90/100 (90%) |
-| Google | Gemma | 4 | 4b (e4b) | v2.1.25 | 88/100 (88%) |
-| Google | Gemma | 4 | 4b (e4b) | v2.1.7 | 96/100 (96%) |
-| Google | Gemma | 4 | 26b | v2.1.7 | 96/100 (96%) |
-| Google | Gemma | 4 | 31b | v2.1.7 | 92/100 (92%) |
-| IBM | Granite | 4.1 | 3b | v2.1.25 | 81/100 (81%) |
-| IBM | Granite | 4.1 | 8b | v2.1.7 | 81/100 (81%) |
-| IBM | Granite | 4.1 | 30b | v2.1.7 | 94/100 (94%) |
-| Meta | Llama | 3.2 | 3b | v2.1.25 | 16/100 (16%) |
-| Meta | Llama | 3.2 | 8b | v2.1.25 | 23/100 (23%) |
-| Prism ML | Bonsai | 2 | 9b | v2.1.25 | 96/100 (96%) |
-| Xiaomi | MiMo | 2.6 | 9.4b | v2.1.25 | 95/100 (95%) |
-| Liquid AI | LFM | 3 | 1.7b | v2.1.25 | 87/100 (87%) |
-| Thinking Machines Lab | Inkling | 2 Small | 594b total / 17b active | v2.1.25 | 97/100 (97%) |
-| Reflection AI | Beam | - | 501b total / 23b active | v2.1.25 | 94/100 (94%) |
-| Muse | Spark | Open | 816b total / 42b active | v2.1.25 | 98/100 (98%) |
-| Zhipu AI | GLM | 4.7 Flash | 32b | v2.1.25 | 91/100 (91%) |
+<table>
+<tr><th>Maker</th><th>Family</th><th>Model</th><th>Params</th><th>Version</th><th>Score</th></tr>
+<tr><td rowspan="10"><b>Alibaba</b></td><td rowspan="10">Qwen</td><td rowspan="6">3.5</td><td>0.8b</td><td>v2.1.25</td><td>59/100 (59%)</td></tr>
+<tr><td>2b</td><td>v2.1.25</td><td>86/100 (86%)</td></tr>
+<tr><td>4b</td><td>v2.1.25</td><td>96/100 (96%)</td></tr>
+<tr><td>9b</td><td>v2.1.25</td><td>91/100 (91%)</td></tr>
+<tr><td>35b</td><td>v2.1.5</td><td>97/100 (97%)</td></tr>
+<tr><td>397b</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
+<tr><td>3.6</td><td>35b</td><td>v2.1.5</td><td>91/100 (91%)</td></tr>
+<tr><td>3.8</td><td>27b</td><td>v2.1.25</td><td>97/100 (97%)</td></tr>
+<tr><td rowspan="2">3</td><td>0.6b</td><td>v2.1.25</td><td>15/100 (15%)</td></tr>
+<tr><td>1.7b</td><td>v2.1.25</td><td>43/100 (43%)</td></tr>
+<tr><td rowspan="2"><b>Ornith</b></td><td rowspan="2">-</td><td rowspan="2">-</td><td>9b</td><td>v2.1.5</td><td>57/100 (57%)</td></tr>
+<tr><td>35b</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
+<tr><td><b>Moonshot AI</b></td><td>Kimi</td><td>K2.7-Code</td><td>1t (32b active)</td><td>v2.1.7</td><td>97/100 (97%)</td></tr>
+<tr><td><b>Minimax</b></td><td>-</td><td>M3</td><td>428b (23b active)</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
+<tr><td><b>DeepSeek</b></td><td>-</td><td>V4 Flash</td><td>284b (13b active)</td><td>v2.1.7</td><td>95/100 (95%)</td></tr>
+<tr><td rowspan="3"><b>Mistral AI</b></td><td rowspan="3">-</td><td>Devstral Small 2</td><td>24b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
+<tr><td>Devstral 2</td><td>123b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
+<tr><td>Large 3</td><td>675b</td><td>v2.1.7</td><td>89/100 (89%)</td></tr>
+<tr><td><b>North AI Labs</b></td><td>-</td><td>Mini Code 1.0</td><td>30b (3b active)</td><td>v2.1.5</td><td>93/100 (93%)</td></tr>
+<tr><td rowspan="5"><b>Google</b></td><td rowspan="5">Gemma</td><td rowspan="5">4</td><td>2b (e2b)</td><td>v2.1.25</td><td>90/100 (90%)</td></tr>
+<tr><td>4b (e4b)</td><td>v2.1.25</td><td>88/100 (88%)</td></tr>
+<tr><td>4b (e4b)</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
+<tr><td>26b</td><td>v2.1.7</td><td>96/100 (96%)</td></tr>
+<tr><td>31b</td><td>v2.1.7</td><td>92/100 (92%)</td></tr>
+<tr><td rowspan="3"><b>IBM</b></td><td rowspan="3">Granite</td><td rowspan="3">4.1</td><td>3b</td><td>v2.1.25</td><td>81/100 (81%)</td></tr>
+<tr><td>8b</td><td>v2.1.7</td><td>81/100 (81%)</td></tr>
+<tr><td>30b</td><td>v2.1.7</td><td>94/100 (94%)</td></tr>
+<tr><td rowspan="2"><b>Meta</b></td><td rowspan="2">Llama</td><td rowspan="2">3.2</td><td>3b</td><td>v2.1.25</td><td>16/100 (16%)</td></tr>
+<tr><td>8b</td><td>v2.1.25</td><td>23/100 (23%)</td></tr>
+<tr><td><b>Prism ML</b></td><td>Bonsai</td><td>2</td><td>9b</td><td>v2.1.25</td><td>96/100 (96%)</td></tr>
+<tr><td><b>Xiaomi</b></td><td>MiMo</td><td>2.6</td><td>9.4b</td><td>v2.1.25</td><td>95/100 (95%)</td></tr>
+<tr><td><b>Liquid AI</b></td><td>LFM</td><td>3</td><td>1.7b</td><td>v2.1.25</td><td>87/100 (87%)</td></tr>
+<tr><td><b>Thinking Machines Lab</b></td><td>Inkling</td><td>2 Small</td><td>594b total / 17b active</td><td>v2.1.25</td><td>97/100 (97%)</td></tr>
+<tr><td><b>Reflection AI</b></td><td>Beam</td><td>-</td><td>501b total / 23b active</td><td>v2.1.25</td><td>94/100 (94%)</td></tr>
+<tr><td><b>Muse</b></td><td>Spark</td><td>Open</td><td>816b total / 42b active</td><td>v2.1.25</td><td>98/100 (98%)</td></tr>
+<tr><td><b>Zhipu AI</b></td><td>GLM</td><td>4.7 Flash</td><td>32b</td><td>v2.1.25</td><td>91/100 (91%)</td></tr>
+</table>
 
 For a more comprehensive view of npcsh's capabilities and the NPC Context-Agent-Tool data layer, see [ALARA for Agents: Least-Privilege Context Engineering Through Portable Composable Multi-Agent Teams](https://arxiv.org/abs/2603.20380).  
 
