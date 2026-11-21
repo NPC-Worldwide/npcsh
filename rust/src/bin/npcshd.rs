@@ -22,8 +22,25 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 const HEARTBEAT_SECS: u64 = 5;
-const IDLE_CHECK_SECS: u64 = 60;
-const IDLE_EXIT_SECS: u64 = 600;
+
+/// Seconds between idle checks. Overridable so the exit path can be tested
+/// without waiting ten minutes.
+fn idle_check_secs() -> u64 {
+    std::env::var("NPCSHD_IDLE_CHECK")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|v: &u64| *v > 0)
+        .unwrap_or(60)
+}
+
+/// Grace period before a daemon with no loops exits. `0` disables the exit so a
+/// daemon can be kept warm deliberately.
+fn idle_exit_secs() -> u64 {
+    std::env::var("NPCSHD_IDLE_EXIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(600)
+}
 
 fn arg_value(args: &[String], names: &[&str]) -> Option<String> {
     for n in names {
@@ -46,11 +63,322 @@ fn log_path() -> PathBuf {
     PathBuf::from(dir).join("npcshd.log")
 }
 
+// ── service installation ─────────────────────────────────────────────────────
+//
+// A daemon that only starts when a shell starts it still dies on reboot, so
+// loops stop until someone opens npcsh again. Registering with the platform
+// supervisor closes that gap: launchd on macOS, systemd --user on Linux.
+//
+// `SuccessfulExit: false` means "restart only after a crash". A clean exit (the
+// idle timeout, or an explicit `Shutdown`) stays down, which is what makes the
+// idle-exit path meaningful instead of a restart loop.
+
+const SERVICE_LABEL: &str = "com.npcworldwide.npcshd";
+
+/// Environment variables the daemon must inherit from the shell that installs
+/// the service.
+///
+/// launchd starts agents with a minimal environment (`PATH=/usr/bin:/bin:...`),
+/// which is a different world from an interactive shell: `python3` resolves to
+/// system Python, which has no `npcpy`, so every jinx step fails with exit 1.
+/// systemd has the same problem. Capturing these at install time is what makes
+/// "works when I run it" and "works as a service" the same thing.
+const SERVICE_ENV_VARS: &[&str] = &[
+    "PATH",
+    "HOME",
+    "PYENV_ROOT",
+    "PYENV_VERSION",
+    "NPCSH_SERVER_URL",
+    "NPCSH_HISTORY_DB",
+    "NPCSH_CHAT_MODEL",
+    "NPCSH_CHAT_PROVIDER",
+    "BACKEND_PYTHON_PATH",
+];
+
+fn captured_env() -> Vec<(String, String)> {
+    SERVICE_ENV_VARS
+        .iter()
+        .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+        .collect()
+}
+
+fn service_path() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = npcsh::real_user_home()?;
+        Some(
+            std::path::Path::new(&home)
+                .join("Library/LaunchAgents")
+                .join(format!("{SERVICE_LABEL}.plist")),
+        )
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let home = npcsh::real_user_home()?;
+        Some(
+            std::path::Path::new(&home)
+                .join(".config/systemd/user")
+                .join("npcshd.service"),
+        )
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
+}
+
+/// Quote an argument for a systemd unit file.
+///
+/// systemd requires double quotes around arguments containing spaces, and it
+/// treats `%` specially in unit files, so both need escaping.
+#[cfg(target_os = "linux")]
+fn quote_systemd_arg(arg: &str) -> String {
+    let escaped = arg.replace('%', "%%");
+    if escaped.contains(char::is_whitespace) || escaped.contains('"') || escaped.contains('\\') {
+        format!("\"{}\"", escaped.replace('"', "\\\""))
+    } else {
+        escaped
+    }
+}
+
+fn service_install(team_dir: &str, db_path: &str, server_url: &str) -> Result<(), String> {
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("cannot resolve own path: {e}"))?
+        .to_string_lossy()
+        .to_string();
+    let path = service_path().ok_or_else(|| {
+        "automatic service installation is only supported on macOS and Linux".to_string()
+    })?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    let env_xml = {
+        let env = captured_env();
+        if env.is_empty() {
+            String::new()
+        } else {
+            let mut out = String::from("    <key>EnvironmentVariables</key>\n    <dict>\n");
+            for (k, v) in env {
+                // XML-escape; values can contain & (e.g. query strings).
+                let esc = v
+                    .replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;");
+                out.push_str(&format!("        <key>{k}</key>\n        <string>{esc}</string>\n"));
+            }
+            out.push_str("    </dict>\n");
+            out
+        }
+    };
+    #[cfg(target_os = "macos")]
+    let body = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{SERVICE_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{exe}</string>
+        <string>--foreground</string>
+        <string>--team</string>
+        <string>{team_dir}</string>
+        <string>--db</string>
+        <string>{db_path}</string>
+        <string>--server-url</string>
+        <string>{server_url}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+{env_xml}    <key>StandardErrorPath</key>
+    <string>{log}</string>
+    <key>StandardOutPath</key>
+    <string>{log}</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
+"#,
+        log = log_path().display(),
+        env_xml = env_xml
+    );
+
+    #[cfg(target_os = "linux")]
+    // systemd splits ExecStart on whitespace unless arguments are quoted, and
+    // `append:` output redirection is unavailable on older systemd, so log to
+    // the journal instead (read with `journalctl --user -u npcshd`).
+    let cmd = [
+        quote_systemd_arg(&exe),
+        "--foreground".to_string(),
+        "--team".to_string(),
+        quote_systemd_arg(team_dir),
+        "--db".to_string(),
+        quote_systemd_arg(db_path),
+        "--server-url".to_string(),
+        quote_systemd_arg(server_url),
+    ]
+    .join(" ");
+    #[cfg(target_os = "linux")]
+    let body = format!(
+        "[Unit]\nDescription=npcsh loop daemon\nAfter=network.target\n\n\
+[Service]\nType=simple\n{env_lines}ExecStart={cmd}\n\
+Restart=on-failure\nRestartSec=5\nStandardOutput=journal\nStandardError=journal\n\n\
+[Install]\nWantedBy=default.target\n",
+        cmd = cmd,
+        env_lines = env_lines
+    );
+
+    std::fs::write(&path, body).map_err(|e| format!("{}: {e}", path.display()))?;
+
+    // Reload through the supervisor so the change takes effect immediately.
+    #[cfg(target_os = "macos")]
+    {
+        let uid = unsafe { libc::getuid() };
+        let domain = format!("gui/{uid}");
+        let _ = std::process::Command::new("launchctl")
+            .args(["bootout", &domain])
+            .arg(&path)
+            .output();
+        let out = std::process::Command::new("launchctl")
+            .args(["bootstrap", &domain])
+            .arg(&path)
+            .output()
+            .map_err(|e| format!("launchctl bootstrap: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "launchctl bootstrap failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .output();
+        let out = std::process::Command::new("systemctl")
+            .args(["--user", "enable", "--now", "npcshd.service"])
+            .output()
+            .map_err(|e| format!("systemctl: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "systemctl enable failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+    }
+
+    println!("Installed {} -> {}", SERVICE_LABEL, path.display());
+    println!("It starts at login and restarts only after a crash.");
+    Ok(())
+}
+
+fn service_uninstall() -> Result<(), String> {
+    let path = service_path().ok_or_else(|| "unsupported platform".to_string())?;
+    if !path.exists() {
+        println!("No service installed at {}", path.display());
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let uid = unsafe { libc::getuid() };
+        let _ = std::process::Command::new("launchctl")
+            .args(["bootout", &format!("gui/{uid}")])
+            .arg(&path)
+            .output();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "disable", "--now", "npcshd.service"])
+            .output();
+    }
+
+    std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    println!("Removed {}", path.display());
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if has_flag(&args, "--version") || has_flag(&args, "-V") {
         println!("npcshd {}", env!("NPCSH_VERSION"));
+        return;
+    }
+
+    if has_flag(&args, "--help") || has_flag(&args, "-h") {
+        println!(
+            "npcshd — npcsh loop daemon
+
+USAGE:
+  npcshd [--team DIR] [--db PATH] [--server-url URL]   start (detached by default)
+  npcshd --foreground                                 run in the foreground
+  npcshd --install-service                            start at login, restart on crash
+  npcshd --uninstall-service                          remove the login service
+
+Loops run here, not in npcsh, so they keep running after the shell exits.
+Each team gets its own daemon."
+        );
+        return;
+    }
+
+    if has_flag(&args, "--install-service") || has_flag(&args, "--uninstall-service") {
+        npcsh::load_env();
+        if has_flag(&args, "--uninstall-service") {
+            if let Err(e) = service_uninstall() {
+                eprintln!("npcshd: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        let team = arg_value(&args, &["--team"]).unwrap_or_else(npcsh::find_team_dir);
+        let db = arg_value(&args, &["--db"]).unwrap_or_else(daemon::default_db_path);
+        let server = arg_value(&args, &["--server-url"])
+            .or_else(|| std::env::var("NPCSH_SERVER_URL").ok())
+            .unwrap_or_else(|| "http://127.0.0.1:5237".to_string());
+        // Refuse to register a daemon that would fail immediately on boot.
+        if !std::path::Path::new(&team).is_dir() {
+            eprintln!("npcshd: team directory does not exist: {team}");
+            std::process::exit(1);
+        }
+        // A daemon started ad-hoc by a shell holds the per-team lock. The
+        // service would then start, find the lock taken, and exit cleanly --
+        // and because a clean exit does not trigger a restart, it would stay
+        // down forever once the ad-hoc daemon died. Hand ownership to the
+        // service by asking the existing daemon to shut down first.
+        if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            rt.block_on(async {
+                if npcsh::daemon::is_alive(&db, &team).await {
+                    eprintln!("npcshd: handing off from the running ad-hoc daemon");
+                    let _ =
+                        npcsh::daemon::request(&db, &team, &daemon::Request::Shutdown).await;
+                    for _ in 0..40 {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        if !npcsh::daemon::is_alive(&db, &team).await {
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        if let Err(e) = service_install(&team, &db, &server) {
+            eprintln!("npcshd: {e}");
+            std::process::exit(1);
+        }
         return;
     }
 
@@ -137,11 +465,28 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         Some(l) => l,
         None => {
             // A daemon for this team already holds the lock: success, not error.
+            // Report its pid so an operator can tell "already running" apart
+            // from "stuck process holding the lock".
+            let holder = std::fs::read_to_string(lock_path_for(&team_dir))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "unknown".to_string());
+            let reachable = daemon::read_status(&db_path, &team_dir).is_some();
             let _ = writeln!(
                 std::io::stderr(),
-                "npcshd: a daemon for team {} is already running",
-                team_dir
+                "npcshd: a daemon for team {} is already running (pid {}), reachable={}",
+                team_dir, holder, reachable
             );
+            if !reachable {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "npcshd: warning: pid {} holds the lock but is not registered; \
+                     if it is wedged, remove {} and retry",
+                    holder,
+                    lock_path_for(&team_dir)
+                );
+            }
             return Ok(());
         }
     };
@@ -211,29 +556,65 @@ async fn run(args: Vec<String>) -> Result<(), String> {
     {
         let db = db_path.clone();
         let team = cfg.team_dir.clone();
+        let pid = std::process::id();
+        let port_now = port;
+        let started = status.started_at.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(HEARTBEAT_SECS));
             loop {
                 tick.tick().await;
+                // Re-publish if the row is missing. Without this, a daemon whose
+                // row is lost (db reset, a dropped table, a pruned ghost row)
+                // becomes unreachable: clients cannot find it to list, stop, or
+                // hand off from it, and it keeps holding the per-team lock so no
+                // replacement can start. That is a permanent deadlock, so the
+                // row is treated as a lease the daemon renews.
                 daemon::touch_heartbeat(&db, &team, "running");
+                if daemon::read_status(&db, &team).is_none() {
+                    let st = DaemonStatus {
+                        pid,
+                        port: port_now,
+                        team_dir: daemon::team_key(&team),
+                        started_at: started.clone(),
+                        last_heartbeat: chrono::Utc::now().to_rfc3339(),
+                        status: "running".to_string(),
+                    };
+                    daemon::write_status(&db, &st);
+                }
             }
         });
     }
 
     // Separate task owns the exit decision so the heartbeat stays simple.
+    //
+    // The grace period is tracked as accumulated idle time, not a single check:
+    // checking once and exiting would treat IDLE_CHECK_SECS as the grace period
+    // and kill a freshly started daemon after one minute. Any job appearing, or
+    // any run in flight, resets the clock.
     {
         let sd = shutdown.clone();
         let reg = registry.clone();
         tokio::spawn(async move {
+            let check = idle_check_secs();
+            let limit = idle_exit_secs();
+            if limit == 0 {
+                return; // idle exit disabled
+            }
+            let mut idle_secs: u64 = 0;
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(IDLE_CHECK_SECS)).await;
-                let idle = reg.lock().map(|r| r.list().is_empty()).unwrap_or(false)
-                    && npcsh::loop_runner::running_keys().is_empty();
-                if idle {
+                tokio::time::sleep(std::time::Duration::from_secs(check)).await;
+                let busy = reg.lock().map(|r| !r.list().is_empty()).unwrap_or(true)
+                    || !npcsh::loop_runner::running_keys().is_empty();
+                if busy {
+                    idle_secs = 0;
+                    continue;
+                }
+                idle_secs += check;
+                if idle_secs >= limit {
                     let _ = writeln!(
                         std::io::stderr(),
                         "npcshd: no loops configured for {}s; exiting",
-                        IDLE_EXIT_SECS
+                        idle_secs
                     );
                     sd.notify_waiters();
                     break;

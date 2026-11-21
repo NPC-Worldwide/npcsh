@@ -262,7 +262,12 @@ impl CronRegistry {
                 }
             })
             .collect();
-        jobs.sort_by(|a, b| a.npc.cmp(&b.npc).then(a.interval.cmp(&b.interval)));
+        // Deliberately do NOT sort here. Job ids are positional: `load()` assigns
+        // ids in file order. Sorting the file while leaving the in-memory Vec in
+        // append order means the shell and the daemon disagree about which id
+        // belongs to which job, so `/loop` reports an id that `/loop <id>` and
+        // `/loops` resolve to a different job. Keeping append order preserves
+        // id identity across save/load.
         let file = CronFile { cron: jobs };
         let body = format!(
             "#!/usr/bin/env npc\njinx_name: cron\ndescription: Scheduled heartbeat tasks\ncron:\n{}\n",

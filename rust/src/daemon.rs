@@ -82,6 +82,10 @@ pub struct Response {
     pub team_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uptime_secs: Option<u64>,
+    /// Protocol version. A mismatch means the client and daemon disagree about
+    /// the wire format, so callers can refuse to interpret the reply.
+    #[serde(default)]
+    pub version: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub jobs: Vec<JobInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -98,6 +102,7 @@ impl Response {
             pid: None,
             team_dir: None,
             uptime_secs: None,
+            version: DAEMON_VERSION,
             jobs: Vec::new(),
             running: Vec::new(),
             output: None,
@@ -111,6 +116,7 @@ impl Response {
             pid: None,
             team_dir: None,
             uptime_secs: None,
+            version: DAEMON_VERSION,
             jobs: Vec::new(),
             running: Vec::new(),
             output: None,
@@ -332,7 +338,18 @@ pub async fn request(db_path: &str, team_dir: &str, req: &Request) -> Option<Res
     .await
     .ok()?
     .ok()?;
-    serde_json::from_str(buf.trim()).ok()
+    let resp: Response = serde_json::from_str(buf.trim()).ok()?;
+    if resp.version != DAEMON_VERSION {
+        // Keep the error text useful: this shows up as "no daemon" in most
+        // callers, and a stale binary is the usual cause.
+        eprintln!(
+            "npcsh: loop daemon speaks protocol v{} but this client expects v{}; \
+             restart the daemon (pkill npcshd) or reinstall",
+            resp.version, DAEMON_VERSION
+        );
+        return None;
+    }
+    Some(resp)
 }
 
 /// Is there a live daemon for *this* team answering on its recorded port?

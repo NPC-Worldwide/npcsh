@@ -2975,22 +2975,37 @@ async fn handle_loop_command(
     } else {
         task.clone()
     };
-    let id = registry
+    let local_id = registry
         .lock()
         .unwrap()
         .add(npc.clone(), secs, task.clone(), kind);
+
     // The daemon owns execution, so tell it about the new job.
-    let resp = npcsh::daemon::request_current(&npcsh::daemon::Request::Reload).await;
-    match resp {
+    let reload = npcsh::daemon::request_current(&npcsh::daemon::Request::Reload).await;
+    match reload {
         Some(r) if r.ok => {
+            // Ids are assigned by the daemon from file order, and the local
+            // registry may disagree (its Vec is append-ordered while the file
+            // is re-read from disk). Ask the daemon which id it actually
+            // assigned so the number printed here is the one `/loop <id>` and
+            // `/loops` will act on.
+            let id = npcsh::daemon::request_current(&npcsh::daemon::Request::List)
+                .await
+                .and_then(|l| {
+                    l.jobs
+                        .into_iter()
+                        .find(|j| j.npc == npc && j.task == task)
+                        .map(|j| j.id)
+                })
+                .unwrap_or(local_id);
             eprintln!("{GREEN}Loop {id} added: @{npc} every {interval} -> {label}{RESET}");
         }
         Some(r) => eprintln!(
-            "{YELLOW}Loop {id} written to loops.yaml, but the daemon rejected the reload: {}{RESET}",
+            "{YELLOW}Loop {local_id} written to loops.yaml, but the daemon rejected the reload: {}{RESET}",
             r.error.unwrap_or_default()
         ),
         None => eprintln!(
-            "{YELLOW}Loop {id} written to loops.yaml, but no daemon is running to execute it.{RESET}"
+            "{YELLOW}Loop {local_id} written to loops.yaml, but no daemon is running to execute it.{RESET}"
         ),
     }
 }
