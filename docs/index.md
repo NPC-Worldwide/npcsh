@@ -46,6 +46,20 @@ See [Agent Coders](agent-coders.md) for the full flow.
 
 At the npcsh prompt, `Ctrl+R` opens a reverse-i-search over `~/.npcsh_history` (deduped, most-recent-first). Type to narrow, `Ctrl+R`/Down cycles, Enter accepts into the input buffer, Esc or Ctrl+G aborts.
 
+## Line Editing
+
+The prompt follows standard readline bindings:
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+A` / `Home` | Move to the start of the line |
+| `Ctrl+E` / `End` | Move to the end of the line |
+| `Ctrl+R` | Reverse history search |
+| `Ctrl+T` | Show the last thinking block from the previous turn |
+| `Ctrl+O` | Show the last tool calls from the previous turn |
+| `Esc`, `Ctrl+C` | Cancel / interrupt |
+| `Ctrl+D` | EOF on an empty line |
+
 ## The CAT Data Layer
 
 Everything customizable in `npcsh` lives as simple files across three layers:
