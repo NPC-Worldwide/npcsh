@@ -212,6 +212,18 @@ fn service_install(team_dir: &str, db_path: &str, server_url: &str) -> Result<()
     );
 
     #[cfg(target_os = "linux")]
+    let env_lines = {
+        // `Environment="K=V"` per variable. systemd parses these before the
+        // service starts, so the daemon sees the same interpreter and tool paths
+        // as the shell that installed it.
+        let mut out = String::new();
+        for (k, v) in captured_env() {
+            let escaped = v.replace('\\', "\\\\").replace('"', "\\\"");
+            out.push_str(&format!("Environment=\"{k}={escaped}\"\n"));
+        }
+        out
+    };
+    #[cfg(target_os = "linux")]
     // systemd splits ExecStart on whitespace unless arguments are quoted, and
     // `append:` output redirection is unavailable on older systemd, so log to
     // the journal instead (read with `journalctl --user -u npcshd`).
