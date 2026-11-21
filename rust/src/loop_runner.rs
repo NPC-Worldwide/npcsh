@@ -1,15 +1,12 @@
-use crate::agent_turn::{ctrl_c_receiver, run_stream_turn, run_stream_turn_with_interrupt, Mode};
 use crate::cron::{CronJob, CronJobKind};
-use crate::stream_client::{self, StreamEvent, StreamRequest};
+use crate::stream_client::{StreamEvent, StreamRequest};
+use npcrs::Message;
 use npcrs::error::Result;
 use npcrs::kernel::Kernel;
-use npcrs::Message;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
-use tokio::task::JoinHandle;
 
 fn loop_auto_approve(_prompt: &str) -> String {
     "Yes (session)".to_string()
@@ -56,143 +53,17 @@ fn continuation_prompt(job: &CronJob) -> String {
     )
 }
 
-pub async fn run_loop_interactive(
-    kernel: &mut Kernel,
-    job: &CronJob,
-    client: &reqwest::Client,
-    server_url: &str,
-) -> Result<String> {
-    let pid = if let Some(proc) = kernel.find_by_name(&job.npc) {
-        proc.pid
-    } else {
-        spawn_npc_for_loop(kernel, &job.npc, 0)?
-    };
-
-    prepare_loop_process(kernel, job, pid)?;
-
-    match job.kind {
-        CronJobKind::Jinx => {
-            let mut args = HashMap::new();
-            let mut pieces = job.task.splitn(2, ' ');
-            let jinx_name = pieces.next().unwrap_or(&job.task).to_string();
-            if let Some(rest) = pieces.next() {
-                if let Some(first_input) =
-                    kernel.jinxes.get(&jinx_name).and_then(|j| j.inputs.first())
-                {
-                    args.insert(first_input.name.clone(), rest.to_string());
-                }
-            }
-            let output = kernel.syscall(pid, &jinx_name, &args).await?;
-            let _ = save_loop_run(&job.npc, &job.task, true, &output);
-            Ok(output)
-        }
-        CronJobKind::Chat => {
-            let process = kernel.get_process(pid).unwrap();
-            let prompt = if process.messages.iter().any(|m| m.role == "user") {
-                continuation_prompt(job)
-            } else {
-                job.task.clone()
-            };
-            let output = run_stream_turn_with_interrupt(
-                kernel,
-                pid,
-                &prompt,
-                Mode::Agent,
-                client,
-                server_url,
-                true,
-                Some(ctrl_c_receiver()),
-                None,
-                Some(&loop_auto_approve),
-            )
-            .await?;
-            let _ = save_loop_run(&job.npc, &job.task, false, &output);
-            Ok(output)
-        }
-    }
-}
-
+/// Run a job once, right now, in a kernel owned by this call.
+///
+/// This backs `/cron run <id>` and any "run now" affordance. It shares the
+/// single execution path with the ticker (`run_loop_detached`) so a manual run
+/// and a scheduled run cannot diverge.
 pub async fn execute_cron_job(
-    kernel: &mut Kernel,
     job: &CronJob,
-    client: &reqwest::Client,
-    server_url: &str,
-    save_history: bool,
+    cfg: DetachedLoopConfig,
+    client: reqwest::Client,
 ) -> Option<String> {
-    let pid = if let Some(proc) = kernel.find_by_name(&job.npc) {
-        proc.pid
-    } else {
-        match spawn_npc_for_loop(kernel, &job.npc, 0) {
-            Ok(pid) => pid,
-            Err(e) => return Some(format!("[cron] could not spawn @{}: {}", job.npc, e)),
-        }
-    };
-    if let Err(e) = prepare_loop_process(kernel, job, pid) {
-        return Some(format!("[cron] could not prepare loop process: {e}"));
-    }
-
-    let mut out = Vec::new();
-    let label = format!("[cron {}]", job.npc);
-
-    match job.kind {
-        CronJobKind::Jinx => {
-            let mut args = HashMap::new();
-            let mut pieces = job.task.splitn(2, ' ');
-            let jinx_name = pieces.next().unwrap_or(&job.task).to_string();
-            if let Some(rest) = pieces.next() {
-                if let Some(first_input) =
-                    kernel.jinxes.get(&jinx_name).and_then(|j| j.inputs.first())
-                {
-                    args.insert(first_input.name.clone(), rest.to_string());
-                }
-            }
-            match kernel.syscall(pid, &jinx_name, &args).await {
-                Ok(output) if !output.is_empty() => {
-                    out.push(format!("{} /{}\n{}", label, jinx_name, output));
-                }
-                Ok(_) => {}
-                Err(e) => out.push(format!("{} /{} error: {}", label, jinx_name, e)),
-            }
-        }
-        CronJobKind::Chat => {
-            let process = kernel.get_process(pid).unwrap();
-            let prompt = if process.messages.iter().any(|m| m.role == "user") {
-                continuation_prompt(job)
-            } else {
-                job.task.clone()
-            };
-            out.push(format!("{} {}", label, prompt));
-            match run_stream_turn(
-                kernel,
-                pid,
-                &prompt,
-                Mode::Agent,
-                client,
-                server_url,
-                save_history,
-                None,
-                Some(&loop_auto_approve),
-            )
-            .await
-            {
-                Ok(output) if !output.is_empty() => {
-                    out.push(output);
-                }
-                Ok(_) => {}
-                Err(e) => out.push(format!("{} error: {}", label, e)),
-            }
-        }
-    }
-
-    let full = if out.is_empty() {
-        None
-    } else {
-        Some(out.join("\n"))
-    };
-    if let Some(ref text) = full {
-        let _ = save_loop_run(&job.npc, &job.task, job.kind == CronJobKind::Jinx, text);
-    }
-    full
+    run_loop_detached(job.clone(), cfg, client).await
 }
 
 pub fn task_slug(task: &str, is_jinx: bool) -> String {
@@ -213,34 +84,24 @@ pub fn task_slug(task: &str, is_jinx: bool) -> String {
 #[derive(Clone, Debug)]
 pub enum LoopEvent {
     ContentDelta(String),
-    ToolStart { name: String, id: String, args: String },
-    ToolResult { name: String, id: String, content: String },
-    ToolError { name: String, id: String, error: String },
+    ToolStart {
+        name: String,
+        id: String,
+        args: String,
+    },
+    ToolResult {
+        name: String,
+        id: String,
+        content: String,
+    },
+    ToolError {
+        name: String,
+        id: String,
+        error: String,
+    },
     Error(String),
     Interrupted,
     Finished,
-}
-
-pub struct BackgroundLoop {
-    pub job: CronJob,
-    pub events: broadcast::Sender<LoopEvent>,
-    pub interrupt: mpsc::UnboundedSender<()>,
-    pub finished: Arc<AtomicBool>,
-    pub task: Mutex<Option<JoinHandle<()>>>,
-}
-
-impl BackgroundLoop {
-    pub fn subscribe(&self) -> broadcast::Receiver<LoopEvent> {
-        self.events.subscribe()
-    }
-
-    pub fn is_finished(&self) -> bool {
-        self.finished.load(Ordering::SeqCst)
-    }
-
-    pub fn interrupt(&self) {
-        let _ = self.interrupt.send(());
-    }
 }
 
 fn build_loop_stream_request(kernel: &Kernel, job: &CronJob, pid: u32) -> Option<StreamRequest> {
@@ -306,127 +167,6 @@ fn build_loop_stream_request(kernel: &Kernel, job: &CronJob, pid: u32) -> Option
     })
 }
 
-pub fn spawn_background_loop(
-    kernel: &mut Kernel,
-    job: CronJob,
-    client: reqwest::Client,
-    server_url: String,
-) -> Result<Arc<BackgroundLoop>> {
-    let pid = if let Some(proc) = kernel.find_by_name(&job.npc) {
-        proc.pid
-    } else {
-        spawn_npc_for_loop(kernel, &job.npc, 0)?
-    };
-    prepare_loop_process(kernel, &job, pid)?;
-
-    let request = build_loop_stream_request(kernel, &job, pid)
-        .ok_or_else(|| npcrs::NpcError::Other("Failed to build stream request".to_string()))?;
-
-    // Persist the loop turn to the same DB that prepare_loop_process reloads
-    // from, so reattaching after a detached run sees the full conversation.
-    let (npc_name, model, provider, conv_id) = {
-        let process = kernel.get_process(pid).ok_or_else(|| {
-            npcrs::NpcError::Other(format!("No process with pid {}", pid))
-        })?;
-        (
-            process.npc.name.clone(),
-            process.npc.resolved_model(),
-            process.npc.resolved_provider(),
-            process.conversation_id.clone(),
-        )
-    };
-    let team_name_str = kernel
-        .team
-        .source_dir
-        .as_deref()
-        .and_then(|d| std::path::Path::new(d).file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("npcsh")
-        .to_string();
-    let cwd = request
-        .current_path
-        .clone()
-        .unwrap_or_else(|| ".".to_string());
-    let prompt = request.commandstr.clone();
-    let turn = Arc::new(Mutex::new(crate::live_persist::LiveTurn::begin(
-        &conv_id, &prompt, &cwd, &model, &provider, &npc_name, &team_name_str,
-    )));
-    let persist_sink = crate::live_persist::event_sink(&turn);
-
-    let (event_tx, _event_rx) = broadcast::channel::<LoopEvent>(256);
-    let (interrupt_tx, interrupt_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
-    let finished = Arc::new(AtomicBool::new(false));
-
-    let done = finished.clone();
-    let job_for_task = job.clone();
-    let event_tx_for_task = event_tx.clone();
-
-    let task = tokio::spawn(async move {
-        let res = stream_client::call_stream_with_sink_no_render(
-            &client,
-            &server_url,
-            &request,
-            Some(&loop_auto_approve),
-            Some(interrupt_rx),
-            Some(Box::new({
-                let events = event_tx_for_task.clone();
-                let mut persist = persist_sink;
-                move |ev| {
-                    if let Some(ref mut p) = persist {
-                        p(ev.clone());
-                    }
-                    let le = match ev {
-                        StreamEvent::ContentDelta(text) => LoopEvent::ContentDelta(text),
-                        StreamEvent::ToolStart { name, id, args } => {
-                            LoopEvent::ToolStart { name, id, args }
-                        }
-                        StreamEvent::ToolResult { name, id, content } => {
-                            LoopEvent::ToolResult { name, id, content }
-                        }
-                        StreamEvent::ToolError { name, id, error } => {
-                            LoopEvent::ToolError { name, id, error }
-                        }
-                        StreamEvent::Interrupted => LoopEvent::Interrupted,
-                        StreamEvent::Finished => LoopEvent::Finished,
-                    };
-                    let _ = events.send(le);
-                }
-            })),
-        )
-        .await;
-
-        match res {
-            Ok(resp) => {
-                {
-                    if let Ok(mut t) = turn.lock() {
-                        t.close_from_response(&resp);
-                    }
-                }
-                let output = resp.message.content.unwrap_or_default();
-                let _ = save_loop_run(
-                    &job_for_task.npc,
-                    &job_for_task.task,
-                    job_for_task.kind == CronJobKind::Jinx,
-                    &output,
-                );
-                let _ = event_tx_for_task.send(LoopEvent::Finished);
-            }
-            Err(e) => {
-                let _ = event_tx_for_task.send(LoopEvent::Error(e));
-            }
-        }
-        done.store(true, Ordering::SeqCst);
-    });
-
-    Ok(Arc::new(BackgroundLoop {
-        job,
-        events: event_tx,
-        interrupt: interrupt_tx,
-        finished,
-        task: Mutex::new(Some(task)),
-    }))
-}
-
 pub fn save_loop_run(npc: &str, task: &str, is_jinx: bool, output: &str) -> std::io::Result<()> {
     let slug = task_slug(task, is_jinx);
     let base = PathBuf::from(shellexpand::tilde("~/.npcsh/loops").to_string())
@@ -439,11 +179,7 @@ pub fn save_loop_run(npc: &str, task: &str, is_jinx: bool, output: &str) -> std:
     std::fs::write(&path, output)
 }
 
-pub fn spawn_npc_for_loop(
-    kernel: &mut Kernel,
-    name: &str,
-    parent_pid: u32,
-) -> Result<u32> {
+pub fn spawn_npc_for_loop(kernel: &mut Kernel, name: &str, parent_pid: u32) -> Result<u32> {
     if let Some(proc) = kernel.find_by_name(name) {
         return Ok(proc.pid);
     }
@@ -487,4 +223,442 @@ fn load_registered_teams() -> Vec<(String, String)> {
         }
     }
     out
+}
+
+// ── Detached (ownership-in-kernel) loop execution ────────────────────────────
+//
+// A loop must be able to run with no REPL attached. `prepare_loop_process`
+// already reloads a loop's conversation from the DB (the DB is the source of
+// truth), and `spawn_background_loop` drops its `&mut Kernel` before the task
+// body ever runs. So a loop does not need the REPL's kernel: it can boot its
+// own from the same team dir and DB, run one turn, persist, and go away.
+//
+// This is what makes loops detachable rather than in-session. The ticker owns
+// execution; `cron_rx` is only a UI notification channel and can be dropped
+// without losing a run.
+
+/// Everything a detached run needs that is not in the `CronJob` itself.
+#[derive(Clone, Debug)]
+pub struct DetachedLoopConfig {
+    pub team_dir: String,
+    pub db_path: String,
+    pub server_url: String,
+}
+
+impl DetachedLoopConfig {
+    pub fn new(
+        team_dir: impl Into<String>,
+        db_path: impl Into<String>,
+        server_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            team_dir: team_dir.into(),
+            db_path: db_path.into(),
+            server_url: server_url.into(),
+        }
+    }
+}
+
+/// Consecutive failures per loop key, used to back off a loop that cannot run.
+///
+/// A loop whose NPC does not exist will fail identically on every tick. Without
+/// backoff it retries at its full interval forever, which fills the loop log and
+/// burns nothing but noise. The streak resets on any successful run so a
+/// transient failure (server down) does not permanently slow the loop.
+fn failure_streak() -> &'static Mutex<HashMap<String, u32>> {
+    static LOCK: std::sync::OnceLock<Mutex<HashMap<String, u32>>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn record_failure(key: &str) -> u32 {
+    let mut m = match failure_streak().lock() {
+        Ok(m) => m,
+        Err(_) => return 0,
+    };
+    let n = m.entry(key.to_string()).or_insert(0);
+    *n += 1;
+    *n
+}
+
+fn clear_failures(key: &str) {
+    if let Ok(mut m) = failure_streak().lock() {
+        m.remove(key);
+    }
+}
+
+pub fn failure_count(key: &str) -> u32 {
+    failure_streak()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(key).copied())
+        .unwrap_or(0)
+}
+
+/// Keys of loops whose run is currently in flight. A tick for a key already in
+/// this set is skipped rather than queued (same no-overlap policy as before),
+/// but because the set lives here instead of in the REPL it keeps working when
+/// no prompt is being drawn.
+fn in_flight() -> &'static Mutex<std::collections::HashSet<String>> {
+    static LOCK: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+pub fn is_in_flight(key: &str) -> bool {
+    in_flight().lock().map(|s| s.contains(key)).unwrap_or(false)
+}
+
+pub fn in_flight_count() -> usize {
+    in_flight().lock().map(|s| s.len()).unwrap_or(0)
+}
+
+fn loop_key_for(job: &CronJob) -> String {
+    format!("loop-{}-{}", job.npc, job.id)
+}
+
+fn append_loop_log(npc: &str, task: &str, is_jinx: bool, line: &str) {
+    let slug = task_slug(task, is_jinx);
+    let dir = PathBuf::from(shellexpand::tilde("~/.npcsh/loops").to_string())
+        .join(npc)
+        .join(slug);
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("loop.log");
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let _ = writeln!(f, "[{}] {}", ts, line);
+    }
+}
+
+/// Run exactly one turn of `job` in a kernel this task owns.
+///
+/// Returns the turn output, or `None` if the run could not be started. Errors
+/// are reported into the loop's run output and log rather than propagated, so
+/// one bad loop cannot take down the ticker.
+pub async fn run_loop_detached(
+    job: CronJob,
+    cfg: DetachedLoopConfig,
+    client: reqwest::Client,
+) -> Option<String> {
+    let is_jinx = job.kind == CronJobKind::Jinx;
+    append_loop_log(&job.npc, &job.task, is_jinx, "run start");
+
+    let mut kernel = match Kernel::boot(&cfg.team_dir, &cfg.db_path) {
+        Ok(k) => k,
+        Err(e) => {
+            let msg = format!("[loop {}] kernel boot failed: {e}", job.id);
+            append_loop_log(&job.npc, &job.task, is_jinx, &msg);
+            let _ = save_loop_run(&job.npc, &job.task, is_jinx, &msg);
+            return None;
+        }
+    };
+
+    // Jinx loops are a plain syscall; the kernel is already booted so the jinx
+    // table is live. They need no conversation state.
+    if job.kind == CronJobKind::Jinx {
+        let pid = match spawn_npc_for_loop(&mut kernel, &job.npc, 0) {
+            Ok(p) => p,
+            Err(e) => {
+                let n = record_failure(&loop_key(&job));
+                let msg = format!(
+                    "[loop {}] npc {:?} unavailable: {e} (failure #{n})",
+                    job.id, job.npc
+                );
+                append_loop_log(&job.npc, &job.task, is_jinx, &msg);
+                let _ = save_loop_run(&job.npc, &job.task, is_jinx, &msg);
+                return None;
+            }
+        };
+        let mut args = HashMap::new();
+        let mut pieces = job.task.splitn(2, ' ');
+        let jinx_name = pieces.next().unwrap_or(&job.task).to_string();
+        if let Some(rest) = pieces.next() {
+            if let Some(first_input) = kernel.jinxes.get(&jinx_name).and_then(|j| j.inputs.first())
+            {
+                args.insert(first_input.name.clone(), rest.to_string());
+            }
+        }
+        let out = match kernel.syscall(pid, &jinx_name, &args).await {
+            Ok(o) => o,
+            Err(e) => format!("[loop {}] /{} error: {e}", job.id, jinx_name),
+        };
+        let _ = save_loop_run(&job.npc, &job.task, is_jinx, &out);
+        append_loop_log(
+            &job.npc,
+            &job.task,
+            is_jinx,
+            &format!("run end ({} bytes)", out.len()),
+        );
+        return Some(out);
+    }
+
+    let pid = match spawn_npc_for_loop(&mut kernel, &job.npc, 0) {
+        Ok(p) => p,
+        Err(e) => {
+            let n = record_failure(&loop_key(&job));
+            let msg = format!(
+                "[loop {}] npc {:?} unavailable: {e} (failure #{n})",
+                job.id, job.npc
+            );
+            append_loop_log(&job.npc, &job.task, is_jinx, &msg);
+            let _ = save_loop_run(&job.npc, &job.task, is_jinx, &msg);
+            return None;
+        }
+    };
+
+    if let Err(e) = prepare_loop_process(&mut kernel, &job, pid) {
+        let msg = format!("[loop {}] could not prepare loop process: {e}", job.id);
+        append_loop_log(&job.npc, &job.task, is_jinx, &msg);
+        let _ = save_loop_run(&job.npc, &job.task, is_jinx, &msg);
+        return None;
+    }
+
+    let request = match build_loop_stream_request(&kernel, &job, pid) {
+        Some(r) => r,
+        None => {
+            let msg = format!("[loop {}] could not build stream request", job.id);
+            append_loop_log(&job.npc, &job.task, is_jinx, &msg);
+            let _ = save_loop_run(&job.npc, &job.task, is_jinx, &msg);
+            return None;
+        }
+    };
+
+    // Persist live so a detach/reattach or a crash still leaves a transcript.
+    let (npc_name, model, provider, conv_id) = match kernel.get_process(pid) {
+        Some(p) => (
+            p.npc.name.clone(),
+            p.npc.resolved_model(),
+            p.npc.resolved_provider(),
+            p.conversation_id.clone(),
+        ),
+        None => {
+            append_loop_log(
+                &job.npc,
+                &job.task,
+                is_jinx,
+                "process vanished before streaming",
+            );
+            return None;
+        }
+    };
+    let team_name = kernel
+        .team
+        .source_dir
+        .as_deref()
+        .and_then(|d| std::path::Path::new(d).file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("npcsh")
+        .to_string();
+    let cwd = request
+        .current_path
+        .clone()
+        .unwrap_or_else(|| ".".to_string());
+    let prompt = request.commandstr.clone();
+    let turn = Arc::new(Mutex::new(crate::live_persist::LiveTurn::begin(
+        &conv_id, &prompt, &cwd, &model, &provider, &npc_name, &team_name,
+    )));
+    let persist_sink = crate::live_persist::event_sink(&turn);
+
+    append_loop_log(
+        &job.npc,
+        &job.task,
+        is_jinx,
+        &format!("streaming (conv {conv_id}, model {model})"),
+    );
+
+    // Publish events so any attached REPL can render the run, and accept an
+    // interrupt from `/detach`/Ctrl-C in the observing process. The persisted
+    // sink and the bus listener both need the events, so wrap the sink.
+    let (event_tx, _) = broadcast::channel::<LoopEvent>(256);
+    let (interrupt_tx, interrupt_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+    let key = loop_key(&job);
+    if let Ok(mut bus) = run_bus().lock() {
+        bus.insert(
+            key.clone(),
+            RunHandle {
+                events: event_tx.clone(),
+                interrupt: interrupt_tx,
+            },
+        );
+    }
+    let bus_tx = event_tx.clone();
+    let mut persist = persist_sink;
+    let combined_sink: Box<dyn FnMut(StreamEvent) + Send> = Box::new(move |ev: StreamEvent| {
+        if let Some(ref mut p) = persist {
+            p(ev.clone());
+        }
+        let le = match ev {
+            StreamEvent::ContentDelta(text) => LoopEvent::ContentDelta(text),
+            StreamEvent::ToolStart { name, id, args } => LoopEvent::ToolStart { name, id, args },
+            StreamEvent::ToolResult { name, id, content } => {
+                LoopEvent::ToolResult { name, id, content }
+            }
+            StreamEvent::ToolError { name, id, error } => LoopEvent::ToolError { name, id, error },
+            StreamEvent::Interrupted => LoopEvent::Interrupted,
+            StreamEvent::Finished => LoopEvent::Finished,
+        };
+        let _ = bus_tx.send(le);
+    });
+
+    let res = crate::stream_client::call_stream_with_sink_no_render(
+        &client,
+        &cfg.server_url,
+        &request,
+        Some(&loop_auto_approve),
+        Some(interrupt_rx),
+        Some(combined_sink),
+    )
+    .await;
+
+    // Retire the bus entry regardless of outcome.
+    if let Ok(mut bus) = run_bus().lock() {
+        bus.remove(&key);
+    }
+    let _ = event_tx.send(LoopEvent::Finished);
+
+    match res {
+        Ok(resp) => {
+            if let Ok(mut t) = turn.lock() {
+                t.close_from_response(&resp);
+            }
+            let out = resp.message.content.unwrap_or_default();
+            clear_failures(&loop_key(&job));
+            let _ = save_loop_run(&job.npc, &job.task, is_jinx, &out);
+            append_loop_log(
+                &job.npc,
+                &job.task,
+                is_jinx,
+                &format!("run end ({} bytes)", out.len()),
+            );
+            Some(out)
+        }
+        Err(e) => {
+            let msg = format!("[loop {}] stream error: {e}", job.id);
+            append_loop_log(&job.npc, &job.task, is_jinx, &msg);
+            let _ = save_loop_run(&job.npc, &job.task, is_jinx, &msg);
+            Some(msg)
+        }
+    }
+}
+
+/// Spawn a detached run on `handle`, skipping (not queueing) if one is already
+/// in flight. Safe to call from the cron ticker thread.
+pub fn spawn_detached_loop(handle: &tokio::runtime::Handle, job: CronJob, cfg: DetachedLoopConfig) {
+    let key = loop_key_for(&job);
+    {
+        let mut set = match in_flight().lock() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        if set.contains(&key) {
+            return;
+        }
+        set.insert(key.clone());
+    }
+    let client = reqwest::Client::new();
+    handle.spawn(async move {
+        let _ = run_loop_detached(job, cfg, client).await;
+        if let Ok(mut set) = in_flight().lock() {
+            set.remove(&key);
+        }
+    });
+}
+
+// ── Detached run observation bus ─────────────────────────────────────────────
+//
+// A detached run is not tied to any REPL, so "entering" a loop can no longer
+// mean "start a run in this process". It means "subscribe to whatever is
+// running and render its events". This registry is how a fresh `npcsh` process
+// (or a second terminal) can attach to work already in flight.
+
+struct RunHandle {
+    events: broadcast::Sender<LoopEvent>,
+    interrupt: mpsc::UnboundedSender<()>,
+}
+
+fn run_bus() -> &'static Mutex<HashMap<String, RunHandle>> {
+    static LOCK: std::sync::OnceLock<Mutex<HashMap<String, RunHandle>>> =
+        std::sync::OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Subscribe to a loop's live events. Returns `None` if nothing is running.
+pub fn subscribe_loop(key: &str) -> Option<broadcast::Receiver<LoopEvent>> {
+    run_bus()
+        .lock()
+        .ok()
+        .and_then(|b| b.get(key).map(|h| h.events.subscribe()))
+}
+
+/// Ask a running loop to stop after the current turn.
+pub fn interrupt_loop(key: &str) -> bool {
+    run_bus()
+        .lock()
+        .ok()
+        .and_then(|b| b.get(key).map(|h| h.interrupt.send(()).is_ok()))
+        .unwrap_or(false)
+}
+
+/// Keys of loops currently executing, for `/loops` and `/ps`.
+pub fn running_keys() -> Vec<String> {
+    run_bus()
+        .lock()
+        .map(|b| b.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+pub fn loop_key(job: &CronJob) -> String {
+    format!("loop-{}-{}", job.npc, job.id)
+}
+
+/// Serialize a `LoopEvent` for the daemon's attach stream.
+pub fn event_to_json(ev: &LoopEvent) -> String {
+    let v = match ev {
+        LoopEvent::ContentDelta(t) => serde_json::json!({"event": "content", "text": t}),
+        LoopEvent::ToolStart { name, args, .. } => {
+            serde_json::json!({"event": "tool_start", "name": name, "args": args})
+        }
+        LoopEvent::ToolResult { name, content, .. } => {
+            serde_json::json!({"event": "tool_result", "name": name, "content": content})
+        }
+        LoopEvent::ToolError { name, error, .. } => {
+            serde_json::json!({"event": "tool_error", "name": name, "error": error})
+        }
+        LoopEvent::Error(e) => serde_json::json!({"event": "error", "error": e}),
+        LoopEvent::Interrupted => serde_json::json!({"event": "interrupted"}),
+        LoopEvent::Finished => serde_json::json!({"event": "finished"}),
+    };
+    v.to_string()
+}
+
+/// Parse a line produced by `event_to_json` back into a `LoopEvent`.
+pub fn event_from_json(line: &str) -> Option<LoopEvent> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    Some(match v.get("event")?.as_str()? {
+        "content" => LoopEvent::ContentDelta(s("text")),
+        "tool_start" => LoopEvent::ToolStart {
+            name: s("name"),
+            id: String::new(),
+            args: s("args"),
+        },
+        "tool_result" => LoopEvent::ToolResult {
+            name: s("name"),
+            id: String::new(),
+            content: s("content"),
+        },
+        "tool_error" => LoopEvent::ToolError {
+            name: s("name"),
+            id: String::new(),
+            error: s("error"),
+        },
+        "error" => LoopEvent::Error(s("error")),
+        "interrupted" => LoopEvent::Interrupted,
+        "finished" => LoopEvent::Finished,
+        _ => return None,
+    })
 }

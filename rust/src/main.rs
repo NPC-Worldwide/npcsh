@@ -5,10 +5,9 @@ use npcrs::process::ProcessState;
 use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use tokio::sync::broadcast;
 
 mod cli_providers;
 mod interrupt;
@@ -18,28 +17,124 @@ mod tutorial;
 mod version_check;
 
 use crate::cli_providers::{CLI_PROVIDERS, run_cli_provider};
-use npcsh::agent_turn::{run_command_loop, Mode};
-use npcsh::cron as cron;
+use npcsh::agent_turn::{Mode, run_command_loop};
+use npcsh::cron;
 use npcsh::cron::CronRegistry;
-use npcsh::loop_runner::{execute_cron_job, spawn_background_loop, spawn_npc_for_loop, BackgroundLoop, LoopEvent};
+use npcsh::loop_runner::{LoopEvent, spawn_npc_for_loop};
 use npcsh::{
     discover_knowledge_stores, find_team_dir, format_memory_context, live_persist,
     memory_context_enabled, real_user_home, resolve_team_layout, set_resolved_team_dir,
     stream_client, team_sync,
 };
 
+/// Locate the `npcshd` binary next to the current executable, then on PATH.
+fn npcshd_path() -> Option<std::path::PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let cand = dir.join(if cfg!(windows) {
+                "npcshd.exe"
+            } else {
+                "npcshd"
+            });
+            if cand.is_file() {
+                return Some(cand);
+            }
+        }
+    }
+    let name = if cfg!(windows) {
+        "npcshd.exe"
+    } else {
+        "npcshd"
+    };
+    for dir in std::env::var("PATH").unwrap_or_default().split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        let cand = std::path::Path::new(dir).join(name);
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+/// Make sure a loop daemon is running, starting one if necessary.
+///
+/// Failure is not fatal: the shell still works, it just cannot leave loops
+/// running after it exits, so we say so rather than pretending.
+async fn ensure_daemon(db_path: &str, cfg: &npcsh::loop_runner::DetachedLoopConfig) {
+    if npcsh::daemon::is_alive(db_path, &cfg.team_dir).await {
+        return;
+    }
+    let exe = match npcshd_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("{DIM}note: npcshd not found; loops will stop when this shell exits.{RESET}");
+            return;
+        }
+    };
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("--team")
+        .arg(&cfg.team_dir)
+        .arg("--db")
+        .arg(&cfg.db_path)
+        .arg("--server-url")
+        .arg(&cfg.server_url);
+
+    // Detach fully: no inherited stdio, own session, so it outlives this shell.
+    let log_dir = shellexpand::tilde("~/.npcsh/logs").to_string();
+    let _ = std::fs::create_dir_all(&log_dir);
+    if let Ok(f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(std::path::Path::new(&log_dir).join("npcshd.log"))
+    {
+        if let Ok(f2) = f.try_clone() {
+            cmd.stdout(std::process::Stdio::from(f));
+            cmd.stderr(std::process::Stdio::from(f2));
+        }
+    } else {
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+    }
+    cmd.stdin(std::process::Stdio::null());
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+
+    if cmd.spawn().is_err() {
+        eprintln!("{DIM}note: could not start npcshd; loops will not outlive this shell.{RESET}");
+        return;
+    }
+
+    // Wait briefly for the daemon to publish its port.
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        if npcsh::daemon::is_alive(db_path, &cfg.team_dir).await {
+            return;
+        }
+    }
+    eprintln!("{DIM}note: npcshd did not become ready; loops may not outlive this shell.{RESET}");
+}
+
 fn cli_sessions() -> &'static Mutex<HashMap<u32, String>> {
     static LOCK: OnceLock<Mutex<HashMap<u32, String>>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn active_loops() -> &'static Mutex<HashMap<String, Arc<BackgroundLoop>>> {
-    static LOCK: OnceLock<Mutex<HashMap<String, Arc<BackgroundLoop>>>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn detach_signal() -> &'static (Mutex<Option<tokio::sync::mpsc::Sender<()>>>, tokio::sync::Mutex<tokio::sync::mpsc::Receiver<()>>) {
-    static LOCK: OnceLock<(Mutex<Option<tokio::sync::mpsc::Sender<()>>>, tokio::sync::Mutex<tokio::sync::mpsc::Receiver<()>>)> = OnceLock::new();
+fn detach_signal() -> &'static (
+    Mutex<Option<tokio::sync::mpsc::Sender<()>>>,
+    tokio::sync::Mutex<tokio::sync::mpsc::Receiver<()>>,
+) {
+    static LOCK: OnceLock<(
+        Mutex<Option<tokio::sync::mpsc::Sender<()>>>,
+        tokio::sync::Mutex<tokio::sync::mpsc::Receiver<()>>,
+    )> = OnceLock::new();
     LOCK.get_or_init(|| {
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         (Mutex::new(Some(tx)), tokio::sync::Mutex::new(rx))
@@ -678,9 +773,7 @@ async fn main() -> Result<()> {
         .without_time()
         .init();
 
-    let _ = dotenvy::dotenv();
-    load_npcshrc();
-    ensure_memory_pref();
+    npcsh::load_env();
 
     resolve_team_layout();
 
@@ -727,6 +820,9 @@ async fn main() -> Result<()> {
     }
 
     let team_dir = find_team_dir();
+    // Cache for daemon lookups: the resolver can prompt, and request handlers
+    // must never do that.
+    npcsh::daemon::set_current_team(&team_dir);
     let db_path = std::env::var("NPCSH_HISTORY_DB")
         .ok()
         .filter(|s| !s.is_empty())
@@ -806,11 +902,24 @@ async fn main() -> Result<()> {
         .await;
     }
 
+    // Loops are owned by `npcshd`, not by this process. If it is not running we
+    // start it and hand it the same team/db/server configuration, so a loop
+    // created here keeps running after this shell exits.
+    let loops_cfg = npcsh::loop_runner::DetachedLoopConfig::new(
+        team_dir.clone(),
+        db_path.clone(),
+        server_url.clone(),
+    );
+    ensure_daemon(&db_path, &loops_cfg).await;
+
+    // A local mirror of the daemon's registry, kept only so `/loop` and `/loops`
+    // can render job descriptions and so `/loop <npc> <interval> <task>` can
+    // append to loops.yaml before asking the daemon to reload. Execution is
+    // never driven from here.
     let cron_file = shellexpand::tilde("~/.npcsh/loops.yaml").to_string();
     let cron_registry = Arc::new(Mutex::new(CronRegistry::with_file(cron_file)));
     cron_registry.lock().unwrap().load_from_jinxes(&team_dir);
-    let (cron_tx, mut cron_rx) = tokio::sync::mpsc::unbounded_channel();
-    cron::spawn_cron_ticker(cron_registry.clone(), cron_tx);
+    let (_cron_tx, mut cron_rx) = tokio::sync::mpsc::unbounded_channel();
 
     print_welcome(&kernel, current_pid);
 
@@ -910,33 +1019,9 @@ async fn main() -> Result<()> {
             "{CYAN}{BOLD}{npc_name}{RESET} {DIM}[{mode}|{model}]{RESET} {DIM}{cwd}{RESET}{usage_hint} {PURPLE}>{RESET} "
         );
 
-        while let Ok(job) = cron_rx.try_recv() {
-            let key = loop_key(&job);
-            let mut loops = active_loops().lock().unwrap();
-            // If a previous run for this job finished but its entry is still in
-            // the map, remove it so the next scheduled run can spawn. If it is
-            // still running, skip this tick instead of overlapping.
-            if let Some(existing) = loops.get(&key) {
-                if existing.is_finished() {
-                    loops.remove(&key);
-                } else {
-                    continue;
-                }
-            }
-            match spawn_background_loop(
-                &mut kernel,
-                job,
-                http_client.clone(),
-                server_url.to_string(),
-            ) {
-                Ok(handle) => {
-                    loops.insert(key, handle);
-                }
-                Err(e) => {
-                    eprintln!("{RED}[cron] failed to start loop: {e}{RESET}");
-                }
-            }
-        }
+        // Drain notifications. The ticker already started these runs, so this
+        // is a redraw hint only: dropping a notification must never drop a run.
+        while cron_rx.try_recv().is_ok() {}
 
         let input = if let Some(queued) = input_queue.pop_front() {
             println!("{}{}", prompt, queued);
@@ -950,6 +1035,7 @@ async fn main() -> Result<()> {
                 &helper,
                 &mut kernel,
                 current_pid,
+                &mut cron_rx,
             ) {
                 Ok(ReadlineResult::Input(line)) => {
                     history.push(line.clone());
@@ -1005,8 +1091,7 @@ async fn main() -> Result<()> {
                 &mut current_pid,
                 &mut mode,
                 &cron_registry,
-                &http_client,
-                &server_url,
+                &mut cron_rx,
             )
             .await
             {
@@ -2232,8 +2317,7 @@ async fn dispatch_core_command(
     current_pid: &mut u32,
     mode: &mut Mode,
     cron_registry: &Arc<Mutex<CronRegistry>>,
-    http_client: &reqwest::Client,
-    server_url: &str,
+    cron_rx: &mut tokio::sync::mpsc::UnboundedReceiver<cron::CronJob>,
 ) -> CoreDispatch {
     match cmd {
         CoreCmd::Exit => CoreDispatch::Break,
@@ -2455,14 +2539,17 @@ async fn dispatch_core_command(
         }
 
         CoreCmd::Loop => {
-            handle_loop_command(rest, kernel, cron_registry, current_pid, http_client, server_url).await;
+            handle_loop_command(rest, kernel, cron_registry, current_pid, cron_rx).await;
             CoreDispatch::Handled
         }
         CoreCmd::Loops => {
-            match tui::run_loops_tui(kernel, cron_registry, current_pid, &http_client, &server_url).await {
+            match tui::run_loops_tui(kernel, cron_registry, current_pid).await {
                 Ok(Some(job)) => {
-                    eprintln!("{GREEN}Entered loop {} for @{} (pid:{}).{RESET}", job.id, job.npc, *current_pid);
-                    if let Err(e) = attach_to_loop(kernel, &job, http_client, server_url).await {
+                    eprintln!(
+                        "{GREEN}Entered loop {} for @{} (pid:{}).{RESET}",
+                        job.id, job.npc, *current_pid
+                    );
+                    if let Err(e) = attach_to_loop(&job, cron_rx).await {
                         eprintln!("{RED}Loop attach error: {e}{RESET}");
                     }
                 }
@@ -2810,149 +2897,25 @@ fn print_core_help() {
     println!("  Tab completes @npcs, /commands, jinx names, and file paths.");
 }
 
-async fn handle_cron_command(
-    rest: &str,
-    kernel: &mut Kernel,
-    registry: &Arc<Mutex<CronRegistry>>,
-    current_pid: u32,
-) {
-    let parts: Vec<&str> = rest.split_whitespace().collect();
-    let cmd = parts.first().copied().unwrap_or("list");
-    match cmd {
-        "list" | "" => {
-            let reg = registry.lock().unwrap();
-            let jobs = reg.list();
-            if jobs.is_empty() {
-                eprintln!(
-                    "{DIM}No cron jobs. Use /loop <npc> <interval> <task> or /cron add ...{RESET}"
-                );
-            } else {
-                eprintln!("{BOLD}Cron jobs:{RESET}");
-                for j in jobs {
-                    let status = if j.enabled { GREEN } else { RED };
-                    let kind = if j.kind == cron::CronJobKind::Jinx {
-                        "jinx"
-                    } else {
-                        "chat"
-                    };
-                    let last = j.last_run.map(|_| "ran").unwrap_or("never");
-                    eprintln!(
-                        "  [{status}{:>3}{RESET}] @{:<12} every {:<5} [{:<4}] {} (last: {})",
-                        j.id,
-                        j.npc,
-                        cron::format_duration(j.interval_secs),
-                        kind,
-                        j.task,
-                        last
-                    );
-                }
-            }
-        }
-        "add" => {
-            if parts.len() < 4 {
-                eprintln!("Usage: /cron add <npc> <interval> <chat|jinx:...>");
-                eprintln!("  /cron add sibiji 30s 'summarize recent commits'");
-                eprintln!("  /cron add corca 5m jinx:shell 'git status'");
-                return;
-            }
-            let npc = parts[1].to_string();
-            let interval = parts[2];
-            let task = parts[3..].join(" ");
-            let (kind, task) = if let Some(t) = task.strip_prefix("jinx:") {
-                (cron::CronJobKind::Jinx, t.to_string())
-            } else {
-                (cron::CronJobKind::Chat, task)
-            };
-            let secs = cron::parse_duration(interval);
-            let id = registry
-                .lock()
-                .unwrap()
-                .add(npc.clone(), secs, task.clone(), kind);
-            eprintln!("{GREEN}Added cron job {id}: @{npc} every {interval} -> {task}{RESET}");
-        }
-        "remove" | "rm" => {
-            if let Some(id_str) = parts.get(1) {
-                if let Ok(id) = id_str.parse::<u32>() {
-                    if registry.lock().unwrap().remove(id) {
-                        eprintln!("{GREEN}Removed cron job {id}{RESET}");
-                    } else {
-                        eprintln!("{RED}No cron job with id {id}{RESET}");
-                    }
-                } else {
-                    eprintln!("{RED}Invalid id: {id_str}{RESET}");
-                }
-            } else {
-                eprintln!("Usage: /cron remove <id>");
-            }
-        }
-        "enable" | "on" => {
-            if let Some(id_str) = parts.get(1) {
-                if let Ok(id) = id_str.parse::<u32>() {
-                    if registry.lock().unwrap().enable(id, true) {
-                        eprintln!("{GREEN}Enabled cron job {id}{RESET}");
-                    } else {
-                        eprintln!("{RED}No cron job with id {id}{RESET}");
-                    }
-                }
-            }
-        }
-        "disable" | "off" => {
-            if let Some(id_str) = parts.get(1) {
-                if let Ok(id) = id_str.parse::<u32>() {
-                    if registry.lock().unwrap().enable(id, false) {
-                        eprintln!("{GREEN}Disabled cron job {id}{RESET}");
-                    } else {
-                        eprintln!("{RED}No cron job with id {id}{RESET}");
-                    }
-                }
-            }
-        }
-        "run" => {
-            if let Some(id_str) = parts.get(1) {
-                if let Ok(id) = id_str.parse::<u32>() {
-                    let job = registry
-                        .lock()
-                        .unwrap()
-                        .list()
-                        .iter()
-                        .find(|j| j.id == id)
-                        .cloned();
-                    if let Some(job) = job {
-                        if let Some(out) = execute_cron_job(
-                            kernel,
-                            &job,
-                            &reqwest::Client::new(),
-                            "http://127.0.0.1:5237",
-                            true,
-                        )
-                        .await
-                        {
-                            println!("{}", out);
-                        }
-                    } else {
-                        eprintln!("{RED}No cron job with id {id}{RESET}");
-                    }
-                }
-            }
-        }
-        _ => eprintln!("{RED}Unknown /cron subcommand: {cmd}{RESET}"),
-    }
-}
-
 async fn handle_loop_command(
     rest: &str,
     kernel: &mut Kernel,
     registry: &Arc<Mutex<CronRegistry>>,
     current_pid: &mut u32,
-    http_client: &reqwest::Client,
-    server_url: &str,
+    cron_rx: &mut tokio::sync::mpsc::UnboundedReceiver<cron::CronJob>,
 ) {
     let parts: Vec<&str> = rest.split_whitespace().collect();
 
     // If the first token parses as an existing loop id, enter that loop's conversation.
     if let Some(first) = parts.first() {
         if let Ok(id) = first.parse::<u32>() {
-            let job = registry.lock().unwrap().list().iter().find(|j| j.id == id).cloned();
+            let job = registry
+                .lock()
+                .unwrap()
+                .list()
+                .iter()
+                .find(|j| j.id == id)
+                .cloned();
             if let Some(job) = job {
                 let npc = &job.npc;
                 let new_pid = if let Some(proc) = kernel.find_by_name(npc) {
@@ -2961,15 +2924,24 @@ async fn handle_loop_command(
                     match spawn_npc_for_loop(kernel, npc, *current_pid) {
                         Ok(pid) => pid,
                         _ => {
-                            eprintln!("{RED}Loop {id} targets @{npc}, but that NPC is not available.{RESET}");
+                            eprintln!(
+                                "{RED}Loop {id} targets @{npc}, but that NPC is not available.{RESET}"
+                            );
                             return;
                         }
                     }
                 };
                 *current_pid = new_pid;
-                let kind = if job.kind == cron::CronJobKind::Jinx { "jinx" } else { "chat" };
-                eprintln!("{GREEN}Entered loop {id} ({kind}) for @{npc} (pid:{}).{RESET}", *current_pid);
-                if let Err(e) = attach_to_loop(kernel, &job, http_client, server_url).await {
+                let kind = if job.kind == cron::CronJobKind::Jinx {
+                    "jinx"
+                } else {
+                    "chat"
+                };
+                eprintln!(
+                    "{GREEN}Entered loop {id} ({kind}) for @{npc} (pid:{}).{RESET}",
+                    *current_pid
+                );
+                if let Err(e) = attach_to_loop(&job, cron_rx).await {
                     eprintln!("{RED}Loop attach error: {e}{RESET}");
                 }
                 return;
@@ -3007,11 +2979,20 @@ async fn handle_loop_command(
         .lock()
         .unwrap()
         .add(npc.clone(), secs, task.clone(), kind);
-    eprintln!("{GREEN}Loop {id} added: @{npc} every {interval} -> {label}{RESET}");
-}
-
-fn loop_key(job: &cron::CronJob) -> String {
-    format!("loop-{}-{}", job.npc, job.id)
+    // The daemon owns execution, so tell it about the new job.
+    let resp = npcsh::daemon::request_current(&npcsh::daemon::Request::Reload).await;
+    match resp {
+        Some(r) if r.ok => {
+            eprintln!("{GREEN}Loop {id} added: @{npc} every {interval} -> {label}{RESET}");
+        }
+        Some(r) => eprintln!(
+            "{YELLOW}Loop {id} written to loops.yaml, but the daemon rejected the reload: {}{RESET}",
+            r.error.unwrap_or_default()
+        ),
+        None => eprintln!(
+            "{YELLOW}Loop {id} written to loops.yaml, but no daemon is running to execute it.{RESET}"
+        ),
+    }
 }
 
 fn render_loop_event(ev: &LoopEvent) {
@@ -3104,71 +3085,97 @@ fn render_loop_event(ev: &LoopEvent) {
     }
 }
 
+/// Observe a loop's live run, streaming events from the daemon.
+///
+/// The daemon owns execution, so attaching never starts work here: it opens one
+/// `Attach` connection and renders whatever that loop is doing. Detaching just
+/// closes the connection, leaving the run in place.
 async fn attach_to_loop(
-    kernel: &mut Kernel,
     job: &cron::CronJob,
-    http_client: &reqwest::Client,
-    server_url: &str,
+    cron_rx: &mut tokio::sync::mpsc::UnboundedReceiver<cron::CronJob>,
 ) -> Result<()> {
-    let key = loop_key(job);
-    let (tx_lock, rx_lock) = detach_signal();
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    // Reset detach signal so old signals do not fire immediately.
+    let st = npcsh::daemon::read_current_status()
+        .ok_or_else(|| npcrs::NpcError::Other("no loop daemon is running".to_string()))?;
+    if st.port == 0 {
+        return Err(npcrs::NpcError::Other(
+            "no loop daemon is running".to_string(),
+        ));
+    }
+
+    let stream = tokio::net::TcpStream::connect(("127.0.0.1", st.port))
+        .await
+        .map_err(|e| npcrs::NpcError::Other(format!("cannot reach npcshd: {e}")))?;
+    let (rd, mut wr) = stream.into_split();
+
+    let req = serde_json::to_string(&npcsh::daemon::Request::Attach { id: job.id })
+        .map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
+    wr.write_all(format!("{req}\n").as_bytes())
+        .await
+        .map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
+    wr.flush().await.ok();
+
+    let mut reader = BufReader::new(rd);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .await
+        .map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
+    let ack: npcsh::daemon::Response = serde_json::from_str(line.trim())
+        .map_err(|e| npcrs::NpcError::Other(format!("bad daemon reply: {e}")))?;
+    if !ack.ok {
+        return Err(npcrs::NpcError::Other(
+            ack.error.unwrap_or_else(|| "attach refused".to_string()),
+        ));
+    }
+
+    let (tx_lock, rx_lock) = detach_signal();
+    let mut detach_rx = rx_lock.lock().await;
     {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         *tx_lock.lock().unwrap() = Some(tx);
-        let _ = rx_lock.lock().await.try_recv();
+        let _ = detach_rx.try_recv();
     }
-
-    let background = {
-        let mut loops = active_loops().lock().unwrap();
-        if let Some(existing) = loops.get(&key) {
-            existing.clone()
-        } else {
-            let new_loop = spawn_background_loop(
-                kernel,
-                job.clone(),
-                http_client.clone(),
-                server_url.to_string(),
-            )
-            .map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
-            loops.insert(key.clone(), new_loop.clone());
-            new_loop
-        }
-    };
-
-    let mut rx = background.subscribe();
-    let mut detach_rx = rx_lock.lock().await;
-    let detach_tx = {
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        tx
-    };
-    *tx_lock.lock().unwrap() = Some(detach_tx);
-
-    eprintln!("\x1b[90mAttached to loop {}. Type /detach to leave it running.\x1b[0m", job.id);
+    eprintln!(
+        "\x1b[90mAttached to loop {} via npcshd. /detach leaves it running.\x1b[0m",
+        job.id
+    );
 
     loop {
+        line.clear();
         tokio::select! {
             biased;
             _ = detach_rx.recv() => {
                 eprintln!("\x1b[90mDetached from loop {}.\x1b[0m", job.id);
                 break;
             }
-            event = rx.recv() => {
-                match event {
-                    Ok(ev) => render_loop_event(&ev),
-                    Err(broadcast::error::RecvError::Closed) => break,
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        eprintln!("\x1b[90m... missed {} events while detached ...\x1b[0m", n);
+            Some(_scheduled) = cron_rx.recv() => {
+                // Notification only; the daemon already started that run.
+                continue;
+            }
+            n = reader.read_line(&mut line) => {
+                match n {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if let Some(ev) = npcsh::loop_runner::event_from_json(trimmed) {
+                            let done = matches!(ev, LoopEvent::Finished);
+                            render_loop_event(&ev);
+                            if done {
+                                break;
+                            }
+                        }
                     }
+                    Err(_) => break,
                 }
             }
         }
     }
 
-    if background.is_finished() {
-        let _ = active_loops().lock().unwrap().remove(&key);
-    }
     Ok(())
 }
 
@@ -3339,91 +3346,6 @@ fn print_welcome(kernel: &Kernel, current_pid: u32) {
         eprintln!("{}", line);
     }
     eprintln!();
-}
-
-fn load_npcshrc() {
-    let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
-    let path = std::path::Path::new(&rc_path);
-
-    if !path.exists() {
-        return;
-    }
-
-    if let Ok(content) = std::fs::read_to_string(path) {
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let line = line.strip_prefix("export ").unwrap_or(line);
-
-            if let Some((key, value)) = line.split_once('=') {
-                let key = key.trim();
-                let value = value.trim().trim_matches('"').trim_matches('\'');
-                if std::env::var(key).is_err() {
-                    unsafe { std::env::set_var(key, value) };
-                }
-            }
-        }
-    }
-}
-
-fn ensure_memory_pref() {
-    if std::env::var("NPCSH_MEMORY").is_ok() {
-        return;
-    }
-    let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
-    let mut has_entry = false;
-    if let Ok(content) = std::fs::read_to_string(&rc_path) {
-        has_entry = content
-            .lines()
-            .any(|l| l.trim_start_matches("export ").starts_with("NPCSH_MEMORY"));
-    }
-    if has_entry {
-        return;
-    }
-
-    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
-        unsafe { std::env::set_var("NPCSH_MEMORY", "1") };
-        let _ = append_npcshrc_line("NPCSH_MEMORY", "1");
-        return;
-    }
-
-    eprintln!("{CYAN}Memory / knowledge extraction{RESET}");
-    eprintln!("npcsh can automatically extract memories from your conversations.");
-    eprintln!("You can change this later by editing NPCSH_MEMORY in ~/.npcshrc.");
-    eprint!("Enable automatic memory extraction? [Y/n] {RESET}");
-    let _ = std::io::Write::flush(&mut std::io::stderr());
-    let mut answer = String::new();
-    if std::io::stdin().read_line(&mut answer).is_err() {
-        answer = "y".to_string();
-    }
-    let enabled = match answer.trim().to_lowercase().as_str() {
-        "" | "y" | "yes" | "true" | "1" | "on" => true,
-        _ => false,
-    };
-    let value = if enabled { "1" } else { "0" };
-    unsafe { std::env::set_var("NPCSH_MEMORY", value) };
-    let _ = append_npcshrc_line("NPCSH_MEMORY", value);
-    eprintln!(
-        "{}Memory extraction {}",
-        if enabled { GREEN } else { YELLOW },
-        if enabled { "enabled" } else { "disabled" }
-    );
-}
-
-fn append_npcshrc_line(key: &str, value: &str) -> std::io::Result<()> {
-    let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
-    let path = std::path::Path::new(&rc_path);
-    let mut content = String::new();
-    if path.exists() {
-        content = std::fs::read_to_string(path)?;
-        if !content.ends_with('\n') {
-            content.push('\n');
-        }
-    }
-    content.push_str(&format!("export {}={}\n", key, value));
-    std::fs::write(path, content)
 }
 
 struct MemoryScheduler {
@@ -4446,6 +4368,7 @@ fn readline_raw(
     helper: &NpcHelper,
     kernel: &mut Kernel,
     current_pid: u32,
+    cron_rx: &mut tokio::sync::mpsc::UnboundedReceiver<cron::CronJob>,
 ) -> io::Result<ReadlineResult> {
     use crossterm::event::{self, Event, KeyCode, KeyModifiers};
     use crossterm::terminal;
@@ -4465,6 +4388,9 @@ fn readline_raw(
     let mut tab_index: usize = 0;
 
     let result = loop {
+        // Notification-only; see the note at the REPL pump.
+        while cron_rx.try_recv().is_ok() {}
+
         if crossterm::event::poll(std::time::Duration::from_millis(50))? {
             match event::read()? {
                 Event::Paste(text) => {
@@ -4499,13 +4425,26 @@ fn readline_raw(
                                     }
                                 }
                                 'a' => {
+                                    // Start of line (readline convention). Redraw
+                                    // instead of emitting one cursor-left per byte:
+                                    // wrapped lines and multi-byte chars both break
+                                    // the naive escape-count approach.
                                     if pos > 0 {
-                                        print!("{}", "\x1b[D".repeat(pos));
                                         pos = 0;
+                                        redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                                         io::stdout().flush()?;
                                     }
                                 }
                                 'e' => {
+                                    // End of line (readline convention). Ctrl+A above
+                                    // handles start of line.
+                                    if pos < buf.len() {
+                                        pos = buf.len();
+                                        redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
+                                        io::stdout().flush()?;
+                                    }
+                                }
+                                't' => {
                                     print!("\r\n");
                                     if let Some(p) = kernel.get_process(current_pid) {
                                         if let Some(ref t) = p.last_thinking {
@@ -4621,15 +4560,15 @@ fn readline_raw(
                     }
                     KeyCode::Home => {
                         if pos > 0 {
-                            print!("{}", "\x1b[D".repeat(pos));
                             pos = 0;
+                            redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                             io::stdout().flush()?;
                         }
                     }
                     KeyCode::End => {
                         if pos < buf.len() {
-                            print!("{}", "\x1b[C".repeat(buf.len() - pos));
                             pos = buf.len();
+                            redraw_prompt(prompt, &buf, pos, mode, &helper.jinx_names);
                             io::stdout().flush()?;
                         }
                     }

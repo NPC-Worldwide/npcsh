@@ -2,7 +2,7 @@ use chrono::{Local, Utc};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
 use npcrs::kernel::Kernel;
-use npcsh::cron::{format_duration, CronJob, CronJobKind, CronRegistry};
+use npcsh::cron::{CronJob, CronJobKind, CronRegistry, format_duration};
 use npcsh::loop_runner::{spawn_npc_for_loop, task_slug};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -30,8 +30,13 @@ impl Drop for RawModeGuard {
 }
 
 pub fn term_size() -> (usize, usize) {
+    // Terminal size is unreliable: it returns 0 for a non-tty (pipes, CI) and
+    // can report absurdly small values while a window is being resized. Every
+    // caller does arithmetic like `rows - 2`, so clamp here rather than
+    // sprinkling saturating_sub through the whole TUI. A tiny floor keeps the
+    // layout valid without crashing.
     let (c, r) = terminal::size().unwrap_or((80, 24));
-    (c as usize, r as usize)
+    ((c as usize).max(20), (r as usize).max(8))
 }
 
 pub fn clear_all(out: &mut io::Stdout) {
@@ -382,19 +387,38 @@ pub fn run_config_tui() -> Result<()> {
                         edit_cursor = 0;
                     }
                 }
-                KeyCode::Char(c) if editing => {
+                // Readline-style line navigation inside the inline editor.
+                // These must come before the catch-all `Char(c)` arm or the
+                // bare letter would be inserted into the field.
+                KeyCode::Char('a') if editing && key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    edit_cursor = 0;
+                }
+                KeyCode::Char('e') if editing && key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    edit_cursor = edit_buf.len();
+                }
+                KeyCode::Home if editing => {
+                    edit_cursor = 0;
+                }
+                KeyCode::End if editing => {
+                    edit_cursor = edit_buf.len();
+                }
+                KeyCode::Char(c) if editing && !key.modifiers.contains(KeyModifiers::CONTROL) => {
                     edit_buf.insert(edit_cursor, c);
-                    edit_cursor += 1;
+                    edit_cursor += c.len_utf8();
                 }
                 KeyCode::Backspace if editing && edit_cursor > 0 => {
-                    edit_cursor -= 1;
+                    // edit_cursor is a byte offset; step back one full char.
+                    let prev = edit_buf[..edit_cursor].chars().next_back().unwrap();
+                    edit_cursor -= prev.len_utf8();
                     edit_buf.remove(edit_cursor);
                 }
                 KeyCode::Left if editing && edit_cursor > 0 => {
-                    edit_cursor -= 1;
+                    let prev = edit_buf[..edit_cursor].chars().next_back().unwrap();
+                    edit_cursor -= prev.len_utf8();
                 }
                 KeyCode::Right if editing && edit_cursor < edit_buf.len() => {
-                    edit_cursor += 1;
+                    let next = edit_buf[edit_cursor..].chars().next().unwrap();
+                    edit_cursor += next.len_utf8();
                 }
                 _ => {}
             }
@@ -2658,16 +2682,17 @@ pub fn run_agent_dashboard_tui(
             .filter(|j| j.npc == npc_name)
             .cloned()
             .collect();
-        let logs = load_agent_logs(kernel, npc_name, 200);
         drop(reg);
+        // Execution lives in npcshd, so local state is never authoritative here.
+        let live = daemon_jobs();
+        let logs = load_agent_logs(kernel, npc_name, 200);
 
         let items = match tab {
             AgentTab::Tasks => jobs.len(),
             AgentTab::TaskRuns => {
                 if runs.is_empty() && selected_job.is_some() {
                     let j = selected_job.as_ref().unwrap();
-                    runs =
-                        load_task_runs(&j.npc, &j.task, j.kind == CronJobKind::Jinx);
+                    runs = load_task_runs(&j.npc, &j.task, j.kind == CronJobKind::Jinx);
                 }
                 runs.len()
             }
@@ -2698,10 +2723,17 @@ pub fn run_agent_dashboard_tui(
                     } else {
                         "chat"
                     };
-                    let status = if j.enabled {
-                        "\x1b[32menabled\x1b[0m"
-                    } else {
+                    let status = if !j.enabled {
                         "\x1b[31mdisabled\x1b[0m"
+                    } else if live
+                        .iter()
+                        .find(|l| l.id == j.id)
+                        .map(|l| l.running)
+                        .unwrap_or(false)
+                    {
+                        "\x1b[36mrunning\x1b[0m"
+                    } else {
+                        "\x1b[32menabled\x1b[0m"
                     };
                     format!(
                         "[{}] every {} [{}] {} ({}) {}",
@@ -2854,12 +2886,30 @@ pub fn run_agent_dashboard_tui(
     Ok(())
 }
 
+/// Snapshot of the daemon's jobs. Empty when no daemon is reachable, which the
+/// caller renders as "unknown" rather than "no loops".
+fn daemon_jobs() -> Vec<npcsh::daemon::JobInfo> {
+    // This is called from a synchronous TUI loop, so use a tiny blocking
+    // runtime rather than borrowing the caller's. It is a single loopback
+    // round-trip and is bounded by the client's own timeouts.
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return Vec::new();
+    };
+    rt.block_on(async {
+        npcsh::daemon::request_current(&npcsh::daemon::Request::List)
+            .await
+            .map(|r| r.jobs)
+            .unwrap_or_default()
+    })
+}
+
 pub async fn run_loops_tui(
     kernel: &mut Kernel,
     registry: &Arc<Mutex<CronRegistry>>,
     current_pid: &mut u32,
-    _client: &reqwest::Client,
-    _server_url: &str,
 ) -> Result<Option<CronJob>> {
     let _guard = RawModeGuard::new().map_err(|e| npcrs::NpcError::Other(e.to_string()))?;
     let mut out = io::stdout();
@@ -2931,7 +2981,13 @@ pub async fn run_loops_tui(
             Tab::Loops => jobs.len(),
             Tab::Runs => runs.len(),
             Tab::History => logs.len(),
-            Tab::Details => if selected_job.is_some() { 1 } else { 0 },
+            Tab::Details => {
+                if selected_job.is_some() {
+                    1
+                } else {
+                    0
+                }
+            }
         };
         if sel >= items && items > 0 {
             sel = items - 1;
@@ -2952,8 +3008,16 @@ pub async fn run_loops_tui(
             let text = match tab {
                 Tab::Loops => {
                     let j = &jobs[idx];
-                    let kind = if j.kind == CronJobKind::Jinx { "jinx" } else { "chat" };
-                    let status = if j.enabled { "\x1b[32menabled\x1b[0m" } else { "\x1b[31mdisabled\x1b[0m" };
+                    let kind = if j.kind == CronJobKind::Jinx {
+                        "jinx"
+                    } else {
+                        "chat"
+                    };
+                    let status = if j.enabled {
+                        "\x1b[32menabled\x1b[0m"
+                    } else {
+                        "\x1b[31mdisabled\x1b[0m"
+                    };
                     let next_secs = j
                         .next_run
                         .duration_since(std::time::Instant::now())
@@ -2976,7 +3040,11 @@ pub async fn run_loops_tui(
                 Tab::History => {
                     let log = &logs[idx];
                     let cost_str = log.cost.map(|c| format!(" ${:.4}", c)).unwrap_or_default();
-                    let ts = if log.timestamp.is_empty() { String::new() } else { format!("{} ", log.timestamp) };
+                    let ts = if log.timestamp.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{} ", log.timestamp)
+                    };
                     format!(
                         "{}{}{}{}{}",
                         ts,
@@ -2988,7 +3056,11 @@ pub async fn run_loops_tui(
                 }
                 Tab::Details => {
                     if let Some(j) = &selected_job {
-                        let kind = if j.kind == CronJobKind::Jinx { "jinx" } else { "chat" };
+                        let kind = if j.kind == CronJobKind::Jinx {
+                            "jinx"
+                        } else {
+                            "chat"
+                        };
                         let last = j.last_run.map(|_| "ran").unwrap_or("never");
                         let next_secs = j
                             .next_run
@@ -3010,7 +3082,10 @@ pub async fn run_loops_tui(
                     }
                 }
             };
-            let truncated = text.chars().take(cols.saturating_sub(4)).collect::<String>();
+            let truncated = text
+                .chars()
+                .take(cols.saturating_sub(4))
+                .collect::<String>();
             if idx == sel {
                 wline(
                     &mut out,
@@ -3024,7 +3099,7 @@ pub async fn run_loops_tui(
 
         hr(&mut out, cols, rows - 2);
         let foot = if tab == Tab::Loops {
-            " [Tab] Cycle  [j/k] Nav  [Enter] Inspect  [Space] Toggle  [r] Run now  [d] Delete  [q] Quit "
+            " [Tab] Cycle  [j/k] Nav  [Enter] Inspect  [Space] Toggle  [r] Run now (detached)  [Enter] Attach  [d] Delete  [q] Quit "
         } else if tab == Tab::Runs {
             " [Tab] Cycle  [j/k] Nav  [Enter] View run  [q] Quit "
         } else if tab == Tab::History {
@@ -3034,7 +3109,14 @@ pub async fn run_loops_tui(
         };
         footer_line(&mut out, cols, rows, foot);
         if let Some(msg) = &status_message {
-            wline(&mut out, rows - 3, &format!("\x1b[90m  {}\x1b[0m", msg.chars().take(cols.saturating_sub(4)).collect::<String>()));
+            wline(
+                &mut out,
+                rows - 3,
+                &format!(
+                    "\x1b[90m  {}\x1b[0m",
+                    msg.chars().take(cols.saturating_sub(4)).collect::<String>()
+                ),
+            );
         }
         let _ = out.flush();
 
@@ -3117,23 +3199,30 @@ pub async fn run_loops_tui(
                 KeyCode::Char('r') | KeyCode::Char('R')
                     if tab == Tab::Loops && !jobs.is_empty() =>
                 {
+                    // Run now goes through the daemon: it owns execution, so a
+                    // manual run and a scheduled run are the same code path and
+                    // the run outlives this TUI.
                     let job = jobs[sel].clone();
                     selected_job = Some(job.clone());
-                    if let Some(proc) = kernel.find_by_name(&job.npc) {
-                        *current_pid = proc.pid;
+                    let jobs_live = daemon_jobs();
+                    let already = jobs_live
+                        .iter()
+                        .find(|j| j.id == job.id)
+                        .map(|j| j.running)
+                        .unwrap_or(false);
+                    if already {
+                        status_message = Some(format!("Loop {} is already running.", job.id));
                     } else {
-                        match spawn_npc_for_loop(kernel, &job.npc, 0) {
-                            Ok(pid) => *current_pid = pid,
-                            Err(e) => {
-                                status_message = Some(format!(
-                                    "Could not spawn NPC for loop {}: {}",
-                                    job.id, e
-                                ));
-                                continue;
-                            }
-                        }
+                        let id = job.id;
+                        let handle = tokio::runtime::Handle::current();
+                        handle.spawn(async move {
+                            let _ =
+                                npcsh::daemon::request_current(&npcsh::daemon::Request::Run { id })
+                                    .await;
+                        });
+                        status_message = Some(format!("Asked npcshd to run loop {} now.", job.id));
                     }
-                    return Ok(Some(job));
+                    runs.clear();
                 }
                 _ => {}
             }

@@ -18,6 +18,10 @@ path = "src/main.rs"
 name = "npc"
 path = "src/bin/npc.rs"
 
+[[bin]]
+name = "npcshd"
+path = "src/bin/npcshd.rs"
+
 [dependencies]
 npcrs = { version = "0.1.31", default-features = false, features = ["ffi"] }
 
