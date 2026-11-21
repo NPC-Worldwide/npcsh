@@ -117,3 +117,9 @@ steps:
               f.write(updated_content)
 
           output = "Applied " + str(changes_applied) + " changes to " + file_path + "\n\n" + explanation
+      # Publish the step result to the context so the runner can read it.
+      # Assigning a bare local `output` is invisible outside exec().
+      try:
+          context['output'] = output
+      except NameError:
+          pass

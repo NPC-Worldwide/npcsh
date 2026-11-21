@@ -62,3 +62,9 @@ steps:
               max_iterations=max_turns,
           )
           context['agent_output'] = output
+      # Publish the step result to the context so the runner can read it.
+      # Assigning a bare local `output` is invisible outside exec().
+      try:
+          context['output'] = output
+      except NameError:
+          pass

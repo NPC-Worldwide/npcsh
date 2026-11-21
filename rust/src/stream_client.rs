@@ -70,7 +70,7 @@ pub async fn call_stream(
     client: &reqwest::Client,
     base_url: &str,
     request: &StreamRequest,
-    permission_prompt: Option<&dyn Fn(&str) -> String>,
+    permission_prompt: Option<&(dyn Fn(&str) -> String + Sync)>,
 ) -> Result<StreamResponse, String> {
     call_stream_with_interrupt(client, base_url, request, permission_prompt, None).await
 }
@@ -81,7 +81,7 @@ pub async fn call_stream_with_sink(
     client: &reqwest::Client,
     base_url: &str,
     request: &StreamRequest,
-    permission_prompt: Option<&dyn Fn(&str) -> String>,
+    permission_prompt: Option<&(dyn Fn(&str) -> String + Sync)>,
     interrupt: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
     sink: Option<Box<dyn FnMut(StreamEvent) + Send>>,
 ) -> Result<StreamResponse, String> {
@@ -92,6 +92,28 @@ pub async fn call_stream_with_sink(
         permission_prompt,
         interrupt,
         sink,
+        false,
+    )
+    .await
+}
+
+/// Event-sink only: suppresses terminal rendering and just emits `StreamEvent`s.
+pub async fn call_stream_with_sink_no_render(
+    client: &reqwest::Client,
+    base_url: &str,
+    request: &StreamRequest,
+    permission_prompt: Option<&(dyn Fn(&str) -> String + Sync)>,
+    interrupt: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
+    sink: Option<Box<dyn FnMut(StreamEvent) + Send>>,
+) -> Result<StreamResponse, String> {
+    call_stream_inner(
+        client,
+        base_url,
+        request,
+        permission_prompt,
+        interrupt,
+        sink,
+        true,
     )
     .await
 }
@@ -100,7 +122,7 @@ pub async fn call_stream_with_interrupt(
     client: &reqwest::Client,
     base_url: &str,
     request: &StreamRequest,
-    permission_prompt: Option<&dyn Fn(&str) -> String>,
+    permission_prompt: Option<&(dyn Fn(&str) -> String + Sync)>,
     interrupt: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
 ) -> Result<StreamResponse, String> {
     call_stream_inner(
@@ -110,6 +132,7 @@ pub async fn call_stream_with_interrupt(
         permission_prompt,
         interrupt,
         None,
+        false,
     )
     .await
 }
@@ -118,9 +141,10 @@ async fn call_stream_inner(
     client: &reqwest::Client,
     base_url: &str,
     request: &StreamRequest,
-    permission_prompt: Option<&dyn Fn(&str) -> String>,
+    permission_prompt: Option<&(dyn Fn(&str) -> String + Sync)>,
     mut interrupt: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
     mut sink: Option<Box<dyn FnMut(StreamEvent) + Send>>,
+    no_render: bool,
 ) -> Result<StreamResponse, String> {
     let stream_url = format!("{}/api/stream", base_url);
     let body = serde_json::json!({
@@ -158,7 +182,11 @@ async fn call_stream_inner(
     let mut saw_output = false;
     let mut thinking_started = false;
     let mut reasoning_started = false;
-    let mut renderer = StreamRenderer::new();
+    let mut renderer = if no_render {
+        StreamRenderer::silent()
+    } else {
+        StreamRenderer::new()
+    };
 
     let mut stream = resp.bytes_stream();
     let mut pending = String::new();
@@ -224,6 +252,7 @@ async fn call_stream_inner(
                 permission_prompt,
                 sink.as_mut()
                     .map(|b| &mut **b as &mut dyn FnMut(StreamEvent)),
+                no_render,
             );
             if pause {
                 continue;
@@ -252,6 +281,7 @@ async fn call_stream_inner(
                         permission_prompt,
                         sink.as_mut()
                             .map(|b| &mut **b as &mut dyn FnMut(StreamEvent)),
+                        no_render,
                     );
                 }
             }
@@ -275,7 +305,9 @@ async fn call_stream_inner(
         cb(StreamEvent::Finished);
     }
 
-    renderer.flush();
+    if !no_render {
+        renderer.flush();
+    }
 
     if !content.is_empty() {
         let dedented: String = content
@@ -356,8 +388,9 @@ fn apply_sse_event(
     usage: &mut Option<Usage>,
     saw_output: &mut bool,
     renderer: &mut StreamRenderer,
-    permission_prompt: Option<&dyn Fn(&str) -> String>,
+    permission_prompt: Option<&(dyn Fn(&str) -> String + Sync)>,
     mut sink: Option<&mut (dyn FnMut(StreamEvent) + '_)>,
+    no_render: bool,
 ) -> bool {
     if let Some(typ) = json.get("type").and_then(|v| v.as_str()) {
         match typ {
@@ -381,7 +414,9 @@ fn apply_sse_event(
             "message_stop" | "stop" => {}
             "error" => {
                 if let Some(msg) = json.get("message").and_then(|v| v.as_str()) {
-                    eprintln!("\x1b[31mstream error: {}\x1b[0m", msg);
+                    if !no_render {
+                        eprintln!("\x1b[31mstream error: {}\x1b[0m", msg);
+                    }
                 }
             }
             "tool_call" | "tool_execution_start" => {
@@ -413,14 +448,15 @@ fn apply_sse_event(
                         args,
                     });
                 }
-                renderer.flush();
-                eprint!("\r\n\x1b[90m┌─ ⚡ {}\x1b[0m\r\n", name);
-                let _ = std::io::Write::flush(&mut std::io::stderr());
-                renderer.clear();
+                if !no_render {
+                    renderer.flush();
+                    eprint!("\r\n\x1b[90m┌─ ⚡ {}\x1b[0m\r\n", name);
+                    let _ = std::io::Write::flush(&mut std::io::stderr());
+                    renderer.clear();
+                }
                 *saw_output = true;
             }
             "tool_result" => {
-                renderer.flush();
                 let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
                 let tool_id = json
                     .get("id")
@@ -445,61 +481,64 @@ fn apply_sse_event(
                 } else {
                     String::new()
                 };
-                let max_lines = std::env::var("NPCSH_TOOL_LINES")
-                    .ok()
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(24);
-                let max_chars = std::env::var("NPCSH_TOOL_CHARS")
-                    .ok()
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(1200);
-                let trimmed = display.trim_end_matches(['\n', '\r']).to_string();
-                let mut preview = trimmed.clone();
-                let mut truncated = false;
-                if preview.chars().count() > max_chars {
-                    preview = preview.chars().take(max_chars).collect::<String>();
-                    truncated = true;
-                }
-                let lines: Vec<String> = preview
-                    .lines()
-                    .map(|l| {
-                        if l.chars().count() > 120 {
-                            format!("{}…", l.chars().take(119).collect::<String>())
+                if !no_render {
+                    renderer.flush();
+                    let max_lines = std::env::var("NPCSH_TOOL_LINES")
+                        .ok()
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(24);
+                    let max_chars = std::env::var("NPCSH_TOOL_CHARS")
+                        .ok()
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(1200);
+                    let trimmed = display.trim_end_matches(['\n', '\r']).to_string();
+                    let mut preview = trimmed.clone();
+                    let mut truncated = false;
+                    if preview.chars().count() > max_chars {
+                        preview = preview.chars().take(max_chars).collect::<String>();
+                        truncated = true;
+                    }
+                    let lines: Vec<String> = preview
+                        .lines()
+                        .map(|l| {
+                            if l.chars().count() > 120 {
+                                format!("{}…", l.chars().take(119).collect::<String>())
+                            } else {
+                                l.to_string()
+                            }
+                        })
+                        .collect();
+                    let visible_lines = lines.len().min(max_lines);
+                    for (i, line) in lines.iter().take(visible_lines).enumerate() {
+                        let prefix = if i == 0 {
+                            format!("\x1b[90m│\x1b[0m  ")
                         } else {
-                            l.to_string()
-                        }
-                    })
-                    .collect();
-                let visible_lines = lines.len().min(max_lines);
-                for (i, line) in lines.iter().take(visible_lines).enumerate() {
-                    let prefix = if i == 0 {
-                        format!("\x1b[90m│\x1b[0m  ")
-                    } else {
-                        "\x1b[90m│\x1b[0m  ".to_string()
-                    };
-                    eprint!("{}{}\r\n", prefix, line);
+                            "\x1b[90m│\x1b[0m  ".to_string()
+                        };
+                        eprint!("{}{}\r\n", prefix, line);
+                        let _ = std::io::Write::flush(&mut std::io::stderr());
+                    }
+                    if lines.len() > max_lines || truncated {
+                        let total = trimmed.lines().count();
+                        let extra = total.saturating_sub(max_lines);
+                        let suffix = if truncated {
+                            format!(" | {}+ chars", trimmed.chars().count() - max_chars)
+                        } else {
+                            String::new()
+                        };
+                        eprint!(
+                            "\r\n\x1b[90m│  … {} more line{}{}\x1b[0m\r\n",
+                            extra,
+                            if extra == 1 { "" } else { "s" },
+                            suffix
+                        );
+                        let _ = std::io::Write::flush(&mut std::io::stderr());
+                    }
+                    eprint!("\x1b[90m└─ \x1b[36m{} result\x1b[0m\r\n", name);
+                    eprint!("\r\n");
                     let _ = std::io::Write::flush(&mut std::io::stderr());
+                    renderer.clear();
                 }
-                if lines.len() > max_lines || truncated {
-                    let total = trimmed.lines().count();
-                    let extra = total.saturating_sub(max_lines);
-                    let suffix = if truncated {
-                        format!(" | {}+ chars", trimmed.chars().count() - max_chars)
-                    } else {
-                        String::new()
-                    };
-                    eprint!(
-                        "\r\n\x1b[90m│  … {} more line{}{}\x1b[0m\r\n",
-                        extra,
-                        if extra == 1 { "" } else { "s" },
-                        suffix
-                    );
-                    let _ = std::io::Write::flush(&mut std::io::stderr());
-                }
-                eprint!("\x1b[90m└─ \x1b[36m{} result\x1b[0m\r\n", name);
-                eprint!("\r\n");
-                let _ = std::io::Write::flush(&mut std::io::stderr());
-                renderer.clear();
                 *saw_output = true;
                 if let Some(cb) = sink.as_mut() {
                     cb(StreamEvent::ToolResult {
@@ -537,8 +576,6 @@ fn apply_sse_event(
                     .get("args_preview")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                renderer.flush();
-                eprint!("\r\n");
                 let tool_name = json
                     .get("tool_name")
                     .and_then(|v| v.as_str())
@@ -561,12 +598,15 @@ fn apply_sse_event(
                 tokio::spawn(async move {
                     let _ = post_client.post(&resp_url).json(&body).send().await;
                 });
-                renderer.clear();
+                if !no_render {
+                    renderer.flush();
+                    eprint!("\r\n");
+                    renderer.clear();
+                }
                 *saw_output = true;
                 return true;
             }
             "tool_error" => {
-                renderer.flush();
                 let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
                 let err = json
                     .get("error")
@@ -584,14 +624,17 @@ fn apply_sse_event(
                         error: err.to_string(),
                     });
                 }
-                eprint!("\r\n\x1b[31m┌─ {} error\x1b[0m\r\n", name);
-                for line in err.lines() {
-                    eprint!("\x1b[31m│  {}\x1b[0m\r\n", line);
+                if !no_render {
+                    renderer.flush();
+                    eprint!("\r\n\x1b[31m┌─ {} error\x1b[0m\r\n", name);
+                    for line in err.lines() {
+                        eprint!("\x1b[31m│  {}\x1b[0m\r\n", line);
+                        let _ = std::io::Write::flush(&mut std::io::stderr());
+                    }
+                    eprint!("\x1b[31m└─\x1b[0m\r\n");
                     let _ = std::io::Write::flush(&mut std::io::stderr());
+                    renderer.clear();
                 }
-                eprint!("\x1b[31m└─\x1b[0m\r\n");
-                let _ = std::io::Write::flush(&mut std::io::stderr());
-                renderer.clear();
                 *saw_output = true;
             }
             _ => {}
@@ -616,30 +659,36 @@ fn apply_sse_event(
                             cb(StreamEvent::ContentDelta(new_text.to_string()));
                         }
                         renderer.push(new_text);
-                        let _ = std::io::Write::flush(&mut std::io::stderr());
+                        if !no_render {
+                            let _ = std::io::Write::flush(&mut std::io::stderr());
+                        }
                     }
                 }
                 if let Some(t) = delta.get("thinking").and_then(|v| v.as_str()) {
                     thinking.push_str(t);
                     *saw_output = true;
-                    if !*thinking_started {
-                        *thinking_started = true;
-                        eprint!("\r\n\x1b[90m{}\x1b[0m", t);
-                    } else {
-                        eprint!("\x1b[90m{}\x1b[0m", t);
+                    if !no_render {
+                        if !*thinking_started {
+                            *thinking_started = true;
+                            eprint!("\r\n\x1b[90m{}\x1b[0m", t);
+                        } else {
+                            eprint!("\x1b[90m{}\x1b[0m", t);
+                        }
+                        let _ = std::io::Write::flush(&mut std::io::stderr());
                     }
-                    let _ = std::io::Write::flush(&mut std::io::stderr());
                 }
                 if let Some(r) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
                     reasoning.push_str(r);
                     *saw_output = true;
-                    if !*reasoning_started {
-                        *reasoning_started = true;
-                        eprint!("\r\n\x1b[90m{}\x1b[0m", r);
-                    } else {
-                        eprint!("\x1b[90m{}\x1b[0m", r);
+                    if !no_render {
+                        if !*reasoning_started {
+                            *reasoning_started = true;
+                            eprint!("\r\n\x1b[90m{}\x1b[0m", r);
+                        } else {
+                            eprint!("\x1b[90m{}\x1b[0m", r);
+                        }
+                        let _ = std::io::Write::flush(&mut std::io::stderr());
                     }
-                    let _ = std::io::Write::flush(&mut std::io::stderr());
                 }
                 if let Some(deltas) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                     for (i, d) in deltas.iter().enumerate() {

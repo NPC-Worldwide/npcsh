@@ -29,6 +29,59 @@ pub struct CronRegistry {
     cron_file: Option<String>,
 }
 
+/// Schedule phase that must outlive the process.
+///
+/// `CronJob::next_run` is an `Instant`, which is meaningless across restarts.
+/// Without this, `load()` re-phases every job to `now + interval` on boot, so a
+/// 12h loop on a machine restarted twice a day would never fire. We persist the
+/// wall-clock due time per job key and restore it on load.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct PhaseFile {
+    #[serde(default)]
+    next_run_at: std::collections::HashMap<String, String>,
+}
+
+fn phase_path(cron_file: &str) -> std::path::PathBuf {
+    std::path::Path::new(&cron_file)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("loops.phase.json")
+}
+
+fn job_phase_key(npc: &str, interval_secs: u64, task: &str) -> String {
+    format!("{npc}|{interval_secs}|{task}")
+}
+
+impl CronRegistry {
+    fn phase_file(&self) -> Option<PhaseFile> {
+        let path = phase_path(&self.cron_path()?);
+        let raw = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&raw).ok()
+    }
+
+    /// Persist the wall-clock due time of every job.
+    fn save_phase(&self) {
+        let Some(path_str) = self.cron_path() else {
+            return;
+        };
+        let path = phase_path(&path_str);
+        let mut pf = PhaseFile::default();
+        let now = Instant::now();
+        for j in &self.jobs {
+            let remaining = j.next_run.saturating_duration_since(now);
+            let due =
+                chrono::Utc::now() + chrono::Duration::from_std(remaining).unwrap_or_default();
+            pf.next_run_at.insert(
+                job_phase_key(&j.npc, j.interval_secs, &j.task),
+                due.to_rfc3339(),
+            );
+        }
+        if let Ok(body) = serde_json::to_string_pretty(&pf) {
+            let _ = std::fs::write(path, body);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CronFile {
     cron: Vec<CronFileJob>,
@@ -77,6 +130,37 @@ impl CronRegistry {
         reg
     }
 
+    /// The loops file this registry watches, with `~` expanded.
+    pub fn cron_file_path(&self) -> Option<String> {
+        self.cron_path()
+    }
+
+    /// Re-read loops.yaml and jinx-declared crons in place.
+    ///
+    /// Preserves `next_run` for jobs that already exist, so an unrelated edit
+    /// does not reset every interval's phase (which would starve long loops).
+    pub fn reload_from_disk(&mut self, team_dir: &str) {
+        let preserved: Vec<(String, Instant)> = self
+            .jobs
+            .iter()
+            .map(|j| (job_phase_key(&j.npc, j.interval_secs, &j.task), j.next_run))
+            .collect();
+
+        self.jobs.clear();
+        self.next_id = 1;
+        self.load();
+
+        // Reapply phases for surviving jobs.
+        for j in self.jobs.iter_mut() {
+            let key = job_phase_key(&j.npc, j.interval_secs, &j.task);
+            if let Some((_, next)) = preserved.iter().find(|(k, _)| *k == key) {
+                j.next_run = *next;
+            }
+        }
+
+        self.load_from_jinxes(team_dir);
+    }
+
     fn cron_path(&self) -> Option<String> {
         self.cron_file
             .as_ref()
@@ -102,14 +186,39 @@ impl CronRegistry {
             Err(_) => return,
         };
         let now = Instant::now();
+        let saved_phase = self.phase_file().unwrap_or_default();
         for j in file.cron {
             let (kind, task) = match j.task {
                 CronFileTask::Chat { task } => (CronJobKind::Chat, task),
-                CronFileTask::Jinx { jinx, .. } => (CronJobKind::Jinx, jinx),
+                CronFileTask::Jinx { jinx, args } => (
+                    CronJobKind::Jinx,
+                    if args.trim().is_empty() {
+                        jinx
+                    } else {
+                        // Preserve the jinx's single positional arg: task
+                        // strings are later split on the first space.
+                        format!("{} {}", jinx, args.trim())
+                    },
+                ),
             };
             let secs = parse_duration(&j.interval);
             let id = self.next_id;
             self.next_id += 1;
+
+            // Restore the persisted due time so a restart does not reset every
+            // loop's phase. If the saved time is already past, run on next tick
+            // (clamp to now) rather than firing a burst of catch-up runs.
+            let next_run = saved_phase
+                .next_run_at
+                .get(&job_phase_key(&j.npc, secs, &task))
+                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+                .map(|due| {
+                    let delta = due.with_timezone(&chrono::Utc) - chrono::Utc::now();
+                    let secs_left = delta.num_seconds().max(0) as u64;
+                    now + Duration::from_secs(secs_left)
+                })
+                .unwrap_or_else(|| now + Duration::from_secs(secs));
+
             self.jobs.push(CronJob {
                 id,
                 npc: j.npc,
@@ -118,9 +227,13 @@ impl CronRegistry {
                 kind,
                 enabled: j.enabled,
                 last_run: None,
-                next_run: now + Duration::from_secs(secs),
+                next_run,
             });
         }
+        // Persist immediately so a fresh schedule survives a restart that
+        // happens before the first tick. Otherwise phase is only written when
+        // a job fires, and a restart loop can starve a long-interval job.
+        self.save_phase();
     }
 
     fn save(&self) {
@@ -149,7 +262,12 @@ impl CronRegistry {
                 }
             })
             .collect();
-        jobs.sort_by(|a, b| a.npc.cmp(&b.npc).then(a.interval.cmp(&b.interval)));
+        // Deliberately do NOT sort here. Job ids are positional: `load()` assigns
+        // ids in file order. Sorting the file while leaving the in-memory Vec in
+        // append order means the shell and the daemon disagree about which id
+        // belongs to which job, so `/loop` reports an id that `/loop <id>` and
+        // `/loops` resolve to a different job. Keeping append order preserves
+        // id identity across save/load.
         let file = CronFile { cron: jobs };
         let body = format!(
             "#!/usr/bin/env npc\njinx_name: cron\ndescription: Scheduled heartbeat tasks\ncron:\n{}\n",
@@ -206,6 +324,7 @@ impl CronRegistry {
     pub fn check_due(&mut self) -> Vec<CronJob> {
         let now = Instant::now();
         let mut due = Vec::new();
+        let mut advanced = false;
         for j in &mut self.jobs {
             if !j.enabled {
                 continue;
@@ -214,7 +333,11 @@ impl CronRegistry {
                 j.last_run = Some(now);
                 j.next_run = now + Duration::from_secs(j.interval_secs);
                 due.push(j.clone());
+                advanced = true;
             }
+        }
+        if advanced {
+            self.save_phase();
         }
         due
     }
@@ -314,19 +437,78 @@ pub fn parse_duration(s: &str) -> u64 {
     }
 }
 
+/// Start the cron ticker.
+///
+/// The ticker *executes* due jobs itself, on the async runtime it is handed.
+/// It does not merely enqueue them for a REPL to pick up: a loop must keep
+/// running when nobody is sitting at a prompt, when a long agent turn is in
+/// progress, and when a TUI is open. `notify` is best-effort only — a UI that
+/// wants to redraw on a tick can listen, and a dropped notification must never
+/// mean a dropped run.
+static TICK_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn spawn_cron_ticker(
     registry: Arc<Mutex<CronRegistry>>,
-    tx: tokio::sync::mpsc::UnboundedSender<CronJob>,
+    handle: tokio::runtime::Handle,
+    cfg: crate::loop_runner::DetachedLoopConfig,
+    notify: Option<tokio::sync::mpsc::UnboundedSender<CronJob>>,
 ) {
+    // The registry is a snapshot from load time, so edits to `loops.yaml` by
+    // hand would otherwise be invisible until a restart. Track the file's mtime
+    // and reload when it changes: the file is the user's editing surface and
+    // must behave like one.
+    let watched = registry.lock().ok().and_then(|r| r.cron_file_path());
+    let mut last_mtime = watched.as_ref().and_then(|p| mtime_of(p));
+
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_secs(1));
-            let due = registry.lock().unwrap().check_due();
+
+            if let Some(path) = watched.as_ref() {
+                let now_mtime = mtime_of(path);
+                if now_mtime != last_mtime {
+                    last_mtime = now_mtime;
+                    if let Ok(mut r) = registry.lock() {
+                        r.reload_from_disk(&cfg.team_dir);
+                    }
+                }
+            }
+
+            let due = match registry.lock() {
+                Ok(mut r) => r.check_due(),
+                Err(_) => continue,
+            };
             for job in due {
-                let _ = tx.send(job);
+                if let Some(tx) = notify.as_ref() {
+                    // Never let notification backpressure drop a run.
+                    let _ = tx.send(job.clone());
+                }
+
+                // Back off a loop that keeps failing to even start (missing NPC,
+                // malformed task). Without this it retries at the configured
+                // interval forever and floods its log. Successful runs reset the
+                // streak, so a transient outage costs nothing.
+                let key = crate::loop_runner::loop_key(&job);
+                let fails = crate::loop_runner::failure_count(&key);
+                if fails > 0 {
+                    let skip = 1u32 << fails.min(5); // 2,4,8,16,32
+                    if skip > 1 {
+                        let counter =
+                            TICK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if counter % skip as u64 != 0 {
+                            continue;
+                        }
+                    }
+                }
+
+                crate::loop_runner::spawn_detached_loop(&handle, job, cfg.clone());
             }
         }
     });
+}
+
+fn mtime_of(path: &str) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
 }
 
 pub fn format_duration(secs: u64) -> String {

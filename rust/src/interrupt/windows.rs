@@ -47,7 +47,12 @@ pub fn spawn_listener(
                                 let _ = queue_tx.send(line);
                             }
                         }
-                        KeyCode::Char(c) => {
+                        // Only plain characters belong in the queued line.
+                        // Control chords (Ctrl+A / Ctrl+E / Ctrl+O / ...) are
+                        // line-editing keys owned by the prompt; pushing the
+                        // bare letter here would inject a stray 'a'/'e' into
+                        // the queued command.
+                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                             buf.push(c);
                         }
                         KeyCode::Backspace => {

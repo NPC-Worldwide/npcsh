@@ -211,3 +211,9 @@ steps:
           final_output = f"[{target_name}] Task incomplete after {max_iters} iterations. Status: {status}"
 
       output = final_output or f"[{target_name}]: No output received"
+      # Publish the step result to the context so the runner can read it.
+      # Assigning a bare local `output` is invisible outside exec().
+      try:
+          context['output'] = output
+      except NameError:
+          pass

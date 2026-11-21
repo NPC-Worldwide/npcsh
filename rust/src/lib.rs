@@ -1,9 +1,12 @@
 pub mod agent_coders;
 pub mod agent_turn;
 pub mod cli_providers;
+pub mod cron;
 pub mod ctrl_r;
+pub mod daemon;
 pub mod db_migrations;
 pub mod live_persist;
+pub mod loop_runner;
 pub mod markdown;
 pub mod mcp_server;
 pub mod stream_client;
@@ -23,6 +26,88 @@ static RESOLVED_TEAM_DIR: OnceLock<String> = OnceLock::new();
 
 pub fn set_resolved_team_dir(dir: String) -> std::result::Result<(), String> {
     RESOLVED_TEAM_DIR.set(dir)
+}
+
+/// Load process environment the same way for both `npcsh` and `npcshd`.
+///
+/// The daemon must resolve models, providers, and the server URL identically to
+/// the shell, otherwise a loop started headless would use different settings
+/// than one started from a prompt.
+pub fn load_env() {
+    let _ = dotenvy::dotenv();
+    load_npcshrc();
+    ensure_memory_pref();
+}
+
+pub fn load_npcshrc() {
+    let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
+    let path = std::path::Path::new(&rc_path);
+    if !path.exists() {
+        return;
+    }
+    if let Ok(content) = std::fs::read_to_string(path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let line = line.strip_prefix("export ").unwrap_or(line);
+            if let Some((key, value)) = line.split_once('=') {
+                let key = key.trim();
+                let value = value.trim().trim_matches('"').trim_matches('\'');
+                if std::env::var(key).is_err() {
+                    // SAFETY: called during single-threaded startup before any
+                    // worker threads read the environment.
+                    unsafe { std::env::set_var(key, value) };
+                }
+            }
+        }
+    }
+}
+
+/// Default to enabling memory extraction when unset. Never prompts: the daemon
+/// and non-interactive runs must not block on stdin.
+pub fn ensure_memory_pref() {
+    if std::env::var("NPCSH_MEMORY").is_ok() {
+        return;
+    }
+    let interactive = io::stdin().is_terminal() && io::stderr().is_terminal();
+    let value = if interactive {
+        eprintln!("\x1b[36mMemory / knowledge extraction\x1b[0m");
+        eprintln!("npcsh can automatically extract memories from your conversations.");
+        eprintln!("You can change this later by editing NPCSH_MEMORY in ~/.npcshrc.");
+        eprint!("Enable automatic memory extraction? [Y/n] ");
+        let _ = io::stderr().flush();
+        let mut answer = String::new();
+        if io::stdin().read_line(&mut answer).is_err() {
+            answer = "y".to_string();
+        }
+        match answer.trim().to_lowercase().as_str() {
+            "" | "y" | "yes" | "true" | "1" | "on" => "1",
+            _ => "0",
+        }
+    } else {
+        "1"
+    };
+    // SAFETY: startup, before threads read the environment.
+    unsafe { std::env::set_var("NPCSH_MEMORY", value) };
+    // Persist the choice so the prompt is not shown again next start.
+    let _ = append_npcshrc_line("NPCSH_MEMORY", value);
+}
+
+/// Append `export KEY=VALUE` to `~/.npcshrc`, creating it if needed.
+pub fn append_npcshrc_line(key: &str, value: &str) -> std::io::Result<()> {
+    let rc_path = shellexpand::tilde("~/.npcshrc").to_string();
+    let path = std::path::Path::new(&rc_path);
+    let mut content = String::new();
+    if path.exists() {
+        content = std::fs::read_to_string(path)?;
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
+    }
+    content.push_str(&format!("export {}={}\n", key, value));
+    std::fs::write(path, content)
 }
 
 pub fn real_user_home() -> Option<String> {
