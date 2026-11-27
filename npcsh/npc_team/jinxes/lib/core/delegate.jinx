@@ -157,10 +157,19 @@ steps:
                 FEEDBACK: If NO, what should be done next
                 SUMMARY: Brief summary of progress"""
 
+              _review_state = globals().get('state', None)
+              _review_model = (
+                  getattr(orchestrator, 'model', None)
+                  or getattr(_review_state, 'chat_model', None)
+              )
+              _review_provider = (
+                  getattr(orchestrator, 'provider', None)
+                  or getattr(_review_state, 'chat_provider', None)
+              )
               review_result = get_llm_response(
                   review_prompt,
-                  model=getattr(orchestrator, 'model', None) or (state.chat_model if state else 'llama3.2'),
-                  provider=getattr(orchestrator, 'provider', None) or (state.chat_provider if state else 'ollama'),
+                  model=_review_model,
+                  provider=_review_provider,
                   npc=orchestrator,
                   temperature=0.3
               )

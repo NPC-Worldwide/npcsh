@@ -90,10 +90,25 @@ steps:
           else:
               from npcpy.llm_funcs import get_llm_response
 
-              _model = user_model or (npc.model if npc else (state.chat_model if state else 'gemma3:4b'))
-              _provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
+              # Resolve model/provider from the widest available context, mirroring
+              # delegate.jinx: explicit input > npc > team > orchestrator > state.
+              # Terminal fallback is None so get_llm_response uses whatever the
+              # user has configured -- we do not assume ollama.
+              _team = getattr(npc, 'team', None) if npc else None
+              _state = globals().get('state', None)
+              _model = (
+                  user_model
+                  or getattr(npc, 'model', None)
+                  or getattr(_team, 'model', None)
+                  or getattr(_state, 'chat_model', None)
+              )
+              _provider = (
+                  getattr(npc, 'provider', None)
+                  or getattr(_team, 'provider', None)
+                  or getattr(_state, 'chat_provider', None)
+              )
 
-              print(f"[release_notes] generating notes with {_provider}/{_model}...", flush=True)
+              print(f"[release_notes] generating notes with {_provider or '(default)'}/{_model or '(default)'}...", flush=True)
               commits_text = log
               files_text = diff_stat if diff_stat else '(unavailable)'
               prs_text = prs if prs else '(none)'
