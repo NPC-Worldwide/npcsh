@@ -111,8 +111,21 @@ steps:
       Use double quotes for all strings. Risk must be safe/moderate/dangerous."""
 
       try:
-          model = npc.model if npc else (state.chat_model if state else 'qwen3.5:2b')
-          provider = npc.provider if npc else (state.chat_provider if state else 'ollama')
+          # Resolve model/provider from the widest available context (npc > team >
+          # state), leaving the terminal fallback as None so get_llm_response uses
+          # whatever the user configured. Do not assume a specific provider.
+          _team = getattr(npc, 'team', None) if npc else None
+          _state = globals().get('state', None)
+          model = (
+              getattr(npc, 'model', None)
+              or getattr(_team, 'model', None)
+              or getattr(_state, 'chat_model', None)
+          )
+          provider = (
+              getattr(npc, 'provider', None)
+              or getattr(_team, 'provider', None)
+              or getattr(_state, 'chat_provider', None)
+          )
 
           result = get_llm_response(plan_prompt, model=model, provider=provider, stream=False)
           response_text = result.get('response', '') if isinstance(result, dict) else str(result)
