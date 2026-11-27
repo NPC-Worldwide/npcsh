@@ -247,6 +247,11 @@ Restart=on-failure\nRestartSec=5\nStandardOutput=journal\nStandardError=journal\
         cmd = cmd,
         env_lines = env_lines
     );
+    // `service_path()` returns `None` on platforms other than macOS/Linux, so the
+    // block below is unreachable at runtime there. The binding still has to exist
+    // so the unconditional `fs::write` type-checks on every target.
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let body = String::new();
 
     std::fs::write(&path, body).map_err(|e| format!("{}: {e}", path.display()))?;
 
